@@ -1,0 +1,580 @@
+// Overtaxed Platform - Prisma Schema
+// Based on PRD requirements for automated property tax appeals
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================
+// Authentication & User Management
+// ============================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  passwordHash  String?
+  name          String?
+  image         String?
+  role          UserRole  @default(USER)
+  
+  // Relationship attestation (owner or authorized)
+  relationshipAttestation RelationshipType @default(OWNER)
+  attestationDate         DateTime         @default(now())
+  
+  // Subscription & Billing
+  subscriptionTier SubscriptionTier @default(COMPS_ONLY)
+  subscriptionStatus SubscriptionStatus @default(INACTIVE)
+  subscriptionStartDate DateTime?
+  subscriptionEndDate   DateTime?
+  subscriptionAnniversaryDate DateTime? // For annual renewals
+  
+  // Performance Plan tracking
+  performancePlanStartDate DateTime? // When 3-year period starts
+  performancePlanPaymentOption PerformancePaymentOption?
+  
+  // Terms of Service
+  termsAcceptances TermsAcceptance[]
+  
+  // User data
+  properties Property[]
+  appeals    Appeal[]
+  invoices   Invoice[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime? // Soft delete for data retention (7 years)
+  
+  @@index([email])
+  @@index([subscriptionTier])
+  @@index([subscriptionStatus])
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum RelationshipType {
+  OWNER
+  AUTHORIZED
+}
+
+enum SubscriptionTier {
+  COMPS_ONLY      // DIY reports only: $69 per property, one-time
+  STARTER         // $149/property/year, full automation
+  GROWTH          // $125/property/year, 3-9 properties (commercial)
+  PORTFOLIO       // $100/property/year, 10-20 properties (commercial)
+  PERFORMANCE     // 4% of 3-year savings, deferred; unlimited. 20+ requires custom pricing.
+}
+
+enum SubscriptionStatus {
+  INACTIVE
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  PAST_DUE
+}
+
+enum PerformancePaymentOption {
+  UPFRONT
+  INSTALLMENTS
+}
+
+// ============================================
+// Terms of Service & User Agreement
+// ============================================
+
+model TermsAcceptance {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  version   String   // Terms version (e.g., "1.0", "2.0")
+  acceptedAt DateTime @default(now())
+  
+  // What was accepted
+  termsOfServiceAccepted Boolean @default(false)
+  userAgreementAccepted  Boolean @default(false)
+  relationshipAttestation Boolean @default(false)
+  
+  ipAddress String?
+  userAgent String?
+  
+  createdAt DateTime @default(now())
+  
+  @@index([userId])
+  @@index([version])
+}
+
+// ============================================
+// Property Management
+// ============================================
+
+model Property {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Property identification
+  pin       String   // Property Identification Number (Cook County)
+  address   String
+  city      String
+  state     String   @default("IL")
+  zipCode   String
+  county    String   @default("Cook") // MVP: Cook County only
+  
+  // Property details (from Cook County Open Data)
+  neighborhood    String?
+  subdivision     String?
+  block           String?
+  buildingClass   String? // e.g., "203" for residential
+  cdu             String? // Characteristic Data Unit (e.g., "AV")
+  livingArea      Int?    // Square feet
+  landSize        Int?    // Square feet
+  yearBuilt       Int?
+  bedrooms        Int?
+  bathrooms       Decimal?
+  exteriorWall    String?
+  roofType        String?
+  heatingType     String?
+  
+  // Assessment data
+  currentAssessmentValue Decimal?
+  currentLandValue       Decimal?
+  currentImprovementValue Decimal?
+  currentMarketValue     Decimal?
+  
+  // Tax information (from Cook County Clerk)
+  taxCode         String?  // Cook County tax code (determines tax rate)
+  taxRate         Decimal? // Total tax rate as decimal (e.g., 0.0756 for 7.56%)
+  stateEqualizer  Decimal? // State equalization factor (e.g., 2.916)
+  
+  // Assessment history (for year-over-year comparison)
+  assessmentHistory AssessmentHistory[]
+  
+  // Appeals for this property
+  appeals Appeal[]
+  
+  // Comps used for this property
+  comps ComparableProperty[]
+  
+  // Monitoring
+  lastCheckedAt DateTime?
+  monitoringEnabled Boolean @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([userId, pin]) // One property per user (by PIN)
+  @@index([userId])
+  @@index([pin])
+  @@index([county])
+  @@index([neighborhood])
+}
+
+model AssessmentHistory {
+  id          String   @id @default(cuid())
+  propertyId  String
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  
+  taxYear     Int      // e.g., 2024, 2025, 2026
+  assessmentValue Decimal
+  landValue    Decimal?
+  improvementValue Decimal?
+  marketValue  Decimal?
+  
+  // Change detection
+  previousAssessmentValue Decimal? // For year-over-year comparison
+  changeAmount            Decimal?
+  changePercent           Decimal?
+  
+  // Source
+  source      String?  // "Cook County Open Data", "manual", "upload"
+  noticeDate  DateTime? // When reassessment notice was received
+  noticeDeadline DateTime? // 30 days from notice date
+  
+  createdAt   DateTime @default(now())
+  
+  @@unique([propertyId, taxYear])
+  @@index([propertyId])
+  @@index([taxYear])
+}
+
+// ============================================
+// Appeals
+// ============================================
+
+model Appeal {
+  id         String   @id @default(cuid())
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Tax year tracking (multi-year support)
+  taxYear    Int      // e.g., 2024
+  
+  // Related appeals (same property, different years) for 3-year savings calculation
+  relatedAppeals Appeal[] @relation("RelatedAppeals")
+  parentAppealId String?
+  parentAppeal   Appeal?  @relation("RelatedAppeals", fields: [parentAppealId], references: [id])
+  
+  // Status
+  status     AppealStatus @default(DRAFT)
+  
+  // Assessment values
+  originalAssessmentValue Decimal
+  requestedAssessmentValue Decimal?
+  finalAssessmentValue    Decimal? // After appeal decision
+  
+  // Appeal details
+  appealType AppealType @default(ASSESSOR) // Assessor's Office or Board of Review
+  filingMethod FilingMethod @default(ELECTRONIC)
+  
+  // Dates
+  noticeDate      DateTime? // When reassessment notice was received
+  filingDeadline  DateTime  // 30 days from notice or township closing date
+  filedAt         DateTime?
+  decisionDate    DateTime?
+  
+  // Outcome data (for win-rate improvement)
+  outcome         AppealOutcome?
+  reductionAmount Decimal? // Assessment reduction achieved
+  reductionPercent Decimal?
+  
+  // Tax savings calculation (for Performance Plan)
+  taxSavings      Decimal? // Calculated: reduction × tax rate × equalization factor
+  taxRate         Decimal? // Most recent ascertainable tax rate
+  equalizationFactor Decimal? // Equalization factor used
+  
+  // Evidence & comps used
+  compsUsed      ComparableProperty[]
+  evidenceSummary String? // Brief summary of evidence submitted
+  
+  // Documents
+  documents      AppealDocument[]
+  
+  // Hearing (if applicable)
+  hearingScheduled Boolean @default(false)
+  hearingDate      DateTime?
+  hearingLocation  String?
+  
+  // Notes
+  notes          String?
+  adminNotes     String? // Internal notes
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  @@unique([propertyId, taxYear, appealType]) // One appeal per property per year per type
+  @@index([userId])
+  @@index([propertyId])
+  @@index([taxYear])
+  @@index([status])
+  @@index([outcome])
+  @@index([parentAppealId])
+}
+
+enum AppealStatus {
+  DRAFT
+  PENDING_FILING
+  FILED
+  UNDER_REVIEW
+  HEARING_SCHEDULED
+  DECISION_PENDING
+  APPROVED
+  PARTIALLY_APPROVED
+  DENIED
+  WITHDRAWN
+}
+
+enum AppealType {
+  ASSESSOR      // Cook County Assessor's Office
+  BOARD_REVIEW  // Board of Review
+  CERTIFICATE_ERROR // Certificate of Error (Rule 27)
+}
+
+enum FilingMethod {
+  ELECTRONIC
+  PAPER
+  EMAIL
+}
+
+enum AppealOutcome {
+  WON              // Full reduction granted
+  PARTIALLY_WON    // Partial reduction
+  DENIED           // No reduction
+  WITHDRAWN        // Appeal withdrawn
+}
+
+// ============================================
+// Comparable Properties (Comps)
+// ============================================
+
+model ComparableProperty {
+  id        String   @id @default(cuid())
+  
+  // Source property (if used in an appeal)
+  propertyId String?
+  property   Property? @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  
+  // Appeals this comp was used in
+  appeals   Appeal[]
+  
+  // Comp type
+  compType  CompType // Sales comp or Equity comp
+  
+  // Property identification (from Cook County Open Data)
+  pin       String
+  address   String
+  city      String
+  state     String   @default("IL")
+  zipCode   String
+  county    String   @default("Cook")
+  
+  // Property details
+  neighborhood    String?
+  subdivision     String?
+  block           String?
+  buildingClass   String?
+  cdu             String?
+  livingArea      Int?
+  landSize        Int?
+  yearBuilt       Int?
+  bedrooms        Int?
+  bathrooms       Decimal?
+  exteriorWall    String?
+  roofType        String?
+  heatingType     String?
+  
+  // Distance from subject property
+  distanceFromSubject Decimal? // Miles
+  
+  // For Sales Comps
+  salePrice       Decimal?
+  saleDate        DateTime?
+  pricePerSqft    Decimal?
+  
+  // For Equity Comps
+  assessedMarketValue Decimal?
+  assessedMarketValuePerSqft Decimal?
+  
+  // Assessment values
+  landValue       Decimal?
+  improvementValue Decimal?
+  
+  // Matching criteria (for Rule 15 compliance)
+  sameNeighborhood Boolean @default(false)
+  sameBuildingClass Boolean @default(false)
+  sameCdu          Boolean @default(false)
+  livingAreaWithinRange Boolean @default(false)
+  ageWithinRange   Boolean @default(false)
+  distanceWithinRange Boolean @default(false)
+  
+  // Data source
+  dataSource      String @default("Cook County Open Data")
+  dataSourceUrl   String?
+  fetchedAt       DateTime @default(now())
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([propertyId])
+  @@index([pin])
+  @@index([compType])
+  @@index([neighborhood])
+}
+
+enum CompType {
+  SALES   // Sales Analysis comps (3+)
+  EQUITY  // Lack of Uniformity comps (5+)
+}
+
+// ============================================
+// Appeal Documents
+// ============================================
+
+model AppealDocument {
+  id        String   @id @default(cuid())
+  appealId  String
+  appeal    Appeal   @relation(fields: [appealId], references: [id], onDelete: Cascade)
+  
+  documentType DocumentType
+  fileName     String
+  fileUrl      String // S3 or storage URL
+  fileSize     Int?   // Bytes
+  mimeType     String?
+  
+  // For photos (Rule 11-12 compliance)
+  isPhoto      Boolean @default(false)
+  photoDate    DateTime? // Date-stamped within 1 year
+  
+  createdAt    DateTime @default(now())
+  
+  @@index([appealId])
+  @@index([documentType])
+}
+
+enum DocumentType {
+  APPEAL_FORM
+  COMP_PACKET
+  EVIDENCE_BRIEF
+  PHOTO
+  SUPPORTING_DOCUMENT
+  DECISION_LETTER
+  HEARING_NOTICE
+  OTHER
+}
+
+// ============================================
+// Billing & Invoices
+// ============================================
+
+model Invoice {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Invoice details
+  invoiceNumber String @unique
+  amount        Decimal
+  currency      String  @default("USD")
+  
+  // Invoice type
+  invoiceType   InvoiceType
+  
+  // Subscription invoices
+  subscriptionTier SubscriptionTier?
+  billingPeriodStart DateTime?
+  billingPeriodEnd   DateTime?
+  
+  // Performance Plan invoices
+  performancePlanAppealIds String[] // Appeal IDs included in 3-year calculation
+  taxSavingsTotal          Decimal? // Total 3-year tax savings
+  taxSavingsBreakdown      Json?   // Per-year breakdown
+  feePercentage            Decimal  @default(0.04) // 4%
+  feeAmount                Decimal? // 4% of tax savings
+  paymentOption            PerformancePaymentOption?
+  installmentNumber        Int?     // For installments (1, 2, or 3)
+  
+  // Comps-only invoices
+  propertyId    String?
+  compPacketGenerated Boolean @default(false)
+  
+  // Payment
+  status        InvoiceStatus @default(PENDING)
+  paidAt        DateTime?
+  paymentMethod String? // "credit_card", "ach"
+  stripePaymentIntentId String?
+  
+  // Collections
+  dueDate       DateTime
+  lateFeeAmount Decimal? // 1.5% per month
+  collectionLettersSent Int @default(0)
+  lastCollectionLetterSentAt DateTime?
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([status])
+  @@index([invoiceType])
+  @@index([dueDate])
+}
+
+enum InvoiceType {
+  SUBSCRIPTION      // Annual subscription (Starter, Growth, Portfolio)
+  PERFORMANCE_FEE   // 4% of 3-year savings
+  COMPS_ONLY        // $69 per property
+  LATE_FEE          // 1.5% monthly finance charge
+  COLLECTION_FEE    // Collection costs
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELLED
+  REFUNDED
+}
+
+// ============================================
+// Monitoring & Automation
+// ============================================
+
+model MonitoringJob {
+  id          String   @id @default(cuid())
+  
+  jobType     MonitoringJobType
+  status      JobStatus @default(PENDING)
+  
+  // What was checked
+  propertiesChecked Int @default(0)
+  assessmentsFound  Int @default(0)
+  appealsTriggered  Int @default(0)
+  
+  // Errors
+  errors      String[] // Error messages
+  warnings    String[] // Warning messages
+  
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+  
+  createdAt   DateTime @default(now())
+  
+  @@index([jobType])
+  @@index([status])
+  @@index([startedAt])
+}
+
+enum MonitoringJobType {
+  ASSESSMENT_CHECK    // Check for new assessments
+  APPEAL_FILING       // File pending appeals
+  COMP_GENERATION     // Generate comp packets
+  DEADLINE_REMINDER   // Send deadline reminders
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+// ============================================
+// County Configuration (for future expansion)
+// ============================================
+
+model CountyConfig {
+  id        String   @id @default(cuid())
+  
+  county    String   @unique // e.g., "Cook", "DuPage"
+  state     String   @default("IL")
+  
+  // Appeal rules
+  appealDeadlineDays Int @default(30) // Days from notice
+  appealTypes         String[] // ["assessor", "board_review"]
+  
+  // Data sources
+  openDataUrl         String?
+  apiUrl              String?
+  apiKey              String?
+  
+  // Form requirements
+  requiresPhotos      Boolean @default(true)
+  photoDateRequirement Int? // Days (e.g., within 365 days)
+  minCompsRequired    Int @default(3)
+  
+  isActive            Boolean @default(false) // MVP: Only Cook County active
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([county])
+  @@index([state])
+}

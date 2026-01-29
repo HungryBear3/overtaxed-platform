@@ -1,0 +1,45 @@
+/**
+ * Commercial pricing: per-property pricing by tier.
+ * Growth: 3-9 properties at $125/property/year.
+ * Portfolio: 10-20 properties at $100/property/year.
+ * 20+ = custom pricing.
+ */
+
+export const RETAIL_PRICE_PER_PROPERTY = 149
+
+/** Growth tier: $125 per property per year */
+export const GROWTH_PRICE_PER_PROPERTY = 125
+export const GROWTH_MIN_PROPERTIES = 3
+export const GROWTH_MAX_PROPERTIES = 9
+
+/** Portfolio tier: $100 per property per year */
+export const PORTFOLIO_PRICE_PER_PROPERTY = 100
+export const PORTFOLIO_MIN_PROPERTIES = 10
+export const PORTFOLIO_MAX_PROPERTIES = 20
+
+/**
+ * Get Growth price for property count. Returns null if outside range.
+ */
+export function growthPriceForProperties(n: number): number | null {
+  if (n >= GROWTH_MIN_PROPERTIES && n <= GROWTH_MAX_PROPERTIES) {
+    return n * GROWTH_PRICE_PER_PROPERTY
+  }
+  return null
+}
+
+/**
+ * Get Portfolio price for property count. Returns null if outside range.
+ */
+export function portfolioPriceForProperties(n: number): number | null {
+  if (n >= PORTFOLIO_MIN_PROPERTIES && n <= PORTFOLIO_MAX_PROPERTIES) {
+    return n * PORTFOLIO_PRICE_PER_PROPERTY
+  }
+  return null
+}
+
+/**
+ * Check if property count requires custom pricing (20+).
+ */
+export function requiresCustomPricing(n: number): boolean {
+  return n > PORTFOLIO_MAX_PROPERTIES
+}

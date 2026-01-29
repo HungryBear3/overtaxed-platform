@@ -1,0 +1,68 @@
+import { redirect } from "next/navigation"
+import { getSession } from "@/lib/auth"
+import Link from "next/link"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+
+export default async function AccountPage() {
+  const session = await getSession()
+  if (!session?.user) redirect("/auth/signin")
+
+  const { user } = session
+
+  return (
+    <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
+      <h1 className="text-2xl font-bold text-gray-900 mb-2">Account</h1>
+      <p className="text-gray-600 mb-8">Manage your account and subscription.</p>
+
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Profile</CardTitle>
+          <CardDescription>Your account details</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <p className="text-sm text-gray-500">Email</p>
+            <p className="font-medium text-gray-900">{user.email}</p>
+          </div>
+          {user.name && (
+            <div>
+              <p className="text-sm text-gray-500">Name</p>
+              <p className="font-medium text-gray-900">{user.name}</p>
+            </div>
+          )}
+          <div>
+            <p className="text-sm text-gray-500">Plan</p>
+            <p className="font-medium text-gray-900">
+              {user.subscriptionTier === "COMPS_ONLY" && "DIY reports only ($69/property)"}
+              {user.subscriptionTier === "STARTER" && "Starter ($149/property/year)"}
+              {user.subscriptionTier === "GROWTH" && "Growth (3–9 properties, $125/property/year)"}
+              {user.subscriptionTier === "PORTFOLIO" && "Portfolio (10–20 properties, $100/property/year)"}
+              {user.subscriptionTier === "PERFORMANCE" && "Performance (4% of savings, deferred)"}
+            </p>
+          </div>
+          <div>
+            <p className="text-sm text-gray-500">Status</p>
+            <p className={`font-medium ${user.subscriptionStatus === "ACTIVE" ? "text-green-600" : "text-gray-600"}`}>
+              {user.subscriptionStatus === "INACTIVE" ? "Free Tier" : user.subscriptionStatus}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+        <div className="flex gap-4">
+        <Link
+          href="/pricing"
+          className="inline-flex h-10 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          View plans & upgrade
+        </Link>
+        <Link
+          href="/api/auth/signout"
+          className="inline-flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium hover:bg-gray-50"
+        >
+          Sign out
+        </Link>
+      </div>
+    </div>
+  )
+}
