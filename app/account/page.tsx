@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
+import { prisma } from "@/lib/db"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
@@ -7,7 +8,31 @@ export default async function AccountPage() {
   const session = await getSession()
   if (!session?.user) redirect("/auth/signin")
 
-  const { user } = session
+  // Fetch fresh user data from DB (JWT token may have stale subscription info)
+  const freshUser = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      subscriptionTier: true,
+      subscriptionStatus: true,
+      subscriptionStartDate: true,
+    },
+  })
+
+  if (!freshUser) {
+    redirect("/auth/signin")
+  }
+
+  const user = {
+    ...session.user,
+    name: freshUser.name,
+    subscriptionTier: freshUser.subscriptionTier,
+    subscriptionStatus: freshUser.subscriptionStatus,
+    subscriptionStartDate: freshUser.subscriptionStartDate,
+  }
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">

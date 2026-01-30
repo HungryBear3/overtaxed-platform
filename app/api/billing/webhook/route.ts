@@ -4,22 +4,33 @@ import { stripe } from "@/lib/stripe/client"
 import { prisma } from "@/lib/db"
 
 export async function POST(request: NextRequest) {
+  console.log("[webhook] Received webhook request")
+  
   if (!stripe) {
+    console.error("[webhook] Stripe not configured")
     return NextResponse.json({ error: "Stripe not configured" }, { status: 500 })
   }
 
   const sig = request.headers.get("stripe-signature")
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
-  if (!sig || !webhookSecret) {
+  
+  if (!sig) {
+    console.error("[webhook] Missing stripe-signature header")
     return NextResponse.json({ error: "Missing signature" }, { status: 400 })
+  }
+  
+  if (!webhookSecret) {
+    console.error("[webhook] STRIPE_WEBHOOK_SECRET not configured")
+    return NextResponse.json({ error: "Webhook secret not configured" }, { status: 500 })
   }
 
   let event
   try {
     const body = await request.text()
     event = stripe.webhooks.constructEvent(body, sig, webhookSecret)
+    console.log(`[webhook] Event verified: ${event.type}`)
   } catch (err) {
-    console.error("Webhook signature verification failed:", err)
+    console.error("[webhook] Signature verification failed:", err)
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 })
   }
 
@@ -28,38 +39,93 @@ export async function POST(request: NextRequest) {
 
   switch (event.type) {
     case "checkout.session.completed": {
+      console.log("[webhook] Processing checkout.session.completed")
+      console.log("[webhook] Session data:", JSON.stringify({ 
+        id: data.id, 
+        customer_email: data.customer_email,
+        metadata,
+        payment_status: data.payment_status,
+      }))
+      
       const userId = metadata.userId
       const plan = metadata.plan
-      if (!userId || !plan) break
+      
+      if (!userId) {
+        console.error("[webhook] Missing userId in metadata")
+        break
+      }
+      if (!plan) {
+        console.error("[webhook] Missing plan in metadata")
+        break
+      }
 
-      await prisma.user.update({
-        where: { id: userId },
-        data: {
-          subscriptionTier: plan as "STARTER" | "GROWTH" | "PORTFOLIO",
-          subscriptionStatus: "ACTIVE",
-          subscriptionStartDate: new Date(),
-        },
-      })
-      console.log(`[webhook] User ${userId} subscribed to ${plan}`)
+      try {
+        const updatedUser = await prisma.user.update({
+          where: { id: userId },
+          data: {
+            subscriptionTier: plan as "STARTER" | "GROWTH" | "PORTFOLIO",
+            subscriptionStatus: "ACTIVE",
+            subscriptionStartDate: new Date(),
+          },
+        })
+        console.log(`[webhook] SUCCESS: User ${userId} subscribed to ${plan}. Updated tier: ${updatedUser.subscriptionTier}`)
+      } catch (dbError) {
+        console.error(`[webhook] Database error updating user ${userId}:`, dbError)
+      }
       break
     }
 
     case "customer.subscription.updated":
     case "customer.subscription.deleted": {
-      // Look up user by Stripe customer if you store stripeCustomerId
       const customerId = data.customer as string | undefined
       const status = data.status as string
+      console.log(`[webhook] Subscription ${event.type} for customer ${customerId}, status=${status}`)
+      
       if (!customerId) break
 
-      // Skip if you don't store stripeCustomerId – would need to map via email
-      console.log(`[webhook] Subscription ${event.type} for customer ${customerId}, status=${status}`)
+      // Try to find user by email from the subscription
+      try {
+        const subscription = await stripe.subscriptions.retrieve(data.id as string)
+        const customer = await stripe.customers.retrieve(customerId)
+        
+        if (customer && !('deleted' in customer) && customer.email) {
+          const user = await prisma.user.findUnique({ where: { email: customer.email } })
+          if (user) {
+            const newStatus = status === "active" ? "ACTIVE" : 
+                            status === "past_due" ? "PAST_DUE" : 
+                            status === "canceled" ? "CANCELLED" : "INACTIVE"
+            
+            await prisma.user.update({
+              where: { id: user.id },
+              data: { subscriptionStatus: newStatus },
+            })
+            console.log(`[webhook] Updated user ${user.id} subscription status to ${newStatus}`)
+          }
+        }
+      } catch (err) {
+        console.error("[webhook] Error processing subscription update:", err)
+      }
       break
     }
 
     case "invoice.payment_failed": {
-      // Notify user or mark as PAST_DUE
       const customerId = data.customer as string | undefined
       console.log(`[webhook] Payment failed for customer ${customerId}`)
+      
+      if (customerId) {
+        try {
+          const customer = await stripe.customers.retrieve(customerId)
+          if (customer && !('deleted' in customer) && customer.email) {
+            await prisma.user.updateMany({
+              where: { email: customer.email },
+              data: { subscriptionStatus: "PAST_DUE" },
+            })
+            console.log(`[webhook] Marked user with email ${customer.email} as PAST_DUE`)
+          }
+        } catch (err) {
+          console.error("[webhook] Error processing payment failure:", err)
+        }
+      }
       break
     }
 
