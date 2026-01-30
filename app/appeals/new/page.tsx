@@ -260,41 +260,125 @@ export default function NewAppealPage() {
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Appeal Details</h2>
               
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Tax Year
-                  </label>
-                  <select
-                    value={taxYear}
-                    onChange={(e) => setTaxYear(parseInt(e.target.value))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    {[0, 1, 2].map((offset) => {
-                      const year = new Date().getFullYear() - offset
-                      return (
-                        <option key={year} value={year}>
-                          {year}
-                        </option>
-                      )
-                    })}
-                  </select>
-                </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Tax Year
+                </label>
+                <select
+                  value={taxYear}
+                  onChange={(e) => setTaxYear(parseInt(e.target.value))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  {[0, 1, 2].map((offset) => {
+                    const year = new Date().getFullYear() - offset
+                    return (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                    )
+                  })}
+                </select>
+              </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Appeal Type
-                  </label>
-                  <select
-                    value={appealType}
-                    onChange={(e) => setAppealType(e.target.value as "ASSESSOR" | "BOARD_REVIEW")}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Appeal Type
+                </label>
+                <div className="space-y-3">
+                  <label
+                    className={`block p-4 border-2 rounded-lg cursor-pointer transition-colors ${
+                      appealType === "ASSESSOR"
+                        ? "border-blue-500 bg-blue-50"
+                        : "border-gray-200 hover:border-gray-300"
+                    }`}
                   >
-                    <option value="ASSESSOR">Assessor&apos;s Office</option>
-                    <option value="BOARD_REVIEW">Board of Review</option>
-                  </select>
+                    <input
+                      type="radio"
+                      name="appealType"
+                      value="ASSESSOR"
+                      checked={appealType === "ASSESSOR"}
+                      onChange={(e) => setAppealType(e.target.value as "ASSESSOR" | "BOARD_REVIEW")}
+                      className="sr-only"
+                    />
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="font-medium text-gray-900">Assessor&apos;s Office Appeal</p>
+                        <p className="text-sm text-gray-500 mt-1">
+                          First-level appeal filed directly with the Cook County Assessor. 
+                          This is the fastest option and typically resolves within 30-60 days. 
+                          <strong className="text-gray-700"> Recommended for most homeowners.</strong>
+                        </p>
+                      </div>
+                      {appealType === "ASSESSOR" && (
+                        <svg className="w-5 h-5 text-blue-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                    </div>
+                  </label>
+                  
+                  <label
+                    className={`block p-4 border-2 rounded-lg cursor-pointer transition-colors ${
+                      appealType === "BOARD_REVIEW"
+                        ? "border-blue-500 bg-blue-50"
+                        : "border-gray-200 hover:border-gray-300"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="appealType"
+                      value="BOARD_REVIEW"
+                      checked={appealType === "BOARD_REVIEW"}
+                      onChange={(e) => setAppealType(e.target.value as "ASSESSOR" | "BOARD_REVIEW")}
+                      className="sr-only"
+                    />
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="font-medium text-gray-900">Board of Review Appeal</p>
+                        <p className="text-sm text-gray-500 mt-1">
+                          Second-level appeal filed after Assessor&apos;s decision, or if you missed the Assessor deadline. 
+                          Takes longer (60-120 days) but provides a fresh review. 
+                          <strong className="text-gray-700"> Use if you disagree with Assessor&apos;s decision.</strong>
+                        </p>
+                      </div>
+                      {appealType === "BOARD_REVIEW" && (
+                        <svg className="w-5 h-5 text-blue-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                    </div>
+                  </label>
                 </div>
               </div>
+
+              {/* Township Info */}
+              {selectedProperty && (
+                <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-4">
+                  <div className="flex gap-3">
+                    <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div className="text-sm">
+                      <p className="font-medium text-amber-800">Filing Deadline Help</p>
+                      <p className="text-amber-700 mt-1">
+                        Cook County reassesses properties on a 3-year cycle by township. Your deadline depends on when your township is reassessed.
+                      </p>
+                      <p className="text-amber-700 mt-2">
+                        <strong>Don&apos;t have your notice?</strong> Check the{" "}
+                        <a 
+                          href="https://www.cookcountyassessor.com/appeals" 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline"
+                        >
+                          Cook County Assessor&apos;s website
+                        </a>
+                        {" "}for current appeal windows, or enter an estimated deadline (typically 30 days from notice mail date).
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4 mb-4">
                 <div>
@@ -308,7 +392,7 @@ export default function NewAppealPage() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    Date you received the reassessment notice
+                    Date printed on your reassessment notice
                   </p>
                 </div>
 
@@ -324,7 +408,9 @@ export default function NewAppealPage() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    Usually 30 days from notice date
+                    {noticeDate 
+                      ? "Auto-calculated: 30 days from notice date" 
+                      : "Check your notice or Assessor's website"}
                   </p>
                 </div>
               </div>
@@ -350,12 +436,25 @@ export default function NewAppealPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <div className="text-sm text-blue-800">
-                  <p className="font-medium mb-1">What happens next?</p>
-                  <ul className="space-y-1 text-blue-700">
-                    <li>• We&apos;ll gather comparable properties to support your appeal</li>
-                    <li>• Generate appeal forms ready for filing</li>
-                    <li>• Track your appeal status through the process</li>
-                  </ul>
+                  <p className="font-medium mb-2">What happens next?</p>
+                  <ol className="space-y-2 text-blue-700">
+                    <li className="flex gap-2">
+                      <span className="bg-blue-200 text-blue-800 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">1</span>
+                      <span><strong>Analysis:</strong> We find comparable properties that sold for less to support your case</span>
+                    </li>
+                    <li className="flex gap-2">
+                      <span className="bg-blue-200 text-blue-800 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">2</span>
+                      <span><strong>Forms:</strong> We generate Rule 15-compliant appeal forms with evidence packet</span>
+                    </li>
+                    <li className="flex gap-2">
+                      <span className="bg-blue-200 text-blue-800 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>
+                      <span><strong>Filing:</strong> Submit online via Cook County portal (DIY) or we file on your behalf (Starter+)</span>
+                    </li>
+                    <li className="flex gap-2">
+                      <span className="bg-blue-200 text-blue-800 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">4</span>
+                      <span><strong>Track:</strong> Monitor your appeal status and receive updates until decision</span>
+                    </li>
+                  </ol>
                 </div>
               </div>
             </div>

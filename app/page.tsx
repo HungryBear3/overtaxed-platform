@@ -6,7 +6,7 @@ export default function HomePage() {
       {/* Navigation */}
       <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-blue-900">Overtaxed</h1>
+          <h1 className="text-2xl font-bold text-blue-900">Over<span className="text-blue-600">Taxed</span></h1>
           <div className="flex items-center gap-6">
             <Link
               href="/pricing"
@@ -45,7 +45,7 @@ export default function HomePage() {
             <span className="text-blue-600">Automatically</span>
           </h2>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto mb-8">
-            Overtaxed monitors your Cook County property assessments and files appeals 
+            OverTaxed monitors your Cook County property assessments and files appeals 
             automatically when you&apos;re being overtaxed. Save money without the hassle.
           </p>
           <div className="flex gap-4 justify-center">
@@ -262,7 +262,7 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <div className="flex justify-between items-center">
             <p className="text-gray-500 text-sm">
-              &copy; {new Date().getFullYear()} Overtaxed. All rights reserved.
+              &copy; {new Date().getFullYear()} OverTaxed. All rights reserved.
             </p>
             <div className="flex gap-6">
               <Link href="/terms" className="text-gray-500 hover:text-gray-700 text-sm">

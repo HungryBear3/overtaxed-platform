@@ -22,7 +22,7 @@ export function Header() {
     <header className="sticky top-0 z-50 w-full border-b border-gray-200 bg-white/95 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         <Link href="/dashboard" className="flex items-center gap-2 font-bold text-blue-900">
-          Overtaxed
+          Over<span className="text-blue-600">Taxed</span>
         </Link>
 
         {/* Desktop nav */}
