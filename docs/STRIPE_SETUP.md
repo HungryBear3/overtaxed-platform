@@ -179,12 +179,65 @@ Stripe can’t reach `localhost` directly, so you use the **Stripe CLI** to forw
 
 ---
 
-## 5. Verify
+## 5. Verify (test mode)
 
 1. **Pricing page** (`/pricing`): Sign in, then click “Get started” on Starter, Growth, or Portfolio. You should be redirected to Stripe Checkout with the correct plan and amount.
 2. **Checkout:** Complete a test payment (use [Stripe test cards](https://stripe.com/docs/testing#cards), e.g. `4242 4242 4242 4242`).
 3. **Webhook:** After checkout, the user’s `subscriptionTier` and `subscriptionStatus` should update (see **Account** or **Dashboard**).
 4. **DIY:** The “Get comps” button currently goes to signup. When you add a DIY checkout route, it should use `STRIPE_PRICE_COMPS_ONLY`.
+
+---
+
+## 6. Live Stripe (production)
+
+When you’re ready to accept real payments on **https://www.overtaxed-il.com** (or your live domain):
+
+### 6.1 Switch to Live mode in Stripe
+
+1. **Stripe Dashboard** → toggle **Test mode** off (top right) to **Live mode**.
+2. **Developers → API keys** → copy **Publishable key** (`pk_live_...`) and **Secret key** (`sk_live_...`).
+
+### 6.2 Create live products and prices
+
+Live mode has a **separate** product catalog from test mode. Create the same products and prices in Live mode (DIY, Starter, Growth, Portfolio) per section 2 above, or use **Product catalog → Products** and duplicate from test if Stripe supports it. Copy each **live** Price ID (`price_...`).
+
+### 6.3 Live webhook
+
+1. **Developers → Webhooks → Add endpoint** (in **Live** mode).
+2. **Endpoint URL:** `https://www.overtaxed-il.com/api/billing/webhook` (or your live domain).
+3. **Events:** `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`.
+4. **Add endpoint** → open it → **Reveal** **Signing secret** → copy `whsec_...` (this is your **live** webhook secret).
+
+### 6.4 Update Vercel environment variables
+
+In **Vercel** → overtaxed-platform → **Settings** → **Environment Variables**, set (for **Production**):
+
+| Name | Value |
+|------|--------|
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | `pk_live_...` |
+| `STRIPE_SECRET_KEY` | `sk_live_...` |
+| `STRIPE_WEBHOOK_SECRET` | `whsec_...` (from live webhook above) |
+| `STRIPE_PRICE_COMPS_ONLY` | live Price ID |
+| `STRIPE_PRICE_STARTER` | live Price ID |
+| `STRIPE_PRICE_GROWTH_PER_PROPERTY` | live Price ID |
+| `STRIPE_PRICE_PORTFOLIO_PER_PROPERTY` | live Price ID |
+
+**Redeploy** after changing env vars.
+
+### 6.5 Test live (small real charge)
+
+1. Visit your live site, sign in, go to **Pricing**, and start a checkout (e.g. Starter with 1 property).
+2. Use a **real card** for a small amount (e.g. $149); confirm checkout completes and user tier updates.
+3. Optionally refund the test charge in **Stripe Dashboard → Payments**.
+
+---
+
+## 7. Testing checklist (quick reference)
+
+- **Test mode (local):** `stripe listen --forward-to localhost:3000/api/billing/webhook`; use test cards (e.g. `4242 4242 4242 4242`).
+- **Test mode (Vercel):** Webhook endpoint = Vercel URL or test subdomain; use test keys and test price IDs in Vercel env.
+- **Live mode:** Use live keys, live price IDs, and live webhook secret in Vercel **Production**; test with one small real payment, then refund if desired.
+- **Verify:** After checkout, user’s **Account** or **Dashboard** shows correct `subscriptionTier` and `subscriptionStatus`; Stripe **Customers** and **Subscriptions** show the customer and subscription.
 
 ---
 

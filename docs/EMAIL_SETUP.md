@@ -1,6 +1,18 @@
-# Email Setup (SendGrid, Postmark, or AWS SES)
+# Email Setup (GoDaddy, SendGrid, Postmark, or AWS SES)
 
 Overtaxed uses **nodemailer** with SMTP. Configure any provider that supports SMTP.
+
+## GoDaddy (overtaxed-il.com)
+
+If you use **GoDaddy** for domain + email (e.g. `noreply@overtaxed-il.com`):
+
+1. **Create** the email account in GoDaddy (My Products → Domains → overtaxed-il.com → Email).
+2. **SMTP:** `smtpout.secureserver.net`, port **587** (TLS), user = full email, password = email account password.
+3. **Vercel:** Add `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` in Environment Variables, then **Redeploy**.
+
+Full steps (Vercel + GoDaddy URL + GoDaddy email): **`docs/OVERTAXED_VERCEL_GODADDY.md`** (Parts 2–3 for domain, **Part 5** for email).
+
+---
 
 ## Environment Variables
 

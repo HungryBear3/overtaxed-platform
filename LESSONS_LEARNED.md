@@ -12,6 +12,9 @@ This document captures bugs, deployment issues, and solutions encountered during
 5. [Husky v9 Migration](#husky-v9-migration)
 6. [NextAuth.js v5 Setup](#nextauthjs-v5-setup)
 7. [Cook County Tax Rate Integration](#cook-county-tax-rate-integration)
+8. [Next.js 16 Prerender / useSearchParams](#nextjs-16-prerender--usesearchparams)
+9. [Vercel + GoDaddy Deployment](#vercel--godaddy-deployment)
+10. [GitHub Sync (overtaxed-platform vs FreshStart-IL)](#github-sync-overtaxed-platform-vs-freshstart-il)
 
 ---
 
@@ -262,6 +265,9 @@ declare module "next-auth/jwt" {
 | Tailwind import | `app/globals.css` |
 | Type extensions | `types/next-auth.d.ts` |
 | Manual SQL | `prisma/manual_setup.sql` |
+| Vercel + GoDaddy | `docs/OVERTAXED_VERCEL_GODADDY.md` |
+| Env / Stripe secrets | `docs/OVERTAXED_SECRETS_AND_PRICES.md` |
+| GitHub sync (monorepo → overtaxed-platform) | `SYNC_OVERTAXED.md` (repo root) |
 
 ---
 
@@ -325,4 +331,54 @@ const calcSavings = (reductionPercent: number) =>
 
 ---
 
-**Last Updated:** January 28, 2026
+## Next.js 16 Prerender / useSearchParams
+
+### Issue: "Error occurred prerendering page /appeals/new" on Vercel Build
+**Error:** `Export encountered an error on /appeals/new/page: /appeals/new, exiting the build.`
+
+**Context:** Pages that use `useSearchParams()` (e.g. `/appeals/new`, `/auth/signin`) are prerendered at build time. Search params exist only at request time, so Next.js 14+ fails during static generation.
+
+**Solution:** Wrap the page (or a parent route) in a `<Suspense>` boundary. Create a `layout.tsx` in the same route segment that wraps `children` in `<Suspense fallback={...}>`.
+
+**Implemented:**
+- `app/appeals/new/layout.tsx` — wraps the "new appeal" page (uses `useSearchParams` for `?propertyId=`)
+- `app/auth/signin/layout.tsx` — wraps the sign-in page (uses `useSearchParams` for `?callbackUrl=`)
+
+**Lesson:** Any client component using `useSearchParams()` must be inside a `<Suspense>` boundary; otherwise Vercel (and `next build`) prerender will fail. Use a layout with Suspense when the whole page uses search params.
+
+---
+
+## Vercel + GoDaddy Deployment
+
+### Setup
+- **Vercel:** Import **HungryBear3/overtaxed-platform**, add env vars (DB, NextAuth, Stripe keys + price IDs + webhook secret), deploy. Use **pooler** `DATABASE_URL` (port 6543).
+- **Custom domain (e.g. overtaxed-il.com):** Add domain in Vercel → Settings → Domains, then add DNS records in GoDaddy (CNAME `www` → `cname.vercel-dns.com`, optional A `@` for root).
+- **After DNS propagates:** Set `NEXTAUTH_URL` and `NEXT_PUBLIC_APP_URL` to `https://www.overtaxed-il.com` (or your domain), no trailing slash. Update Stripe webhook URL to the live domain; set `STRIPE_WEBHOOK_SECRET` from that endpoint. Redeploy.
+
+**Reference:** `docs/OVERTAXED_VERCEL_GODADDY.md` (step-by-step), `docs/OVERTAXED_SECRETS_AND_PRICES.md` (env vars, placeholders only — never commit real secrets).
+
+**Lesson:** Use pooler for serverless; point auth and Stripe at the canonical domain; never put secrets in docs or Git.
+
+---
+
+## GitHub Sync (overtaxed-platform vs FreshStart-IL)
+
+### Issue: "GitHub showing last commit 2 hours ago" / Vercel not picking up pushes
+**Context:** This repo lives in a **monorepo** (FreshStart-IL / ai-dev-tasks). `git push` updates **FreshStart-IL** only. **Vercel Overtaxed** deploys from **HungryBear3/overtaxed-platform** — a **separate** repo created via `git subtree split`. That repo is updated only when you explicitly sync the `overtaxed-platform` folder into it.
+
+**Solution:** From the **repo root** (folder that **contains** `overtaxed-platform`):
+
+```powershell
+cd "C:\Users\alkap\.cursor\FreshStart IL\ai-dev-tasks"
+git subtree split --prefix=overtaxed-platform -b overtaxed-export
+git push https://github.com/HungryBear3/overtaxed-platform.git overtaxed-export:main
+git branch -D overtaxed-export
+```
+
+Use **PowerShell** path format; Git Bash uses `/c/Users/...`. If `git subtree split` fails (e.g. "signal pipe" on Windows), use the **manual clone/copy/push** flow in **`SYNC_OVERTAXED.md`** (repo root).
+
+**Lesson:** Pushes from the monorepo do **not** update the overtaxed-platform repo. Run subtree split + push (or manual sync) whenever you want Overtaxed on GitHub and Vercel to reflect latest changes.
+
+---
+
+**Last Updated:** January 29, 2026
