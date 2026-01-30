@@ -10,7 +10,29 @@ export default async function DashboardPage() {
     redirect("/auth/signin")
   }
 
-  const { user } = session
+  // Fetch fresh user data from DB (JWT token may have stale subscription info)
+  const freshUser = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      subscriptionTier: true,
+      subscriptionStatus: true,
+    },
+  })
+
+  if (!freshUser) {
+    redirect("/auth/signin")
+  }
+
+  const user = {
+    ...session.user,
+    subscriptionTier: freshUser.subscriptionTier,
+    subscriptionStatus: freshUser.subscriptionStatus,
+    role: freshUser.role,
+  }
 
   // Fetch user's properties with latest data
   const properties = await prisma.property.findMany({
@@ -83,7 +105,15 @@ export default async function DashboardPage() {
 
         {/* Account Status */}
         <div className="bg-white rounded-lg shadow p-6 mb-8">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Account Status</h3>
+          <div className="flex justify-between items-start mb-4">
+            <h3 className="text-lg font-medium text-gray-900">Account Status</h3>
+            <Link
+              href="/pricing"
+              className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+            >
+              {user.subscriptionStatus === "ACTIVE" ? "Manage Plan" : "Upgrade"}
+            </Link>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <p className="text-sm text-gray-500">Plan</p>
@@ -108,6 +138,19 @@ export default async function DashboardPage() {
               <p className="font-medium text-gray-900">{user.role}</p>
             </div>
           </div>
+          {user.subscriptionStatus !== "ACTIVE" && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <Link
+                href="/pricing"
+                className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                </svg>
+                View Pricing & Upgrade
+              </Link>
+            </div>
+          )}
         </div>
 
         {/* Recent Properties */}

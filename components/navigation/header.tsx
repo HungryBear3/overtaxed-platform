@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Menu, X, Home, Building2, FileText, User } from "lucide-react"
+import { Menu, X, Home, Building2, FileText, User, CreditCard } from "lucide-react"
 import { useState } from "react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -11,6 +11,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: Home },
   { href: "/properties", label: "Properties", icon: Building2 },
   { href: "/appeals", label: "Appeals", icon: FileText },
+  { href: "/pricing", label: "Pricing", icon: CreditCard },
 ]
 
 export function Header() {

@@ -4,6 +4,13 @@ import { useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 
+interface LimitError {
+  error: string
+  limit: number
+  currentCount: number
+  requiresCustom?: boolean
+}
+
 interface PropertyPreview {
   pin: string
   address: string
@@ -28,6 +35,7 @@ export default function AddPropertyPage() {
   const [loading, setLoading] = useState(false)
   const [lookupLoading, setLookupLoading] = useState(false)
   const [error, setError] = useState("")
+  const [limitError, setLimitError] = useState<LimitError | null>(null)
   const [propertyPreview, setPropertyPreview] = useState<PropertyPreview | null>(null)
   const [step, setStep] = useState<"lookup" | "confirm">("lookup")
 
@@ -73,6 +81,7 @@ export default function AddPropertyPage() {
 
   async function handleAddProperty() {
     setError("")
+    setLimitError(null)
     setLoading(true)
 
     try {
@@ -87,6 +96,16 @@ export default function AddPropertyPage() {
       if (!response.ok) {
         if (response.status === 401) {
           router.push("/auth/signin")
+          return
+        }
+        // Check if it's a property limit error
+        if (response.status === 403 && data.limit !== undefined) {
+          setLimitError({
+            error: data.error,
+            limit: data.limit,
+            currentCount: data.currentCount,
+            requiresCustom: data.requiresCustom,
+          })
           return
         }
         throw new Error(data.error || "Failed to add property")
@@ -335,6 +354,54 @@ export default function AddPropertyPage() {
                 {error && (
                   <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
                     {error}
+                  </div>
+                )}
+
+                {limitError && (
+                  <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg p-5">
+                    <div className="flex items-start gap-3">
+                      <svg className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <div className="flex-1">
+                        <h4 className="font-semibold text-amber-800 mb-1">Property Limit Reached</h4>
+                        <p className="text-amber-700 text-sm mb-3">
+                          You have {limitError.currentCount} of {limitError.limit} properties on your current plan.
+                          {limitError.requiresCustom 
+                            ? " For 20+ properties, please contact us for custom pricing."
+                            : " Upgrade your plan to add more properties."}
+                        </p>
+                        <div className="flex flex-wrap gap-3">
+                          {limitError.requiresCustom ? (
+                            <a
+                              href="mailto:support@overtaxed-il.com?subject=Custom%20pricing%20for%2020%2B%20properties"
+                              className="inline-flex items-center gap-2 bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-700"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                              </svg>
+                              Contact Us for Custom Pricing
+                            </a>
+                          ) : (
+                            <Link
+                              href="/pricing"
+                              className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                              </svg>
+                              View Plans & Upgrade
+                            </Link>
+                          )}
+                          <Link
+                            href="/properties"
+                            className="inline-flex items-center gap-2 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50"
+                          >
+                            Back to Properties
+                          </Link>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
 
