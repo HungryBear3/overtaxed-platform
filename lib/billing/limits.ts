@@ -1,12 +1,12 @@
 /**
  * Subscription tier limits.
- * COMPS_ONLY (DIY reports): 1. STARTER ($149/property/yr): 5. GROWTH: 9. PORTFOLIO: 20. PERFORMANCE: unlimited.
+ * COMPS_ONLY (DIY reports): 1. STARTER ($149/property/yr): 2. GROWTH: 9. PORTFOLIO: 20. PERFORMANCE: unlimited.
  * 20+ properties require custom pricing (contact us).
  */
 
 export const PROPERTY_LIMITS: Record<string, number> = {
   COMPS_ONLY: 1,
-  STARTER: 5,
+  STARTER: 2,
   GROWTH: 9,
   PORTFOLIO: 20,
   PERFORMANCE: 999,

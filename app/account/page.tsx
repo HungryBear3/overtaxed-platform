@@ -59,7 +59,7 @@ export default async function AccountPage() {
             <p className="text-sm text-gray-500">Plan</p>
             <p className="font-medium text-gray-900">
               {user.subscriptionTier === "COMPS_ONLY" && "DIY reports only ($69/property)"}
-              {user.subscriptionTier === "STARTER" && "Starter ($149/property/year)"}
+              {user.subscriptionTier === "STARTER" && "Starter (1–2 properties, $149/property/year)"}
               {user.subscriptionTier === "GROWTH" && "Growth (3–9 properties, $125/property/year)"}
               {user.subscriptionTier === "PORTFOLIO" && "Portfolio (10–20 properties, $100/property/year)"}
               {user.subscriptionTier === "PERFORMANCE" && "Performance (4% of savings, deferred)"}

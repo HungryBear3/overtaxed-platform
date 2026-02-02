@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
     // Recommend plan based on current property count (for upgrade path)
     let recommendedPlan: "STARTER" | "GROWTH" | "PORTFOLIO" | "CUSTOM" | null = null
     const targetCount = propertyCount + 1 // properties they want to add
-    if (targetCount <= 5) recommendedPlan = "STARTER"
+    if (targetCount <= 2) recommendedPlan = "STARTER"
     else if (targetCount <= 9) recommendedPlan = "GROWTH"
     else if (targetCount <= 20) recommendedPlan = "PORTFOLIO"
     else recommendedPlan = "CUSTOM"

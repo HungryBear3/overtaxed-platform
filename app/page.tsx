@@ -157,99 +157,113 @@ export default function HomePage() {
             We monitor, file, and track your appeals automatically. Never miss a deadline.
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-3xl mx-auto">
-            {/* Flat Fee */}
-            <div className="border-2 border-blue-500 rounded-lg p-8 relative">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-5xl mx-auto">
+            {/* Starter - 1-2 properties */}
+            <div className="border-2 border-blue-500 rounded-lg p-6 relative">
               <div className="absolute top-0 right-0 bg-blue-500 text-white text-xs px-3 py-1 rounded-bl-lg rounded-tr-lg">
-                Simple & Predictable
+                1–2 properties
               </div>
-              <h5 className="font-semibold text-gray-900 text-lg">$149/property/year</h5>
-              <p className="text-3xl font-bold text-gray-900 mt-2">$149</p>
-              <p className="text-gray-500">per property, per year</p>
-              <p className="text-sm text-gray-600 mt-4 mb-4">
-                Know exactly what you&apos;ll pay. Perfect for homeowners who want 
-                predictable costs and hands-off automation.
+              <h5 className="font-semibold text-gray-900 text-lg">Starter</h5>
+              <p className="text-2xl font-bold text-gray-900 mt-2">$149</p>
+              <p className="text-gray-500 text-sm">per property/year</p>
+              <p className="text-xs text-gray-600 mt-2">1 = $149/yr · 2 = $298/yr</p>
+              <p className="text-sm text-gray-600 mt-3 mb-3">
+                Per property. Perfect for 1–2 properties.
               </p>
-              <ul className="space-y-3 text-sm text-gray-600">
+              <ul className="space-y-2 text-sm text-gray-600">
                 <li className="flex items-start">
-                  <svg className="w-5 h-5 text-green-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <svg className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                   </svg>
-                  Automatic assessment monitoring
+                  Full automation
                 </li>
                 <li className="flex items-start">
-                  <svg className="w-5 h-5 text-green-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <svg className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                   </svg>
-                  We file the appeal for you
+                  We file for you
+                </li>
+              </ul>
+            </div>
+
+            {/* Growth - 3-9 properties */}
+            <div className="border border-gray-200 rounded-lg p-6 bg-white">
+              <h5 className="font-semibold text-gray-900 text-lg">Growth</h5>
+              <p className="text-2xl font-bold text-gray-900 mt-2">$125</p>
+              <p className="text-gray-500 text-sm">per property/year</p>
+              <p className="text-xs text-gray-600 mt-2">3–9 properties · 3 = $375 · 9 = $1,125/yr</p>
+              <p className="text-sm text-gray-600 mt-3 mb-3">
+                Volume discount for 3–9 properties.
+              </p>
+              <ul className="space-y-2 text-sm text-gray-600">
+                <li className="flex items-start">
+                  <svg className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                  Full automation
                 </li>
                 <li className="flex items-start">
-                  <svg className="w-5 h-5 text-green-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <svg className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                   </svg>
-                  Deadline tracking & reminders
+                  Priority support
+                </li>
+              </ul>
+            </div>
+
+            {/* Portfolio - 10-20 properties */}
+            <div className="border border-gray-200 rounded-lg p-6 bg-white">
+              <h5 className="font-semibold text-gray-900 text-lg">Portfolio</h5>
+              <p className="text-2xl font-bold text-gray-900 mt-2">$100</p>
+              <p className="text-gray-500 text-sm">per property/year</p>
+              <p className="text-xs text-gray-600 mt-2">10–20 properties · 10 = $1,000 · 20 = $2,000/yr</p>
+              <p className="text-sm text-gray-600 mt-3 mb-3">
+                Best rate for 10–20 properties.
+              </p>
+              <ul className="space-y-2 text-sm text-gray-600">
+                <li className="flex items-start">
+                  <svg className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                  Full automation
                 </li>
                 <li className="flex items-start">
-                  <svg className="w-5 h-5 text-green-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <svg className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                   </svg>
-                  Appeal status updates
+                  Priority + phone
                 </li>
               </ul>
             </div>
 
             {/* Performance */}
-            <div className="border border-gray-200 rounded-lg p-8 bg-gradient-to-br from-green-50 to-white">
+            <div className="border border-gray-200 rounded-lg p-6 bg-gradient-to-br from-green-50 to-white">
               <h5 className="font-semibold text-gray-900 text-lg">Performance</h5>
-              <p className="text-3xl font-bold text-gray-900 mt-2">4%</p>
-              <p className="text-gray-500">of 3-year tax savings (deferred)</p>
-              <p className="text-sm text-gray-600 mt-4 mb-4">
-                Pay only when you save. No upfront cost, no risk. 
-                We succeed when you succeed.
+              <p className="text-2xl font-bold text-gray-900 mt-2">4%</p>
+              <p className="text-gray-500 text-sm">of 3-year savings (deferred)</p>
+              <p className="text-sm text-gray-600 mt-3 mb-3">
+                Pay only when you save. No upfront cost.
               </p>
-              <ul className="space-y-3 text-sm text-gray-600">
+              <ul className="space-y-2 text-sm text-gray-600">
                 <li className="flex items-start">
-                  <svg className="w-5 h-5 text-green-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                  </svg>
-                  Everything in Flat Fee
-                </li>
-                <li className="flex items-start">
-                  <svg className="w-5 h-5 text-green-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                  </svg>
-                  No payment if no savings
-                </li>
-                <li className="flex items-start">
-                  <svg className="w-5 h-5 text-green-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                  </svg>
-                  6-8× cheaper than attorneys
-                </li>
-                <li className="flex items-start">
-                  <svg className="w-5 h-5 text-green-500 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <svg className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                   </svg>
                   Unlimited properties
                 </li>
+                <li className="flex items-start">
+                  <svg className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                  No payment if no savings
+                </li>
               </ul>
-            </div>
-
-            {/* Commercial: per-property */}
-            <div className="max-w-2xl mx-auto mt-12 p-6 rounded-lg border border-gray-200 bg-white">
-              <h5 className="font-semibold text-gray-900 text-lg mb-2">Commercial (3–20 properties)</h5>
-              <p className="text-sm text-gray-600 mb-4">
-                Simple per-property pricing. Volume discounts for larger portfolios.
-              </p>
-              <ul className="space-y-2 text-sm text-gray-700">
-                <li><strong>Growth (3–9):</strong> $125/property/year · 3 = $375/yr · 9 = $1,125/yr</li>
-                <li><strong>Portfolio (10–20):</strong> $100/property/year · 10 = $1,000/yr · 20 = $2,000/yr</li>
-              </ul>
-              <p className="text-xs text-gray-500 mt-3">
-                20+ properties? <Link href="/pricing" className="text-blue-600 hover:underline">Contact us</Link> for custom pricing.
-              </p>
             </div>
           </div>
+
+          <p className="text-center text-sm text-gray-500 mt-6">
+            20+ properties? <Link href="/pricing" className="text-blue-600 hover:underline">Contact us</Link> for custom pricing.
+          </p>
 
           <p className="text-center text-sm text-gray-500 mt-8">
             <Link href="/pricing" className="text-blue-600 hover:underline">View full pricing</Link> · Have questions? <span className="text-blue-600">Contact us</span>

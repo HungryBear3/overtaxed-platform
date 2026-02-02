@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Check } from "lucide-react"
 import {
+  RETAIL_PRICE_PER_PROPERTY,
   GROWTH_PRICE_PER_PROPERTY,
   GROWTH_MIN_PROPERTIES,
   GROWTH_MAX_PROPERTIES,
@@ -33,9 +34,9 @@ const plans: Array<{
     id: "STARTER",
     name: "Starter",
     priceLabel: "$149/property/year",
-    propertyLimit: "Per property",
+    propertyLimit: "1–2 properties",
     pricingNote: "Retail pricing.",
-    exampleTotals: "1 property = $149 · 2 = $298",
+    exampleTotals: "1 = $149/yr · 2 = $298/yr",
     popular: true,
     features: [
       "Full automation per property",
@@ -86,6 +87,20 @@ const RANGE_TO_PLAN: Record<PlanRange, "STARTER" | "GROWTH" | "PORTFOLIO" | "CUS
 
 const RANGE_LABELS: PlanRange[] = ["1-2", "3-9", "10-20", "20+"]
 
+function getQuantityRange(range: PlanRange): number[] {
+  if (range === "1-2") return [1, 2]
+  if (range === "3-9") return [3, 4, 5, 6, 7, 8, 9]
+  if (range === "10-20") return [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+  return []
+}
+
+function getAnnualPrice(plan: "STARTER" | "GROWTH" | "PORTFOLIO", qty: number): number {
+  if (plan === "STARTER") return qty * RETAIL_PRICE_PER_PROPERTY
+  if (plan === "GROWTH" && qty >= 3 && qty <= 9) return qty * GROWTH_PRICE_PER_PROPERTY
+  if (plan === "PORTFOLIO" && qty >= 10 && qty <= 20) return qty * PORTFOLIO_PRICE_PER_PROPERTY
+  return 0
+}
+
 export default function PricingPage() {
   const router = useRouter()
   const [loading, setLoading] = useState<string | null>(null)
@@ -97,6 +112,7 @@ export default function PricingPage() {
     atLimit?: boolean
   } | null>(null)
   const [selectedRange, setSelectedRange] = useState<PlanRange | null>(null)
+  const [selectedQuantity, setSelectedQuantity] = useState<number>(1)
 
   useEffect(() => {
     fetch("/api/billing/plan-info")
@@ -115,17 +131,30 @@ export default function PricingPage() {
 
   const planToRange: Record<string, PlanRange> = { STARTER: "1-2", GROWTH: "3-9", PORTFOLIO: "10-20", CUSTOM: "20+" }
   const effectiveRange = selectedRange ?? (planInfo?.recommendedPlan ? planToRange[planInfo.recommendedPlan] ?? "1-2" : "1-2")
+  const quantityOptions = getQuantityRange(effectiveRange)
 
-  async function subscribe(plan: "STARTER" | "GROWTH" | "PORTFOLIO", propertyCount?: number) {
+  // Reset selectedQuantity when range changes
+  useEffect(() => {
+    const opts = getQuantityRange(effectiveRange)
+    if (opts.length > 0) {
+      const currentCount = planInfo?.propertyCount ?? 0
+      setSelectedQuantity(opts.includes(currentCount) ? currentCount : opts[0])
+    }
+  }, [effectiveRange])
+
+  async function subscribe(plan: "STARTER" | "GROWTH" | "PORTFOLIO") {
     setLoading(plan)
     setError("")
     try {
-      const body: { plan: string; propertyCount?: number } = { plan }
-      if (propertyCount !== undefined && propertyCount > 0) body.propertyCount = propertyCount
+      const qty = RANGE_TO_PLAN[effectiveRange] === plan ? selectedQuantity : (
+        plan === "STARTER" ? Math.min(selectedQuantity, 2) :
+        plan === "GROWTH" ? Math.max(Math.min(selectedQuantity, 9), 3) :
+        Math.max(Math.min(selectedQuantity, 20), 10)
+      )
       const res = await fetch("/api/billing/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ plan, propertyCount: qty }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -135,7 +164,10 @@ export default function PricingPage() {
         }
         throw new Error(data.error || "Failed to start checkout")
       }
-      if (data.url) window.location.href = data.url
+      if (!data.url) {
+        throw new Error("Checkout URL not available. Please try again or contact support.")
+      }
+      window.location.href = data.url
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong")
     } finally {
@@ -173,16 +205,23 @@ export default function PricingPage() {
 
         {/* Find your plan - property count selector */}
         <div className="mb-10 rounded-lg bg-white p-6 shadow border border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900 mb-3">Find your plan</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-3">Choose your plan</h2>
           <p className="text-sm text-gray-600 mb-4">
-            How many properties do you want to include?
+            Select how many properties you want to include — this is the quantity you&apos;ll be charged for at checkout.
           </p>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 mb-4">
             {RANGE_LABELS.map((range) => (
               <button
                 key={range}
                 type="button"
-                onClick={() => setSelectedRange(range)}
+                onClick={() => {
+                  setSelectedRange(range)
+                  const opts = getQuantityRange(range)
+                  if (opts.length > 0) {
+                    const c = planInfo?.propertyCount ?? 0
+                    setSelectedQuantity(opts.includes(c) ? c : opts[0])
+                  }
+                }}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   effectiveRange === range
                     ? "bg-blue-600 text-white"
@@ -193,6 +232,28 @@ export default function PricingPage() {
               </button>
             ))}
           </div>
+          {quantityOptions.length > 0 && (
+            <div className="flex items-center gap-3">
+              <label htmlFor="qty" className="text-sm font-medium text-gray-700">
+                Number of properties:
+              </label>
+              <select
+                id="qty"
+                value={selectedQuantity}
+                onChange={(e) => setSelectedQuantity(Number(e.target.value))}
+                className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900"
+              >
+                {quantityOptions.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+              {RANGE_TO_PLAN[effectiveRange] !== "CUSTOM" && (
+                <span className="text-sm text-gray-600">
+                  = ${getAnnualPrice(RANGE_TO_PLAN[effectiveRange] as "STARTER" | "GROWTH" | "PORTFOLIO", selectedQuantity).toLocaleString()}/year
+                </span>
+              )}
+            </div>
+          )}
           {planInfo && planInfo.propertyCount > 0 && (
             <p className="mt-3 text-sm text-gray-600">
               You have <strong>{planInfo.propertyCount} propert{planInfo.propertyCount === 1 ? "y" : "ies"}</strong>
@@ -287,14 +348,21 @@ export default function PricingPage() {
                       </li>
                     ))}
                   </ul>
-                  <Button
-                    className="w-full"
-                    variant={isRecommended ? "primary" : plan.popular ? "primary" : "outline"}
-                    onClick={() => subscribe(plan.id, planInfo?.propertyCount)}
-                    disabled={!!loading}
-                  >
-                    {loading === plan.id ? "Loading…" : "Get started"}
-                  </Button>
+                  <div className="space-y-2">
+                    {RANGE_TO_PLAN[effectiveRange] === plan.id && quantityOptions.length > 0 && (
+                      <p className="text-xs text-gray-600 text-center">
+                        {selectedQuantity} propert{selectedQuantity === 1 ? "y" : "ies"} = ${getAnnualPrice(plan.id, selectedQuantity).toLocaleString()}/year
+                      </p>
+                    )}
+                    <Button
+                      className="w-full"
+                      variant={isRecommended ? "primary" : plan.popular ? "primary" : "outline"}
+                      onClick={() => subscribe(plan.id)}
+                      disabled={!!loading || (RANGE_TO_PLAN[effectiveRange] === plan.id && quantityOptions.length === 0)}
+                    >
+                      {loading === plan.id ? "Redirecting to checkout…" : "Get started"}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             )

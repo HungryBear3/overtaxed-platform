@@ -128,9 +128,14 @@ export async function POST(request: NextRequest) {
     
     const normalizedPIN = normalizePIN(pin)
 
-    // Enforce property limit by subscription tier
+    // Enforce property limit by subscription tier (fetch fresh from DB - session may have stale data)
     const { getPropertyLimit, requiresCustomPricing } = await import('@/lib/billing/limits')
-    const limit = getPropertyLimit(session.user.subscriptionTier ?? 'COMPS_ONLY')
+    const dbUser = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { subscriptionTier: true },
+    })
+    const tier = dbUser?.subscriptionTier ?? session.user.subscriptionTier ?? 'COMPS_ONLY'
+    const limit = getPropertyLimit(tier)
     const count = await prisma.property.count({ where: { userId: session.user.id } })
     
     if (requiresCustomPricing(count + 1)) {
