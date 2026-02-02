@@ -3,24 +3,34 @@ import { getSession } from "@/lib/auth"
 import { prisma } from "@/lib/db"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { ManagedPropertiesList } from "@/components/account/ManagedPropertiesList"
+import { getPropertyLimit } from "@/lib/billing/limits"
+import { formatPIN } from "@/lib/cook-county"
 
 export default async function AccountPage() {
   const session = await getSession()
   if (!session?.user) redirect("/auth/signin")
 
-  // Fetch fresh user data from DB (JWT token may have stale subscription info)
-  const freshUser = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true,
-      subscriptionTier: true,
-      subscriptionStatus: true,
-      subscriptionStartDate: true,
-    },
-  })
+  // Fetch fresh user data and properties from DB
+  const [freshUser, properties] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        subscriptionTier: true,
+        subscriptionStatus: true,
+        subscriptionStartDate: true,
+      },
+    }),
+    prisma.property.findMany({
+      where: { userId: session.user.id },
+      select: { id: true, pin: true, address: true, city: true, state: true, zipCode: true },
+      orderBy: { createdAt: "desc" },
+    }),
+  ])
 
   if (!freshUser) {
     redirect("/auth/signin")
@@ -33,6 +43,19 @@ export default async function AccountPage() {
     subscriptionStatus: freshUser.subscriptionStatus,
     subscriptionStartDate: freshUser.subscriptionStartDate,
   }
+
+  const tier = user.subscriptionTier ?? "COMPS_ONLY"
+  const propertyLimit = getPropertyLimit(tier)
+  const canAddMore = properties.length < propertyLimit || propertyLimit >= 999
+
+  const managedProperties = properties.map((p) => ({
+    id: p.id,
+    pin: formatPIN(p.pin),
+    address: p.address,
+    city: p.city,
+    state: p.state,
+    zipCode: p.zipCode,
+  }))
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
@@ -74,7 +97,23 @@ export default async function AccountPage() {
         </CardContent>
       </Card>
 
-        <div className="flex gap-4">
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Managed Properties</CardTitle>
+          <CardDescription>
+            Properties using your plan slots. Add, edit, or remove properties below.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ManagedPropertiesList
+            properties={managedProperties}
+            propertyLimit={propertyLimit}
+            canAddMore={canAddMore}
+          />
+        </CardContent>
+      </Card>
+
+      <div className="flex gap-4">
         <Link
           href="/pricing"
           className="inline-flex h-10 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700"

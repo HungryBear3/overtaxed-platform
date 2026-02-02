@@ -171,12 +171,17 @@ export default async function DashboardPage() {
         <div className="bg-white rounded-lg shadow p-6 mb-8">
           <div className="flex justify-between items-start mb-4">
             <h3 className="text-lg font-medium text-gray-900">Account Status</h3>
-            <Link
-              href="/pricing"
-              className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-            >
-              {user.subscriptionStatus === "ACTIVE" ? "Manage Plan" : "Upgrade"}
-            </Link>
+            <div className="flex gap-4">
+              <Link href="/account" className="text-sm text-blue-600 hover:text-blue-700 font-medium">
+                Manage properties (PINs & slots)
+              </Link>
+              <Link
+                href="/pricing"
+                className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+              >
+                {user.subscriptionStatus === "ACTIVE" ? "Change plan" : "Upgrade"}
+              </Link>
+            </div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
