@@ -274,7 +274,7 @@ declare module "next-auth/jwt" {
 | Vercel Preview + Stripe test | `docs/VERCEL_PREVIEW_STRIPE_SETUP.md` |
 | Env / Stripe secrets | `docs/OVERTAXED_SECRETS_AND_PRICES.md` |
 | Admin set-subscription (testing tiers) | `POST /api/admin/set-subscription` — see [Admin Set-Subscription](#admin-set-subscription-testing) |
-| GitHub sync (monorepo → overtaxed-platform) | See [Sync to overtaxed-platform Repo](#sync-to-overtaxed-platform-repo-robocopy) (robocopy) or `SYNC_OVERTAXED.md` (subtree) |
+| GitHub sync (monorepo → overtaxed-platform) | **Use robocopy** — [Sync to overtaxed-platform Repo](#sync-to-overtaxed-platform-repo-robocopy). Alternative: `SYNC_OVERTAXED.md` (subtree, slower) |
 
 ---
 
@@ -373,7 +373,7 @@ const calcSavings = (reductionPercent: number) =>
 ### Issue: "GitHub showing last commit 2 hours ago" / Vercel not picking up pushes
 **Context:** This repo lives in a **monorepo** (FreshStart-IL / ai-dev-tasks). `git push` updates **FreshStart-IL** only. **Vercel Overtaxed** deploys from **HungryBear3/overtaxed-platform** — a **separate** repo. That repo is updated only when you explicitly sync the `overtaxed-platform` folder into it.
 
-**Preferred solution (fast):** Use [robocopy + deploy clone](#sync-to-overtaxed-platform-repo-robocopy).
+**Use robocopy:** [Sync to overtaxed-platform Repo (Robocopy)](#sync-to-overtaxed-platform-repo-robocopy) — recommended; fast and reliable.
 
 **Alternative (subtree split):** From the **repo root** (folder that **contains** `overtaxed-platform`):
 
@@ -391,6 +391,14 @@ Use **PowerShell** path format; Git Bash uses `/c/Users/...`. If `git subtree sp
 ---
 
 ## Sync to overtaxed-platform Repo (Robocopy)
+
+### Which method to use?
+| Method | Use when |
+|--------|----------|
+| **Robocopy** (this section) | **Default.** After editing `overtaxed-platform/` — fast, copies only changed files. |
+| `git subtree split` | Backup or CI; slow (walks full history). See `SYNC_OVERTAXED.md`. |
+
+**Why robocopy?** The monorepo (FreshStart-IL / ai-dev-tasks) contains `overtaxed-platform/`. Vercel deploys from **HungryBear3/overtaxed-platform** — a separate repo. Robocopy syncs the folder into a deploy clone; subtree split is slower and can fail on Windows.
 
 ### Preferred Method: robocopy + separate clone
 **Context:** `git subtree split` is slow (walks 265+ commits each time). A separate clone + robocopy copies only changed files and pushes in seconds.
@@ -435,6 +443,8 @@ git config --global user.name "Your Name"
 When robocopy copies from monorepo (often LF line endings) to the deploy clone on Windows, `git add` may show "LF will be replaced by CRLF" warnings. These are normal and harmless; the commit still succeeds.
 
 **Lesson:** Use robocopy + deploy clone for fast sync. Reserve `git subtree split` for one-off or CI use. Vercel auto-deploys on push to overtaxed-platform main.
+
+**Cross-reference:** `tasks/tasks-overtaxed-platform.md` — "Push to production" section for quick copy-paste commands.
 
 ---
 
