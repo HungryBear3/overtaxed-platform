@@ -85,6 +85,14 @@ const RANGE_TO_PLAN: Record<PlanRange, "STARTER" | "GROWTH" | "PORTFOLIO" | "CUS
   "20+": "CUSTOM",
 }
 
+const TIER_RANK: Record<string, number> = { COMPS_ONLY: 0, STARTER: 1, GROWTH: 2, PORTFOLIO: 3, PERFORMANCE: 4 }
+function isUpgradeFrom(currentTier: string | null, targetPlan: "STARTER" | "GROWTH" | "PORTFOLIO"): boolean {
+  if (!currentTier) return false
+  const current = TIER_RANK[currentTier] ?? 0
+  const target = TIER_RANK[targetPlan] ?? 0
+  return target > current
+}
+
 const RANGE_LABELS: PlanRange[] = ["1-2", "3-9", "10-20", "20+"]
 
 function getQuantityRange(range: PlanRange): number[] {
@@ -360,7 +368,7 @@ export default function PricingPage() {
                       onClick={() => subscribe(plan.id)}
                       disabled={!!loading || (RANGE_TO_PLAN[effectiveRange] === plan.id && quantityOptions.length === 0)}
                     >
-                      {loading === plan.id ? "Redirecting to checkout…" : "Get started"}
+                      {loading === plan.id ? "Redirecting to checkout…" : isUpgradeFrom(planInfo?.subscriptionTier ?? null, plan.id) ? "Upgrade" : "Get started"}
                     </Button>
                   </div>
                 </CardContent>

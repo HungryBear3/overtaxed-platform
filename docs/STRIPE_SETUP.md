@@ -60,7 +60,7 @@ Go to **Product catalog → Products → Add product**. Create each product belo
   - **Recurring:** Yes
 - **Env variable:** `STRIPE_PRICE_STARTER`
 
-Checkout uses **quantity = number of properties** (1–5). Total charge = `$149 × quantity` per year.
+Checkout uses **quantity = number of properties** (1–2). Total charge = `$149 × quantity` per year.
 
 ---
 
