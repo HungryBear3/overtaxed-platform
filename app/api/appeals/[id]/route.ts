@@ -3,10 +3,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth/session'
 import { prisma } from '@/lib/db'
 import { formatPIN } from '@/lib/cook-county'
+import { canChangePropertyOnAppeal } from '@/lib/appeals/status'
 import { z } from 'zod'
 
 // Validation schema for updating an appeal
 const updateAppealSchema = z.object({
+  propertyId: z.string().min(1).optional(),
   status: z.enum([
     'DRAFT', 'PENDING_FILING', 'FILED', 'UNDER_REVIEW',
     'HEARING_SCHEDULED', 'DECISION_PENDING', 'APPROVED',
@@ -231,9 +233,38 @@ export async function PATCH(
 
     const data = validation.data
 
+    // propertyId change: only allowed for non-submitted appeals
+    if (data.propertyId !== undefined) {
+      if (!canChangePropertyOnAppeal(existingAppeal.status)) {
+        return NextResponse.json(
+          {
+            error:
+              'Cannot change the property on a submitted appeal. Once filed, the appeal is locked to that PIN. Only draft or pending-filing appeals can be reassigned to a different property.',
+          },
+          { status: 400 }
+        )
+      }
+      if (data.propertyId !== existingAppeal.propertyId) {
+        // Verify new property belongs to user
+        const newProperty = await prisma.property.findFirst({
+          where: {
+            id: data.propertyId,
+            userId: session.user!.id,
+          },
+        })
+        if (!newProperty) {
+          return NextResponse.json(
+            { error: 'Property not found or does not belong to you.' },
+            { status: 400 }
+          )
+        }
+      }
+    }
+
     // Build update object
     const updateData: Record<string, unknown> = {}
     
+    if (data.propertyId !== undefined) updateData.propertyId = data.propertyId
     if (data.status !== undefined) updateData.status = data.status
     if (data.requestedAssessmentValue !== undefined) updateData.requestedAssessmentValue = data.requestedAssessmentValue
     if (data.finalAssessmentValue !== undefined) updateData.finalAssessmentValue = data.finalAssessmentValue

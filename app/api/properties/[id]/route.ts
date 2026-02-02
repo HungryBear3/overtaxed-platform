@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth/session'
 import { prisma } from '@/lib/db'
 import { formatPIN } from '@/lib/cook-county'
+import { isAppealSubmitted } from '@/lib/appeals/status'
 
 // GET /api/properties/[id] - Get a single property with full details
 export async function GET(
@@ -155,11 +156,14 @@ export async function DELETE(
     
     const { id } = await params
     
-    // Verify ownership
+    // Verify ownership and check for submitted appeals
     const property = await prisma.property.findFirst({
       where: {
         id,
         userId: session.user.id,
+      },
+      include: {
+        appeals: { select: { id: true, status: true, taxYear: true } },
       },
     })
     
@@ -167,6 +171,16 @@ export async function DELETE(
       return NextResponse.json(
         { error: 'Property not found' },
         { status: 404 }
+      )
+    }
+
+    const submittedAppeals = property.appeals.filter((a) => isAppealSubmitted(a.status))
+    if (submittedAppeals.length > 0) {
+      return NextResponse.json(
+        {
+          error: 'Cannot remove this property — it has submitted appeal(s) that are filed or in progress. The property (PIN) is locked to those appeals. You can only remove properties with no submitted appeals.',
+        },
+        { status: 400 }
       )
     }
     
