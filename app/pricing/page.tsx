@@ -211,64 +211,15 @@ export default function PricingPage() {
           </p>
         </div>
 
-        {/* Find your plan - property count selector */}
-        <div className="mb-10 rounded-lg bg-white p-6 shadow border border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900 mb-3">Choose your plan</h2>
-          <p className="text-sm text-gray-600 mb-4">
-            Select how many properties you want to include — this is the quantity you&apos;ll be charged for at checkout.
-          </p>
-          <div className="flex flex-wrap gap-2 mb-4">
-            {RANGE_LABELS.map((range) => (
-              <button
-                key={range}
-                type="button"
-                onClick={() => {
-                  setSelectedRange(range)
-                  const opts = getQuantityRange(range)
-                  if (opts.length > 0) {
-                    const c = planInfo?.propertyCount ?? 0
-                    setSelectedQuantity(opts.includes(c) ? c : opts[0])
-                  }
-                }}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  effectiveRange === range
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                }`}
-              >
-                {range} properties
-              </button>
-            ))}
-          </div>
-          {quantityOptions.length > 0 && (
-            <div className="flex items-center gap-3">
-              <label htmlFor="qty" className="text-sm font-medium text-gray-700">
-                Number of properties:
-              </label>
-              <select
-                id="qty"
-                value={selectedQuantity}
-                onChange={(e) => setSelectedQuantity(Number(e.target.value))}
-                className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900"
-              >
-                {quantityOptions.map((n) => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-              {RANGE_TO_PLAN[effectiveRange] !== "CUSTOM" && (
-                <span className="text-sm text-gray-600">
-                  = ${getAnnualPrice(RANGE_TO_PLAN[effectiveRange] as "STARTER" | "GROWTH" | "PORTFOLIO", selectedQuantity).toLocaleString()}/year
-                </span>
-              )}
-            </div>
-          )}
-          {planInfo && planInfo.propertyCount > 0 && (
-            <p className="mt-3 text-sm text-gray-600">
+        {/* Property count hint - shown when user has properties */}
+        {planInfo && planInfo.propertyCount > 0 && (
+          <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-center">
+            <p className="text-sm text-gray-700">
               You have <strong>{planInfo.propertyCount} propert{planInfo.propertyCount === 1 ? "y" : "ies"}</strong>
-              {planInfo.atLimit && " — at plan limit. Upgrade to add more."}
+              {planInfo.atLimit && " — at plan limit. Select a plan below to upgrade."}
             </p>
-          )}
-        </div>
+          </div>
+        )}
 
         {error && (
           <div className="mb-8 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700 text-center">
@@ -319,10 +270,36 @@ export default function PricingPage() {
         </div>
 
         {/* Full automation */}
-        <h2 className="text-xl font-semibold text-gray-900 text-center mb-6">Full automation</h2>
+        <h2 className="text-xl font-semibold text-gray-900 text-center mb-4">Full automation</h2>
+        <div className="flex flex-wrap justify-center gap-2 mb-2">
+          <span className="text-sm text-gray-600">How many properties?</span>
+          {RANGE_LABELS.map((range) => (
+            <button
+              key={range}
+              type="button"
+              onClick={() => {
+                setSelectedRange(range)
+                const opts = getQuantityRange(range)
+                if (opts.length > 0) {
+                  const c = planInfo?.propertyCount ?? 0
+                  setSelectedQuantity(opts.includes(c) ? c : opts[0])
+                }
+              }}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                effectiveRange === range ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              {range}
+            </button>
+          ))}
+        </div>
+        <p className="text-center text-sm text-gray-500 mb-6">
+          Select quantity in the highlighted plan below, then click Upgrade or Get started.
+        </p>
         <div className="grid gap-6 md:grid-cols-3 mb-12">
           {plans.map((plan) => {
             const isRecommended = RANGE_TO_PLAN[effectiveRange] === plan.id
+            const showQuantitySelector = RANGE_TO_PLAN[effectiveRange] === plan.id && quantityOptions.length > 0
             return (
               <Card
                 key={plan.id}
@@ -348,7 +325,7 @@ export default function PricingPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="flex flex-1 flex-col">
-                  <ul className="mb-8 flex-1 space-y-3">
+                  <ul className="mb-6 flex-1 space-y-3">
                     {plan.features.map((f, i) => (
                       <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
                         <Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-green-600" />
@@ -356,21 +333,37 @@ export default function PricingPage() {
                       </li>
                     ))}
                   </ul>
-                  <div className="space-y-2">
-                    {RANGE_TO_PLAN[effectiveRange] === plan.id && quantityOptions.length > 0 && (
-                      <p className="text-xs text-gray-600 text-center">
-                        {selectedQuantity} propert{selectedQuantity === 1 ? "y" : "ies"} = ${getAnnualPrice(plan.id, selectedQuantity).toLocaleString()}/year
-                      </p>
-                    )}
-                    <Button
-                      className="w-full"
-                      variant={isRecommended ? "primary" : plan.popular ? "primary" : "outline"}
-                      onClick={() => subscribe(plan.id)}
-                      disabled={!!loading || (RANGE_TO_PLAN[effectiveRange] === plan.id && quantityOptions.length === 0)}
-                    >
-                      {loading === plan.id ? "Redirecting to checkout…" : isUpgradeFrom(planInfo?.subscriptionTier ?? null, plan.id) ? "Upgrade" : "Get started"}
-                    </Button>
-                  </div>
+                  {/* Quantity selector - inside the card, right above the button */}
+                  {showQuantitySelector && (
+                    <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                      <label htmlFor={`qty-${plan.id}`} className="block text-sm font-medium text-gray-700 mb-2">
+                        Number of properties (you&apos;ll be charged for this at checkout):
+                      </label>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <select
+                          id={`qty-${plan.id}`}
+                          value={selectedQuantity}
+                          onChange={(e) => setSelectedQuantity(Number(e.target.value))}
+                          className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-900 bg-white"
+                        >
+                          {quantityOptions.map((n) => (
+                            <option key={n} value={n}>{n}</option>
+                          ))}
+                        </select>
+                        <span className="text-sm font-semibold text-gray-900">
+                          = ${getAnnualPrice(plan.id, selectedQuantity).toLocaleString()}/year
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  <Button
+                    className="w-full"
+                    variant={isRecommended ? "primary" : plan.popular ? "primary" : "outline"}
+                    onClick={() => subscribe(plan.id)}
+                    disabled={!!loading || (showQuantitySelector && quantityOptions.length === 0)}
+                  >
+                    {loading === plan.id ? "Redirecting to checkout…" : isUpgradeFrom(planInfo?.subscriptionTier ?? null, plan.id) ? "Upgrade" : "Get started"}
+                  </Button>
                 </CardContent>
               </Card>
             )
@@ -386,6 +379,9 @@ export default function PricingPage() {
               <span className="text-3xl font-bold text-gray-900">4%</span>
               <span className="text-gray-500 ml-1">of 3‑year tax savings (deferred)</span>
             </div>
+            <p className="text-sm text-amber-700 mt-2 bg-amber-50 rounded px-3 py-2">
+              Custom setup required — we track multi-year appeals and savings to calculate your fee. Contact us to get started.
+            </p>
           </CardHeader>
           <CardContent>
             <ul className="space-y-2 text-sm text-gray-600 mb-6">
@@ -395,9 +391,9 @@ export default function PricingPage() {
             </ul>
             <a
               href="mailto:support@overtaxed-il.com?subject=Performance%20plan"
-              className="flex h-10 w-full items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium hover:bg-gray-50"
+              className="flex h-10 w-full items-center justify-center rounded-lg border border-green-300 bg-green-50 px-4 text-sm font-medium text-green-800 hover:bg-green-100"
             >
-              Contact us
+              Contact us to set up Performance plan
             </a>
           </CardContent>
         </Card>
