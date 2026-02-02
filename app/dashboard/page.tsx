@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
 import { prisma } from "@/lib/db"
+import { getPropertyLimit } from "@/lib/billing/limits"
 import Link from "next/link"
 
 export default async function DashboardPage() {
@@ -35,20 +36,27 @@ export default async function DashboardPage() {
   }
 
   // Fetch user's properties with latest data
-  const properties = await prisma.property.findMany({
-    where: { userId: user.id },
-    include: {
-      appeals: {
-        orderBy: { createdAt: "desc" },
-        take: 1,
+  const [properties, totalPropertyCount] = await Promise.all([
+    prisma.property.findMany({
+      where: { userId: user.id },
+      include: {
+        appeals: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
       },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 5,
-  })
+      orderBy: { createdAt: "desc" },
+      take: 5,
+    }),
+    prisma.property.count({ where: { userId: user.id } }),
+  ])
+
+  const propertyLimit = getPropertyLimit(user.subscriptionTier ?? "COMPS_ONLY")
+  const atLimit = totalPropertyCount >= propertyLimit && propertyLimit < 999
+  const slotsRemaining = Math.max(0, propertyLimit - totalPropertyCount)
 
   // Calculate summary stats
-  const totalProperties = properties.length
+  const totalProperties = totalPropertyCount
   const totalAssessmentValue = properties.reduce(
     (sum, p) => sum + (p.currentAssessmentValue ? Number(p.currentAssessmentValue) : 0),
     0
@@ -81,6 +89,62 @@ export default async function DashboardPage() {
           <p className="mt-2 text-gray-600">
             Manage your property tax appeals from your dashboard.
           </p>
+        </div>
+
+        {/* Property Credits / Slots - prominent */}
+        <div className="mb-8 p-5 rounded-lg bg-white shadow border-l-4 border-blue-500">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">Property Slots</h3>
+              <p className="text-2xl font-bold text-gray-900 mt-1">
+                {totalProperties} of {propertyLimit === 999 ? "∞" : propertyLimit} used
+              </p>
+              <p className="text-sm text-gray-500 mt-1">
+                {propertyLimit === 999
+                  ? "Unlimited properties on Performance plan"
+                  : slotsRemaining === 0
+                    ? "All slots used — upgrade to add more properties"
+                    : `${slotsRemaining} slot${slotsRemaining === 1 ? "" : "s"} remaining`}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              {atLimit ? (
+                <Link
+                  href="/pricing"
+                  className="inline-flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-blue-700"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                  </svg>
+                  Upgrade Plan
+                </Link>
+              ) : (
+                <Link
+                  href="/properties/add"
+                  className="inline-flex items-center gap-2 border border-gray-300 text-gray-700 px-5 py-2.5 rounded-lg font-medium hover:bg-gray-50"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add Property
+                </Link>
+              )}
+              <Link
+                href="/pricing"
+                className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+              >
+                {user.subscriptionStatus === "ACTIVE" ? "Manage" : "View plans"}
+              </Link>
+            </div>
+          </div>
+          {propertyLimit < 999 && (
+            <div className="mt-4 h-2 bg-gray-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-blue-500 rounded-full transition-all"
+                style={{ width: `${Math.min(100, (totalProperties / propertyLimit) * 100)}%` }}
+              />
+            </div>
+          )}
         </div>
 
         {/* Summary Stats */}
@@ -138,7 +202,20 @@ export default async function DashboardPage() {
               <p className="font-medium text-gray-900">{user.role}</p>
             </div>
           </div>
-          {user.subscriptionStatus !== "ACTIVE" && (
+          {atLimit && user.subscriptionTier !== "PERFORMANCE" && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <p className="text-sm text-gray-600 mb-2">
+                <strong>Need more property slots?</strong> Go to Pricing to choose the right plan for {totalPropertyCount + 1}+ properties.
+              </p>
+              <Link
+                href="/pricing"
+                className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"
+              >
+                View plans & upgrade
+              </Link>
+            </div>
+          )}
+          {user.subscriptionStatus !== "ACTIVE" && !atLimit && (
             <div className="mt-4 pt-4 border-t border-gray-100">
               <Link
                 href="/pricing"
