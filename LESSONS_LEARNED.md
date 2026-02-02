@@ -15,6 +15,11 @@ This document captures bugs, deployment issues, and solutions encountered during
 8. [Next.js 16 Prerender / useSearchParams](#nextjs-16-prerender--usesearchparams)
 9. [Vercel + GoDaddy Deployment](#vercel--godaddy-deployment)
 10. [GitHub Sync (overtaxed-platform vs FreshStart-IL)](#github-sync-overtaxed-platform-vs-freshstart-il)
+11. [Sync to overtaxed-platform Repo (Robocopy)](#sync-to-overtaxed-platform-repo-robocopy)
+12. [JWT / Stale Subscription Data](#jwt--stale-subscription-data)
+13. [Stripe Webhook Debugging](#stripe-webhook-debugging)
+14. [Vercel Preview + Stripe Test Mode](#vercel-preview--stripe-test-mode)
+15. [Admin Set-Subscription (Testing)](#admin-set-subscription-testing)
 
 ---
 
@@ -266,8 +271,10 @@ declare module "next-auth/jwt" {
 | Type extensions | `types/next-auth.d.ts` |
 | Manual SQL | `prisma/manual_setup.sql` |
 | Vercel + GoDaddy | `docs/OVERTAXED_VERCEL_GODADDY.md` |
+| Vercel Preview + Stripe test | `docs/VERCEL_PREVIEW_STRIPE_SETUP.md` |
 | Env / Stripe secrets | `docs/OVERTAXED_SECRETS_AND_PRICES.md` |
-| GitHub sync (monorepo → overtaxed-platform) | `SYNC_OVERTAXED.md` (repo root) |
+| Admin set-subscription (testing tiers) | `POST /api/admin/set-subscription` — see [Admin Set-Subscription](#admin-set-subscription-testing) |
+| GitHub sync (monorepo → overtaxed-platform) | See [Sync to overtaxed-platform Repo](#sync-to-overtaxed-platform-repo-robocopy) (robocopy) or `SYNC_OVERTAXED.md` (subtree) |
 
 ---
 
@@ -364,9 +371,11 @@ const calcSavings = (reductionPercent: number) =>
 ## GitHub Sync (overtaxed-platform vs FreshStart-IL)
 
 ### Issue: "GitHub showing last commit 2 hours ago" / Vercel not picking up pushes
-**Context:** This repo lives in a **monorepo** (FreshStart-IL / ai-dev-tasks). `git push` updates **FreshStart-IL** only. **Vercel Overtaxed** deploys from **HungryBear3/overtaxed-platform** — a **separate** repo created via `git subtree split`. That repo is updated only when you explicitly sync the `overtaxed-platform` folder into it.
+**Context:** This repo lives in a **monorepo** (FreshStart-IL / ai-dev-tasks). `git push` updates **FreshStart-IL** only. **Vercel Overtaxed** deploys from **HungryBear3/overtaxed-platform** — a **separate** repo. That repo is updated only when you explicitly sync the `overtaxed-platform` folder into it.
 
-**Solution:** From the **repo root** (folder that **contains** `overtaxed-platform`):
+**Preferred solution (fast):** Use [robocopy + deploy clone](#sync-to-overtaxed-platform-repo-robocopy).
+
+**Alternative (subtree split):** From the **repo root** (folder that **contains** `overtaxed-platform`):
 
 ```powershell
 cd "C:\Users\alkap\.cursor\FreshStart IL\ai-dev-tasks"
@@ -378,6 +387,184 @@ git branch -D overtaxed-export
 Use **PowerShell** path format; Git Bash uses `/c/Users/...`. If `git subtree split` fails (e.g. "signal pipe" on Windows), use the **manual clone/copy/push** flow in **`SYNC_OVERTAXED.md`** (repo root).
 
 **Lesson:** Pushes from the monorepo do **not** update the overtaxed-platform repo. Run subtree split + push (or manual sync) whenever you want Overtaxed on GitHub and Vercel to reflect latest changes.
+
+---
+
+## Sync to overtaxed-platform Repo (Robocopy)
+
+### Preferred Method: robocopy + separate clone
+**Context:** `git subtree split` is slow (walks 265+ commits each time). A separate clone + robocopy copies only changed files and pushes in seconds.
+
+### One-time setup
+```powershell
+cd "c:\Users\alkap\.cursor\FreshStart IL\ai-dev-tasks"
+git clone https://github.com/HungryBear3/overtaxed-platform.git overtaxed-platform-deploy
+```
+
+### Every sync (after editing code in overtaxed-platform)
+```powershell
+cd "c:\Users\alkap\.cursor\FreshStart IL\ai-dev-tasks"
+
+# Copy overtaxed-platform into the deploy clone (excludes .git, node_modules, .next, .env.local)
+robocopy overtaxed-platform overtaxed-platform-deploy /E /XD .git node_modules .next /XF .env.local /NFL /NDL /NJH /NJS
+
+# Commit and push
+cd overtaxed-platform-deploy
+git add -A
+git status
+git commit -m "sync from monorepo"
+git push origin main
+```
+
+### robocopy flags
+| Flag | Purpose |
+|------|---------|
+| `/E` | Copy subdirectories including empty |
+| `/XD .git node_modules .next` | Exclude these directories |
+| `/XF .env.local` | Exclude this file |
+| `/NFL /NDL /NJH /NJS` | Quiet output (optional) |
+
+### Git identity (if needed)
+If commit fails with "Author identity unknown":
+```powershell
+git config --global user.email "your@email.com"
+git config --global user.name "Your Name"
+```
+
+### LF/CRLF warnings
+When robocopy copies from monorepo (often LF line endings) to the deploy clone on Windows, `git add` may show "LF will be replaced by CRLF" warnings. These are normal and harmless; the commit still succeeds.
+
+**Lesson:** Use robocopy + deploy clone for fast sync. Reserve `git subtree split` for one-off or CI use. Vercel auto-deploys on push to overtaxed-platform main.
+
+---
+
+## JWT / Stale Subscription Data
+
+### Issue: Dashboard shows old subscription tier after Stripe checkout
+**Context:** After completing Stripe checkout, the webhook updates `subscriptionTier` and `subscriptionStatus` in the database. The user's JWT token, however, was created at login and still contains the old values. NextAuth session data comes from the JWT, so the user sees "Free Tier" or "DIY" until they sign out and back in.
+
+**Solution:** Pages that display subscription info (dashboard, account) should fetch fresh user data from the database instead of relying solely on session:
+
+```typescript
+// Fetch fresh user data from DB (JWT may have stale subscription info)
+const freshUser = await prisma.user.findUnique({
+  where: { id: session.user.id },
+  select: { subscriptionTier: true, subscriptionStatus: true, ... },
+})
+const user = { ...session.user, ...freshUser }
+```
+
+**Lesson:** JWT tokens cache user data at login. For fields that change via webhooks or background jobs (subscription, role), fetch from DB on critical pages.
+
+---
+
+## Stripe Webhook Debugging
+
+### Issue: Subscription doesn't update after checkout
+**Context:** User completes Stripe checkout but dashboard still shows old tier. The webhook should update the user record on `checkout.session.completed`.
+
+**Checklist:**
+1. **Vercel logs:** Deployments → select deploy → Logs. Search for `[webhook]`. Look for "Event verified", "Processing checkout.session.completed", "SUCCESS", or errors.
+2. **Stripe Dashboard → Webhooks:** Verify the endpoint URL (Production: `https://www.overtaxed-il.com/api/billing/webhook`). Check that `checkout.session.completed` is enabled. View event history for failed/succeeded delivery.
+3. **Webhook secret:** `STRIPE_WEBHOOK_SECRET` in Vercel must match the signing secret from the *correct* webhook endpoint (live vs test).
+4. **Metadata:** Checkout session must include `metadata.userId` and `metadata.plan`. The checkout API route sets these; verify they're present in Stripe's event payload.
+
+**Lesson:** Live and test Stripe use different webhook endpoints and secrets. Ensure Production env vars point to live webhook secret.
+
+---
+
+## Vercel Preview + Stripe Test Mode
+
+### Issue: Can't use test cards in production
+**Context:** Stripe blocks test card numbers (4242...) when using live API keys. You need a way to test checkout without real charges.
+
+**Solution:** Use Vercel's **Preview** environment. Preview deploys (from branches other than `main`, or from PRs) use Preview env vars. Set Stripe *test* keys for Preview:
+
+| Variable | Production | Preview |
+|----------|------------|---------|
+| `STRIPE_SECRET_KEY` | `sk_live_...` | `sk_test_...` |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | `pk_live_...` | `pk_test_...` |
+| `STRIPE_WEBHOOK_SECRET` | Live webhook secret | Test webhook secret |
+| `STRIPE_PRICE_STARTER` | Live price ID | Test price ID |
+| `STRIPE_PRICE_GROWTH_PER_PROPERTY` | Live price ID | Test price ID |
+| `STRIPE_PRICE_PORTFOLIO_PER_PROPERTY` | Live price ID | Test price ID |
+| `STRIPE_PRICE_COMPS_ONLY` | Live price ID | Test price ID |
+
+**Setup steps:** See [Vercel Preview setup](#vercel-preview-setup) below or `docs/VERCEL_PREVIEW_STRIPE_SETUP.md` for a full step-by-step guide.
+
+**Stripe test webhook:** Create a separate webhook in Stripe (test mode) pointing to your Preview URL, e.g. `https://overtaxed-platform-xxx-username.vercel.app/api/billing/webhook`. Preview URLs change per branch; you may need to update the webhook URL when testing different branches, or use a stable Preview URL if available.
+
+**Lesson:** Use Preview env for full checkout testing with test cards. Production stays on live Stripe.
+
+---
+
+## Vercel Preview Setup
+
+1. **Vercel Dashboard** → overtaxed-platform → **Settings** → **Environment Variables**
+2. For each Stripe-related variable, add a **second** row:
+   - Click **Add New**
+   - Same **Name** (e.g. `STRIPE_SECRET_KEY`)
+   - **Value:** test key / test price ID
+   - **Environments:** Select **Preview** only (uncheck Production, Development)
+   - Save
+3. **Repeat** for: `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_GROWTH_PER_PROPERTY`, `STRIPE_PRICE_PORTFOLIO_PER_PROPERTY`, `STRIPE_PRICE_COMPS_ONLY`
+4. **Create Preview deploy:** Push to a branch (e.g. `develop`) or open a PR. Vercel will deploy a Preview; use that URL for testing.
+5. **Stripe test webhook:** In Stripe (test mode) → Developers → Webhooks → Add endpoint. URL = `https://your-preview-url.vercel.app/api/billing/webhook`. Copy the signing secret into `STRIPE_WEBHOOK_SECRET` for Preview. If Preview URL changes per deploy, update the webhook URL in Stripe or use a custom Preview domain.
+
+---
+
+## Admin Set-Subscription (Testing)
+
+### Purpose
+Set a user's subscription tier without going through Stripe. Useful for testing different tiers (Starter, Growth, Portfolio) and property limits without live card charges.
+
+### Endpoint
+`POST /api/admin/set-subscription`
+
+### Auth
+- Header: `x-admin-secret: YOUR_ADMIN_SECRET` (set `ADMIN_SECRET` in Vercel env vars), **or**
+- Logged in as user with `role: "ADMIN"`
+
+### Body
+```json
+{
+  "email": "user@example.com",
+  "subscriptionTier": "STARTER",
+  "subscriptionStatus": "ACTIVE"
+}
+```
+Tiers: `COMPS_ONLY`, `STARTER`, `GROWTH`, `PORTFOLIO`, `PERFORMANCE`.  
+Status: `INACTIVE`, `ACTIVE`, `PAST_DUE`, `CANCELLED`.
+
+### Example (curl)
+```bash
+curl -X POST https://www.overtaxed-il.com/api/admin/set-subscription \
+  -H "Content-Type: application/json" \
+  -H "x-admin-secret: your-secret" \
+  -d '{"email": "al@example.com", "subscriptionTier": "STARTER", "subscriptionStatus": "ACTIVE"}'
+```
+
+### GET (list users / get one)
+```bash
+# All users
+curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/set-subscription"
+
+# One user
+curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/set-subscription?email=al@example.com"
+```
+
+**Lesson:** Add `ADMIN_SECRET` to Vercel (any random string). Use this endpoint to test tiers without Stripe. Keep the secret private.
+
+---
+
+## Stripe Test Cards in Live Mode
+
+**Fact:** Stripe intentionally blocks test card numbers (e.g. 4242 4242 4242 4242) when your app uses **live** API keys. This is by design.
+
+**Options for testing without real charges:**
+1. **Vercel Preview + test Stripe keys** — Use Preview environment with test keys; test cards work there.
+2. **Admin set-subscription endpoint** — Set tier directly; no checkout needed for tier/limit testing.
+3. **Real card + refund** — Small processing fee; use for final production verification only.
 
 ---
 

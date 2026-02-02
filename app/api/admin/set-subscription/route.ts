@@ -58,9 +58,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Find user
+    // Find user (build where so Prisma gets string, not string | undefined)
+    const where = email ? { email } : userId ? { id: userId } : undefined
+    if (!where) {
+      return NextResponse.json(
+        { error: "Provide either email or userId" },
+        { status: 400 }
+      )
+    }
     const user = await prisma.user.findFirst({
-      where: email ? { email } : { id: userId },
+      where,
     })
 
     if (!user) {
@@ -143,8 +150,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ users })
     }
 
+    const where = email ? { email } : userId ? { id: userId } : undefined
+    if (!where) {
+      return NextResponse.json({ error: "Provide either email or userId" }, { status: 400 })
+    }
     const user = await prisma.user.findFirst({
-      where: email ? { email } : { id: userId },
+      where,
       select: {
         id: true,
         email: true,
