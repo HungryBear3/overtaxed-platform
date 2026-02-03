@@ -1,4 +1,4 @@
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib"
+import { PDFDocument, PDFFont, rgb, StandardFonts } from "pdf-lib"
 
 export interface AppealSummaryData {
   property: {
@@ -136,7 +136,7 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
       : null
 
   // Wrap text to maxWidth so we can advance y by lineHeight per line (avoids overlap)
-  const wrapLines = (text: string, f: ReturnType<typeof doc.embedFont>, fs: number): string[] => {
+  const wrapLines = (text: string, f: PDFFont, fs: number): string[] => {
     const words = text.split(/\s+/)
     if (words.length === 0) return [""]
     const lines: string[] = []
