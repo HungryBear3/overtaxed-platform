@@ -14,12 +14,12 @@ export async function GET(request: NextRequest) {
       prisma.property.count({ where: { userId: session.user.id } }),
       prisma.user.findUnique({
         where: { id: session.user.id },
-        select: { subscriptionTier: true },
+        select: { subscriptionTier: true, subscriptionQuantity: true },
       }),
     ])
 
     const tier = dbUser?.subscriptionTier ?? session.user.subscriptionTier ?? "COMPS_ONLY"
-    const limit = getPropertyLimit(tier)
+    const limit = getPropertyLimit(tier, dbUser?.subscriptionQuantity)
 
     // Recommend plan based on current property count (for upgrade path)
     let recommendedPlan: "STARTER" | "GROWTH" | "PORTFOLIO" | "CUSTOM" | null = null

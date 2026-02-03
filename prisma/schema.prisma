@@ -32,6 +32,11 @@ model User {
   subscriptionStartDate DateTime?
   subscriptionEndDate   DateTime?
   subscriptionAnniversaryDate DateTime? // For annual renewals
+  /** Paid property count (slots) — caps usage; null = use tier default max */
+  subscriptionQuantity Int?
+  /** Stripe customer/subscription IDs for portal and quantity sync */
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
   
   // Performance Plan tracking
   performancePlanStartDate DateTime? // When 3-year period starts

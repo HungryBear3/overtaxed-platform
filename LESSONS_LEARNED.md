@@ -276,6 +276,8 @@ declare module "next-auth/jwt" {
 | Vercel Preview + Stripe test | `docs/VERCEL_PREVIEW_STRIPE_SETUP.md` |
 | Env / Stripe secrets | `docs/OVERTAXED_SECRETS_AND_PRICES.md` |
 | Admin set-subscription (testing tiers) | `POST /api/admin/set-subscription` — see [Admin Set-Subscription](#admin-set-subscription-testing) |
+| Testing subscriptions & limits | `docs/TESTING_SUBSCRIPTION_AND_LIMITS.md` — reduce test account tier, test property limits |
+| Filing on behalf of users | `docs/FILING_ON_BEHALF.md` — options (staff-assisted vs API); why DIY-only today |
 | GitHub sync (monorepo → overtaxed-platform) | **Use robocopy** — [Sync to overtaxed-platform Repo](#sync-to-overtaxed-platform-repo-robocopy). Alternative: `SYNC_OVERTAXED.md` (subtree, slower) |
 
 ---
@@ -494,11 +496,11 @@ const user = { ...session.user, ...freshUser }
 **Lesson:** Use sessionStorage to pass comps across the navigation so the user doesn’t re-select; only attach comps when the selected property matches the stored one.
 
 ### PDF appeal summary – text overlap
-**Context:** Long lines in the appeal summary PDF were drawn with `drawText(..., { maxWidth })`. pdf-lib wraps visually but we only decremented `y` by a fixed `lineHeight` once, so wrapped lines overlapped.
+**Context:** Long lines in the appeal summary PDF were drawn with `drawText(..., { maxWidth })`. pdf-lib wraps visually but we only decremented `y` by a fixed `lineHeight` once, so wrapped lines overlapped. After adding wrapLines, overlap remained because a fixed 14pt line height was smaller than the actual rendered line height (ascender + descender + gap).
 
-**Solution:** In `lib/document-generation/appeal-summary.ts`, add a `wrapLines(text, font, fontSize)` helper that splits text into words and builds lines that fit within `maxWidth` using `font.widthOfTextAtSize()`. Then draw each line with `drawText(line)` (no maxWidth) and decrement `y` by `lineHeight` per line.
+**Solution:** (1) Add a `wrapLines(text, font, fontSize)` helper that splits text into words and builds lines that fit within `maxWidth` using `font.widthOfTextAtSize()`. Draw each line with `drawText(line)` (no maxWidth) and decrement `y` per line. (2) **Scale line height by font size:** use `lineHeightFor(fontSize) = max(14, ceil(fontSize * 1.4))` so 11pt→16pt, 13pt→19pt, 16pt→23pt; pass this into both `drawText` and `drawLine`. (3) **Type the font parameter as `PDFFont`:** use `f: PDFFont` in wrapLines (and import `PDFFont` from `pdf-lib`). Do **not** use `ReturnType<typeof doc.embedFont>`, which is `Promise<PDFFont>` — the Vercel build fails with "Property 'widthOfTextAtSize' does not exist on type 'Promise<PDFFont>'".
 
-**Lesson:** When using pdf-lib with word wrap, either measure wrapped height or wrap manually and advance `y` per line to avoid overlap.
+**Lesson:** When using pdf-lib: wrap manually and advance `y` per line; use a line height that scales with font size (e.g. 1.4×); type font params as `PDFFont`, not the return type of `embedFont`.
 
 ### Ready to File vs Mark as Filed
 **Context:** Users thought "Ready to File" would submit the appeal. The platform does not submit to the county; users must file at the Cook County Assessor portal. "Mark as Filed" is for updating our status after they’ve filed there.
@@ -619,4 +621,4 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 ---
 
-**Last Updated:** January 28, 2026
+**Last Updated:** February 2026

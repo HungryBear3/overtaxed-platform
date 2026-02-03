@@ -51,7 +51,7 @@ export default async function DashboardPage() {
     prisma.property.count({ where: { userId: user.id } }),
   ])
 
-  const propertyLimit = getPropertyLimit(user.subscriptionTier ?? "COMPS_ONLY")
+  const propertyLimit = getPropertyLimit(user.subscriptionTier ?? "COMPS_ONLY", freshUser.subscriptionQuantity)
   const atLimit = totalPropertyCount >= propertyLimit && propertyLimit < 999
   const slotsRemaining = Math.max(0, propertyLimit - totalPropertyCount)
 
@@ -189,8 +189,8 @@ export default async function DashboardPage() {
               <p className="font-medium text-gray-900">
                 {user.subscriptionTier === "COMPS_ONLY" && "DIY reports only ($69/property)"}
                 {user.subscriptionTier === "STARTER" && "Starter (1–2 properties, $149/property/year)"}
-                {user.subscriptionTier === "GROWTH" && "Growth (3–9 properties, $125/property/year)"}
-                {user.subscriptionTier === "PORTFOLIO" && "Portfolio (10–20 properties, $100/property/year)"}
+                {user.subscriptionTier === "GROWTH" && "Growth (up to 9 properties, $125/property/year)"}
+                {user.subscriptionTier === "PORTFOLIO" && "Portfolio (up to 20 properties, $100/property/year)"}
                 {user.subscriptionTier === "PERFORMANCE" && "Performance (4% of savings, deferred)"}
               </p>
             </div>

@@ -36,6 +36,10 @@ export interface AppealSummaryData {
     pin: string
     address: string
     compType: string
+    neighborhood: string | null
+    buildingClass: string | null
+    bedrooms: number | null
+    bathrooms: number | null
     salePrice: number | null
     saleDate: string | null
     livingArea: number | null
@@ -345,6 +349,14 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
         `   PIN: ${c.pin}  |  Sale: ${formatCurrency(c.salePrice)}  |  ${formatDate(c.saleDate)}  |  ` +
           `$/sq ft: ${formatCurrencySqft(c.pricePerSqft)}  |  Living area: ${c.livingArea ?? "—"} sq ft  |  Year built: ${c.yearBuilt ?? "—"}`
       )
+      if (c.neighborhood || c.buildingClass != null || c.bedrooms != null || c.bathrooms != null) {
+        const parts: string[] = []
+        if (c.neighborhood) parts.push(`Neighborhood: ${c.neighborhood}`)
+        if (c.buildingClass != null) parts.push(`Class: ${c.buildingClass}`)
+        if (c.bedrooms != null || c.bathrooms != null)
+          parts.push(`Beds/baths: ${c.bedrooms ?? "—"} / ${c.bathrooms ?? "—"}`)
+        if (parts.length > 0) drawText(`   ${parts.join("  |  ")}`)
+      }
       if (c.distanceFromSubject != null)
         drawText(`   Distance from subject: ${Number(c.distanceFromSubject).toFixed(2)} mi`)
     }
@@ -365,6 +377,14 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
         `   PIN: ${c.pin}  |  Assessed market value: ${formatCurrency(c.assessedMarketValue)}  |  ` +
           `$/sq ft: ${formatCurrencySqft(c.assessedMarketValuePerSqft)}  |  Living area: ${c.livingArea ?? "—"} sq ft  |  Year built: ${c.yearBuilt ?? "—"}`
       )
+      if (c.neighborhood || c.buildingClass != null || c.bedrooms != null || c.bathrooms != null) {
+        const parts: string[] = []
+        if (c.neighborhood) parts.push(`Neighborhood: ${c.neighborhood}`)
+        if (c.buildingClass != null) parts.push(`Class: ${c.buildingClass}`)
+        if (c.bedrooms != null || c.bathrooms != null)
+          parts.push(`Beds/baths: ${c.bedrooms ?? "—"} / ${c.bathrooms ?? "—"}`)
+        if (parts.length > 0) drawText(`   ${parts.join("  |  ")}`)
+      }
       if (c.distanceFromSubject != null)
         drawText(`   Distance from subject: ${Number(c.distanceFromSubject).toFixed(2)} mi`)
     }
@@ -381,6 +401,14 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
         `   PIN: ${c.pin}  |  ${c.compType}  |  Sale: ${formatCurrency(c.salePrice)}  |  ${formatDate(c.saleDate)}  |  ` +
           `Value: ${formatCurrency(c.assessedMarketValue)}  |  $/sq ft: ${formatCurrencySqft(c.pricePerSqft ?? c.assessedMarketValuePerSqft)}`
       )
+      if (c.neighborhood || c.buildingClass != null || c.bedrooms != null || c.bathrooms != null) {
+        const parts: string[] = []
+        if (c.neighborhood) parts.push(`Neighborhood: ${c.neighborhood}`)
+        if (c.buildingClass != null) parts.push(`Class: ${c.buildingClass}`)
+        if (c.bedrooms != null || c.bathrooms != null)
+          parts.push(`Beds/baths: ${c.bedrooms ?? "—"} / ${c.bathrooms ?? "—"}`)
+        if (parts.length > 0) drawText(`   ${parts.join("  |  ")}`)
+      }
       if (c.livingArea != null || c.yearBuilt != null)
         drawText(`   Living area: ${c.livingArea ?? "—"} sq ft  |  Year built: ${c.yearBuilt ?? "—"}`)
     }

@@ -40,24 +40,19 @@ export async function POST(request: NextRequest) {
   switch (event.type) {
     case "checkout.session.completed": {
       console.log("[webhook] Processing checkout.session.completed")
-      console.log("[webhook] Session data:", JSON.stringify({ 
-        id: data.id, 
-        customer_email: data.customer_email,
-        metadata,
-        payment_status: data.payment_status,
-      }))
-      
       const userId = metadata.userId
       const plan = metadata.plan
-      
-      if (!userId) {
-        console.error("[webhook] Missing userId in metadata")
+      const propertyCountStr = metadata.propertyCount
+
+      if (!userId || !plan) {
+        console.error("[webhook] Missing userId or plan in metadata")
         break
       }
-      if (!plan) {
-        console.error("[webhook] Missing plan in metadata")
-        break
-      }
+
+      const subscriptionQuantity =
+        propertyCountStr != null ? Math.max(1, parseInt(propertyCountStr, 10) || 1) : null
+      const stripeCustomerId = (data.customer as string) ?? null
+      const stripeSubscriptionId = (data.subscription as string) ?? null
 
       try {
         const updatedUser = await prisma.user.update({
@@ -66,9 +61,14 @@ export async function POST(request: NextRequest) {
             subscriptionTier: plan as "STARTER" | "GROWTH" | "PORTFOLIO",
             subscriptionStatus: "ACTIVE",
             subscriptionStartDate: new Date(),
+            subscriptionQuantity: subscriptionQuantity ?? undefined,
+            stripeCustomerId: stripeCustomerId ?? undefined,
+            stripeSubscriptionId: stripeSubscriptionId ?? undefined,
           },
         })
-        console.log(`[webhook] SUCCESS: User ${userId} subscribed to ${plan}. Updated tier: ${updatedUser.subscriptionTier}`)
+        console.log(
+          `[webhook] SUCCESS: User ${userId} subscribed to ${plan}, quantity=${subscriptionQuantity}, tier=${updatedUser.subscriptionTier}`
+        )
       } catch (dbError) {
         console.error(`[webhook] Database error updating user ${userId}:`, dbError)
       }
@@ -77,31 +77,54 @@ export async function POST(request: NextRequest) {
 
     case "customer.subscription.updated":
     case "customer.subscription.deleted": {
+      const subscriptionId = data.id as string
       const customerId = data.customer as string | undefined
       const status = data.status as string
-      console.log(`[webhook] Subscription ${event.type} for customer ${customerId}, status=${status}`)
-      
-      if (!customerId) break
+      console.log(`[webhook] Subscription ${event.type} id=${subscriptionId}, status=${status}`)
 
-      // Try to find user by email from the subscription
       try {
-        const subscription = await stripe.subscriptions.retrieve(data.id as string)
-        const customer = await stripe.customers.retrieve(customerId)
-        
-        if (customer && !('deleted' in customer) && customer.email) {
-          const user = await prisma.user.findUnique({ where: { email: customer.email } })
-          if (user) {
-            const newStatus = status === "active" ? "ACTIVE" : 
-                            status === "past_due" ? "PAST_DUE" : 
-                            status === "canceled" ? "CANCELLED" : "INACTIVE"
-            
-            await prisma.user.update({
-              where: { id: user.id },
-              data: { subscriptionStatus: newStatus },
-            })
-            console.log(`[webhook] Updated user ${user.id} subscription status to ${newStatus}`)
+        // Find user by stored stripeSubscriptionId or by customer email
+        let user = await prisma.user.findFirst({
+          where: { stripeSubscriptionId: subscriptionId },
+        })
+        if (!user && customerId) {
+          const customer = await stripe.customers.retrieve(customerId)
+          if (customer && !("deleted" in customer) && customer.email) {
+            user = await prisma.user.findUnique({ where: { email: customer.email } })
           }
         }
+        if (!user) {
+          console.log("[webhook] No user found for subscription", subscriptionId)
+          break
+        }
+
+        const newStatus =
+          status === "active" ? "ACTIVE" :
+          status === "past_due" ? "PAST_DUE" :
+          status === "canceled" ? "CANCELLED" : "INACTIVE"
+
+        let quantity: number | null = null
+        const items = (data.items as { data?: Array<{ quantity?: number }> })?.data
+        if (items?.[0]?.quantity != null) quantity = items[0].quantity
+        else {
+          const sub = await stripe.subscriptions.retrieve(subscriptionId, { expand: ["items.data"] })
+          const firstItem = sub.items?.data?.[0]
+          if (firstItem?.quantity != null) quantity = firstItem.quantity
+        }
+
+        await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            subscriptionStatus: newStatus,
+            ...(quantity != null && quantity > 0 && { subscriptionQuantity: quantity }),
+            ...(status === "canceled" || status === "unpaid"
+              ? { subscriptionQuantity: null, stripeSubscriptionId: null }
+              : {}),
+          },
+        })
+        console.log(
+          `[webhook] Updated user ${user.id} status=${newStatus}${quantity != null ? ` quantity=${quantity}` : ""}`
+        )
       } catch (err) {
         console.error("[webhook] Error processing subscription update:", err)
       }

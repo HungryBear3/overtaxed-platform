@@ -147,10 +147,10 @@ export async function POST(request: NextRequest) {
     const { getPropertyLimit, requiresCustomPricing } = await import('@/lib/billing/limits')
     const dbUser = await prisma.user.findUnique({
       where: { id: session.user.id },
-      select: { subscriptionTier: true },
+      select: { subscriptionTier: true, subscriptionQuantity: true },
     })
     const tier = dbUser?.subscriptionTier ?? session.user.subscriptionTier ?? 'COMPS_ONLY'
-    const limit = getPropertyLimit(tier)
+    const limit = getPropertyLimit(tier, dbUser?.subscriptionQuantity)
     const count = await prisma.property.count({ where: { userId: session.user.id } })
     
     if (requiresCustomPricing(count + 1)) {

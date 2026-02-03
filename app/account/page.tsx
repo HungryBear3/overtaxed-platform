@@ -23,6 +23,7 @@ export default async function AccountPage() {
         subscriptionTier: true,
         subscriptionStatus: true,
         subscriptionStartDate: true,
+        subscriptionQuantity: true,
       },
     }),
     prisma.property.findMany({
@@ -45,7 +46,7 @@ export default async function AccountPage() {
   }
 
   const tier = user.subscriptionTier ?? "COMPS_ONLY"
-  const propertyLimit = getPropertyLimit(tier)
+  const propertyLimit = getPropertyLimit(tier, freshUser.subscriptionQuantity)
   const canAddMore = properties.length < propertyLimit || propertyLimit >= 999
 
   const managedProperties = properties.map((p) => ({
@@ -87,6 +88,11 @@ export default async function AccountPage() {
               {user.subscriptionTier === "PORTFOLIO" && "Portfolio (10–20 properties, $100/property/year)"}
               {user.subscriptionTier === "PERFORMANCE" && "Performance (4% of savings, deferred)"}
             </p>
+            {user.subscriptionTier !== "COMPS_ONLY" && user.subscriptionTier !== "PERFORMANCE" && (
+              <p className="text-xs text-gray-500 mt-1">
+                Your plan allows up to {propertyLimit} property slots. To upgrade or downgrade, go to Pricing.
+              </p>
+            )}
           </div>
           <div>
             <p className="text-sm text-gray-500">Status</p>
@@ -118,7 +124,7 @@ export default async function AccountPage() {
           href="/pricing"
           className="inline-flex h-10 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700"
         >
-          View plans & upgrade
+          Change plan (upgrade or downgrade)
         </Link>
         <Link
           href="/api/auth/signout"

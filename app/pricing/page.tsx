@@ -218,8 +218,21 @@ export default function PricingPage() {
               You have <strong>{planInfo.propertyCount} propert{planInfo.propertyCount === 1 ? "y" : "ies"}</strong>
               {planInfo.atLimit && " — at plan limit. Select a plan below to upgrade."}
             </p>
+            {!planInfo.atLimit && (
+              <p className="text-xs text-gray-600 mt-1">
+                Growth (3–9): add up to {Math.max(0, 9 - planInfo.propertyCount)} more. Portfolio (10–20): add up to {Math.max(0, 20 - planInfo.propertyCount)} more.
+              </p>
+            )}
           </div>
         )}
+
+        {/* How plans work - avoid "bought 3 slots = 5 total" confusion */}
+        <div className="mb-8 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
+          <p className="text-sm font-medium text-amber-900 mb-1">How upgrade tiers work</p>
+          <p className="text-sm text-amber-800">
+            Each plan has a <strong>property range</strong> (e.g. 3–9 = Growth). You get <strong>up to the max slots</strong> for that plan. You choose how many to <strong>pay for</strong> at checkout (minimum is the range start). You can add more properties anytime up to the plan max — no extra checkout. To downgrade or change plan, use Account or contact us.
+          </p>
+        </div>
 
         {error && (
           <div className="mb-8 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700 text-center">
@@ -294,7 +307,7 @@ export default function PricingPage() {
           ))}
         </div>
         <p className="text-center text-sm text-gray-500 mb-6">
-          Select quantity in the highlighted plan below, then click Upgrade or Get started.
+          Pick a range (1–2, 3–9, or 10–20). Then choose how many properties to pay for in the highlighted plan — you get <strong>up to the max</strong> slots for that tier (e.g. 3–9 plan = up to 9 slots).
         </p>
         <div className="grid gap-6 md:grid-cols-3 mb-12">
           {plans.map((plan) => {
@@ -337,7 +350,7 @@ export default function PricingPage() {
                   {showQuantitySelector && (
                     <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                       <label htmlFor={`qty-${plan.id}`} className="block text-sm font-medium text-gray-700 mb-2">
-                        Number of properties (you&apos;ll be charged for this at checkout):
+                        How many properties to pay for (you&apos;ll be charged this at checkout):
                       </label>
                       <div className="flex items-center gap-2 flex-wrap">
                         <select
@@ -354,6 +367,9 @@ export default function PricingPage() {
                           = ${getAnnualPrice(plan.id, selectedQuantity).toLocaleString()}/year
                         </span>
                       </div>
+                      <p className="text-xs text-gray-600 mt-2">
+                        This plan allows <strong>up to {plan.id === "GROWTH" ? 9 : 20} properties</strong>. You can add more later within that limit without another checkout.
+                      </p>
                     </div>
                   )}
                   <Button
