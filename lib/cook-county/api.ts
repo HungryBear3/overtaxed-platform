@@ -337,11 +337,13 @@ export async function getPropertyByPIN(
       longitude: parcel.lon ? parseFloat(parcel.lon as string) : (parcel.longitude ? parseFloat(parcel.longitude as string) : null),
       
       // Property characteristics (from improvement characteristics if available)
-      // Try both with and without char_ prefix
+      // Try both with and without char_ prefix; parcel may have bldg_sf in some views
       buildingClass: (parcel.class || chars?.class || null) as string | null,
       cdu: (chars?.cnst_qlty || chars?.char_cnst_qlty || chars?.condition_desirability_and_utility || null) as string | null,
-      livingArea: parseIntSafe(chars?.bldg_sf || chars?.char_bldg_sf || chars?.total_bldg_sf),
-      landSize: parseIntSafe(chars?.land_sf || chars?.char_land_sf),
+      livingArea: parseIntSafe(
+        chars?.bldg_sf || chars?.char_bldg_sf || chars?.total_bldg_sf || parcel.bldg_sf || parcel.char_bldg_sf
+      ),
+      landSize: parseIntSafe(chars?.land_sf || chars?.char_land_sf || parcel.land_sf || parcel.char_land_sf),
       yearBuilt: parseIntSafe(chars?.yrblt || chars?.char_yrblt),
       bedrooms: parseIntSafe(chars?.beds || chars?.char_beds),
       bathrooms: chars ? 
@@ -448,8 +450,38 @@ export async function searchPropertiesByAddress(
 }
 
 /**
+ * Fetch improvement characteristics (living area, year built, etc.) by PIN.
+ * Tries Single-Family then Multi-Family dataset. Used to enrich sales comps.
+ */
+async function getImprovementCharsForPIN(pin: PIN): Promise<{
+  livingArea: number | null
+  yearBuilt: number | null
+  bedrooms: number | null
+  bathrooms: number | null
+} | null> {
+  let chars = await getSingleFamilyCharsByPIN(pin)
+  if (!chars) chars = await getMultiFamilyCharsByPIN(pin)
+  if (!chars) return null
+  const c = chars as unknown as Record<string, unknown>
+  const bldgSf = c?.bldg_sf ?? c?.char_bldg_sf ?? c?.total_bldg_sf
+  const yrblt = c?.yrblt ?? c?.char_yrblt
+  const beds = c?.beds ?? c?.char_beds
+  const fbath = c?.fbath ?? c?.char_fbath
+  const hbath = c?.hbath ?? c?.char_hbath
+  const livingArea = bldgSf != null ? parseIntSafe(bldgSf) : null
+  const yearBuilt = yrblt != null ? parseIntSafe(yrblt) : null
+  const bedrooms = beds != null ? parseIntSafe(beds) : null
+  const bathrooms =
+    fbath != null || hbath != null
+      ? (parseIntSafe(fbath) ?? 0) + 0.5 * (parseIntSafe(hbath) ?? 0)
+      : null
+  return { livingArea, yearBuilt, bedrooms, bathrooms }
+}
+
+/**
  * Get comparable sales for a property
  * Rule 15: 3+ sales comps, similar size/class/location
+ * Enriches each sale with living area etc. from Improvement Characteristics when Parcel Sales has no chars.
  */
 export async function getComparableSales(
   property: PropertyData,
@@ -463,78 +495,70 @@ export async function getComparableSales(
 ): Promise<CookCountyApiResponse<SalesRecord[]>> {
   try {
     const {
-      maxDistanceMiles = 0.5,  // Within 0.5 miles (Rule 15)
       livingAreaTolerancePercent = 25,  // ±25% living area
       yearBuiltTolerance = 10,  // ±10 years
       limit = 20,
       saleDateAfter = new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000), // 2 years
     } = options
-    
-    // Build query filters
+
+    // Parcel Sales (wvhk-k5uv) does not include char_bldg_sf; filters that need it are skipped
     const filters: string[] = []
-    
-    // Same neighborhood (preferred for Rule 15)
-    if (property.neighborhood) {
-      filters.push(`nbhd='${property.neighborhood}'`)
-    }
-    
-    // Same building class
-    if (property.buildingClass) {
-      filters.push(`class='${property.buildingClass}'`)
-    }
-    
-    // Living area within tolerance
-    if (property.livingArea) {
-      const minSqft = Math.floor(property.livingArea * (1 - livingAreaTolerancePercent / 100))
-      const maxSqft = Math.ceil(property.livingArea * (1 + livingAreaTolerancePercent / 100))
-      filters.push(`char_bldg_sf >= '${minSqft}' AND char_bldg_sf <= '${maxSqft}'`)
-    }
-    
-    // Year built within tolerance
-    if (property.yearBuilt) {
-      const minYear = property.yearBuilt - yearBuiltTolerance
-      const maxYear = property.yearBuilt + yearBuiltTolerance
-      filters.push(`char_yrblt >= '${minYear}' AND char_yrblt <= '${maxYear}'`)
-    }
-    
-    // Sale date filter
+    if (property.neighborhood) filters.push(`nbhd='${property.neighborhood}'`)
+    if (property.buildingClass) filters.push(`class='${property.buildingClass}'`)
     const saleDateStr = saleDateAfter.toISOString().split('T')[0]
     filters.push(`sale_date >= '${saleDateStr}'`)
-    
-    // Exclude subject property
     filters.push(`pin != '${property.pin}'`)
-    
-    // Build query
+
     const query = `$where=${encodeURIComponent(filters.join(' AND '))}&$limit=${limit}&$order=sale_date DESC`
-    
-    const results = await fetchSocrataData<ParcelSalesRecord>(
+    const results = await fetchSocrataData<Record<string, unknown>>(
       DATASETS.PARCEL_SALES,
       query
     )
-    
-    // Transform to SalesRecord format
-    const salesRecords: SalesRecord[] = results.map((record) => ({
-      pin: record.pin,
-      address: '', // Not in sales data, would need join
-      city: '',
-      zipCode: '',
-      neighborhood: record.nbhd,
-      
-      saleDate: new Date(record.sale_date),
-      salePrice: parseFloat(record.sale_price) || 0,
-      pricePerSqft: record.char_bldg_sf && record.sale_price
-        ? parseFloat(record.sale_price) / parseInt(record.char_bldg_sf)
-        : null,
-      
-      buildingClass: record.class,
-      livingArea: record.char_bldg_sf ? parseInt(record.char_bldg_sf) : null,
-      yearBuilt: record.char_yrblt ? parseInt(record.char_yrblt) : null,
-      bedrooms: record.char_beds ? parseInt(record.char_beds) : null,
-      bathrooms: record.char_fbath ? parseInt(record.char_fbath) : null,
-      
-      dataSource: 'Cook County Open Data - Parcel Sales',
-    }))
-    
+
+    const rawRecords = results as Array<Record<string, unknown>>
+    const uniquePins = [...new Set(rawRecords.map((r) => String(r.pin ?? '')))].filter(Boolean).slice(0, 20)
+    const charsByPin = new Map<string, Awaited<ReturnType<typeof getImprovementCharsForPIN>>>()
+    await Promise.all(
+      uniquePins.map(async (pin) => {
+        const chars = await getImprovementCharsForPIN(pin)
+        if (chars) charsByPin.set(pin, chars)
+      })
+    )
+
+    const salesRecords: SalesRecord[] = rawRecords.map((record) => {
+      const pin = String(record.pin ?? '')
+      const salePrice = parseFloat(String(record.sale_price ?? 0)) || 0
+      const chars = charsByPin.get(pin) ?? null
+      const livingArea =
+        chars?.livingArea ??
+        (record.char_bldg_sf != null ? parseIntSafe(record.char_bldg_sf) : null) ??
+        (record.bldg_sf != null ? parseIntSafe(record.bldg_sf) : null)
+      const yearBuilt =
+        chars?.yearBuilt ??
+        (record.char_yrblt != null ? parseIntSafe(record.char_yrblt) : null) ??
+        (record.yrblt != null ? parseIntSafe(record.yrblt) : null)
+      const bedrooms = chars?.bedrooms ?? (record.char_beds != null ? parseIntSafe(record.char_beds) : null)
+      const bathrooms = chars?.bathrooms ?? (record.char_fbath != null ? parseIntSafe(record.char_fbath) : null)
+      const pricePerSqft =
+        livingArea != null && livingArea > 0 && salePrice > 0 ? salePrice / livingArea : null
+      return {
+        pin,
+        address: '',
+        city: '',
+        zipCode: '',
+        neighborhood: String(record.nbhd ?? ''),
+        saleDate: new Date(String(record.sale_date)),
+        salePrice,
+        pricePerSqft,
+        buildingClass: String(record.class ?? ''),
+        livingArea,
+        yearBuilt,
+        bedrooms,
+        bathrooms,
+        dataSource: 'Cook County Open Data - Parcel Sales',
+      }
+    })
+
     return {
       success: true,
       data: salesRecords,

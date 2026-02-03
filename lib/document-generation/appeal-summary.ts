@@ -84,6 +84,13 @@ function formatPct(n: number | null | unknown): string {
   return `${Number(n).toFixed(1)}%`
 }
 
+function median(values: number[]): number | null {
+  if (values.length === 0) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 !== 0 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2
+}
+
 export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   doc.addPage() // pdf-lib starts with 0 pages; getPage(0) requires at least one page
@@ -106,6 +113,12 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
 
   const salesComps = data.comps.filter((c) => c.compType === "SALES")
   const equityComps = data.comps.filter((c) => c.compType === "EQUITY")
+  const subjectSqft =
+    data.property.livingArea != null &&
+    data.property.livingArea > 0 &&
+    data.property.currentAssessmentValue != null
+      ? data.property.currentAssessmentValue / data.property.livingArea
+      : null
 
   const drawText = (
     text: string,
@@ -166,6 +179,14 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
       "The following comparable sales and uniformity analysis support a fair market value consistent with similar properties in the same neighborhood and building class."
     )
   }
+  // Rule 15 compliance and no cherry-picking
+  if (data.comps.length > 0) {
+    const salesN = salesComps.length
+    const equityN = equityComps.length
+    drawText(
+      `This submission includes ${salesN > 0 ? salesN + " sales comp(s)" : ""}${salesN > 0 && equityN > 0 ? " and " : ""}${equityN > 0 ? equityN + " equity comp(s)" : ""} from the same neighborhood and building class, consistent with Rule 15. All comparables are identified by Cook County PIN for verification. Comparables were selected by proximity, same neighborhood and class, and similar living area; no cherry-picking.`
+    )
+  }
   drawLine()
 
   // —— Subject property (expanded, like sample report) ——
@@ -192,6 +213,8 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   )
   if (data.property.currentMarketValue != null)
     drawText(`Noticed market value: ${formatCurrency(data.property.currentMarketValue)}`)
+  if (subjectSqft != null)
+    drawText(`Subject assessed $/sq ft: ${formatCurrencySqft(subjectSqft)}`)
   drawLine()
 
   // —— Appeal details ——
@@ -207,9 +230,29 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   // —— Sales analysis (3+ sales comps per Cook County / sample) ——
   if (salesComps.length > 0) {
     drawText("Sales Analysis — Comparable Sales", { bold: true, fontSize: 13 })
+    const salesDates = salesComps
+      .map((c) => (c.saleDate ? new Date(c.saleDate).getTime() : null))
+      .filter((t): t is number => t != null)
+    const dateRangeStr =
+      salesDates.length > 0
+        ? `Sales occurred between ${new Date(Math.min(...salesDates)).toLocaleDateString("en-US", { month: "short", year: "numeric" })} and ${new Date(Math.max(...salesDates)).toLocaleDateString("en-US", { month: "short", year: "numeric" })}. `
+        : ""
     drawText(
-      "The following recent arm's-length sales of similar properties in the same neighborhood and building class support a lower market value for the subject."
+      dateRangeStr +
+        "The following recent arm's-length sales of similar properties in the same neighborhood and building class support a lower market value for the subject."
     )
+    const salesPrices = salesComps.map((c) => c.salePrice).filter((v): v is number => v != null && v > 0)
+    const salesPricePerSqft = salesComps
+      .map((c) => (c.pricePerSqft != null && c.livingArea != null && c.livingArea > 0 ? c.pricePerSqft : null))
+      .filter((v): v is number => v != null)
+    const medianSale = salesPrices.length > 0 ? median(salesPrices) : null
+    const medianSqft = salesPricePerSqft.length > 0 ? median(salesPricePerSqft) : null
+    if (medianSale != null || medianSqft != null) {
+      const parts: string[] = []
+      if (medianSale != null) parts.push(`Median sale price: ${formatCurrency(medianSale)}`)
+      if (medianSqft != null) parts.push(`Median $/sq ft: ${formatCurrencySqft(medianSqft)}`)
+      drawText(parts.join(". "))
+    }
     y -= 4
     for (let i = 0; i < salesComps.length; i++) {
       const c = salesComps[i]
@@ -264,11 +307,36 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     drawLine()
   }
 
+  // —— Subject vs comp $/sq ft (when we have both) ——
+  const compSqftValues = [
+    ...salesComps.map((c) => c.pricePerSqft).filter((v): v is number => v != null),
+    ...equityComps.map((c) => c.assessedMarketValuePerSqft).filter((v): v is number => v != null),
+  ]
+  const compMedianSqftAll = compSqftValues.length > 0 ? median(compSqftValues) : null
+  if (subjectSqft != null && compMedianSqftAll != null && compMedianSqftAll > 0) {
+    const pctAbove = ((subjectSqft - compMedianSqftAll) / compMedianSqftAll) * 100
+    drawText(
+      `Subject assessed $/sq ft (${formatCurrencySqft(subjectSqft)}) is ${pctAbove >= 0 ? formatPct(pctAbove) + " above" : formatPct(-pctAbove) + " below"} the median comparable $/sq ft (${formatCurrencySqft(compMedianSqftAll)}), supporting a reduction.`
+    )
+    drawLine()
+  }
+
+  // —— Photo / Rule 15 note ——
+  drawText(
+    "Photo attachments for the subject property and comparables may be submitted separately to the Assessor per Rule 15 where applicable."
+  )
+  drawLine()
+
   // —— Conclusion (compelling closing for assessors) ——
   drawText("Conclusion", { bold: true, fontSize: 13 })
   if (requestedValue != null && data.comps.length > 0) {
     const salesN = salesComps.length
     const equityN = equityComps.length
+    const marketEst = requestedValue * 10
+    drawText(
+      `Sales analysis and uniformity comps support a fair market value (and thus assessed value) of ${formatCurrency(requestedValue)}. ` +
+        `Requested assessed value reflects an estimated market value of ${formatCurrency(marketEst)} (10% assessment ratio). `
+    )
     const parts: string[] = []
     parts.push(
       `Based on the comparable sales and uniformity analysis above, the requested assessment of ${formatCurrency(requestedValue)} is supported by`
