@@ -1,12 +1,8 @@
 // POST /api/properties/[id]/refresh - Re-fetch property data from Cook County and update DB
-// Helps when assessment value was missing (e.g. condos) or data is stale
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
-import { getPropertyByPIN } from "@/lib/cook-county"
-import type { AssessmentHistoryRecord } from "@/lib/cook-county/types"
-
-const ASSESSMENT_CHECK_SOURCE = "Cook County Open Data (manual refresh)"
+import { refreshPropertyFromCookCounty } from "@/lib/properties/refresh-from-cook-county"
 
 export async function POST(
   request: NextRequest,
@@ -28,102 +24,19 @@ export async function POST(
       return NextResponse.json({ error: "Property not found" }, { status: 404 })
     }
 
-    const api = await getPropertyByPIN(property.pin)
-    if (!api.success || !api.data) {
+    const result = await refreshPropertyFromCookCounty(id)
+
+    if (!result.success) {
       return NextResponse.json(
-        { error: api.error ?? "Property not found in Cook County records" },
+        { error: result.error },
         { status: 404 }
       )
     }
 
-    const history = (api.data.assessmentHistory ?? []) as AssessmentHistoryRecord[]
-    const sorted = [...history].sort((a, b) => b.year - a.year)
-
-    for (let i = 0; i < sorted.length; i++) {
-      const rec = sorted[i]
-      const prev = sorted[i + 1]
-      const prevVal = prev?.assessedTotalValue ?? null
-      const currVal = rec.assessedTotalValue ?? 0
-      let changeAmount: number | null = null
-      let changePercent: number | null = null
-      if (prevVal != null && prevVal > 0) {
-        changeAmount = currVal - prevVal
-        changePercent = (changeAmount / prevVal) * 100
-      }
-
-      await prisma.assessmentHistory.upsert({
-        where: { propertyId_taxYear: { propertyId: id, taxYear: rec.year } },
-        create: {
-          propertyId: id,
-          taxYear: rec.year,
-          assessmentValue: currVal,
-          landValue: rec.assessedLandValue,
-          improvementValue: rec.assessedBuildingValue,
-          marketValue: rec.marketValue,
-          changeAmount,
-          changePercent,
-          source: ASSESSMENT_CHECK_SOURCE,
-        },
-        update: {
-          assessmentValue: currVal,
-          landValue: rec.assessedLandValue,
-          improvementValue: rec.assessedBuildingValue,
-          marketValue: rec.marketValue,
-          changeAmount,
-          changePercent,
-          source: ASSESSMENT_CHECK_SOURCE,
-        },
-      })
-    }
-
-    const updateData: {
-      lastCheckedAt: Date
-      currentAssessmentValue?: number | null
-      currentLandValue?: number | null
-      currentImprovementValue?: number | null
-      currentMarketValue?: number | null
-      address?: string
-      city?: string
-      zipCode?: string
-      neighborhood?: string | null
-    } = {
-      lastCheckedAt: new Date(),
-    }
-
-    // Set current assessment: use latest year that has a positive value (latest year may be uncertified/0)
-    const latestWithValue = sorted.find((r) => r.assessedTotalValue != null && r.assessedTotalValue > 0)
-    const latestFromHistory = sorted.length > 0 ? sorted[0] : null
-    const sourceRecord = latestWithValue ?? latestFromHistory
-    const assessmentValue =
-      (sourceRecord?.assessedTotalValue != null && sourceRecord.assessedTotalValue > 0)
-        ? sourceRecord.assessedTotalValue
-        : (api.data.assessedTotalValue != null && api.data.assessedTotalValue > 0)
-          ? api.data.assessedTotalValue
-          : sourceRecord?.assessedTotalValue ?? api.data.assessedTotalValue ?? null
-
-    // Always write current* so the property row updates (Prisma Decimal accepts number)
-    updateData.currentAssessmentValue = assessmentValue != null ? assessmentValue : null
-    if (sourceRecord) {
-      updateData.currentLandValue = sourceRecord.assessedLandValue ?? null
-      updateData.currentImprovementValue = sourceRecord.assessedBuildingValue ?? null
-      updateData.currentMarketValue = sourceRecord.marketValue ?? null
-    } else if (api.data.assessedLandValue != null || api.data.assessedBuildingValue != null || api.data.marketValue != null) {
-      updateData.currentLandValue = api.data.assessedLandValue ?? null
-      updateData.currentImprovementValue = api.data.assessedBuildingValue ?? null
-      updateData.currentMarketValue = api.data.marketValue ?? null
-    }
-
-    if (api.data.address) updateData.address = api.data.address
-    if (api.data.city) updateData.city = api.data.city
-    if (api.data.zipCode) updateData.zipCode = api.data.zipCode
-    if (api.data.neighborhood != null) updateData.neighborhood = api.data.neighborhood
-
-    await prisma.property.update({ where: { id }, data: updateData })
-
     return NextResponse.json({
       success: true,
       message: "Property data refreshed",
-      yearsUpdated: sorted.map((r) => r.year),
+      yearsUpdated: result.yearsUpdated,
     })
   } catch (error) {
     console.error("Property refresh error:", error)

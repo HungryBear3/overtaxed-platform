@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth/session'
 import { prisma } from '@/lib/db'
 import { getPropertyByPIN, isValidPIN, normalizePIN, formatPIN } from '@/lib/cook-county'
+import { refreshPropertyFromCookCounty } from '@/lib/properties/refresh-from-cook-county'
 import { z } from 'zod'
 
 // Validation schema for adding a property
@@ -295,26 +296,83 @@ export async function POST(request: NextRequest) {
         },
       })
     }
-    
+
+    // If snapshot had no assessment value but we have history, set currentAssessmentValue from latest non-zero (same logic as refresh)
+    const needsBackfill =
+      (property.currentAssessmentValue == null || Number(property.currentAssessmentValue) === 0) &&
+      propertyData.assessmentHistory &&
+      propertyData.assessmentHistory.length > 0
+    if (needsBackfill) {
+      const sorted = [...propertyData.assessmentHistory].sort((a, b) => b.year - a.year)
+      const latestWithValue = sorted.find(
+        (r) => r.assessedTotalValue != null && r.assessedTotalValue > 0
+      )
+      const sourceRecord = latestWithValue ?? sorted[0]
+      const assessmentValue =
+        sourceRecord?.assessedTotalValue != null && sourceRecord.assessedTotalValue > 0
+          ? sourceRecord.assessedTotalValue
+          : propertyData.assessedTotalValue ?? null
+      if (assessmentValue != null) {
+        await prisma.property.update({
+          where: { id: property.id },
+          data: {
+            currentAssessmentValue: assessmentValue,
+            currentLandValue: sourceRecord?.assessedLandValue ?? propertyData.assessedLandValue ?? undefined,
+            currentImprovementValue: sourceRecord?.assessedBuildingValue ?? propertyData.assessedBuildingValue ?? undefined,
+            currentMarketValue: sourceRecord?.marketValue ?? propertyData.marketValue ?? undefined,
+          },
+        })
+      }
+    }
+
+    // Full refresh from Cook County so user has latest assessment/history without manual refresh
+    const refreshResult = await refreshPropertyFromCookCounty(property.id)
+    if (!refreshResult.success) {
+      console.warn('Property add: post-add refresh failed', { propertyId: property.id, error: refreshResult.error })
+    }
+
+    // Use updated property for response (backfill and/or full refresh may have run)
+    const forResponse = await prisma.property.findUnique({
+      where: { id: property.id },
+      select: {
+        id: true,
+        pin: true,
+        address: true,
+        city: true,
+        state: true,
+        zipCode: true,
+        county: true,
+        neighborhood: true,
+        buildingClass: true,
+        livingArea: true,
+        yearBuilt: true,
+        bedrooms: true,
+        bathrooms: true,
+        currentAssessmentValue: true,
+        currentMarketValue: true,
+      },
+    })
+    const p = forResponse ?? property
+
     return NextResponse.json({
       success: true,
       message: 'Property added successfully',
       property: {
-        id: property.id,
-        pin: formatPIN(property.pin),
-        address: property.address,
-        city: property.city,
-        state: property.state,
-        zipCode: property.zipCode,
-        county: property.county,
-        neighborhood: property.neighborhood,
-        buildingClass: property.buildingClass,
-        livingArea: property.livingArea,
-        yearBuilt: property.yearBuilt,
-        bedrooms: property.bedrooms,
-        bathrooms: property.bathrooms ? Number(property.bathrooms) : null,
-        currentAssessmentValue: property.currentAssessmentValue ? Number(property.currentAssessmentValue) : null,
-        currentMarketValue: property.currentMarketValue ? Number(property.currentMarketValue) : null,
+        id: p.id,
+        pin: formatPIN(p.pin),
+        address: p.address,
+        city: p.city,
+        state: p.state,
+        zipCode: p.zipCode,
+        county: p.county,
+        neighborhood: p.neighborhood,
+        buildingClass: p.buildingClass,
+        livingArea: p.livingArea,
+        yearBuilt: p.yearBuilt,
+        bedrooms: p.bedrooms,
+        bathrooms: p.bathrooms ? Number(p.bathrooms) : null,
+        currentAssessmentValue: p.currentAssessmentValue ? Number(p.currentAssessmentValue) : null,
+        currentMarketValue: p.currentMarketValue ? Number(p.currentMarketValue) : null,
       },
     }, { status: 201 })
   } catch (error) {

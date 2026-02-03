@@ -20,6 +20,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 13. [Stripe Webhook Debugging](#stripe-webhook-debugging)
 14. [Vercel Preview + Stripe Test Mode](#vercel-preview--stripe-test-mode)
 15. [Admin Set-Subscription (Testing)](#admin-set-subscription-testing)
+16. [Property add – assessment backfill](#property-add--assessment-backfill)
 
 ---
 
@@ -465,6 +466,17 @@ const user = { ...session.user, ...freshUser }
 ```
 
 **Lesson:** JWT tokens cache user data at login. For fields that change via webhooks or background jobs (subscription, role), fetch from DB on critical pages.
+
+---
+
+## Property add – assessment backfill
+
+### Issue: New property shows no assessment value; user must manually refresh
+**Context:** For some properties (e.g. condos), the Cook County snapshot returned when adding by PIN has `assessedTotalValue` null or zero, while `assessmentHistory` contains valid prior years. The property was created with null `currentAssessmentValue`, so "Start appeal" was blocked until the user manually ran "Refresh property data."
+
+**Solution:** In `POST /api/properties`, after creating the property and its assessment history, if `currentAssessmentValue` is null or zero but we have assessment history, derive it from the latest non-zero year (same logic as the refresh route) and update the property. The response then reflects the backfilled value so the user can start an appeal without a manual refresh.
+
+**Lesson:** When adding a property, backfill current assessment from history when the snapshot lacks it. Manual refresh remains available for stale data or re-sync.
 
 ---
 

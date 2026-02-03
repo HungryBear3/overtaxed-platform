@@ -46,11 +46,28 @@ export async function GET(
         pin: safeFormatPIN(appeal.property.pin),
         county: appeal.property.county,
         neighborhood: appeal.property.neighborhood,
+        subdivision: appeal.property.subdivision,
+        block: appeal.property.block,
         buildingClass: appeal.property.buildingClass,
+        cdu: appeal.property.cdu,
         livingArea: appeal.property.livingArea,
+        landSize: appeal.property.landSize,
         yearBuilt: appeal.property.yearBuilt,
+        bedrooms: appeal.property.bedrooms,
+        bathrooms: appeal.property.bathrooms
+          ? Number(appeal.property.bathrooms)
+          : null,
         currentAssessmentValue: appeal.property.currentAssessmentValue
           ? Number(appeal.property.currentAssessmentValue)
+          : null,
+        currentLandValue: appeal.property.currentLandValue
+          ? Number(appeal.property.currentLandValue)
+          : null,
+        currentImprovementValue: appeal.property.currentImprovementValue
+          ? Number(appeal.property.currentImprovementValue)
+          : null,
+        currentMarketValue: appeal.property.currentMarketValue
+          ? Number(appeal.property.currentMarketValue)
           : null,
       },
       appeal: {
@@ -72,6 +89,12 @@ export async function GET(
         saleDate: c.saleDate?.toISOString() ?? null,
         livingArea: c.livingArea,
         yearBuilt: c.yearBuilt,
+        pricePerSqft: c.pricePerSqft ? Number(c.pricePerSqft) : null,
+        assessedMarketValue: c.assessedMarketValue ? Number(c.assessedMarketValue) : null,
+        assessedMarketValuePerSqft: c.assessedMarketValuePerSqft
+          ? Number(c.assessedMarketValuePerSqft)
+          : null,
+        distanceFromSubject: c.distanceFromSubject ? Number(c.distanceFromSubject) : null,
       })),
     }
 
