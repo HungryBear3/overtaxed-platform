@@ -21,6 +21,7 @@ export default async function DashboardPage() {
       role: true,
       subscriptionTier: true,
       subscriptionStatus: true,
+      subscriptionQuantity: true,
     },
   })
 
