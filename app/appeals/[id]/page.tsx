@@ -543,6 +543,31 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
 
           {/* Sidebar */}
           <div className="space-y-6">
+            {/* Filing explained — so "Ready to File" vs "Mark as Filed" is clear */}
+            {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING") && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <p className="font-medium text-amber-900 mb-2">How filing works</p>
+                <ul className="text-sm text-amber-800 space-y-2">
+                  <li>
+                    <strong>Ready to File</strong> means your appeal packet (summary + comps) is prepared. It does not submit the appeal for you.
+                  </li>
+                  <li>
+                    You submit the appeal yourself at the{" "}
+                    <a href="https://www.cookcountyassessoril.gov/file-appeal" target="_blank" rel="noopener noreferrer" className="underline font-medium">
+                      Cook County Assessor portal
+                    </a>{" "}
+                    (download your PDF from above first).
+                  </li>
+                  <li>
+                    After you have submitted there, click <strong>Mark as Filed</strong> here so we can track your appeal status.
+                  </li>
+                  <li className="text-amber-700">
+                    Filing on your behalf (Starter+ plans) is coming soon.
+                  </li>
+                </ul>
+              </div>
+            )}
+
             {/* Actions */}
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Actions</h2>

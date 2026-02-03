@@ -36,6 +36,22 @@ export default function NewAppealPage() {
   const [noticeDate, setNoticeDate] = useState("")
   const [filingDeadline, setFilingDeadline] = useState("")
   const [notes, setNotes] = useState("")
+  const [pendingCompsFromProperty, setPendingCompsFromProperty] = useState<{
+    propertyId: string
+    comps: Array<{
+      pin: string
+      address?: string
+      city?: string
+      zipCode?: string
+      neighborhood?: string
+      buildingClass?: string
+      livingArea?: number
+      yearBuilt?: number
+      saleDate?: string
+      salePrice?: number
+      pricePerSqft?: number
+    }>
+  } | null>(null)
   const [townshipInfo, setTownshipInfo] = useState<{
     township: string | null
     noticeDate?: string | null
@@ -45,6 +61,26 @@ export default function NewAppealPage() {
 
   useEffect(() => {
     fetchProperties()
+  }, [])
+
+  // Read comps passed from property comps page (Start Appeal with These Comps)
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    try {
+      const raw = sessionStorage.getItem("overtaxed_appeal_comps")
+      if (!raw) {
+        setPendingCompsFromProperty(null)
+        return
+      }
+      const { propertyId: storedPropertyId, comps: storedComps } = JSON.parse(raw)
+      if (storedPropertyId && Array.isArray(storedComps) && storedComps.length > 0) {
+        setPendingCompsFromProperty({ propertyId: storedPropertyId, comps: storedComps })
+      } else {
+        setPendingCompsFromProperty(null)
+      }
+    } catch {
+      setPendingCompsFromProperty(null)
+    }
   }, [])
 
   // Auto-lookup township and deadlines when property is selected
@@ -149,18 +185,36 @@ export default function NewAppealPage() {
         )
       }
 
+      const body: Record<string, unknown> = {
+        propertyId: selectedPropertyId,
+        taxYear,
+        appealType,
+        originalAssessmentValue: effectiveAssessmentValue,
+        noticeDate: noticeDate ? new Date(noticeDate).toISOString() : undefined,
+        filingDeadline: new Date(filingDeadline).toISOString(),
+        notes: notes || undefined,
+      }
+      const compsToAdd = pendingCompsFromProperty?.propertyId === selectedPropertyId ? pendingCompsFromProperty.comps : []
+      if (compsToAdd.length > 0) {
+        body.comps = compsToAdd.map((c) => ({
+          pin: c.pin,
+          address: c.address ?? "",
+          city: c.city ?? "",
+          zipCode: c.zipCode ?? "",
+          neighborhood: c.neighborhood ?? undefined,
+          buildingClass: c.buildingClass ?? undefined,
+          livingArea: c.livingArea ?? undefined,
+          yearBuilt: c.yearBuilt ?? undefined,
+          salePrice: c.salePrice ?? undefined,
+          saleDate: c.saleDate ?? undefined,
+          pricePerSqft: c.pricePerSqft ?? undefined,
+          compType: "SALES" as const,
+        }))
+      }
       const response = await fetch("/api/appeals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          propertyId: selectedPropertyId,
-          taxYear,
-          appealType,
-          originalAssessmentValue: effectiveAssessmentValue,
-          noticeDate: noticeDate ? new Date(noticeDate).toISOString() : undefined,
-          filingDeadline: new Date(filingDeadline).toISOString(),
-          notes: notes || undefined,
-        }),
+        body: JSON.stringify(body),
       })
 
       const data = await response.json()
@@ -169,6 +223,7 @@ export default function NewAppealPage() {
         throw new Error(data.error || "Failed to create appeal")
       }
 
+      sessionStorage.removeItem("overtaxed_appeal_comps")
       router.push(`/appeals/${data.appeal.id}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create appeal")
@@ -238,13 +293,25 @@ export default function NewAppealPage() {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Comps from property page — only when this property was the one we came from */}
+            {pendingCompsFromProperty && pendingCompsFromProperty.propertyId === selectedPropertyId && pendingCompsFromProperty.comps.length > 0 && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <p className="font-medium text-green-900 mb-1">
+                  {pendingCompsFromProperty.comps.length} comps from the property page will be added to this appeal
+                </p>
+                <p className="text-sm text-green-800">
+                  When you click Create Appeal below, all {pendingCompsFromProperty.comps.length} comparable properties will be attached automatically. Next: set your requested value on the appeal page, then download your summary and forms.
+                </p>
+              </div>
+            )}
+
             {/* Step-by-step guide */}
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
               <p className="font-medium text-blue-900 mb-2">How to start an appeal (3 steps)</p>
               <ol className="text-sm text-blue-800 space-y-1">
                 <li><strong>1. Select a property</strong> below — choose the one you want to appeal</li>
                 <li><strong>2. Choose appeal type</strong> — filing deadline is auto-filled when we find your township, or enter from your notice</li>
-                <li><strong>3. Click Create Appeal</strong> — you can add comparable properties and generate forms after</li>
+                <li><strong>3. Click Create Appeal</strong> — {pendingCompsFromProperty?.propertyId === selectedPropertyId && (pendingCompsFromProperty?.comps.length ?? 0) > 0 ? "your comps will be added automatically, then " : ""}set requested value and download forms on the appeal page</li>
               </ol>
             </div>
 
@@ -535,7 +602,7 @@ export default function NewAppealPage() {
                     </li>
                     <li className="flex gap-2">
                       <span className="bg-blue-200 text-blue-800 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>
-                      <span><strong>Filing:</strong> Submit online via Cook County portal (DIY) or we file on your behalf (Starter+)</span>
+                      <span><strong>Filing:</strong> Submit at the Cook County Assessor portal (we’ll link you). Filing on your behalf (Starter+) is coming soon.</span>
                     </li>
                     <li className="flex gap-2">
                       <span className="bg-blue-200 text-blue-800 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">4</span>

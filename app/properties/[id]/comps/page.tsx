@@ -6,14 +6,18 @@ import Link from "next/link"
 
 interface Comp {
   pin: string
+  pinRaw?: string
   address: string
   city: string
-  state: string
+  state?: string
+  zipCode?: string
   propertyClass: string | null
+  buildingClass?: string | null
   livingArea: number | null
   yearBuilt: number | null
   saleDate: string | null
   salePrice: number | null
+  pricePerSqft?: number | null
   currentAssessmentValue: number | null
   neighborhood: string | null
 }
@@ -44,7 +48,13 @@ export default function PropertyCompsPage() {
         throw new Error(data.error || "Failed to fetch comps")
       }
 
-      setComps(data.comps || [])
+      // API returns buildingClass, zipCode; map for display (state, propertyClass)
+      const list = (data.comps || []).map((c: Record<string, unknown>) => ({
+        ...c,
+        state: (c.state as string) ?? "IL",
+        propertyClass: (c.buildingClass as string) ?? (c.propertyClass as string) ?? null,
+      }))
+      setComps(list)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load comps")
     } finally {
@@ -161,6 +171,9 @@ export default function PropertyCompsPage() {
                         Sale Price
                       </th>
                       <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        $/sq ft
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Assessment
                       </th>
                     </tr>
@@ -191,6 +204,9 @@ export default function PropertyCompsPage() {
                           {formatCurrency(comp.salePrice)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
+                          {comp.pricePerSqft != null ? `$${Math.round(comp.pricePerSqft).toLocaleString()}/sq ft` : "—"}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
                           {formatCurrency(comp.currentAssessmentValue)}
                         </td>
                       </tr>
@@ -200,19 +216,48 @@ export default function PropertyCompsPage() {
               </div>
             </div>
 
-            <div className="mt-6 flex gap-3">
-              <Link
-                href={`/properties/${propertyId}`}
-                className="flex-1 text-center border border-gray-300 text-gray-700 py-3 px-4 rounded-lg font-medium hover:bg-gray-50"
-              >
-                Back to Property
-              </Link>
-              <Link
-                href={`/appeals/new?propertyId=${propertyId}`}
-                className="flex-1 text-center bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700"
-              >
-                Start Appeal with These Comps
-              </Link>
+            <div className="mt-6 space-y-3">
+              <p className="text-sm text-gray-600">
+                When you start an appeal below, all {comps.length} comps will be added to your appeal automatically. Next steps: create the appeal, set your requested value, then download your summary and forms.
+              </p>
+              <div className="flex gap-3">
+                <Link
+                  href={`/properties/${propertyId}`}
+                  className="flex-1 text-center border border-gray-300 text-gray-700 py-3 px-4 rounded-lg font-medium hover:bg-gray-50"
+                >
+                  Back to Property
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      const rawComps = comps.map((c) => ({
+                        pin: c.pinRaw ?? c.pin,
+                        address: c.address,
+                        city: c.city,
+                        zipCode: c.zipCode ?? "",
+                        neighborhood: c.neighborhood ?? undefined,
+                        buildingClass: c.buildingClass ?? c.propertyClass ?? undefined,
+                        livingArea: c.livingArea ?? undefined,
+                        yearBuilt: c.yearBuilt ?? undefined,
+                        saleDate: c.saleDate ?? undefined,
+                        salePrice: c.salePrice ?? undefined,
+                        pricePerSqft: c.pricePerSqft ?? undefined,
+                      }))
+                      sessionStorage.setItem(
+                        "overtaxed_appeal_comps",
+                        JSON.stringify({ propertyId, comps: rawComps })
+                      )
+                      router.push(`/appeals/new?propertyId=${propertyId}`)
+                    } catch (e) {
+                      router.push(`/appeals/new?propertyId=${propertyId}`)
+                    }
+                  }}
+                  className="flex-1 text-center bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700"
+                >
+                  Start Appeal with These Comps
+                </button>
+              </div>
             </div>
           </>
         )}

@@ -450,6 +450,21 @@ export async function searchPropertiesByAddress(
 }
 
 /**
+ * Fetch address (and city, zip) by PIN from Parcel Universe. Used to enrich comps list.
+ */
+async function getAddressByPIN(pin: PIN): Promise<{ address: string; city: string; zipCode: string } | null> {
+  const parcel = await getParcelUniverseByPIN(pin)
+  if (!parcel) return null
+  const p = parcel as unknown as Record<string, unknown>
+  const address =
+    (p.prop_address_full ?? p.property_address ?? p.addr ?? "") as string
+  const city = (p.prop_address_city_name ?? p.property_city ?? p.cook_municipality_name ?? "") as string
+  const zipCode = (p.prop_address_zipcode_1 ?? p.property_zip ?? p.zip_code ?? "") as string
+  if (!address && !city) return null
+  return { address: address || `PIN ${formatPIN(String(p.pin ?? pin))}`, city, zipCode }
+}
+
+/**
  * Fetch improvement characteristics (living area, year built, etc.) by PIN.
  * Tries Single-Family then Multi-Family dataset. Used to enrich sales comps.
  */

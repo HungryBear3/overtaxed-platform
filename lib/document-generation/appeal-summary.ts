@@ -91,13 +91,28 @@ function median(values: number[]): number | null {
   return sorted.length % 2 !== 0 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2
 }
 
+const DEBUG_LOG = (payload: { location: string; message: string; data?: Record<string, unknown>; hypothesisId?: string }) => {
+  // #region agent log
+  fetch("http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, timestamp: Date.now(), sessionId: "debug-session" }),
+  }).catch(() => {})
+  // #endregion
+}
+
 export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise<Uint8Array> {
+  // #region agent log
+  DEBUG_LOG({ location: "appeal-summary.ts:entry", message: "generateAppealSummaryPdf called", hypothesisId: "A" })
+  // #endregion
   const doc = await PDFDocument.create()
   doc.addPage() // pdf-lib starts with 0 pages; getPage(0) requires at least one page
   const font = await doc.embedFont(StandardFonts.Helvetica)
   const fontBold = await doc.embedFont(StandardFonts.HelveticaBold)
   const size = 11
-  const lineHeight = 14
+  const baseLineHeight = 14
+  // Use line height that scales with font size so larger text doesn't overlap (screenshot: 14pt was too small)
+  const lineHeightFor = (fontSize: number) => Math.max(baseLineHeight, Math.ceil(fontSize * 1.4))
   let y = 750
   const margin = 50
   const pageWidth = 612
@@ -120,6 +135,50 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
       ? data.property.currentAssessmentValue / data.property.livingArea
       : null
 
+  // Wrap text to maxWidth so we can advance y by lineHeight per line (avoids overlap)
+  const wrapLines = (text: string, f: ReturnType<typeof doc.embedFont>, fs: number): string[] => {
+    const words = text.split(/\s+/)
+    if (words.length === 0) return [""]
+    const lines: string[] = []
+    let current = ""
+    for (const word of words) {
+      const candidate = current ? current + " " + word : word
+      const w = f.widthOfTextAtSize(candidate, fs)
+      if (w > maxWidth && current) {
+        lines.push(current)
+        current = word
+        // #region agent log
+        const singleWordW = f.widthOfTextAtSize(word, fs)
+        if (singleWordW > maxWidth) {
+          DEBUG_LOG({
+            location: "appeal-summary.ts:wrapLines",
+            message: "single word exceeds maxWidth",
+            data: { wordLen: word.length, singleWordW, maxWidth, hypothesisId: "B" },
+            hypothesisId: "B",
+          })
+        }
+        // #endregion
+      } else {
+        current = candidate
+      }
+    }
+    if (current) {
+      const singleWordW = f.widthOfTextAtSize(current, fs)
+      if (singleWordW > maxWidth) {
+        // #region agent log
+        DEBUG_LOG({
+          location: "appeal-summary.ts:wrapLines",
+          message: "final line (word) exceeds maxWidth",
+          data: { len: current.length, singleWordW, maxWidth, hypothesisId: "B" },
+          hypothesisId: "B",
+        })
+        // #endregion
+      }
+      lines.push(current)
+    }
+    return lines
+  }
+
   const drawText = (
     text: string,
     opts?: { bold?: boolean; fontSize?: number; x?: number }
@@ -127,19 +186,44 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     const f = opts?.bold ? fontBold : font
     const fs = opts?.fontSize ?? size
     const x = opts?.x ?? margin
-    if (y < 50) {
-      doc.addPage()
-      y = 750
+    const lineHeight = lineHeightFor(fs)
+    const lines = wrapLines(text, f, fs)
+    // #region agent log
+    if (lines.length > 1) {
+      DEBUG_LOG({
+        location: "appeal-summary.ts:drawText",
+        message: "multi-line draw",
+        data: { lineCount: lines.length, yBefore: y, fontSize: fs, lineHeight, hypothesisId: "C,D,E" },
+        hypothesisId: "C",
+      })
     }
-    doc.getPage(doc.getPageCount() - 1).drawText(text, {
-      x,
-      y,
-      size: fs,
-      font: f,
-      color: rgb(0.1, 0.1, 0.1),
-      maxWidth,
-    })
-    y -= lineHeight
+    // #endregion
+    const yBeforeDraw = y
+    for (const line of lines) {
+      if (y < 50) {
+        doc.addPage()
+        y = 750
+      }
+      const page = doc.getPage(doc.getPageCount() - 1)
+      page.drawText(line, {
+        x,
+        y,
+        size: fs,
+        font: f,
+        color: rgb(0.1, 0.1, 0.1),
+      })
+      y -= lineHeight
+    }
+    // #region agent log
+    if (lines.length > 1) {
+      DEBUG_LOG({
+        location: "appeal-summary.ts:drawText",
+        message: "multi-line draw done",
+        data: { lineCount: lines.length, yAfter: y, yDelta: yBeforeDraw - y, expectedDelta: lines.length * lineHeight, hypothesisId: "D" },
+        hypothesisId: "D",
+      })
+    }
+    // #endregion
   }
 
   const drawLine = () => {
@@ -154,7 +238,7 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
       thickness: 0.5,
       color: rgb(0.8, 0.8, 0.8),
     })
-    y -= lineHeight
+    y -= lineHeightFor(size)
   }
 
   // —— Title & generated date ——

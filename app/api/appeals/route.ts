@@ -5,6 +5,23 @@ import { prisma } from '@/lib/db'
 import { formatPIN } from '@/lib/cook-county'
 import { z } from 'zod'
 
+const compSchema = z.object({
+  pin: z.string().min(1),
+  address: z.string().default(''),
+  city: z.string().default(''),
+  zipCode: z.string().default(''),
+  neighborhood: z.string().optional().nullable(),
+  buildingClass: z.string().optional().nullable(),
+  livingArea: z.number().optional().nullable(),
+  yearBuilt: z.number().optional().nullable(),
+  bedrooms: z.number().optional().nullable(),
+  bathrooms: z.number().optional().nullable(),
+  salePrice: z.number().optional().nullable(),
+  saleDate: z.string().optional().nullable(),
+  pricePerSqft: z.number().optional().nullable(),
+  compType: z.enum(['SALES', 'EQUITY']).default('SALES'),
+})
+
 // Validation schema for creating an appeal
 const createAppealSchema = z.object({
   propertyId: z.string().min(1, 'Property ID is required'),
@@ -15,6 +32,7 @@ const createAppealSchema = z.object({
   noticeDate: z.string().datetime().optional(),
   filingDeadline: z.string().datetime(),
   notes: z.string().optional(),
+  comps: z.array(compSchema).max(20).optional(),
 })
 
 // GET /api/appeals - List user's appeals
@@ -210,6 +228,36 @@ export async function POST(request: NextRequest) {
         },
       },
     })
+
+    // Attach comparable properties if provided (e.g. from "Start Appeal with These Comps")
+    const compsToAdd = data.comps ?? []
+    for (const c of compsToAdd) {
+      const pin = String(c.pin).replace(/[^0-9]/g, '')
+      if (pin.length !== 14) continue
+      await prisma.comparableProperty.create({
+        data: {
+          propertyId: data.propertyId,
+          compType: c.compType,
+          pin,
+          address: c.address || `PIN ${formatPIN(pin)}`,
+          city: c.city || 'Cook County',
+          state: 'IL',
+          zipCode: c.zipCode || '',
+          county: 'Cook',
+          neighborhood: c.neighborhood ?? null,
+          buildingClass: c.buildingClass ?? null,
+          livingArea: c.livingArea ?? null,
+          yearBuilt: c.yearBuilt ?? null,
+          bedrooms: c.bedrooms ?? null,
+          bathrooms: c.bathrooms ?? null,
+          salePrice: c.salePrice ?? null,
+          saleDate: c.saleDate ? new Date(c.saleDate) : null,
+          pricePerSqft: c.pricePerSqft ?? null,
+          dataSource: 'Cook County Open Data',
+          appeals: { connect: { id: appeal.id } },
+        },
+      })
+    }
 
     return NextResponse.json({
       success: true,

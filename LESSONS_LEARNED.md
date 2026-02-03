@@ -21,6 +21,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 14. [Vercel Preview + Stripe Test Mode](#vercel-preview--stripe-test-mode)
 15. [Admin Set-Subscription (Testing)](#admin-set-subscription-testing)
 16. [Property add – assessment backfill](#property-add--assessment-backfill)
+17. [Comps-to-appeal flow, PDF wrap, and filing UX](#comps-to-appeal-flow-pdf-wrap-and-filing-ux)
 
 ---
 
@@ -480,6 +481,34 @@ const user = { ...session.user, ...freshUser }
 
 ---
 
+## Comps-to-appeal flow, PDF wrap, and filing UX
+
+### Comps from property page → new appeal (auto-attach)
+**Context:** Users expected "Start Appeal with These Comps" to use all shown comps. Previously they landed on the new appeal page and still had to add comps manually.
+
+**Solution:**
+- **Property comps page** (`/properties/[id]/comps`): "Start Appeal with These Comps" is a button (not a link) that writes `{ propertyId, comps }` to `sessionStorage` (key: `overtaxed_appeal_comps`) then navigates to `/appeals/new?propertyId=...`. Copy clarifies: "When you start an appeal below, all X comps will be added automatically."
+- **New appeal page** (`/appeals/new`): On load, read `sessionStorage`; when the selected property matches the stored `propertyId`, show a green notice ("X comps from the property page will be added to this appeal") and include the comps array in the POST body when creating the appeal. After successful create, clear `sessionStorage`.
+- **POST /api/appeals**: Schema accepts optional `comps` array (same shape as POST `/api/appeals/[id]/comps`, max 20). After creating the appeal, create `ComparableProperty` records and connect them to the new appeal (all as `SALES`).
+
+**Lesson:** Use sessionStorage to pass comps across the navigation so the user doesn’t re-select; only attach comps when the selected property matches the stored one.
+
+### PDF appeal summary – text overlap
+**Context:** Long lines in the appeal summary PDF were drawn with `drawText(..., { maxWidth })`. pdf-lib wraps visually but we only decremented `y` by a fixed `lineHeight` once, so wrapped lines overlapped.
+
+**Solution:** In `lib/document-generation/appeal-summary.ts`, add a `wrapLines(text, font, fontSize)` helper that splits text into words and builds lines that fit within `maxWidth` using `font.widthOfTextAtSize()`. Then draw each line with `drawText(line)` (no maxWidth) and decrement `y` by `lineHeight` per line.
+
+**Lesson:** When using pdf-lib with word wrap, either measure wrapped height or wrap manually and advance `y` per line to avoid overlap.
+
+### Ready to File vs Mark as Filed
+**Context:** Users thought "Ready to File" would submit the appeal. The platform does not submit to the county; users must file at the Cook County Assessor portal. "Mark as Filed" is for updating our status after they’ve filed there.
+
+**Solution:** On the appeal detail page, when status is DRAFT or PENDING_FILING, show an amber "How filing works" box: (1) Ready to File = packet prepared, does not submit; (2) User submits at [Cook County Assessor portal](https://www.cookcountyassessoril.gov/file-appeal); (3) After submitting there, click Mark as Filed here to track status; (4) "Filing on your behalf (Starter+) is coming soon." New appeal page step 3 copy updated to: "Submit at the Cook County Assessor portal (we'll link you). Filing on your behalf (Starter+) is coming soon."
+
+**Lesson:** Make it explicit that we prepare the packet and they file at the county; "Mark as Filed" is a status update in our app, not the actual filing.
+
+---
+
 ## Stripe Webhook Debugging
 
 ### Issue: Subscription doesn't update after checkout
@@ -590,4 +619,4 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 ---
 
-**Last Updated:** January 29, 2026
+**Last Updated:** January 28, 2026
