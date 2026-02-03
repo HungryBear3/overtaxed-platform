@@ -16,6 +16,7 @@ interface Property {
   taxCode: string | null
   taxRate: number | null
   stateEqualizer: number | null
+  assessmentHistory?: Array<{ taxYear: number; assessmentValue: number }>
 }
 
 export default function NewAppealPage() {
@@ -119,6 +120,15 @@ export default function NewAppealPage() {
 
   const selectedProperty = properties.find((p) => p.id === selectedPropertyId)
 
+  // Assessment for appeal: current value or history for selected tax year (condos often have value in history only)
+  function getAssessmentForAppeal(prop: Property | undefined): number | null {
+    if (!prop) return null
+    if (prop.currentAssessmentValue && prop.currentAssessmentValue > 0) return prop.currentAssessmentValue
+    const hist = prop.assessmentHistory?.find((h) => h.taxYear === taxYear)
+    return hist?.assessmentValue ?? null
+  }
+  const effectiveAssessmentValue = getAssessmentForAppeal(selectedProperty)
+
   const ASSESSOR_CALENDAR_URL = "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
 
   async function handleSubmit(e: React.FormEvent) {
@@ -133,8 +143,10 @@ export default function NewAppealPage() {
       if (!filingDeadline) {
         throw new Error("Filing deadline is required")
       }
-      if (!selectedProperty?.currentAssessmentValue) {
-        throw new Error("Selected property has no assessment value")
+      if (!effectiveAssessmentValue || effectiveAssessmentValue <= 0) {
+        throw new Error(
+          "No assessment value found for this property and tax year. Try refreshing property data from the property page first."
+        )
       }
 
       const response = await fetch("/api/appeals", {
@@ -144,7 +156,7 @@ export default function NewAppealPage() {
           propertyId: selectedPropertyId,
           taxYear,
           appealType,
-          originalAssessmentValue: selectedProperty.currentAssessmentValue,
+          originalAssessmentValue: effectiveAssessmentValue,
           noticeDate: noticeDate ? new Date(noticeDate).toISOString() : undefined,
           filingDeadline: new Date(filingDeadline).toISOString(),
           notes: notes || undefined,
@@ -176,10 +188,10 @@ export default function NewAppealPage() {
 
   // Calculate potential savings
   function calculatePotentialSavings(reductionPercent: number): number | null {
-    if (!selectedProperty?.currentAssessmentValue) return null
-    const taxRate = selectedProperty.taxRate || 0.075
-    const equalizer = selectedProperty.stateEqualizer || 3.0355
-    return selectedProperty.currentAssessmentValue * reductionPercent * equalizer * taxRate
+    if (!effectiveAssessmentValue) return null
+    const taxRate = selectedProperty?.taxRate || 0.075
+    const equalizer = selectedProperty?.stateEqualizer || 3.0355
+    return effectiveAssessmentValue * reductionPercent * equalizer * taxRate
   }
 
   if (loading) {
@@ -424,6 +436,11 @@ export default function NewAppealPage() {
                             <>
                               Your township: <strong>{townshipInfo.township}</strong>
                               {townshipInfo.lastFileDate && " — deadline auto-filled above."}{" "}
+                              {townshipInfo.noticeDate && townshipInfo.lastFileDate && taxYear === 2025 && (
+                                <span className="block mt-2 text-amber-800 font-medium">
+                                  ✓ Synced with Cook County calendar: Notice {new Date(townshipInfo.noticeDate).toLocaleDateString("en-US")}, Last file {new Date(townshipInfo.lastFileDate).toLocaleDateString("en-US")}
+                                </span>
+                              )}
                             </>
                           ) : (
                             "Township could not be looked up. "
@@ -531,11 +548,21 @@ export default function NewAppealPage() {
 
             {/* Submit */}
             <div className="flex flex-col gap-3">
-              {(!selectedPropertyId || !filingDeadline) && !submitting && (
+              {(!selectedPropertyId || !filingDeadline || !effectiveAssessmentValue) && !submitting && (
                 <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                   {!selectedPropertyId
                     ? "Select a property above to enable Create Appeal."
-                    : "Enter a filing deadline (or notice date for auto-calculation) to enable Create Appeal."}
+                    : !effectiveAssessmentValue
+                      ? (selectedPropertyId && (
+                          <>
+                            No assessment value for this property and tax year.{" "}
+                            <Link href={`/properties/${selectedPropertyId}/refresh`} className="font-medium underline hover:text-amber-800">
+                              Refresh property data
+                            </Link>
+                            {" "}or try a different tax year.
+                          </>
+                        )) || "No assessment value. Select a property and refresh its data."
+                      : "Enter a filing deadline (or notice date for auto-calculation) to enable Create Appeal."}
                 </p>
               )}
               <div className="flex gap-3">
@@ -547,7 +574,7 @@ export default function NewAppealPage() {
                 </Link>
                 <button
                   type="submit"
-                  disabled={!selectedPropertyId || !filingDeadline || submitting}
+                  disabled={!selectedPropertyId || !filingDeadline || !effectiveAssessmentValue || submitting}
                   className="flex-1 bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {submitting ? (

@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
       include: {
         assessmentHistory: {
           orderBy: { taxYear: 'desc' },
-          take: 1,
+          take: 15,
         },
         appeals: {
           orderBy: { createdAt: 'desc' },
@@ -66,6 +66,11 @@ export async function GET(request: NextRequest) {
         monitoringEnabled: p.monitoringEnabled,
         lastCheckedAt: p.lastCheckedAt,
         createdAt: p.createdAt,
+        // Assessment history (for appeal form: use value for selected tax year when currentAssessmentValue is null)
+        assessmentHistory: p.assessmentHistory.map((ah) => ({
+          taxYear: ah.taxYear,
+          assessmentValue: Number(ah.assessmentValue),
+        })),
         // Latest assessment
         latestAssessment: p.assessmentHistory[0] ? {
           taxYear: p.assessmentHistory[0].taxYear,

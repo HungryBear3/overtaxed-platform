@@ -34,13 +34,15 @@ export interface AppealSummaryData {
   }>
 }
 
-function formatCurrency(n: number | null): string {
+function formatCurrency(n: number | null | unknown): string {
   if (n == null) return "—"
+  const num = typeof n === "number" ? n : Number(n)
+  if (Number.isNaN(num)) return "—"
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
     maximumFractionDigits: 0,
-  }).format(n)
+  }).format(num)
 }
 
 function formatDate(s: string | null): string {

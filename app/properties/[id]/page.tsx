@@ -446,7 +446,7 @@ export default function PropertyDetailPage({ params }: { params: Promise<{ id: s
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold text-gray-900">Appeals</h2>
             <Link
-              href={`/properties/${property.id}/appeal`}
+              href={`/appeals/new?propertyId=${property.id}`}
               className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
