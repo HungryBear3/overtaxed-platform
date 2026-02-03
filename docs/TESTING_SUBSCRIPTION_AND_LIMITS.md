@@ -1,5 +1,22 @@
 # Testing: Subscription Tiers and Property Limits
 
+## Fix P2022: "The column does not exist in the current database"
+
+If you see this error at runtime, the production (or current) database is missing the new User columns used for slot capping and Stripe: `subscriptionQuantity`, `stripeCustomerId`, `stripeSubscriptionId`.
+
+**Run the migration once** against your database (e.g. Supabase SQL Editor, or `psql` with your `DATABASE_URL`):
+
+1. Open `prisma/migrations/add_user_billing_columns.sql` in this repo.
+2. Execute its contents in your database. The script is idempotent (safe to run multiple times).
+
+Alternatively, with Prisma and your production `DATABASE_URL` set:
+
+- `npx prisma db push` — pushes schema changes (adds missing columns).
+
+After the migration, restart or redeploy so the app uses the updated schema.
+
+---
+
 ## Reducing active subscriptions for a test account
 
 Use the **admin set-subscription** endpoint to change a user's tier or status without going through Stripe. This lets you downgrade a test account (e.g. from PORTFOLIO to STARTER) or simulate cancelled/inactive.
