@@ -90,20 +90,23 @@ export async function POST(
       lastCheckedAt: new Date(),
     }
 
-    // Set current assessment from latest history year, or fallback to API snapshot (assessedTotalValue)
+    // Set current assessment: use latest year that has a positive value (latest year may be uncertified/0)
+    const latestWithValue = sorted.find((r) => r.assessedTotalValue != null && r.assessedTotalValue > 0)
     const latestFromHistory = sorted.length > 0 ? sorted[0] : null
+    const sourceRecord = latestWithValue ?? latestFromHistory
     const assessmentValue =
-      (latestFromHistory?.assessedTotalValue != null && latestFromHistory.assessedTotalValue > 0)
-        ? latestFromHistory.assessedTotalValue
+      (sourceRecord?.assessedTotalValue != null && sourceRecord.assessedTotalValue > 0)
+        ? sourceRecord.assessedTotalValue
         : (api.data.assessedTotalValue != null && api.data.assessedTotalValue > 0)
           ? api.data.assessedTotalValue
-          : latestFromHistory?.assessedTotalValue ?? api.data.assessedTotalValue ?? null
+          : sourceRecord?.assessedTotalValue ?? api.data.assessedTotalValue ?? null
 
-    updateData.currentAssessmentValue = assessmentValue ?? null
-    if (latestFromHistory) {
-      updateData.currentLandValue = latestFromHistory.assessedLandValue ?? null
-      updateData.currentImprovementValue = latestFromHistory.assessedBuildingValue ?? null
-      updateData.currentMarketValue = latestFromHistory.marketValue ?? null
+    // Always write current* so the property row updates (Prisma Decimal accepts number)
+    updateData.currentAssessmentValue = assessmentValue != null ? assessmentValue : null
+    if (sourceRecord) {
+      updateData.currentLandValue = sourceRecord.assessedLandValue ?? null
+      updateData.currentImprovementValue = sourceRecord.assessedBuildingValue ?? null
+      updateData.currentMarketValue = sourceRecord.marketValue ?? null
     } else if (api.data.assessedLandValue != null || api.data.assessedBuildingValue != null || api.data.marketValue != null) {
       updateData.currentLandValue = api.data.assessedLandValue ?? null
       updateData.currentImprovementValue = api.data.assessedBuildingValue ?? null

@@ -50,6 +50,21 @@ export async function GET(
         { status: 404 }
       )
     }
+
+    // Use latest assessment from history when property row has no current assessment (e.g. after refresh)
+    const latestFromHistory = property.assessmentHistory[0]
+    const currentAssessmentValue = property.currentAssessmentValue
+      ? Number(property.currentAssessmentValue)
+      : (latestFromHistory ? Number(latestFromHistory.assessmentValue) : null)
+    const currentLandValue = property.currentLandValue
+      ? Number(property.currentLandValue)
+      : (latestFromHistory?.landValue ? Number(latestFromHistory.landValue) : null)
+    const currentImprovementValue = property.currentImprovementValue
+      ? Number(property.currentImprovementValue)
+      : (latestFromHistory?.improvementValue ? Number(latestFromHistory.improvementValue) : null)
+    const currentMarketValue = property.currentMarketValue
+      ? Number(property.currentMarketValue)
+      : (latestFromHistory?.marketValue ? Number(latestFromHistory.marketValue) : null)
     
     return NextResponse.json({
       success: true,
@@ -74,10 +89,10 @@ export async function GET(
         exteriorWall: property.exteriorWall,
         roofType: property.roofType,
         heatingType: property.heatingType,
-        currentAssessmentValue: property.currentAssessmentValue ? Number(property.currentAssessmentValue) : null,
-        currentLandValue: property.currentLandValue ? Number(property.currentLandValue) : null,
-        currentImprovementValue: property.currentImprovementValue ? Number(property.currentImprovementValue) : null,
-        currentMarketValue: property.currentMarketValue ? Number(property.currentMarketValue) : null,
+        currentAssessmentValue,
+        currentLandValue,
+        currentImprovementValue,
+        currentMarketValue,
         taxCode: property.taxCode,
         taxRate: property.taxRate ? Number(property.taxRate) : null,
         stateEqualizer: property.stateEqualizer ? Number(property.stateEqualizer) : null,

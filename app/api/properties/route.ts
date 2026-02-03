@@ -47,7 +47,15 @@ export async function GET(request: NextRequest) {
     
     return NextResponse.json({
       success: true,
-      properties: properties.map((p) => ({
+      properties: properties.map((p) => {
+        const latestFromHistory = p.assessmentHistory[0]
+        const currentAssessmentValue = p.currentAssessmentValue
+          ? Number(p.currentAssessmentValue)
+          : (latestFromHistory ? Number(latestFromHistory.assessmentValue) : null)
+        const currentMarketValue = p.currentMarketValue
+          ? Number(p.currentMarketValue)
+          : (latestFromHistory?.marketValue ? Number(latestFromHistory.marketValue) : null)
+        return {
         id: p.id,
         pin: formatPIN(p.pin),
         address: p.address,
@@ -61,8 +69,8 @@ export async function GET(request: NextRequest) {
         yearBuilt: p.yearBuilt,
         bedrooms: p.bedrooms,
         bathrooms: p.bathrooms ? Number(p.bathrooms) : null,
-        currentAssessmentValue: p.currentAssessmentValue ? Number(p.currentAssessmentValue) : null,
-        currentMarketValue: p.currentMarketValue ? Number(p.currentMarketValue) : null,
+        currentAssessmentValue,
+        currentMarketValue,
         monitoringEnabled: p.monitoringEnabled,
         lastCheckedAt: p.lastCheckedAt,
         createdAt: p.createdAt,
@@ -85,7 +93,8 @@ export async function GET(request: NextRequest) {
           status: p.appeals[0].status,
           outcome: p.appeals[0].outcome,
         } : null,
-      })),
+      }
+      }),
     })
   } catch (error) {
     console.error('Error fetching properties:', error)
