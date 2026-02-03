@@ -35,12 +35,53 @@ export default function NewAppealPage() {
   const [noticeDate, setNoticeDate] = useState("")
   const [filingDeadline, setFilingDeadline] = useState("")
   const [notes, setNotes] = useState("")
+  const [townshipInfo, setTownshipInfo] = useState<{
+    township: string | null
+    noticeDate?: string | null
+    lastFileDate?: string | null
+    calendarUrl?: string
+  } | null>(null)
 
   useEffect(() => {
     fetchProperties()
   }, [])
 
-  // Auto-calculate filing deadline (30 days from notice date)
+  // Auto-lookup township and deadlines when property is selected
+  useEffect(() => {
+    if (!selectedPropertyId || !properties.length) {
+      setTownshipInfo(null)
+      return
+    }
+    const prop = properties.find((p) => p.id === selectedPropertyId)
+    if (!prop?.pin) {
+      setTownshipInfo(null)
+      return
+    }
+    let cancelled = false
+    const pinRaw = prop.pin.replace(/\D/g, "")
+    fetch(`/api/properties/lookup-deadline?pin=${encodeURIComponent(pinRaw)}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return
+        setTownshipInfo({
+          township: d.township ?? null,
+          noticeDate: d.noticeDate ?? null,
+          lastFileDate: d.lastFileDate ?? null,
+          calendarUrl: d.calendarUrl,
+        })
+        // Auto-fill filing deadline from Assessor calendar (lastFileDate is the actual deadline)
+        // Don't set noticeDate — that would trigger the 30-day calc and overwrite with notice+30
+        if (d.lastFileDate && taxYear === 2025) {
+          setFilingDeadline(d.lastFileDate)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setTownshipInfo({ township: null })
+      })
+    return () => { cancelled = true }
+  }, [selectedPropertyId, properties])
+
+  // Auto-calculate filing deadline (30 days from notice date) when user manually changes notice
   useEffect(() => {
     if (noticeDate) {
       const notice = new Date(noticeDate)
@@ -77,6 +118,8 @@ export default function NewAppealPage() {
   }
 
   const selectedProperty = properties.find((p) => p.id === selectedPropertyId)
+
+  const ASSESSOR_CALENDAR_URL = "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -183,6 +226,16 @@ export default function NewAppealPage() {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Step-by-step guide */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <p className="font-medium text-blue-900 mb-2">How to start an appeal (3 steps)</p>
+              <ol className="text-sm text-blue-800 space-y-1">
+                <li><strong>1. Select a property</strong> below — choose the one you want to appeal</li>
+                <li><strong>2. Choose appeal type</strong> — filing deadline is auto-filled when we find your township, or enter from your notice</li>
+                <li><strong>3. Click Create Appeal</strong> — you can add comparable properties and generate forms after</li>
+              </ol>
+            </div>
+
             {error && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
                 {error}
@@ -191,7 +244,8 @@ export default function NewAppealPage() {
 
             {/* Property Selection */}
             <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Select Property</h2>
+              <h2 className="text-lg font-semibold text-gray-900 mb-1">Step 1: Select Property</h2>
+              <p className="text-sm text-gray-500 mb-4">Choose the property you want to appeal — this must be selected before you can create an appeal.</p>
               <div className="space-y-3">
                 {properties.map((property) => (
                   <label
@@ -258,7 +312,8 @@ export default function NewAppealPage() {
 
             {/* Appeal Details */}
             <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Appeal Details</h2>
+              <h2 className="text-lg font-semibold text-gray-900 mb-1">Step 2: Appeal Details</h2>
+              <p className="text-sm text-gray-500 mb-4">Select tax year, appeal type, and enter your filing deadline (required).</p>
               
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -351,29 +406,44 @@ export default function NewAppealPage() {
                 </div>
               </div>
 
-              {/* Township Info */}
+              {/* Township / Deadline — auto-looked up when property selected */}
               {selectedProperty && (
                 <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-4">
                   <div className="flex gap-3">
                     <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
-                    <div className="text-sm">
-                      <p className="font-medium text-amber-800">Filing Deadline Help</p>
+                    <div className="text-sm flex-1">
+                      <p className="font-medium text-amber-800">Filing Deadline</p>
                       <p className="text-amber-700 mt-1">
-                        Cook County reassesses properties on a 3-year cycle by township. Your deadline depends on when your township is reassessed.
+                        Cook County reassesses on a 3-year cycle by township. We look up your township from your PIN and auto-fill the deadline when available (2025 calendar).
                       </p>
+                      {townshipInfo ? (
+                        <p className="text-amber-700 mt-2">
+                          {townshipInfo.township ? (
+                            <>
+                              Your township: <strong>{townshipInfo.township}</strong>
+                              {townshipInfo.lastFileDate && " — deadline auto-filled above."}{" "}
+                            </>
+                          ) : (
+                            "Township could not be looked up. "
+                          )}
+                          <a
+                            href={townshipInfo.calendarUrl || ASSESSOR_CALENDAR_URL}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline"
+                          >
+                            View appeal calendar by township
+                          </a>
+                        </p>
+                      ) : (
+                        <p className="text-amber-700 mt-2">
+                          Looking up township…
+                        </p>
+                      )}
                       <p className="text-amber-700 mt-2">
-                        <strong>Don&apos;t have your notice?</strong> Check the{" "}
-                        <a 
-                          href="https://www.cookcountyassessor.com/appeals" 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline"
-                        >
-                          Cook County Assessor&apos;s website
-                        </a>
-                        {" "}for current appeal windows, or enter an estimated deadline (typically 30 days from notice mail date).
+                        Or enter your notice date (30-day deadline auto-calculates) or check your notice letter.
                       </p>
                     </div>
                   </div>
@@ -460,19 +530,27 @@ export default function NewAppealPage() {
             </div>
 
             {/* Submit */}
-            <div className="flex gap-3">
-              <Link
-                href="/appeals"
-                className="flex-1 text-center border border-gray-300 text-gray-700 py-3 px-4 rounded-lg font-medium hover:bg-gray-50"
-              >
-                Cancel
-              </Link>
-              <button
-                type="submit"
-                disabled={!selectedPropertyId || !filingDeadline || submitting}
-                className="flex-1 bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                {submitting ? (
+            <div className="flex flex-col gap-3">
+              {(!selectedPropertyId || !filingDeadline) && !submitting && (
+                <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  {!selectedPropertyId
+                    ? "Select a property above to enable Create Appeal."
+                    : "Enter a filing deadline (or notice date for auto-calculation) to enable Create Appeal."}
+                </p>
+              )}
+              <div className="flex gap-3">
+                <Link
+                  href="/appeals"
+                  className="flex-1 text-center border border-gray-300 text-gray-700 py-3 px-4 rounded-lg font-medium hover:bg-gray-50"
+                >
+                  Cancel
+                </Link>
+                <button
+                  type="submit"
+                  disabled={!selectedPropertyId || !filingDeadline || submitting}
+                  className="flex-1 bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {submitting ? (
                   <>
                     <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -484,6 +562,7 @@ export default function NewAppealPage() {
                   "Create Appeal"
                 )}
               </button>
+              </div>
             </div>
           </form>
         )}

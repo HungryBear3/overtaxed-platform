@@ -4,6 +4,7 @@ import { useState, useEffect, use } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { AddCompsDialog } from "@/components/appeals/add-comps-dialog"
+import { PdfDownloadButton } from "@/components/appeals/pdf-download-button"
 
 interface Appeal {
   id: string
@@ -462,7 +463,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
 
             {/* Comparable Properties */}
             <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-semibold text-gray-900">
                   Comparable Properties ({appeal.compsUsed.length})
                 </h2>
@@ -472,6 +473,12 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                 >
                   + Add Comps
                 </button>
+              </div>
+              <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900">
+                <p className="font-medium mb-1">How to choose comps</p>
+                <p>
+                  Add <strong>5–8 comparable sales</strong> that support a lower valuation. Rule 15 requires 3+ for sales analysis. Best comps: <strong>similar size</strong> (±25% living area), <strong>recent sale</strong> (within 2 years), same neighborhood, and <strong>lower price per sqft</strong> than your property — these strengthen your case.
+                </p>
               </div>
               {showAddComps && (
                 <AddCompsDialog
@@ -540,16 +547,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Actions</h2>
               <div className="space-y-3">
-                <a
-                  href={`/api/appeals/${appeal.id}/download-summary`}
-                  download
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 hover:bg-gray-50"
-                >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  Download summary PDF
-                </a>
+                <PdfDownloadButton appealId={appeal.id} />
                 {appeal.status === "DRAFT" && (
                   <>
                     <button
@@ -642,16 +640,11 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
               </dl>
             </div>
 
-            {/* Documents */}
+            {/* Documents - upload not available in MVP */}
             <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-gray-900">Documents</h2>
-                <button className="text-sm text-blue-600 hover:text-blue-700">
-                  + Upload
-                </button>
-              </div>
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Documents</h2>
               {appeal.documents.length === 0 ? (
-                <p className="text-sm text-gray-500">No documents uploaded yet.</p>
+                <p className="text-sm text-gray-500">Document upload will be available in a future update. For now, use the Download summary PDF to get your evidence packet.</p>
               ) : (
                 <ul className="space-y-2">
                   {appeal.documents.map((doc) => (

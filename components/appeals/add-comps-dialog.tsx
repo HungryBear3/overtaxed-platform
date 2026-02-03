@@ -119,6 +119,15 @@ export function AddCompsDialog({
           </Button>
         </CardHeader>
         <CardContent className="flex-1 overflow-y-auto p-4">
+          <div className="mb-4 rounded-lg bg-amber-50 border-2 border-amber-300 px-4 py-4 text-sm text-amber-900 shrink-0">
+            <p className="font-semibold mb-2">How many comps to add?</p>
+            <p className="text-amber-800 mb-2">
+              <strong>5–8 strong comps</strong> is usually best — you don&apos;t need all 20. Rule 15 requires at least 3 for sales analysis.
+            </p>
+            <p className="text-amber-800">
+              <strong>Best comps:</strong> Recent sales (within 2 years), similar size (±25% living area), same neighborhood. Pick the ones with <strong>lower price per sqft</strong> than your property — they support a lower assessment.
+            </p>
+          </div>
           {error && (
             <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
