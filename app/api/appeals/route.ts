@@ -163,7 +163,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Check if appeal already exists for this property/year/type
+    // Check if appeal already exists for this property/year/type (allow new if existing is WITHDRAWN)
     const existingAppeal = await prisma.appeal.findFirst({
       where: {
         propertyId: data.propertyId,
@@ -172,7 +172,7 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    if (existingAppeal) {
+    if (existingAppeal && existingAppeal.status !== 'WITHDRAWN') {
       return NextResponse.json(
         { 
           error: `An appeal already exists for this property for tax year ${data.taxYear}`,

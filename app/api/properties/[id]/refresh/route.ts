@@ -78,7 +78,7 @@ export async function POST(
 
     const updateData: {
       lastCheckedAt: Date
-      currentAssessmentValue?: number
+      currentAssessmentValue?: number | null
       currentLandValue?: number | null
       currentImprovementValue?: number | null
       currentMarketValue?: number | null
@@ -90,12 +90,24 @@ export async function POST(
       lastCheckedAt: new Date(),
     }
 
-    if (sorted.length > 0) {
-      const latest = sorted[0]
-      updateData.currentAssessmentValue = latest.assessedTotalValue ?? undefined
-      updateData.currentLandValue = latest.assessedLandValue ?? null
-      updateData.currentImprovementValue = latest.assessedBuildingValue ?? null
-      updateData.currentMarketValue = latest.marketValue ?? null
+    // Set current assessment from latest history year, or fallback to API snapshot (assessedTotalValue)
+    const latestFromHistory = sorted.length > 0 ? sorted[0] : null
+    const assessmentValue =
+      (latestFromHistory?.assessedTotalValue != null && latestFromHistory.assessedTotalValue > 0)
+        ? latestFromHistory.assessedTotalValue
+        : (api.data.assessedTotalValue != null && api.data.assessedTotalValue > 0)
+          ? api.data.assessedTotalValue
+          : latestFromHistory?.assessedTotalValue ?? api.data.assessedTotalValue ?? null
+
+    updateData.currentAssessmentValue = assessmentValue ?? null
+    if (latestFromHistory) {
+      updateData.currentLandValue = latestFromHistory.assessedLandValue ?? null
+      updateData.currentImprovementValue = latestFromHistory.assessedBuildingValue ?? null
+      updateData.currentMarketValue = latestFromHistory.marketValue ?? null
+    } else if (api.data.assessedLandValue != null || api.data.assessedBuildingValue != null || api.data.marketValue != null) {
+      updateData.currentLandValue = api.data.assessedLandValue ?? null
+      updateData.currentImprovementValue = api.data.assessedBuildingValue ?? null
+      updateData.currentMarketValue = api.data.marketValue ?? null
     }
 
     if (api.data.address) updateData.address = api.data.address

@@ -592,6 +592,15 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                     Withdraw Appeal
                   </button>
                 )}
+                {appeal.status === "WITHDRAWN" && (
+                  <button
+                    onClick={() => updateStatus("DRAFT")}
+                    disabled={updating}
+                    className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    Reopen as draft
+                  </button>
+                )}
               </div>
             </div>
 

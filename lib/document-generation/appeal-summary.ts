@@ -56,6 +56,7 @@ function formatDate(s: string | null): string {
 
 export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
+  doc.addPage() // pdf-lib starts with 0 pages; getPage(0) requires at least one page
   const font = await doc.embedFont(StandardFonts.Helvetica)
   const fontBold = await doc.embedFont(StandardFonts.HelveticaBold)
   const size = 11
