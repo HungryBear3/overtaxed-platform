@@ -52,7 +52,7 @@ const plans: Array<{
     priceLabel: `$${GROWTH_PRICE_PER_PROPERTY}/property/year`,
     propertyLimit: `${GROWTH_MIN_PROPERTIES}–${GROWTH_MAX_PROPERTIES} properties`,
     pricingNote: "Per-property pricing.",
-    exampleTotals: `3 = $${growthPriceForProperties(3)}/yr · 5 = $${growthPriceForProperties(5)}/yr · 9 = $${growthPriceForProperties(9)}/yr`,
+    exampleTotals: `1 = $${growthPriceForProperties(1)}/yr · 5 = $${growthPriceForProperties(5)}/yr · 9 = $${growthPriceForProperties(9)}/yr`,
     features: [
       `Full automation for ${GROWTH_MIN_PROPERTIES}–${GROWTH_MAX_PROPERTIES} properties`,
       "Comparable property analysis",
@@ -67,7 +67,7 @@ const plans: Array<{
     priceLabel: `$${PORTFOLIO_PRICE_PER_PROPERTY}/property/year`,
     propertyLimit: `${PORTFOLIO_MIN_PROPERTIES}–${PORTFOLIO_MAX_PROPERTIES} properties`,
     pricingNote: "Per-property pricing.",
-    exampleTotals: `10 = $${portfolioPriceForProperties(10)}/yr · 15 = $${portfolioPriceForProperties(15)}/yr · 20 = $${portfolioPriceForProperties(20)}/yr`,
+    exampleTotals: `1 = $${portfolioPriceForProperties(1)}/yr · 10 = $${portfolioPriceForProperties(10)}/yr · 20 = $${portfolioPriceForProperties(20)}/yr`,
     features: [
       `Full automation for ${PORTFOLIO_MIN_PROPERTIES}–${PORTFOLIO_MAX_PROPERTIES} properties`,
       "Comparable property analysis",
@@ -95,34 +95,34 @@ function isUpgradeFrom(currentTier: string | null, targetPlan: "STARTER" | "GROW
 
 const RANGE_LABELS: PlanRange[] = ["1-2", "3-9", "10-20", "20+"]
 
-/** Slot options shown in UI: 1–2, 1–7 (Growth), or 1–11 (Portfolio). Tier is based on total properties. */
+/** Quantity = property count. Growth 1–9, Portfolio 1–20, Starter 1–2. */
 function getQuantityRange(range: PlanRange): number[] {
   if (range === "1-2") return [1, 2]
-  if (range === "3-9") return [1, 2, 3, 4, 5, 6, 7]
-  if (range === "10-20") return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  if (range === "3-9") return [1, 2, 3, 4, 5, 6, 7, 8, 9]
+  if (range === "10-20") return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
   return []
 }
 
-/** Map UI slot index (1–7 or 1–11) to actual property count for checkout and pricing. */
+/** Selected quantity is the property count (1 = minimum at tier price). */
 function slotIndexToPropertyCount(range: PlanRange, slotIndex: number): number {
   if (range === "1-2") return slotIndex
-  if (range === "3-9") return slotIndex + 2  // 1→3, 2→4, ... 7→9
-  if (range === "10-20") return slotIndex + 9  // 1→10, 2→11, ... 11→20
+  if (range === "3-9") return slotIndex   // 1→1, 2→2, ... 9→9
+  if (range === "10-20") return slotIndex // 1→1, ... 20→20
   return slotIndex
 }
 
-/** Map current property count to slot index for pre-selecting the dropdown. */
+/** Map current property count to dropdown selection. */
 function propertyCountToSlotIndex(range: PlanRange, count: number): number {
   if (range === "1-2") return Math.min(Math.max(count, 1), 2)
-  if (range === "3-9") return Math.min(Math.max(count - 2, 1), 7)  // 3→1, 9→7
-  if (range === "10-20") return Math.min(Math.max(count - 9, 1), 11)  // 10→1, 20→11
+  if (range === "3-9") return Math.min(Math.max(count, 1), 9)
+  if (range === "10-20") return Math.min(Math.max(count, 1), 20)
   return 1
 }
 
 function getAnnualPrice(plan: "STARTER" | "GROWTH" | "PORTFOLIO", qty: number): number {
   if (plan === "STARTER") return qty * RETAIL_PRICE_PER_PROPERTY
-  if (plan === "GROWTH" && qty >= 3 && qty <= 9) return qty * GROWTH_PRICE_PER_PROPERTY
-  if (plan === "PORTFOLIO" && qty >= 10 && qty <= 20) return qty * PORTFOLIO_PRICE_PER_PROPERTY
+  if (plan === "GROWTH" && qty >= 1 && qty <= 9) return qty * GROWTH_PRICE_PER_PROPERTY
+  if (plan === "PORTFOLIO" && qty >= 1 && qty <= 20) return qty * PORTFOLIO_PRICE_PER_PROPERTY
   return 0
 }
 
@@ -177,8 +177,8 @@ export default function PricingPage() {
         : plan === "STARTER"
           ? Math.min(selectedQuantity, 2)
           : plan === "GROWTH"
-            ? Math.max(Math.min(slotIndexToPropertyCount("3-9", selectedQuantity), 9), 3)
-            : Math.max(Math.min(slotIndexToPropertyCount("10-20", selectedQuantity), 20), 10)
+            ? Math.max(Math.min(selectedQuantity, 9), 1)
+            : Math.max(Math.min(selectedQuantity, 20), 1)
       const qty = propertyCount
       const res = await fetch("/api/billing/checkout", {
         method: "POST",
@@ -247,11 +247,11 @@ export default function PricingPage() {
           </div>
         )}
 
-        {/* How plans work - 1–7 / 1–11 slot choice with price per property */}
+        {/* How plans work - quantity = property count, 1 minimum at tier price */}
         <div className="mb-8 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
           <p className="text-sm font-medium text-amber-900 mb-1">How upgrade tiers work</p>
           <p className="text-sm text-amber-800">
-            <strong>Starter:</strong> 1–2 properties ($149 each). <strong>Growth:</strong> choose <strong>1–7 slots</strong> (3–9 properties at $125/property). <strong>Portfolio:</strong> choose <strong>1–11 slots</strong> (10–20 properties at $100/property). You pay for the number of slots you select; you can add more properties later within the plan max without another checkout. To downgrade or change plan, use Account or contact us.
+            <strong>Starter:</strong> 1–2 properties ($149 each). <strong>Growth:</strong> 1–9 properties at $125/property (minimum 1). <strong>Portfolio:</strong> 1–20 properties at $100/property (minimum 1). You choose how many properties to pay for; you can add more later within the plan max. To downgrade or change plan, use Account or contact us.
           </p>
         </div>
 
@@ -351,7 +351,7 @@ export default function PricingPage() {
           ))}
         </div>
         <p className="text-center text-sm text-gray-500 mb-6">
-          Pick a range (1–2, 3–9, or 10–20). For Growth choose <strong>1–7 slots</strong> (3–9 properties); for Portfolio choose <strong>1–11 slots</strong> (10–20 properties). Price per property applies to the slots you select.
+          Pick a range (1–2, 3–9, or 10–20). For Growth choose <strong>1–9 properties</strong> at $125 each; for Portfolio choose <strong>1–20 properties</strong> at $100 each. Minimum 1 at the tier price.
         </p>
         <div className="grid gap-6 md:grid-cols-3 mb-12">
           {plans.map((plan) => {
@@ -395,9 +395,9 @@ export default function PricingPage() {
                     <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                       <label htmlFor={`qty-${plan.id}`} className="block text-sm font-medium text-gray-700 mb-2">
                         {plan.id === "GROWTH"
-                          ? "Choose 1–7 slots (each slot = 1 property; 3–9 properties total at $125/property):"
+                          ? "Choose 1–9 properties at $125/property/year (minimum 1):"
                           : plan.id === "PORTFOLIO"
-                            ? "Choose 1–11 slots (each slot = 1 property; 10–20 properties total at $100/property):"
+                            ? "Choose 1–20 properties at $100/property/year (minimum 1):"
                             : "How many properties to pay for (you'll be charged this at checkout):"}
                       </label>
                       <div className="flex items-center gap-2 flex-wrap">
@@ -409,11 +409,8 @@ export default function PricingPage() {
                         >
                           {quantityOptions.map((n) => {
                             const count = slotIndexToPropertyCount(effectiveRange, n)
-                            if (plan.id === "GROWTH") {
-                              return <option key={n} value={n}>{n} slot{n === 1 ? "" : "s"} — {count} propert{count === 1 ? "y" : "ies"} (${getAnnualPrice(plan.id, count).toLocaleString()}/yr)</option>
-                            }
-                            if (plan.id === "PORTFOLIO") {
-                              return <option key={n} value={n}>{n} slot{n === 1 ? "" : "s"} — {count} propert{count === 1 ? "y" : "ies"} (${getAnnualPrice(plan.id, count).toLocaleString()}/yr)</option>
+                            if (plan.id === "GROWTH" || plan.id === "PORTFOLIO") {
+                              return <option key={n} value={n}>{count} propert{count === 1 ? "y" : "ies"} (${getAnnualPrice(plan.id, count).toLocaleString()}/yr)</option>
                             }
                             return <option key={n} value={n}>{count} propert{count === 1 ? "y" : "ies"}</option>
                           })}
@@ -424,9 +421,9 @@ export default function PricingPage() {
                       </div>
                       <p className="text-xs text-gray-600 mt-2">
                         {plan.id === "GROWTH"
-                          ? "Growth: 1–7 slots = 3–9 properties. You can add more later within that limit."
+                          ? "Growth: 1–9 properties at $125 each. You can add more later within that limit."
                           : plan.id === "PORTFOLIO"
-                            ? "Portfolio: 1–11 slots = 10–20 properties. You can add more later within that limit."
+                            ? "Portfolio: 1–20 properties at $100 each. You can add more later within that limit."
                             : "Starter: up to 2 properties. You can add more later within that limit."}
                       </p>
                     </div>

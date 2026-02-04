@@ -7,14 +7,14 @@
 
 export const RETAIL_PRICE_PER_PROPERTY = 149
 
-/** Growth tier: $125 per property per year */
+/** Growth tier: $125 per property per year. Min 1, max 9. */
 export const GROWTH_PRICE_PER_PROPERTY = 125
-export const GROWTH_MIN_PROPERTIES = 3
+export const GROWTH_MIN_PROPERTIES = 1
 export const GROWTH_MAX_PROPERTIES = 9
 
-/** Portfolio tier: $100 per property per year */
+/** Portfolio tier: $100 per property per year. Min 1, max 20. */
 export const PORTFOLIO_PRICE_PER_PROPERTY = 100
-export const PORTFOLIO_MIN_PROPERTIES = 10
+export const PORTFOLIO_MIN_PROPERTIES = 1
 export const PORTFOLIO_MAX_PROPERTIES = 20
 
 /**

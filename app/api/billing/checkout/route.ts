@@ -62,23 +62,21 @@ export async function POST(request: NextRequest) {
     } else if (parsed.data.plan === "GROWTH") {
       if (propertyCount > GROWTH_MAX_PROPERTIES) {
         return NextResponse.json(
-          { error: `You have ${propertyCount} properties. Growth is for 3–9. Choose Portfolio (10–20) or contact us for 20+.` },
+          { error: `Growth is for 1–9 properties. You selected ${propertyCount}. Choose Portfolio (1–20) or contact us for 20+.` },
           { status: 400 }
         )
       }
       priceId = PRICE_IDS.GROWTH_PER_PROPERTY
-      // Allow upgrade: charge for at least minimum (3), up to actual count or max (9)
       quantity = Math.max(propertyCount, GROWTH_MIN_PROPERTIES)
       quantity = Math.min(quantity, GROWTH_MAX_PROPERTIES)
     } else if (parsed.data.plan === "PORTFOLIO") {
-      if (propertyCount > 20) {
+      if (propertyCount > PORTFOLIO_MAX_PROPERTIES) {
         return NextResponse.json(
           { error: "Portfolio is for up to 20 properties. Contact us for custom pricing." },
           { status: 400 }
         )
       }
       priceId = PRICE_IDS.PORTFOLIO_PER_PROPERTY
-      // Allow upgrade: charge for at least minimum (10), up to actual count or max (20)
       quantity = Math.max(propertyCount, PORTFOLIO_MIN_PROPERTIES)
       quantity = Math.min(quantity, PORTFOLIO_MAX_PROPERTIES)
     }
