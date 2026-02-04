@@ -104,11 +104,9 @@ export default async function AccountPage() {
               {user.subscriptionStatus === "INACTIVE" ? "Free Tier" : user.subscriptionStatus}
             </p>
           </div>
-          {(freshUser.stripeSubscriptionId || freshUser.stripeCustomerId) && (
-            <div className="pt-2 border-t border-gray-100">
-              <RefreshSubscriptionButton />
-            </div>
-          )}
+          <div className="pt-2 border-t border-gray-100">
+            <RefreshSubscriptionButton />
+          </div>
         </CardContent>
       </Card>
 

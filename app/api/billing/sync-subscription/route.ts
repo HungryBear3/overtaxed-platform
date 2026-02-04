@@ -30,41 +30,60 @@ export async function POST(request: NextRequest) {
 
   const user = await prisma.user.findUnique({
     where: { id: token.sub },
-    select: { id: true, stripeSubscriptionId: true, stripeCustomerId: true },
+    select: { id: true, email: true, stripeSubscriptionId: true, stripeCustomerId: true },
   })
-  if (!user?.stripeCustomerId && !user?.stripeSubscriptionId) {
+  if (!user?.email) {
     return NextResponse.json(
-      { error: "No Stripe customer linked. Complete a checkout first, or contact support if you just paid." },
+      { error: "User email not found." },
       { status: 400 }
     )
   }
 
   try {
     let subscriptionId = user.stripeSubscriptionId
-    if (!subscriptionId && user.stripeCustomerId) {
+    let customerId = user.stripeCustomerId
+
+    if (!subscriptionId && customerId) {
       const subs = await stripe.subscriptions.list({
-        customer: user.stripeCustomerId,
+        customer: customerId,
         status: "active",
         limit: 1,
       })
       subscriptionId = subs.data[0]?.id ?? null
       if (!subscriptionId) {
         const trialed = await stripe.subscriptions.list({
-          customer: user.stripeCustomerId,
+          customer: customerId,
           status: "trialing",
           limit: 1,
         })
         subscriptionId = trialed.data[0]?.id ?? null
       }
-      if (!subscriptionId) {
-        return NextResponse.json(
-          { error: "No active subscription found for your account in Stripe." },
-          { status: 400 }
-        )
+    }
+
+    if (!subscriptionId && !customerId) {
+      const customers = await stripe.customers.list({ email: user.email, limit: 1 })
+      customerId = customers.data[0]?.id ?? null
+      if (customerId) {
+        const subs = await stripe.subscriptions.list({
+          customer: customerId,
+          status: "active",
+          limit: 1,
+        })
+        subscriptionId = subs.data[0]?.id ?? null
+        if (!subscriptionId) {
+          const trialed = await stripe.subscriptions.list({
+            customer: customerId,
+            status: "trialing",
+            limit: 1,
+          })
+          subscriptionId = trialed.data[0]?.id ?? null
+        }
       }
-    } else if (!subscriptionId) {
+    }
+
+    if (!subscriptionId) {
       return NextResponse.json(
-        { error: "No subscription linked. Complete a checkout first, or contact support if you just paid." },
+        { error: "No active subscription found for this email in Stripe. Complete a checkout first, or contact support if you just paid." },
         { status: 400 }
       )
     }
@@ -72,10 +91,23 @@ export async function POST(request: NextRequest) {
     const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
       expand: ["items.data.price"],
     })
-    const firstItem = subscription.items?.data?.[0]
-    const quantity = firstItem?.quantity ?? null
-    const priceId = typeof firstItem?.price?.id === "string" ? firstItem.price.id : null
-    const plan = getPlanFromPriceId(priceId)
+    const items = subscription.items?.data ?? []
+    const knownPriceIds = [
+      process.env.STRIPE_PRICE_STARTER ?? "",
+      process.env.STRIPE_PRICE_GROWTH_PER_PROPERTY ?? "",
+      process.env.STRIPE_PRICE_PORTFOLIO_PER_PROPERTY ?? "",
+    ].filter(Boolean)
+    let quantity: number | null = 0
+    let plan: string | null = null
+    for (const item of items) {
+      const priceId = typeof item.price?.id === "string" ? item.price.id : null
+      if (priceId && knownPriceIds.includes(priceId)) {
+        quantity = (quantity ?? 0) + (item.quantity ?? 0)
+        if (!plan) plan = getPlanFromPriceId(priceId)
+      }
+    }
+    if (quantity === 0) quantity = items[0] ? (items[0].quantity ?? null) : null
+    if (!plan && items[0]) plan = getPlanFromPriceId(typeof items[0].price?.id === "string" ? items[0].price.id : null)
     const status = subscription.status === "active" ? "ACTIVE" : subscription.status === "past_due" ? "PAST_DUE" : "INACTIVE"
 
     await prisma.user.update({
@@ -85,6 +117,7 @@ export async function POST(request: NextRequest) {
         subscriptionStatus: status,
         subscriptionQuantity: quantity != null ? quantity : undefined,
         ...(subscription.id && !user.stripeSubscriptionId && { stripeSubscriptionId: subscription.id }),
+        ...(customerId && !user.stripeCustomerId && { stripeCustomerId: customerId }),
       },
     })
 
