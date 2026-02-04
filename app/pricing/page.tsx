@@ -284,20 +284,42 @@ export default function PricingPage() {
                 <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600 shrink-0" />PDF evidence packet</li>
                 <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600 shrink-0" />No monitoring or filing</li>
               </ul>
-              {planInfo && planInfo.propertyCount > 0 ? (
+              {planInfo?.subscriptionTier ? (
                 <Link
                   href="/properties"
                   className="flex h-10 w-full items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium hover:bg-gray-50"
                 >
-                  Pick a property & get comps ($69 each)
+                  Pick a property & get comps
                 </Link>
               ) : (
-                <Link
-                  href="/auth/signup"
-                  className="flex h-10 w-full items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium hover:bg-gray-50"
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  onClick={async () => {
+                    setLoading("COMPS_ONLY")
+                    setError("")
+                    try {
+                      const res = await fetch("/api/billing/checkout-diy", { method: "POST" })
+                      const data = await res.json()
+                      if (!res.ok) {
+                        if (res.status === 401) {
+                          router.push("/auth/signin?callbackUrl=/pricing")
+                          return
+                        }
+                        throw new Error(data.error || "Failed to start checkout")
+                      }
+                      if (data.url) window.location.href = data.url
+                      else throw new Error("Checkout URL not available")
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : "Something went wrong")
+                    } finally {
+                      setLoading(null)
+                    }
+                  }}
+                  disabled={!!loading}
                 >
-                  Sign up to add properties & get comps
-                </Link>
+                  {loading === "COMPS_ONLY" ? "Redirecting…" : "Get comps — $69"}
+                </Button>
               )}
             </CardContent>
           </Card>

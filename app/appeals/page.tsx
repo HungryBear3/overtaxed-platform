@@ -215,6 +215,10 @@ export default function AppealsPage() {
                 : "No appeals match this filter."}
             </p>
             {filter === "all" && (
+              <>
+              <p className="text-sm text-gray-500 mb-4">
+                On the next screen, select a property (or open a property and click <strong>Start Appeal</strong> to start from there).
+              </p>
               <Link
                 href="/appeals/new"
                 className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700"
@@ -224,6 +228,7 @@ export default function AppealsPage() {
                 </svg>
                 Start Your First Appeal
               </Link>
+              </>
             )}
           </div>
         ) : (

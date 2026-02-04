@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ManagedPropertiesList } from "@/components/account/ManagedPropertiesList"
+import { ManageSubscriptionButton } from "@/components/account/ManageSubscriptionButton"
 import { getPropertyLimit } from "@/lib/billing/limits"
 import { formatPIN } from "@/lib/cook-county"
 
@@ -24,6 +25,7 @@ export default async function AccountPage() {
         subscriptionStatus: true,
         subscriptionStartDate: true,
         subscriptionQuantity: true,
+        stripeCustomerId: true,
       },
     }),
     prisma.property.findMany({
@@ -119,13 +121,16 @@ export default async function AccountPage() {
         </CardContent>
       </Card>
 
-      <div className="flex gap-4">
+      <div className="flex flex-wrap gap-4">
         <Link
           href="/pricing"
           className="inline-flex h-10 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700"
         >
           Change plan (upgrade or downgrade)
         </Link>
+        {freshUser.stripeCustomerId && (
+          <ManageSubscriptionButton />
+        )}
         <Link
           href="/api/auth/signout"
           className="inline-flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium hover:bg-gray-50"

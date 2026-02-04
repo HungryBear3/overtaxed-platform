@@ -187,7 +187,10 @@ export default function HomePage() {
             </div>
 
             {/* Growth - 3-9 properties */}
-            <div className="border border-gray-200 rounded-lg p-6 bg-white">
+            <div className="border-2 border-emerald-500 rounded-lg p-6 bg-white relative">
+              <div className="absolute top-0 right-0 bg-emerald-500 text-white text-xs px-3 py-1 rounded-bl-lg rounded-tr-lg">
+                3–9 properties
+              </div>
               <h5 className="font-semibold text-gray-900 text-lg">Growth</h5>
               <p className="text-2xl font-bold text-gray-900 mt-2">$125</p>
               <p className="text-gray-500 text-sm">per property/year</p>
@@ -212,7 +215,10 @@ export default function HomePage() {
             </div>
 
             {/* Portfolio - 10-20 properties */}
-            <div className="border border-gray-200 rounded-lg p-6 bg-white">
+            <div className="border-2 border-indigo-500 rounded-lg p-6 bg-white relative">
+              <div className="absolute top-0 right-0 bg-indigo-500 text-white text-xs px-3 py-1 rounded-bl-lg rounded-tr-lg">
+                10–20 properties
+              </div>
               <h5 className="font-semibold text-gray-900 text-lg">Portfolio</h5>
               <p className="text-2xl font-bold text-gray-900 mt-2">$100</p>
               <p className="text-gray-500 text-sm">per property/year</p>

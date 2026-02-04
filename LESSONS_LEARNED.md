@@ -22,6 +22,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 15. [Admin Set-Subscription (Testing)](#admin-set-subscription-testing)
 16. [Property add – assessment backfill](#property-add--assessment-backfill)
 17. [Comps-to-appeal flow, PDF wrap, and filing UX](#comps-to-appeal-flow-pdf-wrap-and-filing-ux)
+18. [Property slot capping and production DB migration](#property-slot-capping-and-production-db-migration)
 
 ---
 
@@ -511,6 +512,33 @@ const user = { ...session.user, ...freshUser }
 
 ---
 
+## Property slot capping and production DB migration
+
+### Slot capping by quantity paid
+**Context:** Property limits must reflect the **quantity** the user paid for (e.g. 5 slots on Growth), not just the tier maximum. Annual billing and Stripe subscription quantity must stay in sync.
+
+**Implementation:**
+- **User model:** Added `subscriptionQuantity` (Int?), `stripeCustomerId` (String?), `stripeSubscriptionId` (String?).
+- **Webhook** (`POST /api/billing/webhook`): On `checkout.session.completed`, set `subscriptionQuantity` from `metadata.propertyCount`, plus Stripe customer/subscription IDs. On `customer.subscription.updated`, read `subscription.items.data[0].quantity` and update `user.subscriptionQuantity`.
+- **Limits:** `getPropertyLimit(tier, subscriptionQuantity)` uses `subscriptionQuantity` when set (0 = 0 slots); otherwise tier default. All call sites (dashboard, account, properties API, plan-info) pass the user’s `subscriptionQuantity`.
+- **Pricing UI:** Growth/Portfolio use slot indices (e.g. 1–7, 1–11) mapped to property counts for checkout; "Growth Annual" is 3–9 properties.
+
+### Production DB: new User columns
+**Issue:** After adding `subscriptionQuantity`, `stripeCustomerId`, `stripeSubscriptionId` to the schema, Vercel build failed on `/admin/users` with **P2022** (column does not exist). Next.js tried to prerender that page, which runs `prisma.user.findMany()` including the new columns.
+
+**Fixes:**
+1. **Prerender:** Add `export const dynamic = "force-dynamic"` to `app/admin/users/page.tsx` so the page is not statically generated at build time.
+2. **Migration:** Run the migration in production (Supabase). Use `npx prisma db push` from a machine that can reach the DB, or run the SQL from `prisma/migrations/add_user_billing_columns.sql` in the Supabase SQL Editor (add the three columns to `User`).
+
+### Admin set-subscription and null userId
+**Issue:** In `POST /api/admin/set-subscription`, the `where` for `prisma.user.findFirst` was `email ? { email } : { id: userId }`. When `userId` was null, Prisma received `{ id: null }`, which is invalid and caused a TypeScript/build error.
+
+**Solution:** Build the `where` object explicitly: if `email` is provided use `{ email }`; else if `userId` is non-null use `{ id: userId }`; otherwise return 400. Never pass `id: null` to Prisma.
+
+**Lesson:** For new billing columns, either force-dynamic any page that selects them until production DB is migrated, or run the migration before deploying. Keep admin `where` clauses strictly non-null for unique fields.
+
+---
+
 ## Stripe Webhook Debugging
 
 ### Issue: Subscription doesn't update after checkout
@@ -621,4 +649,4 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 ---
 
-**Last Updated:** February 2026
+**Last Updated:** January 2026

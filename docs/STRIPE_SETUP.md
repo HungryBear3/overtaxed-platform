@@ -164,14 +164,15 @@ Stripe can’t reach `localhost` directly, so you use the **Stripe CLI** to forw
 4. **Copy the webhook signing secret**  
    The CLI prints something like:
    ```text
-   Ready! Your webhook signing secret is whsec_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   Ready! Your webhook signing secret is whsec_<your-secret>
    ```
    Copy the full `whsec_...` value.
 
 5. **Add it to Overtaxed’s `.env.local`** (in the `overtaxed-platform` folder):
    ```env
-   STRIPE_WEBHOOK_SECRET="whsec_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   STRIPE_WEBHOOK_SECRET="whsec_<paste-value-from-cli>"
    ```
+   **If a webhook secret was ever committed to git:** Rotate it in Stripe (Developers → Webhooks → add a new endpoint or recreate the existing one), then set the new signing secret in your environment (e.g. Vercel) and redeploy.
 
 6. **Restart your Next.js dev server** so it picks up the new env var.
 

@@ -112,6 +112,14 @@ export default function PropertyCompsPage() {
           </div>
         )}
 
+        {/* Comps guidance */}
+        <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 p-4">
+          <p className="font-medium text-blue-900 mb-1">How many comps do I need?</p>
+          <p className="text-sm text-blue-800">
+            Cook County typically expects <strong>at least 3–5 comparable sales</strong> for a strong appeal. We show up to 20 matches ranked by similarity (location, size, age, class). Use the <strong>best 5–10</strong> that are most similar to your property — quality matters more than quantity. Lower $/sq ft comps support a lower requested value.
+          </p>
+        </div>
+
         {comps.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-8 text-center">
             <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

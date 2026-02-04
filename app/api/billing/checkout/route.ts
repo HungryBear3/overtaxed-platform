@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
       metadata: {
         userId: user.id,
         plan: parsed.data.plan,
-        propertyCount: String(propertyCount),
+        propertyCount: String(quantity), // Use quantity charged (e.g. Starter capped at 2), not client request
       },
     })
 

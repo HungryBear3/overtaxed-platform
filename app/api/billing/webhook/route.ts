@@ -43,17 +43,38 @@ export async function POST(request: NextRequest) {
       const userId = metadata.userId
       const plan = metadata.plan
       const propertyCountStr = metadata.propertyCount
+      const mode = data.mode as string | undefined
 
       if (!userId || !plan) {
         console.error("[webhook] Missing userId or plan in metadata")
         break
       }
 
-      const subscriptionQuantity =
-        propertyCountStr != null ? Math.max(1, parseInt(propertyCountStr, 10) || 1) : null
       const stripeCustomerId = (data.customer as string) ?? null
       const stripeSubscriptionId = (data.subscription as string) ?? null
 
+      // One-time payment (e.g. DIY/comps-only $69)
+      if (mode === "payment") {
+        try {
+          await prisma.user.update({
+            where: { id: userId },
+            data: {
+              subscriptionTier: "COMPS_ONLY",
+              subscriptionStatus: "ACTIVE",
+              subscriptionQuantity: 1,
+              stripeCustomerId: stripeCustomerId ?? undefined,
+            },
+          })
+          console.log(`[webhook] SUCCESS: User ${userId} DIY/comps-only payment completed`)
+        } catch (dbError) {
+          console.error(`[webhook] Database error updating user ${userId}:`, dbError)
+        }
+        break
+      }
+
+      // Subscription (Starter, Growth, Portfolio)
+      const subscriptionQuantity =
+        propertyCountStr != null ? Math.max(1, parseInt(propertyCountStr, 10) || 1) : null
       try {
         const updatedUser = await prisma.user.update({
           where: { id: userId },

@@ -305,6 +305,15 @@ export default function NewAppealPage() {
               </div>
             )}
 
+            {/* Guidance: select a property first */}
+            {!selectedPropertyId && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <p className="font-medium text-amber-900">
+                  Select a property below to start an appeal. You can also go to <Link href="/properties" className="underline font-medium">Properties</Link>, open a property, and click <strong>Start Appeal</strong> to open this page with that property already selected.
+                </p>
+              </div>
+            )}
+
             {/* Step-by-step guide */}
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
               <p className="font-medium text-blue-900 mb-2">How to start an appeal (3 steps)</p>
@@ -362,8 +371,8 @@ export default function NewAppealPage() {
               </div>
             </div>
 
-            {/* Potential Savings Preview */}
-            {selectedProperty?.currentAssessmentValue && (
+            {/* Potential Savings Preview — show when we have any assessment (current or from history for selected tax year) */}
+            {effectiveAssessmentValue && effectiveAssessmentValue > 0 && (
               <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg shadow p-6 border border-green-200">
                 <h2 className="text-lg font-semibold text-green-900 mb-3">Potential Annual Savings</h2>
                 <div className="grid grid-cols-3 gap-4">
