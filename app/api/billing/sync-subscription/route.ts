@@ -32,15 +32,44 @@ export async function POST(request: NextRequest) {
     where: { id: token.sub },
     select: { id: true, stripeSubscriptionId: true, stripeCustomerId: true },
   })
-  if (!user?.stripeSubscriptionId) {
+  if (!user?.stripeCustomerId && !user?.stripeSubscriptionId) {
     return NextResponse.json(
-      { error: "No subscription linked. Complete a checkout first, or contact support if you just paid." },
+      { error: "No Stripe customer linked. Complete a checkout first, or contact support if you just paid." },
       { status: 400 }
     )
   }
 
   try {
-    const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId, {
+    let subscriptionId = user.stripeSubscriptionId
+    if (!subscriptionId && user.stripeCustomerId) {
+      const subs = await stripe.subscriptions.list({
+        customer: user.stripeCustomerId,
+        status: "active",
+        limit: 1,
+      })
+      subscriptionId = subs.data[0]?.id ?? null
+      if (!subscriptionId) {
+        const trialed = await stripe.subscriptions.list({
+          customer: user.stripeCustomerId,
+          status: "trialing",
+          limit: 1,
+        })
+        subscriptionId = trialed.data[0]?.id ?? null
+      }
+      if (!subscriptionId) {
+        return NextResponse.json(
+          { error: "No active subscription found for your account in Stripe." },
+          { status: 400 }
+        )
+      }
+    } else if (!subscriptionId) {
+      return NextResponse.json(
+        { error: "No subscription linked. Complete a checkout first, or contact support if you just paid." },
+        { status: 400 }
+      )
+    }
+
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
       expand: ["items.data.price"],
     })
     const firstItem = subscription.items?.data?.[0]
@@ -55,6 +84,7 @@ export async function POST(request: NextRequest) {
         ...(plan != null && { subscriptionTier: plan }),
         subscriptionStatus: status,
         subscriptionQuantity: quantity != null ? quantity : undefined,
+        ...(subscription.id && !user.stripeSubscriptionId && { stripeSubscriptionId: subscription.id }),
       },
     })
 
