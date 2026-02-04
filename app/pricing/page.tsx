@@ -174,7 +174,7 @@ export default function PricingPage() {
           else setSelectedRange("20+")
         }
       })
-      .catch(() => setPlanInfo({ propertyCount: 0, subscriptionTier: null, recommendedPlan: null }))
+      .catch(() => setPlanInfo({ propertyCount: 0, subscriptionTier: null, subscriptionQuantity: null, recommendedPlan: null }))
   }, [])
 
   const planToRange: Record<string, PlanRange> = { STARTER: "1-2", GROWTH: "3-9", PORTFOLIO: "10-20", CUSTOM: "20+" }
