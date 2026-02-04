@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getToken } from "next-auth/jwt"
 import { stripe } from "@/lib/stripe/client"
 import { prisma } from "@/lib/db"
+import type { SubscriptionStatus, SubscriptionTier } from "@prisma/client"
 
 function getPlanFromPriceId(priceId: string | null): string | null {
   if (!priceId) return null
@@ -108,12 +109,13 @@ export async function POST(request: NextRequest) {
     }
     if (quantity === 0) quantity = items[0] ? (items[0].quantity ?? null) : null
     if (!plan && items[0]) plan = getPlanFromPriceId(typeof items[0].price?.id === "string" ? items[0].price.id : null)
-    const status = subscription.status === "active" ? "ACTIVE" : subscription.status === "past_due" ? "PAST_DUE" : "INACTIVE"
+    const status: SubscriptionStatus =
+      subscription.status === "active" ? "ACTIVE" : subscription.status === "past_due" ? "PAST_DUE" : "INACTIVE"
 
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        ...(plan != null && { subscriptionTier: plan }),
+        ...(plan != null && { subscriptionTier: plan as SubscriptionTier }),
         subscriptionStatus: status,
         subscriptionQuantity: quantity != null ? quantity : undefined,
         ...(subscription.id && !user.stripeSubscriptionId && { stripeSubscriptionId: subscription.id }),
