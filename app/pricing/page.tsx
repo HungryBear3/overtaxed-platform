@@ -154,6 +154,8 @@ export default function PricingPage() {
   const [planInfo, setPlanInfo] = useState<{
     propertyCount: number
     subscriptionTier: string | null
+    subscriptionQuantity: number | null
+    propertyLimit?: number
     recommendedPlan: string | null
     atLimit?: boolean
   } | null>(null)
@@ -179,15 +181,17 @@ export default function PricingPage() {
   const effectiveRange = selectedRange ?? (planInfo?.recommendedPlan ? planToRange[planInfo.recommendedPlan] ?? "1-2" : "1-2")
   const quantityOptions = getQuantityRange(effectiveRange)
 
-  // Reset selectedQuantity (slot index) when range changes; preselect from current property count
+  // Reset selectedQuantity when range or planInfo changes; preselect current count or next upgrade when at limit
   useEffect(() => {
     const opts = getQuantityRange(effectiveRange)
-    if (opts.length > 0) {
-      const currentCount = planInfo?.propertyCount ?? 0
-      const slotIndex = propertyCountToSlotIndex(effectiveRange, currentCount)
-      setSelectedQuantity(opts.includes(slotIndex) ? slotIndex : opts[0])
-    }
-  }, [effectiveRange])
+    if (opts.length === 0) return
+    const currentCount = planInfo?.propertyCount ?? 0
+    const limit = planInfo?.propertyLimit
+    const atLimit = limit != null && limit < 999 && currentCount >= limit
+    const nextUpgrade = atLimit && limit != null ? Math.min(limit + 1, opts[opts.length - 1]) : null
+    const slotIndex = nextUpgrade ?? propertyCountToSlotIndex(effectiveRange, currentCount)
+    setSelectedQuantity(opts.includes(slotIndex) ? slotIndex : opts[0])
+  }, [effectiveRange, planInfo?.propertyCount, planInfo?.propertyLimit])
 
   async function subscribe(plan: "STARTER" | "GROWTH" | "PORTFOLIO") {
     setLoading(plan)
@@ -414,6 +418,17 @@ export default function PricingPage() {
                   {/* Quantity selector - 1–7 slots (Growth) or 1–11 (Portfolio); labels show slot + property count */}
                   {showQuantitySelector && (
                     <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                      {planInfo?.subscriptionTier === plan.id && planInfo?.propertyLimit != null && planInfo.propertyLimit < 999 && (
+                        <p className="text-sm font-medium text-gray-800 mb-2">
+                          {planInfo.propertyCount ?? 0} of {planInfo.propertyLimit} slots used
+                          {((planInfo.propertyLimit - (planInfo.propertyCount ?? 0)) > 0) && (
+                            <span className="text-green-700"> · {planInfo.propertyLimit - (planInfo.propertyCount ?? 0)} available</span>
+                          )}
+                          {(planInfo.propertyCount ?? 0) >= planInfo.propertyLimit && (
+                            <span className="text-amber-700"> · Select more below to upgrade</span>
+                          )}
+                        </p>
+                      )}
                       <label htmlFor={`qty-${plan.id}`} className="block text-sm font-medium text-gray-700 mb-2">
                         {plan.id === "GROWTH"
                           ? `Choose 1–9 properties at $${GROWTH_PRICE_PER_PROPERTY}/property/year (minimum 1):`

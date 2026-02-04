@@ -219,6 +219,9 @@ export default async function DashboardPage() {
                     : ""}
                 Go to Pricing to upgrade.
               </p>
+              <p className="text-xs text-gray-500 mb-2">
+                Just paid for more slots in Stripe? Go to <Link href="/account" className="text-blue-600 hover:underline">Account</Link> and click &quot;Refresh subscription from Stripe&quot; to sync.
+              </p>
               <Link
                 href="/pricing"
                 className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"

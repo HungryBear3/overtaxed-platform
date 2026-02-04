@@ -32,6 +32,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       propertyCount,
       subscriptionTier: tier,
+      subscriptionQuantity: dbUser?.subscriptionQuantity ?? null,
       propertyLimit: limit,
       atLimit: propertyCount >= limit && limit < 999,
       recommendedPlan,
