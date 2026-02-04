@@ -72,9 +72,22 @@ export async function POST(request: NextRequest) {
         break
       }
 
-      // Subscription (Starter, Growth, Portfolio)
-      const subscriptionQuantity =
+      // Subscription (Starter, Growth, Portfolio) — use subscription line item quantity as source of truth when available
+      let subscriptionQuantity =
         propertyCountStr != null ? Math.max(1, parseInt(propertyCountStr, 10) || 1) : null
+      if (stripeSubscriptionId) {
+        try {
+          const subscription = await stripe.subscriptions.retrieve(stripeSubscriptionId, {
+            expand: ["items.data"],
+          })
+          const firstItem = subscription.items?.data?.[0]
+          if (firstItem?.quantity != null) {
+            subscriptionQuantity = firstItem.quantity
+          }
+        } catch (err) {
+          console.warn("[webhook] Could not fetch subscription for quantity fallback:", err)
+        }
+      }
       try {
         const updatedUser = await prisma.user.update({
           where: { id: userId },

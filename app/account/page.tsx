@@ -5,6 +5,7 @@ import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ManagedPropertiesList } from "@/components/account/ManagedPropertiesList"
 import { ManageSubscriptionButton } from "@/components/account/ManageSubscriptionButton"
+import { RefreshSubscriptionButton } from "@/components/account/RefreshSubscriptionButton"
 import { getPropertyLimit } from "@/lib/billing/limits"
 import { formatPIN } from "@/lib/cook-county"
 
@@ -26,6 +27,7 @@ export default async function AccountPage() {
         subscriptionStartDate: true,
         subscriptionQuantity: true,
         stripeCustomerId: true,
+        stripeSubscriptionId: true,
       },
     }),
     prisma.property.findMany({
@@ -102,6 +104,11 @@ export default async function AccountPage() {
               {user.subscriptionStatus === "INACTIVE" ? "Free Tier" : user.subscriptionStatus}
             </p>
           </div>
+          {freshUser.stripeSubscriptionId && (
+            <div className="pt-2 border-t border-gray-100">
+              <RefreshSubscriptionButton />
+            </div>
+          )}
         </CardContent>
       </Card>
 

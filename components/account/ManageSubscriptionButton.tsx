@@ -30,14 +30,14 @@ export function ManageSubscriptionButton() {
   }
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-2">
       <Button
         variant="outline"
         className="h-10"
         onClick={openPortal}
         disabled={loading}
       >
-        {loading ? "Opening…" : "Manage subscription (cancel, payment)"}
+        {loading ? "Opening…" : "Manage subscription (update, cancel, payment)"}
       </Button>
       {error && <p className="text-sm text-red-600">{error}</p>}
     </div>
