@@ -247,11 +247,11 @@ export default function PricingPage() {
           </div>
         )}
 
-        {/* How plans work - avoid "bought 3 slots = 5 total" confusion */}
+        {/* How plans work - 1–7 / 1–11 slot choice with price per property */}
         <div className="mb-8 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
           <p className="text-sm font-medium text-amber-900 mb-1">How upgrade tiers work</p>
           <p className="text-sm text-amber-800">
-            Each plan has a <strong>property range</strong> (e.g. 3–9 = Growth). You get <strong>up to the max slots</strong> for that plan. You choose how many to <strong>pay for</strong> at checkout (minimum is the range start). You can add more properties anytime up to the plan max — no extra checkout. To downgrade or change plan, use Account or contact us.
+            <strong>Starter:</strong> 1–2 properties ($149 each). <strong>Growth:</strong> choose <strong>1–7 slots</strong> (3–9 properties at $125/property). <strong>Portfolio:</strong> choose <strong>1–11 slots</strong> (10–20 properties at $100/property). You pay for the number of slots you select; you can add more properties later within the plan max without another checkout. To downgrade or change plan, use Account or contact us.
           </p>
         </div>
 
@@ -351,7 +351,7 @@ export default function PricingPage() {
           ))}
         </div>
         <p className="text-center text-sm text-gray-500 mb-6">
-          Pick a range (1–2, 3–9, or 10–20). Then choose how many properties to pay for in the highlighted plan — you get <strong>up to the max</strong> slots for that tier (e.g. 3–9 plan = up to 9 slots).
+          Pick a range (1–2, 3–9, or 10–20). For Growth choose <strong>1–7 slots</strong> (3–9 properties); for Portfolio choose <strong>1–11 slots</strong> (10–20 properties). Price per property applies to the slots you select.
         </p>
         <div className="grid gap-6 md:grid-cols-3 mb-12">
           {plans.map((plan) => {
@@ -390,11 +390,15 @@ export default function PricingPage() {
                       </li>
                     ))}
                   </ul>
-                  {/* Quantity selector - inside the card, right above the button */}
+                  {/* Quantity selector - 1–7 slots (Growth) or 1–11 (Portfolio); labels show slot + property count */}
                   {showQuantitySelector && (
                     <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                       <label htmlFor={`qty-${plan.id}`} className="block text-sm font-medium text-gray-700 mb-2">
-                        How many properties to pay for (you&apos;ll be charged this at checkout):
+                        {plan.id === "GROWTH"
+                          ? "Choose 1–7 slots (each slot = 1 property; 3–9 properties total at $125/property):"
+                          : plan.id === "PORTFOLIO"
+                            ? "Choose 1–11 slots (each slot = 1 property; 10–20 properties total at $100/property):"
+                            : "How many properties to pay for (you'll be charged this at checkout):"}
                       </label>
                       <div className="flex items-center gap-2 flex-wrap">
                         <select
@@ -405,6 +409,12 @@ export default function PricingPage() {
                         >
                           {quantityOptions.map((n) => {
                             const count = slotIndexToPropertyCount(effectiveRange, n)
+                            if (plan.id === "GROWTH") {
+                              return <option key={n} value={n}>{n} slot{n === 1 ? "" : "s"} — {count} propert{count === 1 ? "y" : "ies"} (${getAnnualPrice(plan.id, count).toLocaleString()}/yr)</option>
+                            }
+                            if (plan.id === "PORTFOLIO") {
+                              return <option key={n} value={n}>{n} slot{n === 1 ? "" : "s"} — {count} propert{count === 1 ? "y" : "ies"} (${getAnnualPrice(plan.id, count).toLocaleString()}/yr)</option>
+                            }
                             return <option key={n} value={n}>{count} propert{count === 1 ? "y" : "ies"}</option>
                           })}
                         </select>
@@ -413,7 +423,11 @@ export default function PricingPage() {
                         </span>
                       </div>
                       <p className="text-xs text-gray-600 mt-2">
-                        This plan allows <strong>up to {plan.id === "GROWTH" ? 9 : 20} properties</strong>. You can add more later within that limit without another checkout.
+                        {plan.id === "GROWTH"
+                          ? "Growth: 1–7 slots = 3–9 properties. You can add more later within that limit."
+                          : plan.id === "PORTFOLIO"
+                            ? "Portfolio: 1–11 slots = 10–20 properties. You can add more later within that limit."
+                            : "Starter: up to 2 properties. You can add more later within that limit."}
                       </p>
                     </div>
                   )}

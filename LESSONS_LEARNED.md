@@ -23,6 +23,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 16. [Property add – assessment backfill](#property-add--assessment-backfill)
 17. [Comps-to-appeal flow, PDF wrap, and filing UX](#comps-to-appeal-flow-pdf-wrap-and-filing-ux)
 18. [Property slot capping and production DB migration](#property-slot-capping-and-production-db-migration)
+19. [GitHub secret exposure – Stripe webhook signing secret](#github-secret-exposure--stripe-webhook-signing-secret)
 
 ---
 
@@ -539,6 +540,24 @@ const user = { ...session.user, ...freshUser }
 
 ---
 
+## GitHub secret exposure – Stripe webhook signing secret
+
+### Issue: GitHub alerts on exposed secrets
+**Context:** GitHub (and secret-scanning tools) may flag commits that contain values that look like real secrets (e.g. `whsec_` followed by 32+ alphanumeric characters). Even placeholder examples in documentation can trigger alerts if they match the pattern.
+
+**What we did:**
+- In `docs/STRIPE_SETUP.md`, replaced any `whsec_xxxxxxxx...`-style placeholders with clearly fake placeholders: `whsec_<your-secret>` and `whsec_<paste-value-from-cli>`.
+- Added a note: if a webhook secret was ever committed to git, rotate it in Stripe (Developers → Webhooks → recreate or roll the secret), then set the new signing secret in your environment (e.g. Vercel `STRIPE_WEBHOOK_SECRET`) and redeploy.
+
+### If GitHub notifies you of an exposed secret
+1. **Rotate immediately:** In Stripe (use the same mode as the exposed secret – test or live), create a new webhook endpoint or use “Roll”/regenerate the signing secret for the existing endpoint.
+2. **Update env:** Set the new value in Vercel (and any other env) as `STRIPE_WEBHOOK_SECRET`. Redeploy so the app uses the new secret.
+3. **Do not** re-commit the old or new secret in docs or code; keep docs as placeholders only.
+
+**Lesson:** Never commit real webhook (or API) secrets. Use placeholders in docs that don’t match real-secret patterns. If a secret was committed, treat it as compromised and rotate it everywhere.
+
+---
+
 ## Stripe Webhook Debugging
 
 ### Issue: Subscription doesn't update after checkout
@@ -649,4 +668,4 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 ---
 
-**Last Updated:** January 2026
+**Last Updated:** February 2026
