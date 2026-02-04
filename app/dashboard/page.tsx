@@ -190,8 +190,8 @@ export default async function DashboardPage() {
               <p className="font-medium text-gray-900">
                 {user.subscriptionTier === "COMPS_ONLY" && "DIY reports only ($69/property)"}
                 {user.subscriptionTier === "STARTER" && (freshUser.subscriptionQuantity != null ? `Starter (${freshUser.subscriptionQuantity} slot${freshUser.subscriptionQuantity === 1 ? "" : "s"}, $149/property/year)` : "Starter (1–2 properties, $149/property/year)")}
-                {user.subscriptionTier === "GROWTH" && (freshUser.subscriptionQuantity != null ? `Growth (${freshUser.subscriptionQuantity} slots, $125/property/year)` : "Growth (3–9 properties, $125/property/year)")}
-                {user.subscriptionTier === "PORTFOLIO" && (freshUser.subscriptionQuantity != null ? `Portfolio (${freshUser.subscriptionQuantity} slots, $100/property/year)` : "Portfolio (10–20 properties, $100/property/year)")}
+                {user.subscriptionTier === "GROWTH" && (freshUser.subscriptionQuantity != null ? `Growth (${freshUser.subscriptionQuantity} slots, $124/property/year)` : "Growth (3–9 properties, $124/property/year)")}
+                {user.subscriptionTier === "PORTFOLIO" && (freshUser.subscriptionQuantity != null ? `Portfolio (${freshUser.subscriptionQuantity} slots, $99/property/year)` : "Portfolio (10–20 properties, $99/property/year)")}
                 {user.subscriptionTier === "PERFORMANCE" && "Performance (4% of savings, deferred)"}
               </p>
             </div>
@@ -213,9 +213,9 @@ export default async function DashboardPage() {
               <p className="text-sm text-gray-600 mb-2">
                 <strong>Need more property slots?</strong>{" "}
                 {totalPropertyCount + 1 <= 9
-                  ? `For ${totalPropertyCount + 1}–9 properties choose Growth ($125/property). `
+                  ? `For ${totalPropertyCount + 1}–9 properties choose Growth ($124/property). `
                   : totalPropertyCount + 1 <= 20
-                    ? `For ${totalPropertyCount + 1}–20 properties choose Portfolio ($100/property). `
+                    ? `For ${totalPropertyCount + 1}–20 properties choose Portfolio ($99/property). `
                     : ""}
                 Go to Pricing to upgrade.
               </p>

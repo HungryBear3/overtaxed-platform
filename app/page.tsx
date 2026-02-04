@@ -192,9 +192,9 @@ export default function HomePage() {
                 3–9 properties
               </div>
               <h5 className="font-semibold text-gray-900 text-lg">Growth</h5>
-              <p className="text-2xl font-bold text-gray-900 mt-2">$125</p>
+              <p className="text-2xl font-bold text-gray-900 mt-2">$124</p>
               <p className="text-gray-500 text-sm">per property/year</p>
-              <p className="text-xs text-gray-600 mt-2">3–9 properties · 3 = $375 · 9 = $1,125/yr</p>
+              <p className="text-xs text-gray-600 mt-2">3–9 properties · 3 = $372 · 9 = $1,116/yr</p>
               <p className="text-sm text-gray-600 mt-3 mb-3">
                 Volume discount for 3–9 properties.
               </p>
@@ -220,9 +220,9 @@ export default function HomePage() {
                 10–20 properties
               </div>
               <h5 className="font-semibold text-gray-900 text-lg">Portfolio</h5>
-              <p className="text-2xl font-bold text-gray-900 mt-2">$100</p>
+              <p className="text-2xl font-bold text-gray-900 mt-2">$99</p>
               <p className="text-gray-500 text-sm">per property/year</p>
-              <p className="text-xs text-gray-600 mt-2">10–20 properties · 10 = $1,000 · 20 = $2,000/yr</p>
+              <p className="text-xs text-gray-600 mt-2">10–20 properties · 10 = $990 · 20 = $1,980/yr</p>
               <p className="text-sm text-gray-600 mt-3 mb-3">
                 Best rate for 10–20 properties.
               </p>

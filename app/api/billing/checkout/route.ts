@@ -34,13 +34,49 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid plan" }, { status: 400 })
     }
 
-    const user = await prisma.user.findUnique({ where: { id: session.user.id } })
+    const user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { id: true, email: true, subscriptionTier: true, subscriptionStatus: true },
+    })
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
 
     // Get property count (from request or user's current count)
     const propertyCount = parsed.data.propertyCount ?? await prisma.property.count({ where: { userId: user.id } })
+
+    // Require Starter before Growth; require Growth with all slots used before Portfolio
+    const currentTier = user.subscriptionTier ?? "COMPS_ONLY"
+    if (parsed.data.plan === "GROWTH") {
+      if (currentTier !== "STARTER") {
+        return NextResponse.json(
+          {
+            error:
+              "You must subscribe to Starter (1–2 properties) first before upgrading to Growth. Please choose Starter on the pricing page.",
+          },
+          { status: 400 }
+        )
+      }
+    }
+    if (parsed.data.plan === "PORTFOLIO") {
+      if (currentTier !== "GROWTH") {
+        return NextResponse.json(
+          {
+            error:
+              "You must be on Growth and use all 9 Growth slots before upgrading to Portfolio. Subscribe to Starter first, then Growth (1–9 properties).",
+          },
+          { status: 400 }
+        )
+      }
+      if (propertyCount < GROWTH_MAX_PROPERTIES) {
+        return NextResponse.json(
+          {
+            error: `Portfolio is available after you use all 9 Growth slots. You have ${propertyCount} properties. Add more properties on Growth first, then upgrade to Portfolio.`,
+          },
+          { status: 400 }
+        )
+      }
+    }
 
     // Check for custom pricing requirement
     if (requiresCustomPricing(propertyCount)) {

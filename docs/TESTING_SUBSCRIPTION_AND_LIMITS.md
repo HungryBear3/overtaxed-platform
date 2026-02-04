@@ -79,6 +79,32 @@ Response includes `subscriptionTier`, `subscriptionStatus`, and `_count.properti
 
 ---
 
+## Reset subscription (test from scratch)
+
+To clear a user’s subscription and Stripe link so they can go through checkout again (e.g. after changing Stripe price IDs):
+
+- **POST** `/api/admin/reset-subscription`
+- **Auth:** same as set-subscription (`x-admin-secret` or logged-in ADMIN)
+- **Body:** `{ "email": "user@example.com" }` or `{ "userId": "..." }`
+
+This sets: `subscriptionTier: COMPS_ONLY`, `subscriptionStatus: INACTIVE`, `subscriptionQuantity: null`, `stripeCustomerId: null`, `stripeSubscriptionId: null`. The user can then sign in, go to Pricing, and complete checkout with the new prices.
+
+**PowerShell:**
+
+```powershell
+Invoke-RestMethod -Uri "https://www.overtaxed-il.com/api/admin/reset-subscription" -Method POST -ContentType "application/json" -Headers @{ "x-admin-secret" = "YOUR_ADMIN_SECRET" } -Body '{"email": "your@email.com"}'
+```
+
+**Bash:**
+
+```bash
+curl -X POST https://www.overtaxed-il.com/api/admin/reset-subscription \
+  -H "Content-Type: application/json" -H "x-admin-secret: YOUR_ADMIN_SECRET" \
+  -d '{"email": "your@email.com"}'
+```
+
+---
+
 ## How to test property limits
 
 Limits are enforced in **POST /api/properties** (add property). The UI (e.g. Add Property page) should disable or show an error when at limit; the API returns **403** with a clear message when over limit.

@@ -93,6 +93,27 @@ function isUpgradeFrom(currentTier: string | null, targetPlan: "STARTER" | "GROW
   return target > current
 }
 
+/** Growth requires Starter first. */
+function requiresStarterFirst(
+  plan: "STARTER" | "GROWTH" | "PORTFOLIO",
+  currentTier: string | null | undefined
+): boolean {
+  if (plan !== "GROWTH") return false
+  if (!currentTier) return false
+  return currentTier !== "STARTER"
+}
+
+/** Portfolio requires Growth and all 9 Growth slots used. */
+function requiresGrowthFirstOrFullSlots(
+  plan: "STARTER" | "GROWTH" | "PORTFOLIO",
+  currentTier: string | null | undefined,
+  propertyCount: number
+): boolean {
+  if (plan !== "PORTFOLIO") return false
+  if (currentTier !== "GROWTH") return true
+  return propertyCount < 9
+}
+
 const RANGE_LABELS: PlanRange[] = ["1-2", "3-9", "10-20", "20+"]
 
 /** Quantity = property count. Growth 1–9, Portfolio 1–20, Starter 1–2. */
@@ -251,7 +272,7 @@ export default function PricingPage() {
         <div className="mb-8 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
           <p className="text-sm font-medium text-amber-900 mb-1">How upgrade tiers work</p>
           <p className="text-sm text-amber-800">
-            <strong>Starter:</strong> 1–2 properties ($149 each). <strong>Growth:</strong> 1–9 properties at $125/property (minimum 1). <strong>Portfolio:</strong> 1–20 properties at $100/property (minimum 1). You choose how many properties to pay for; you can add more later within the plan max. To downgrade or change plan, use Account or contact us.
+            <strong>Starter:</strong> 1–2 properties ($149 each). <strong>Growth:</strong> 1–9 properties at ${GROWTH_PRICE_PER_PROPERTY}/property (minimum 1). <strong>Portfolio:</strong> 1–20 properties at ${PORTFOLIO_PRICE_PER_PROPERTY}/property (minimum 1). You choose how many properties to pay for; you can add more later within the plan max. To downgrade or change plan, use Account or contact us.
           </p>
         </div>
 
@@ -351,7 +372,7 @@ export default function PricingPage() {
           ))}
         </div>
         <p className="text-center text-sm text-gray-500 mb-6">
-          Pick a range (1–2, 3–9, or 10–20). For Growth choose <strong>1–9 properties</strong> at $125 each; for Portfolio choose <strong>1–20 properties</strong> at $100 each. Minimum 1 at the tier price.
+          Pick a range (1–2, 3–9, or 10–20). For Growth choose <strong>1–9 properties</strong> at ${GROWTH_PRICE_PER_PROPERTY} each; for Portfolio choose <strong>1–20 properties</strong> at ${PORTFOLIO_PRICE_PER_PROPERTY} each. Minimum 1 at the tier price.
         </p>
         <div className="grid gap-6 md:grid-cols-3 mb-12">
           {plans.map((plan) => {
@@ -395,9 +416,9 @@ export default function PricingPage() {
                     <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                       <label htmlFor={`qty-${plan.id}`} className="block text-sm font-medium text-gray-700 mb-2">
                         {plan.id === "GROWTH"
-                          ? "Choose 1–9 properties at $125/property/year (minimum 1):"
+                          ? `Choose 1–9 properties at $${GROWTH_PRICE_PER_PROPERTY}/property/year (minimum 1):`
                           : plan.id === "PORTFOLIO"
-                            ? "Choose 1–20 properties at $100/property/year (minimum 1):"
+                            ? `Choose 1–20 properties at $${PORTFOLIO_PRICE_PER_PROPERTY}/property/year (minimum 1):`
                             : "How many properties to pay for (you'll be charged this at checkout):"}
                       </label>
                       <div className="flex items-center gap-2 flex-wrap">
@@ -421,20 +442,62 @@ export default function PricingPage() {
                       </div>
                       <p className="text-xs text-gray-600 mt-2">
                         {plan.id === "GROWTH"
-                          ? "Growth: 1–9 properties at $125 each. You can add more later within that limit."
+                          ? `Growth: 1–9 properties at $${GROWTH_PRICE_PER_PROPERTY} each. You can add more later within that limit.`
                           : plan.id === "PORTFOLIO"
-                            ? "Portfolio: 1–20 properties at $100 each. You can add more later within that limit."
+                            ? `Portfolio: 1–20 properties at $${PORTFOLIO_PRICE_PER_PROPERTY} each. You can add more later within that limit.`
                             : "Starter: up to 2 properties. You can add more later within that limit."}
                       </p>
                     </div>
                   )}
+                  {plan.id === "GROWTH" &&
+                    planInfo?.subscriptionTier != null &&
+                    planInfo.subscriptionTier !== "STARTER" && (
+                      <p className="text-sm text-amber-700 bg-amber-50 rounded px-3 py-2 mb-3">
+                        Subscribe to <strong>Starter</strong> (1–2 properties) first; then you can upgrade to Growth here.
+                      </p>
+                    )}
+                  {plan.id === "PORTFOLIO" &&
+                    (planInfo?.subscriptionTier !== "GROWTH" || (planInfo?.propertyCount ?? 0) < 9) &&
+                    planInfo?.subscriptionTier != null && (
+                      <p className="text-sm text-amber-700 bg-amber-50 rounded px-3 py-2 mb-3">
+                        {planInfo.subscriptionTier !== "GROWTH" ? (
+                          <>
+                            Subscribe to <strong>Starter</strong> first, then <strong>Growth</strong> (1–9 properties).
+                            Portfolio is available after you use all 9 Growth slots.
+                          </>
+                        ) : (
+                          `Use all 9 Growth slots first (you have ${planInfo.propertyCount ?? 0} properties). Then you can upgrade to Portfolio.`
+                        )}
+                      </p>
+                    )}
                   <Button
                     className="w-full"
                     variant={isRecommended ? "primary" : plan.popular ? "primary" : "outline"}
                     onClick={() => subscribe(plan.id)}
-                    disabled={!!loading || (showQuantitySelector && quantityOptions.length === 0)}
+                    disabled={
+                      !!loading ||
+                      (showQuantitySelector && quantityOptions.length === 0) ||
+                      requiresStarterFirst(plan.id, planInfo?.subscriptionTier ?? null) ||
+                      requiresGrowthFirstOrFullSlots(
+                        plan.id,
+                        planInfo?.subscriptionTier ?? null,
+                        planInfo?.propertyCount ?? 0
+                      )
+                    }
                   >
-                    {loading === plan.id ? "Redirecting to checkout…" : isUpgradeFrom(planInfo?.subscriptionTier ?? null, plan.id) ? "Upgrade" : "Get started"}
+                    {loading === plan.id
+                      ? "Redirecting to checkout…"
+                      : requiresStarterFirst(plan.id, planInfo?.subscriptionTier ?? null)
+                        ? "Starter required"
+                        : requiresGrowthFirstOrFullSlots(
+                              plan.id,
+                              planInfo?.subscriptionTier ?? null,
+                              planInfo?.propertyCount ?? 0
+                            )
+                          ? "Growth & 9 slots required"
+                          : isUpgradeFrom(planInfo?.subscriptionTier ?? null, plan.id)
+                            ? "Upgrade"
+                            : "Get started"}
                   </Button>
                 </CardContent>
               </Card>
