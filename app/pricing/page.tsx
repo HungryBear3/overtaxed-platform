@@ -95,11 +95,28 @@ function isUpgradeFrom(currentTier: string | null, targetPlan: "STARTER" | "GROW
 
 const RANGE_LABELS: PlanRange[] = ["1-2", "3-9", "10-20", "20+"]
 
+/** Slot options shown in UI: 1–2, 1–7 (Growth), or 1–11 (Portfolio). Tier is based on total properties. */
 function getQuantityRange(range: PlanRange): number[] {
   if (range === "1-2") return [1, 2]
-  if (range === "3-9") return [3, 4, 5, 6, 7, 8, 9]
-  if (range === "10-20") return [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+  if (range === "3-9") return [1, 2, 3, 4, 5, 6, 7]
+  if (range === "10-20") return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
   return []
+}
+
+/** Map UI slot index (1–7 or 1–11) to actual property count for checkout and pricing. */
+function slotIndexToPropertyCount(range: PlanRange, slotIndex: number): number {
+  if (range === "1-2") return slotIndex
+  if (range === "3-9") return slotIndex + 2  // 1→3, 2→4, ... 7→9
+  if (range === "10-20") return slotIndex + 9  // 1→10, 2→11, ... 11→20
+  return slotIndex
+}
+
+/** Map current property count to slot index for pre-selecting the dropdown. */
+function propertyCountToSlotIndex(range: PlanRange, count: number): number {
+  if (range === "1-2") return Math.min(Math.max(count, 1), 2)
+  if (range === "3-9") return Math.min(Math.max(count - 2, 1), 7)  // 3→1, 9→7
+  if (range === "10-20") return Math.min(Math.max(count - 9, 1), 11)  // 10→1, 20→11
+  return 1
 }
 
 function getAnnualPrice(plan: "STARTER" | "GROWTH" | "PORTFOLIO", qty: number): number {
@@ -141,12 +158,13 @@ export default function PricingPage() {
   const effectiveRange = selectedRange ?? (planInfo?.recommendedPlan ? planToRange[planInfo.recommendedPlan] ?? "1-2" : "1-2")
   const quantityOptions = getQuantityRange(effectiveRange)
 
-  // Reset selectedQuantity when range changes
+  // Reset selectedQuantity (slot index) when range changes; preselect from current property count
   useEffect(() => {
     const opts = getQuantityRange(effectiveRange)
     if (opts.length > 0) {
       const currentCount = planInfo?.propertyCount ?? 0
-      setSelectedQuantity(opts.includes(currentCount) ? currentCount : opts[0])
+      const slotIndex = propertyCountToSlotIndex(effectiveRange, currentCount)
+      setSelectedQuantity(opts.includes(slotIndex) ? slotIndex : opts[0])
     }
   }, [effectiveRange])
 
@@ -154,11 +172,14 @@ export default function PricingPage() {
     setLoading(plan)
     setError("")
     try {
-      const qty = RANGE_TO_PLAN[effectiveRange] === plan ? selectedQuantity : (
-        plan === "STARTER" ? Math.min(selectedQuantity, 2) :
-        plan === "GROWTH" ? Math.max(Math.min(selectedQuantity, 9), 3) :
-        Math.max(Math.min(selectedQuantity, 20), 10)
-      )
+      const propertyCount = RANGE_TO_PLAN[effectiveRange] === plan
+        ? slotIndexToPropertyCount(effectiveRange, selectedQuantity)
+        : plan === "STARTER"
+          ? Math.min(selectedQuantity, 2)
+          : plan === "GROWTH"
+            ? Math.max(Math.min(slotIndexToPropertyCount("3-9", selectedQuantity), 9), 3)
+            : Math.max(Math.min(slotIndexToPropertyCount("10-20", selectedQuantity), 20), 10)
+      const qty = propertyCount
       const res = await fetch("/api/billing/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -295,7 +316,8 @@ export default function PricingPage() {
                 const opts = getQuantityRange(range)
                 if (opts.length > 0) {
                   const c = planInfo?.propertyCount ?? 0
-                  setSelectedQuantity(opts.includes(c) ? c : opts[0])
+                  const slotIndex = propertyCountToSlotIndex(range, c)
+                  setSelectedQuantity(opts.includes(slotIndex) ? slotIndex : opts[0])
                 }
               }}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -359,12 +381,13 @@ export default function PricingPage() {
                           onChange={(e) => setSelectedQuantity(Number(e.target.value))}
                           className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-900 bg-white"
                         >
-                          {quantityOptions.map((n) => (
-                            <option key={n} value={n}>{n}</option>
-                          ))}
+                          {quantityOptions.map((n) => {
+                            const count = slotIndexToPropertyCount(effectiveRange, n)
+                            return <option key={n} value={n}>{count} propert{count === 1 ? "y" : "ies"}</option>
+                          })}
                         </select>
                         <span className="text-sm font-semibold text-gray-900">
-                          = ${getAnnualPrice(plan.id, selectedQuantity).toLocaleString()}/year
+                          = ${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity)).toLocaleString()}/year
                         </span>
                       </div>
                       <p className="text-xs text-gray-600 mt-2">
