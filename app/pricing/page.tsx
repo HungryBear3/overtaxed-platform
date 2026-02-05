@@ -116,27 +116,41 @@ function requiresGrowthFirstOrFullSlots(
 
 const RANGE_LABELS: PlanRange[] = ["1-2", "3-9", "10-20", "20+"]
 
-/** Quantity = property count. Growth 1–9, Portfolio 1–20, Starter 1–2. */
-function getQuantityRange(range: PlanRange): number[] {
+/** When upgrading: Starter→Growth show 1–7 additional (total 3–9); Growth→Portfolio show 1–11 additional (total 10–20). */
+function getQuantityRange(range: PlanRange, currentTier: string | null): number[] {
   if (range === "1-2") return [1, 2]
-  if (range === "3-9") return [1, 2, 3, 4, 5, 6, 7, 8, 9]
-  if (range === "10-20") return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+  if (range === "3-9") {
+    if (currentTier === "STARTER") return [1, 2, 3, 4, 5, 6, 7] // additional slots (2 + 1..7 = 3..9 total)
+    return [1, 2, 3, 4, 5, 6, 7, 8, 9]
+  }
+  if (range === "10-20") {
+    if (currentTier === "GROWTH") return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] // additional (9 + 1..11 = 10..20 total)
+    return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+  }
   return []
 }
 
-/** Selected quantity is the property count (1 = minimum at tier price). */
-function slotIndexToPropertyCount(range: PlanRange, slotIndex: number): number {
+/** Total property count for display/price: when upgrading from Starter, total = 2 + slotIndex; from Growth, total = 9 + slotIndex. */
+function slotIndexToPropertyCount(range: PlanRange, slotIndex: number, currentTier: string | null): number {
   if (range === "1-2") return slotIndex
-  if (range === "3-9") return slotIndex   // 1→1, 2→2, ... 9→9
-  if (range === "10-20") return slotIndex // 1→1, ... 20→20
+  if (range === "3-9") return currentTier === "STARTER" ? 2 + slotIndex : slotIndex
+  if (range === "10-20") return currentTier === "GROWTH" ? 9 + slotIndex : slotIndex
   return slotIndex
 }
 
 /** Map current property count to dropdown selection. */
-function propertyCountToSlotIndex(range: PlanRange, count: number): number {
+function propertyCountToSlotIndex(range: PlanRange, count: number, currentTier: string | null): number {
   if (range === "1-2") return Math.min(Math.max(count, 1), 2)
-  if (range === "3-9") return Math.min(Math.max(count, 1), 9)
-  if (range === "10-20") return Math.min(Math.max(count, 1), 20)
+  if (range === "3-9") {
+    const max = currentTier === "STARTER" ? 7 : 9
+    const min = 1
+    return Math.min(Math.max(currentTier === "STARTER" ? count - 2 : count, min), max)
+  }
+  if (range === "10-20") {
+    const max = currentTier === "GROWTH" ? 11 : 20
+    const min = 1
+    return Math.min(Math.max(currentTier === "GROWTH" ? count - 9 : count, min), max)
+  }
   return 1
 }
 
@@ -179,32 +193,51 @@ export default function PricingPage() {
 
   const planToRange: Record<string, PlanRange> = { STARTER: "1-2", GROWTH: "3-9", PORTFOLIO: "10-20", CUSTOM: "20+" }
   const effectiveRange = selectedRange ?? (planInfo?.recommendedPlan ? planToRange[planInfo.recommendedPlan] ?? "1-2" : "1-2")
-  const quantityOptions = getQuantityRange(effectiveRange)
+  const currentTier = planInfo?.subscriptionTier ?? null
+  const quantityOptions = getQuantityRange(effectiveRange, currentTier)
 
   // Reset selectedQuantity when range or planInfo changes; preselect current count or next upgrade when at limit
   useEffect(() => {
-    const opts = getQuantityRange(effectiveRange)
+    const opts = getQuantityRange(effectiveRange, currentTier)
     if (opts.length === 0) return
     const currentCount = planInfo?.propertyCount ?? 0
     const limit = planInfo?.propertyLimit
     const atLimit = limit != null && limit < 999 && currentCount >= limit
-    const nextUpgrade = atLimit && limit != null ? Math.min(limit + 1, opts[opts.length - 1]) : null
-    const slotIndex = nextUpgrade ?? propertyCountToSlotIndex(effectiveRange, currentCount)
-    setSelectedQuantity(opts.includes(slotIndex) ? slotIndex : opts[0])
-  }, [effectiveRange, planInfo?.propertyCount, planInfo?.propertyLimit])
+    const nextUpgradeVal = atLimit && limit != null && currentTier === "STARTER" && effectiveRange === "3-9"
+      ? Math.min(Math.max(limit + 1 - 2, 1), 7)
+      : atLimit && limit != null && currentTier === "GROWTH" && effectiveRange === "10-20"
+        ? Math.min(Math.max(limit + 1 - 9, 1), 11)
+        : atLimit && limit != null
+          ? Math.min(limit + 1, opts[opts.length - 1])
+          : null
+    const slotIndex = nextUpgradeVal ?? propertyCountToSlotIndex(effectiveRange, currentCount, currentTier)
+    const sel = opts.includes(slotIndex) ? slotIndex : opts[0]
+    setSelectedQuantity(sel)
+  }, [effectiveRange, currentTier, planInfo?.propertyCount, planInfo?.propertyLimit])
 
   async function subscribe(plan: "STARTER" | "GROWTH" | "PORTFOLIO") {
     setLoading(plan)
     setError("")
     try {
-      const propertyCount = RANGE_TO_PLAN[effectiveRange] === plan
-        ? slotIndexToPropertyCount(effectiveRange, selectedQuantity)
-        : plan === "STARTER"
-          ? Math.min(selectedQuantity, 2)
-          : plan === "GROWTH"
-            ? Math.max(Math.min(selectedQuantity, 9), 1)
-            : Math.max(Math.min(selectedQuantity, 20), 1)
+      // When upgrading: send total slots (Starter 2 + additional for Growth; Growth 9 + additional for Portfolio)
+      let propertyCount: number
+      if (plan === "GROWTH" && currentTier === "STARTER") {
+        propertyCount = Math.min(2 + selectedQuantity, 9)
+      } else if (plan === "PORTFOLIO" && currentTier === "GROWTH") {
+        propertyCount = Math.min(9 + selectedQuantity, 20)
+      } else {
+        propertyCount = RANGE_TO_PLAN[effectiveRange] === plan
+          ? slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier)
+          : plan === "STARTER"
+            ? Math.min(selectedQuantity, 2)
+            : plan === "GROWTH"
+              ? Math.max(Math.min(selectedQuantity, 9), 1)
+              : Math.max(Math.min(selectedQuantity, 20), 1)
+      }
       const qty = propertyCount
+      // #region agent log
+      fetch("http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: "pricing/page.tsx:subscribe", message: "checkout request", data: { plan, effectiveRange, selectedQuantity, propertyCountSent: qty, subscriptionTier: planInfo?.subscriptionTier ?? null, subscriptionQuantity: planInfo?.subscriptionQuantity ?? null, quantityOptionsLen: quantityOptions.length }, timestamp: Date.now(), sessionId: "debug-session", hypothesisId: "H1-H2" }) }).catch(() => {})
+      // #endregion
       const res = await fetch("/api/billing/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -431,9 +464,13 @@ export default function PricingPage() {
                       )}
                       <label htmlFor={`qty-${plan.id}`} className="block text-sm font-medium text-gray-700 mb-2">
                         {plan.id === "GROWTH"
-                          ? `Choose 1–9 properties at $${GROWTH_PRICE_PER_PROPERTY}/property/year (minimum 1):`
+                          ? currentTier === "STARTER"
+                            ? `Add 1–7 properties (3–9 total) at $${GROWTH_PRICE_PER_PROPERTY}/property/year:`
+                            : `Choose 1–9 properties at $${GROWTH_PRICE_PER_PROPERTY}/property/year (minimum 1):`
                           : plan.id === "PORTFOLIO"
-                            ? `Choose 1–20 properties at $${PORTFOLIO_PRICE_PER_PROPERTY}/property/year (minimum 1):`
+                            ? currentTier === "GROWTH"
+                              ? `Add 1–11 properties (10–20 total) at $${PORTFOLIO_PRICE_PER_PROPERTY}/property/year:`
+                              : `Choose 1–20 properties at $${PORTFOLIO_PRICE_PER_PROPERTY}/property/year (minimum 1):`
                             : "How many properties to pay for (you'll be charged this at checkout):"}
                       </label>
                       <div className="flex items-center gap-2 flex-wrap">
@@ -444,7 +481,7 @@ export default function PricingPage() {
                           className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-900 bg-white"
                         >
                           {quantityOptions.map((n) => {
-                            const count = slotIndexToPropertyCount(effectiveRange, n)
+                            const count = slotIndexToPropertyCount(effectiveRange, n, currentTier)
                             if (plan.id === "GROWTH" || plan.id === "PORTFOLIO") {
                               return <option key={n} value={n}>{count} propert{count === 1 ? "y" : "ies"} (${getAnnualPrice(plan.id, count).toLocaleString()}/yr)</option>
                             }
@@ -452,14 +489,18 @@ export default function PricingPage() {
                           })}
                         </select>
                         <span className="text-sm font-semibold text-gray-900">
-                          = ${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity)).toLocaleString()}/year
+                          = ${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier)).toLocaleString()}/year
                         </span>
                       </div>
                       <p className="text-xs text-gray-600 mt-2">
                         {plan.id === "GROWTH"
-                          ? `Growth: 1–9 properties at $${GROWTH_PRICE_PER_PROPERTY} each. You can add more later within that limit.`
+                          ? currentTier === "STARTER"
+                            ? `Add 1–7 more (3–9 total). $${GROWTH_PRICE_PER_PROPERTY} each. You can add more later within 9.`
+                            : `Growth: 1–9 properties at $${GROWTH_PRICE_PER_PROPERTY} each. You can add more later within that limit.`
                           : plan.id === "PORTFOLIO"
-                            ? `Portfolio: 1–20 properties at $${PORTFOLIO_PRICE_PER_PROPERTY} each. You can add more later within that limit.`
+                            ? currentTier === "GROWTH"
+                              ? `Add 1–11 more (10–20 total). $${PORTFOLIO_PRICE_PER_PROPERTY} each. You can add more later within 20.`
+                              : `Portfolio: 1–20 properties at $${PORTFOLIO_PRICE_PER_PROPERTY} each. You can add more later within that limit.`
                             : "Starter: up to 2 properties. You can add more later within that limit."}
                       </p>
                     </div>

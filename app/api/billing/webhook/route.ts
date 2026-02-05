@@ -88,6 +88,22 @@ export async function POST(request: NextRequest) {
           console.warn("[webhook] Could not fetch subscription for quantity fallback:", err)
         }
       }
+      // Sum quantities across ALL subscriptions for this customer (Starter + Growth etc.) so we don't overwrite with a single subscription's quantity
+      let quantityToStore = subscriptionQuantity
+      if (stripeCustomerId && stripe) {
+        try {
+          const subs = await stripe.subscriptions.list({ customer: stripeCustomerId, status: "active", limit: 100 })
+          const trialing = await stripe.subscriptions.list({ customer: stripeCustomerId, status: "trialing", limit: 100 })
+          const pastDue = await stripe.subscriptions.list({ customer: stripeCustomerId, status: "past_due", limit: 100 })
+          const all = [...subs.data, ...trialing.data, ...pastDue.data]
+          const sum = all.reduce((acc, s) => acc + (s.items?.data?.reduce((a, i) => a + (i.quantity ?? 0), 0) ?? 0), 0)
+          if (sum > 0) quantityToStore = sum
+        } catch (_) {}
+      }
+      // #region agent log
+      const beforeUser = await prisma.user.findUnique({ where: { id: userId }, select: { subscriptionQuantity: true } }).catch(() => null)
+      fetch("http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: "webhook/route.ts:checkout.session.completed", message: "webhook quantity", data: { userId, plan, singleSubscriptionQuantity: subscriptionQuantity, quantityToStore, dbQuantityBefore: beforeUser?.subscriptionQuantity ?? null }, timestamp: Date.now(), sessionId: "debug-session", runId: "post-fix", hypothesisId: "H3-H4" }) }).catch(() => {})
+      // #endregion
       try {
         const updatedUser = await prisma.user.update({
           where: { id: userId },
@@ -95,13 +111,13 @@ export async function POST(request: NextRequest) {
             subscriptionTier: plan as "STARTER" | "GROWTH" | "PORTFOLIO",
             subscriptionStatus: "ACTIVE",
             subscriptionStartDate: new Date(),
-            subscriptionQuantity: subscriptionQuantity ?? undefined,
+            subscriptionQuantity: quantityToStore ?? undefined,
             stripeCustomerId: stripeCustomerId ?? undefined,
             stripeSubscriptionId: stripeSubscriptionId ?? undefined,
           },
         })
         console.log(
-          `[webhook] SUCCESS: User ${userId} subscribed to ${plan}, quantity=${subscriptionQuantity}, tier=${updatedUser.subscriptionTier}`
+          `[webhook] SUCCESS: User ${userId} subscribed to ${plan}, quantity=${quantityToStore}, tier=${updatedUser.subscriptionTier}`
         )
       } catch (dbError) {
         console.error(`[webhook] Database error updating user ${userId}:`, dbError)
@@ -137,27 +153,33 @@ export async function POST(request: NextRequest) {
           status === "past_due" ? "PAST_DUE" :
           status === "canceled" ? "CANCELLED" : "INACTIVE"
 
-        let quantity: number | null = null
-        const items = (data.items as { data?: Array<{ quantity?: number }> })?.data
-        if (items?.[0]?.quantity != null) quantity = items[0].quantity
-        else {
-          const sub = await stripe.subscriptions.retrieve(subscriptionId, { expand: ["items.data"] })
-          const firstItem = sub.items?.data?.[0]
-          if (firstItem?.quantity != null) quantity = firstItem.quantity
+        // Sum quantities across all active/trialing/past_due subscriptions for this customer (remaining subs after cancel)
+        let quantityToStore: number | null = null
+        if (customerId) {
+          try {
+            const subs = await stripe.subscriptions.list({ customer: customerId, status: "active", limit: 100 })
+            const trialing = await stripe.subscriptions.list({ customer: customerId, status: "trialing", limit: 100 })
+            const pastDue = await stripe.subscriptions.list({ customer: customerId, status: "past_due", limit: 100 })
+            const all = [...subs.data, ...trialing.data, ...pastDue.data]
+            const sum = all.reduce((acc, s) => acc + (s.items?.data?.reduce((a, i) => a + (i.quantity ?? 0), 0) ?? 0), 0)
+            quantityToStore = sum > 0 ? sum : null
+          } catch (_) {}
         }
+        // #region agent log
+        const beforeSubQty = (await prisma.user.findUnique({ where: { id: user.id }, select: { subscriptionQuantity: true } }))?.subscriptionQuantity ?? null
+        fetch("http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: "webhook/route.ts:subscription.updated", message: "sum quantity", data: { userId: user.id, quantityToStore, dbQuantityBefore: beforeSubQty }, timestamp: Date.now(), sessionId: "debug-session", runId: "post-fix", hypothesisId: "H3" }) }).catch(() => {})
+        // #endregion
 
         await prisma.user.update({
           where: { id: user.id },
           data: {
             subscriptionStatus: newStatus,
-            ...(quantity != null && quantity > 0 && { subscriptionQuantity: quantity }),
-            ...(status === "canceled" || status === "unpaid"
-              ? { subscriptionQuantity: null, stripeSubscriptionId: null }
-              : {}),
+            ...(quantityToStore != null ? { subscriptionQuantity: quantityToStore } : { subscriptionQuantity: null }),
+            ...(status === "canceled" || status === "unpaid" ? { stripeSubscriptionId: null } : {}),
           },
         })
         console.log(
-          `[webhook] Updated user ${user.id} status=${newStatus}${quantity != null ? ` quantity=${quantity}` : ""}`
+          `[webhook] Updated user ${user.id} status=${newStatus}${quantityToStore != null ? ` quantity=${quantityToStore}` : ""}`
         )
       } catch (err) {
         console.error("[webhook] Error processing subscription update:", err)

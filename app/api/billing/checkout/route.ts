@@ -36,11 +36,15 @@ export async function POST(request: NextRequest) {
 
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
-      select: { id: true, email: true, subscriptionTier: true, subscriptionStatus: true, stripeCustomerId: true },
+      select: { id: true, email: true, subscriptionTier: true, subscriptionStatus: true, stripeCustomerId: true, subscriptionQuantity: true },
     })
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
+
+    // #region agent log
+    fetch("http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: "checkout/route.ts:POST", message: "checkout incoming", data: { plan: parsed.data.plan, propertyCountFromBody: parsed.data.propertyCount, userTier: user.subscriptionTier, userSubscriptionQuantity: user.subscriptionQuantity }, timestamp: Date.now(), sessionId: "debug-session", hypothesisId: "H2-H5" }) }).catch(() => {})
+    // #endregion
 
     // Get property count (from request or user's current count)
     const propertyCount = parsed.data.propertyCount ?? await prisma.property.count({ where: { userId: user.id } })
@@ -122,6 +126,10 @@ export async function POST(request: NextRequest) {
     }
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+
+    // #region agent log
+    fetch("http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: "checkout/route.ts:quantity", message: "stripe quantity", data: { plan: parsed.data.plan, quantitySentToStripe: quantity, propertyCount }, timestamp: Date.now(), sessionId: "debug-session", hypothesisId: "H5" }) }).catch(() => {})
+    // #endregion
 
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "subscription",

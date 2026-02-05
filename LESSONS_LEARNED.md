@@ -24,6 +24,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 17. [Comps-to-appeal flow, PDF wrap, and filing UX](#comps-to-appeal-flow-pdf-wrap-and-filing-ux)
 18. [Property slot capping and production DB migration](#property-slot-capping-and-production-db-migration)
 19. [GitHub secret exposure – Stripe webhook signing secret](#github-secret-exposure--stripe-webhook-signing-secret)
+20. [Stripe: multiple customers per email; serverless DB pool](#20-stripe-multiple-customers-per-email-serverless-db-pool)
 
 ---
 
@@ -555,6 +556,26 @@ const user = { ...session.user, ...freshUser }
 3. **Do not** re-commit the old or new secret in docs or code; keep docs as placeholders only.
 
 **Lesson:** Never commit real webhook (or API) secrets. Use placeholders in docs that don’t match real-secret patterns. If a secret was committed, treat it as compromised and rotate it everywhere.
+
+---
+
+## 20. Stripe: multiple customers per email; serverless DB pool
+
+### Multiple Stripe customer IDs for the same user
+**Context:** When a user checks out multiple times (e.g. first Starter for 1 property, then again for a second), Stripe can create **separate customer records** (different `customer_id`) even with the same email and card. Our sync originally looked up only the **first** customer by email (`customers.list({ email, limit: 1 })`), so subscriptions on the second customer were never counted — dashboard showed "1 of 1" instead of 2.
+
+**Solution:**
+- **Sync** (`POST /api/billing/sync-subscription`): List **all** customers with that email (`customers.list({ email, limit: 100 })`). For each customer ID, fetch active + trialing + past_due subscriptions and **sum** all line-item quantities. Store a single "primary" customer ID (for the portal link) and one primary subscription ID; the displayed slot count is the sum across all customers.
+- **Checkout** (`POST /api/billing/checkout`): When the user already has `stripeCustomerId`, pass `customer: user.stripeCustomerId` instead of `customer_email`. New subscriptions then attach to the **same** customer, so future upgrades don't create more customer IDs and incremental upgrades within a tier work correctly.
+
+**Lesson:** Same email can map to multiple Stripe customers. Sync must aggregate subscriptions across all of them. Checkout should reuse the existing customer when present so users can upgrade incrementally on one customer.
+
+### MaxClientsInSessionMode (Supabase pooler)
+**Context:** In production (Vercel), login and other DB-heavy pages failed with `DriverAdapterError: MaxClientsInSessionMode: max clients reached`. Each serverless instance was using a pg `Pool` with `max: 5`; many concurrent requests exhausted the pooler's session limit.
+
+**Solution:** In `lib/db/prisma.ts`, detect serverless (e.g. `process.env.VERCEL` or `AWS_LAMBDA_FUNCTION_NAME`) and set the pool **max to 1** for that environment. Each instance then uses at most one connection; the pooler can serve many more instances without hitting the limit.
+
+**Lesson:** In serverless, keep the Prisma/pg pool size per instance to 1 (or 2 at most) when using a connection pooler in Session mode. Use Transaction mode in Supabase if available for higher concurrency.
 
 ---
 
