@@ -348,7 +348,7 @@ export default function PricingPage() {
         <div className="mb-8 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
           <p className="text-sm font-medium text-amber-900 mb-1">How upgrade tiers work</p>
           <p className="text-sm text-amber-800">
-            <strong>Starter:</strong> 1–2 properties ($149 each). <strong>Growth:</strong> 1–9 properties at ${GROWTH_PRICE_PER_PROPERTY}/property (minimum 1). <strong>Portfolio:</strong> 1–20 properties at ${PORTFOLIO_PRICE_PER_PROPERTY}/property (minimum 1). You choose how many properties to pay for; you can add more later within the plan max. To downgrade or change plan, use Account or contact us.
+            <strong>Starter:</strong> up to 2 properties ($149 each). <strong>Growth:</strong> up to 7 more properties (3–9 total) at ${GROWTH_PRICE_PER_PROPERTY}/property. <strong>Portfolio:</strong> up to 11 more properties (10–20 total) at ${PORTFOLIO_PRICE_PER_PROPERTY}/property. You choose how many to pay for; you can add more later within the plan max. To downgrade or change plan, use Account or contact us.
           </p>
         </div>
 
@@ -448,7 +448,7 @@ export default function PricingPage() {
           ))}
         </div>
         <p className="text-center text-sm text-gray-500 mb-6">
-          Pick a range (1–2, 3–9, or 10–20). For Growth choose <strong>1–9 properties</strong> at ${GROWTH_PRICE_PER_PROPERTY} each; for Portfolio choose <strong>1–20 properties</strong> at ${PORTFOLIO_PRICE_PER_PROPERTY} each. Minimum 1 at the tier price.
+          Pick a range: <strong>Starter</strong> up to 2 properties, <strong>Growth</strong> up to 7 more (3–9 total) at ${GROWTH_PRICE_PER_PROPERTY} each, <strong>Portfolio</strong> up to 11 more (10–20 total) at ${PORTFOLIO_PRICE_PER_PROPERTY} each. Minimum 1 at the tier price.
         </p>
         <div className="grid gap-6 md:grid-cols-3 mb-12">
           {plans.map((plan) => {
@@ -496,8 +496,11 @@ export default function PricingPage() {
                           {tierUsed.starter < STARTER_SLOTS && (
                             <span className="text-green-700"> · {STARTER_SLOTS - tierUsed.starter} available</span>
                           )}
-                          {tierUsed.starter >= STARTER_SLOTS && (
+                          {tierUsed.starter >= STARTER_SLOTS && currentTier === "STARTER" && (currentSlots >= STARTER_SLOTS) && (
                             <span className="text-amber-700"> · Select Growth above to add more</span>
+                          )}
+                          {tierUsed.starter >= STARTER_SLOTS && (currentTier !== "STARTER" || currentSlots < STARTER_SLOTS) && (
+                            <span className="text-green-700"> · Subscribe to Starter below to cover your {tierUsed.starter} properties</span>
                           )}
                         </p>
                       )}
