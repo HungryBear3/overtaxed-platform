@@ -91,23 +91,25 @@ export async function POST(request: NextRequest) {
       const items = expanded.items?.data ?? []
       for (const item of items) {
         const priceId = typeof item.price?.id === "string" ? item.price.id : null
+        const qty = item.quantity ?? 0
+        totalQuantity += qty
         if (priceId && knownPriceIds.includes(priceId)) {
-          totalQuantity += item.quantity ?? 0
           const plan = getPlanFromPriceId(priceId)
           if (plan && (bestPlan == null || (tierRank[plan] ?? 0) > (tierRank[bestPlan] ?? 0))) {
             bestPlan = plan
           }
+        } else if (!bestPlan && qty > 0) {
+          bestPlan = getPlanFromPriceId(priceId) ?? "STARTER"
         }
       }
       if (expanded.status === "active" && bestStatus !== "ACTIVE") bestStatus = "ACTIVE"
       else if (expanded.status === "past_due" && bestStatus !== "ACTIVE") bestStatus = "PAST_DUE"
     }
 
-    if (totalQuantity === 0 && allSubs[0]) {
+    if (!bestPlan && allSubs[0]) {
       const fallback = await stripe.subscriptions.retrieve(allSubs[0].id, { expand: ["items.data.price"] })
       const firstItem = fallback.items?.data?.[0]
-      totalQuantity = firstItem?.quantity ?? 0
-      if (!bestPlan && firstItem) bestPlan = getPlanFromPriceId(typeof firstItem.price?.id === "string" ? firstItem.price.id : null)
+      if (firstItem) bestPlan = getPlanFromPriceId(typeof firstItem.price?.id === "string" ? firstItem.price.id : null) ?? "STARTER"
     }
 
     await prisma.user.update({
