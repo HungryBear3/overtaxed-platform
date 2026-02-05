@@ -116,13 +116,28 @@ function requiresGrowthFirstOrFullSlots(
 
 const RANGE_LABELS: PlanRange[] = ["1-2", "3-9", "10-20", "20+"]
 
-/** When upgrading: Starter→Growth show 1–7 additional (total 3–9); on Growth cap by slots left (9 - current); Portfolio same with 20 - current. */
+/** Per-tier bucket sizes: Starter 2, Growth 7 (on top of 2), Portfolio 11 (on top of 9). Display "X/Y slots" per tier. */
+const STARTER_SLOTS = 2
+const GROWTH_SLOTS = 7
+const PORTFOLIO_SLOTS = 11
+
+/** Used count in each tier bucket from total property count. */
+function tierUsedFromTotal(total: number): { starter: number; growth: number; portfolio: number } {
+  return {
+    starter: Math.min(STARTER_SLOTS, total),
+    growth: Math.min(GROWTH_SLOTS, Math.max(0, total - STARTER_SLOTS)),
+    portfolio: Math.min(PORTFOLIO_SLOTS, Math.max(0, total - STARTER_SLOTS - GROWTH_SLOTS)),
+  }
+}
+
+/** When upgrading: Starter→Growth show 1–7 additional (total 3–9); on Growth cap by Growth bucket left (7 - growthUsed); Portfolio same. */
 function getQuantityRange(range: PlanRange, currentTier: string | null, currentSlots: number): number[] {
   if (range === "1-2") return [1, 2]
   if (range === "3-9") {
     if (currentTier === "STARTER" || currentTier === null) return [1, 2, 3, 4, 5, 6, 7] // additional (2 + 1..7 = 3..9 total)
     if (currentTier === "GROWTH") {
-      const maxAdditional = Math.max(1, GROWTH_MAX_PROPERTIES - currentSlots)
+      const growthUsed = currentSlots - STARTER_SLOTS
+      const maxAdditional = Math.max(1, GROWTH_SLOTS - growthUsed)
       return Array.from({ length: maxAdditional }, (_, i) => i + 1) // 1..maxAdditional
     }
     return [1, 2, 3, 4, 5, 6, 7, 8, 9]
@@ -130,7 +145,8 @@ function getQuantityRange(range: PlanRange, currentTier: string | null, currentS
   if (range === "10-20") {
     if (currentTier === "GROWTH") return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] // additional (9 + 1..11 = 10..20 total)
     if (currentTier === "PORTFOLIO") {
-      const maxAdditional = Math.max(1, Math.min(11, PORTFOLIO_MAX_PROPERTIES - currentSlots))
+      const portfolioUsed = currentSlots - STARTER_SLOTS - GROWTH_SLOTS
+      const maxAdditional = Math.max(1, PORTFOLIO_SLOTS - portfolioUsed)
       return Array.from({ length: maxAdditional }, (_, i) => i + 1)
     }
     return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
@@ -214,6 +230,8 @@ export default function PricingPage() {
   const effectiveRange = selectedRange ?? (planInfo?.recommendedPlan ? planToRange[planInfo.recommendedPlan] ?? "1-2" : "1-2")
   const currentTier = planInfo?.subscriptionTier ?? null
   const currentSlots = planInfo?.subscriptionQuantity ?? 0
+  const totalProperties = planInfo?.propertyCount ?? 0
+  const tierUsed = tierUsedFromTotal(totalProperties)
   const quantityOptions = getQuantityRange(effectiveRange, currentTier, currentSlots)
 
   // Reset selectedQuantity when range or planInfo changes; preselect current count or next upgrade when at limit
@@ -472,14 +490,36 @@ export default function PricingPage() {
                   {/* Quantity selector - 1–7 slots (Growth) or 1–11 (Portfolio); labels show slot + property count */}
                   {showQuantitySelector && (
                     <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                      {planInfo?.subscriptionTier === plan.id && planInfo?.propertyLimit != null && planInfo.propertyLimit < 999 && (
+                      {planInfo && plan.id === "STARTER" && (
                         <p className="text-sm font-medium text-gray-800 mb-2">
-                          {planInfo.propertyCount ?? 0} of {planInfo.propertyLimit} slots used
-                          {((planInfo.propertyLimit - (planInfo.propertyCount ?? 0)) > 0) && (
-                            <span className="text-green-700"> · {planInfo.propertyLimit - (planInfo.propertyCount ?? 0)} available</span>
+                          {tierUsed.starter} of {STARTER_SLOTS} slots used
+                          {tierUsed.starter < STARTER_SLOTS && (
+                            <span className="text-green-700"> · {STARTER_SLOTS - tierUsed.starter} available</span>
                           )}
-                          {(planInfo.propertyCount ?? 0) >= planInfo.propertyLimit && (
-                            <span className="text-amber-700"> · Select more below to upgrade</span>
+                          {tierUsed.starter >= STARTER_SLOTS && (
+                            <span className="text-amber-700"> · Select Growth above to add more</span>
+                          )}
+                        </p>
+                      )}
+                      {planInfo && plan.id === "GROWTH" && (
+                        <p className="text-sm font-medium text-gray-800 mb-2">
+                          {tierUsed.growth} of {GROWTH_SLOTS} slots used
+                          {tierUsed.growth < GROWTH_SLOTS && (
+                            <span className="text-green-700"> · {GROWTH_SLOTS - tierUsed.growth} available</span>
+                          )}
+                          {tierUsed.growth >= GROWTH_SLOTS && (
+                            <span className="text-amber-700"> · Select more below or upgrade to Portfolio</span>
+                          )}
+                        </p>
+                      )}
+                      {planInfo && plan.id === "PORTFOLIO" && (
+                        <p className="text-sm font-medium text-gray-800 mb-2">
+                          {tierUsed.portfolio} of {PORTFOLIO_SLOTS} slots used
+                          {tierUsed.portfolio < PORTFOLIO_SLOTS && (
+                            <span className="text-green-700"> · {PORTFOLIO_SLOTS - tierUsed.portfolio} available</span>
+                          )}
+                          {tierUsed.portfolio >= PORTFOLIO_SLOTS && (
+                            <span className="text-amber-700"> · At limit; contact us for 20+</span>
                           )}
                         </p>
                       )}
@@ -545,7 +585,7 @@ export default function PricingPage() {
                             Portfolio is available after you use all 9 Growth slots.
                           </>
                         ) : (
-                          `Portfolio unlocks after 9 Growth slots. You have ${planInfo.propertyCount ?? 0} of 9 — add more Growth slots above, then you can upgrade to Portfolio.`
+                          `Portfolio unlocks after all 7 Growth slots are used. You have ${tierUsed.growth} of ${GROWTH_SLOTS} Growth slots — add more above, then you can upgrade to Portfolio.`
                         )}
                       </p>
                     )}
