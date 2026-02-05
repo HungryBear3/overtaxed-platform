@@ -172,12 +172,7 @@ export async function POST(request: NextRequest) {
             ? GROWTH_PRICE_PER_PROPERTY * 100
             : PORTFOLIO_PRICE_PER_PROPERTY * 100
         const amountCents = additionalSlots * pricePerSlotCents
-        await stripe.invoiceItems.create({
-          customer: customerId,
-          amount: amountCents,
-          currency: "usd",
-          description: `Additional ${additionalSlots} slot(s) — ${parsed.data.plan} (prorated)`,
-        })
+        // Create draft invoice first so the line item is attached to it (otherwise pending items can end up on subscription's next invoice → $0)
         const invoice = await stripe.invoices.create({
           customer: customerId,
           collection_method: "charge_automatically",
@@ -187,6 +182,13 @@ export async function POST(request: NextRequest) {
             newQuantity: String(quantity),
             plan: parsed.data.plan,
           },
+        })
+        await stripe.invoiceItems.create({
+          customer: customerId,
+          invoice: invoice.id,
+          amount: amountCents,
+          currency: "usd",
+          description: `Additional ${additionalSlots} slot(s) — ${parsed.data.plan} (prorated)`,
         })
         const finalized = await stripe.invoices.finalizeInvoice(invoice.id)
         const payUrl =
