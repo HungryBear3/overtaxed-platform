@@ -34,7 +34,7 @@ const plans: Array<{
     id: "STARTER",
     name: "Starter",
     priceLabel: "$149/property/year",
-    propertyLimit: "1–2 properties",
+    propertyLimit: "Up to 2 of your first properties",
     pricingNote: "Retail pricing.",
     exampleTotals: "1 = $149/yr · 2 = $298/yr",
     popular: true,
@@ -50,7 +50,7 @@ const plans: Array<{
     id: "GROWTH",
     name: "Growth",
     priceLabel: `$${GROWTH_PRICE_PER_PROPERTY}/property/year`,
-    propertyLimit: `${GROWTH_MIN_PROPERTIES}–${GROWTH_MAX_PROPERTIES} properties`,
+    propertyLimit: "Up to 7 more properties (after Starter)",
     pricingNote: "Per-property pricing.",
     exampleTotals: `1 = $${growthPriceForProperties(1)}/yr · 5 = $${growthPriceForProperties(5)}/yr · 9 = $${growthPriceForProperties(9)}/yr`,
     features: [
@@ -65,7 +65,7 @@ const plans: Array<{
     id: "PORTFOLIO",
     name: "Portfolio",
     priceLabel: `$${PORTFOLIO_PRICE_PER_PROPERTY}/property/year`,
-    propertyLimit: `${PORTFOLIO_MIN_PROPERTIES}–${PORTFOLIO_MAX_PROPERTIES} properties`,
+    propertyLimit: "Up to 11 more properties (after Growth)",
     pricingNote: "Per-property pricing.",
     exampleTotals: `1 = $${portfolioPriceForProperties(1)}/yr · 10 = $${portfolioPriceForProperties(10)}/yr · 20 = $${portfolioPriceForProperties(20)}/yr`,
     features: [
@@ -492,7 +492,7 @@ export default function PricingPage() {
                     <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                       {planInfo && plan.id === "STARTER" && (
                         <p className="text-sm font-medium text-gray-800 mb-2">
-                          {tierUsed.starter} of {STARTER_SLOTS} slots used
+                          {tierUsed.starter}/{STARTER_SLOTS} slots used
                           {tierUsed.starter < STARTER_SLOTS && (
                             <span className="text-green-700"> · {STARTER_SLOTS - tierUsed.starter} available</span>
                           )}
@@ -503,7 +503,7 @@ export default function PricingPage() {
                       )}
                       {planInfo && plan.id === "GROWTH" && (
                         <p className="text-sm font-medium text-gray-800 mb-2">
-                          {tierUsed.growth} of {GROWTH_SLOTS} slots used
+                          {tierUsed.growth}/{GROWTH_SLOTS} slots used
                           {tierUsed.growth < GROWTH_SLOTS && (
                             <span className="text-green-700"> · {GROWTH_SLOTS - tierUsed.growth} available</span>
                           )}
@@ -514,7 +514,7 @@ export default function PricingPage() {
                       )}
                       {planInfo && plan.id === "PORTFOLIO" && (
                         <p className="text-sm font-medium text-gray-800 mb-2">
-                          {tierUsed.portfolio} of {PORTFOLIO_SLOTS} slots used
+                          {tierUsed.portfolio}/{PORTFOLIO_SLOTS} slots used
                           {tierUsed.portfolio < PORTFOLIO_SLOTS && (
                             <span className="text-green-700"> · {PORTFOLIO_SLOTS - tierUsed.portfolio} available</span>
                           )}
@@ -543,10 +543,20 @@ export default function PricingPage() {
                         >
                           {quantityOptions.map((n) => {
                             const count = slotIndexToPropertyCount(effectiveRange, n, currentTier, currentSlots)
-                            if (plan.id === "GROWTH" || plan.id === "PORTFOLIO") {
-                              return <option key={n} value={n}>{count} propert{count === 1 ? "y" : "ies"} (${getAnnualPrice(plan.id, count).toLocaleString()}/yr)</option>
+                            const price = getAnnualPrice(plan.id, count)
+                            if (plan.id === "GROWTH" && (currentTier === "STARTER" || currentTier === null)) {
+                              return <option key={n} value={n}>Add {n} more ({count} total) — ${price.toLocaleString()}/yr</option>
                             }
-                            return <option key={n} value={n}>{count} propert{count === 1 ? "y" : "ies"}</option>
+                            if (plan.id === "GROWTH" && currentTier === "GROWTH") {
+                              return <option key={n} value={n}>Add {n} more ({count} total) — ${price.toLocaleString()}/yr</option>
+                            }
+                            if (plan.id === "PORTFOLIO" && currentTier === "GROWTH") {
+                              return <option key={n} value={n}>Add {n} more ({count} total) — ${price.toLocaleString()}/yr</option>
+                            }
+                            if (plan.id === "PORTFOLIO" && currentTier === "PORTFOLIO") {
+                              return <option key={n} value={n}>Add {n} more ({count} total) — ${price.toLocaleString()}/yr</option>
+                            }
+                            return <option key={n} value={n}>{count} propert{count === 1 ? "y" : "ies"} (${price.toLocaleString()}/yr)</option>
                           })}
                         </select>
                         <span className="text-sm font-semibold text-gray-900">
