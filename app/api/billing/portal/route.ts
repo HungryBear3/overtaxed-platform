@@ -19,11 +19,11 @@ export async function POST(request: NextRequest) {
 
   const user = await prisma.user.findUnique({
     where: { id: token.sub },
-    select: { stripeCustomerId: true },
+    select: { id: true, stripeCustomerId: true },
   })
   if (!user?.stripeCustomerId) {
     return NextResponse.json(
-      { error: "No billing account yet. Upgrade or complete a purchase on Pricing to manage your subscription." },
+      { error: "No billing account yet. Complete a checkout on the Pricing page to manage your subscription." },
       { status: 400 }
     )
   }
@@ -38,8 +38,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Portal URL not available" }, { status: 500 })
     }
     return NextResponse.json({ url: session.url })
-  } catch (err) {
+  } catch (err: unknown) {
     console.error("Billing portal error:", err)
+    const stripeErr = err as { code?: string; type?: string; message?: string }
+    const msg = (stripeErr?.message ?? "").toLowerCase()
+    const isInvalidCustomer =
+      stripeErr?.code === "resource_missing" ||
+      stripeErr?.type === "StripeInvalidRequestError" ||
+      msg.includes("no such customer")
+    if (isInvalidCustomer) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { stripeCustomerId: null, stripeSubscriptionId: null, subscriptionQuantity: null },
+      })
+      return NextResponse.json(
+        {
+          error:
+            "Your previous billing account is no longer valid (e.g. deleted in Stripe). Complete a new checkout on the Pricing page to link your account.",
+        },
+        { status: 400 }
+      )
+    }
     return NextResponse.json({ error: "Failed to open billing portal" }, { status: 500 })
   }
 }
