@@ -162,6 +162,11 @@ postgresql://postgres:[PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres
 - Run `npm run db:generate` after setting up environment variables
 - Check `prisma.config.ts` exists and loads env vars correctly
 
+### "MaxClientsInSessionMode: max clients reached"
+- The app uses **1 connection per serverless instance** on Vercel to avoid exhausting the pooler.
+- If you still see this: in Supabase **Settings → Database → Connection pooling**, use **Transaction** mode (not Session) for the pooler if available; or increase pool size in the Supabase dashboard.
+- Ensure `DATABASE_URL` uses the **pooler** (port 6543) with `?pgbouncer=true`.
+
 ## Security Notes
 
 - **Never commit `.env.local`** to git (it's in `.gitignore`)
