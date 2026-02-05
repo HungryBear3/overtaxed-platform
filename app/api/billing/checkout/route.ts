@@ -52,7 +52,17 @@ export async function POST(request: NextRequest) {
 
     // Get property count (from request or user's current count)
     const propertyCount = parsed.data.propertyCount ?? await prisma.property.count({ where: { userId: user.id } })
-    const currentQty = user.subscriptionQuantity ?? 0
+    let currentQty = user.subscriptionQuantity ?? 0
+    // If DB quantity is 0 but we have a subscription, use Stripe's quantity so "add slots" path works
+    if (currentQty === 0 && user.stripeSubscriptionId) {
+      try {
+        const sub = await stripe.subscriptions.retrieve(user.stripeSubscriptionId)
+        const q = sub.items.data[0]?.quantity
+        if (typeof q === "number") currentQty = q
+      } catch {
+        // ignore
+      }
+    }
 
     // Require Starter before first Growth; allow existing Growth to add more. Same for Portfolio.
     const currentTier = user.subscriptionTier ?? "COMPS_ONLY"
@@ -156,12 +166,17 @@ export async function POST(request: NextRequest) {
         if (!itemId) {
           return NextResponse.json({ error: "Subscription has no items to update" }, { status: 500 })
         }
-        await stripe.subscriptions.update(user.stripeSubscriptionId, {
+        const updated = await stripe.subscriptions.update(user.stripeSubscriptionId, {
           items: [{ id: itemId, quantity }],
           proration_behavior: "create_prorations",
         })
-        // Webhook will sync subscriptionQuantity; redirect to account
-        return NextResponse.json({ url: `${appUrl}/account?checkout=success&slots_added=1` })
+        // Create and finalize an invoice so the user is sent to Stripe to pay the proration now
+        const invoice = await stripe.invoices.create({
+          subscription: updated.id,
+        })
+        const finalized = await stripe.invoices.finalizeInvoice(invoice.id)
+        const payUrl = finalized.hosted_invoice_url || finalized.invoice_pdf || `${appUrl}/account?checkout=success&slots_added=1`
+        return NextResponse.json({ url: payUrl })
       } catch (err) {
         console.error("Subscription update error:", err)
         return NextResponse.json(
