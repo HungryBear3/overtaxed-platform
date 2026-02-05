@@ -62,17 +62,12 @@ export async function POST(request: NextRequest) {
     ].filter(Boolean)
     const tierRank: Record<string, number> = { STARTER: 1, GROWTH: 2, PORTFOLIO: 3 }
 
-    const subs = await stripe.subscriptions.list({
-      customer: customerId,
-      status: "active",
-      limit: 100,
-    })
-    const trialed = await stripe.subscriptions.list({
-      customer: customerId,
-      status: "trialing",
-      limit: 100,
-    })
-    const allSubs = [...subs.data, ...trialed.data]
+    const [activeSubs, trialedSubs, pastDueSubs] = await Promise.all([
+      stripe.subscriptions.list({ customer: customerId, status: "active", limit: 100 }),
+      stripe.subscriptions.list({ customer: customerId, status: "trialing", limit: 100 }),
+      stripe.subscriptions.list({ customer: customerId, status: "past_due", limit: 100 }),
+    ])
+    const allSubs = [...activeSubs.data, ...trialedSubs.data, ...pastDueSubs.data]
 
     if (allSubs.length === 0) {
       return NextResponse.json(
@@ -128,6 +123,7 @@ export async function POST(request: NextRequest) {
       subscriptionQuantity: totalQuantity,
       subscriptionTier: bestPlan,
       subscriptionStatus: bestStatus,
+      subscriptionCount: allSubs.length,
     })
   } catch (err) {
     console.error("[sync-subscription] Error:", err)
