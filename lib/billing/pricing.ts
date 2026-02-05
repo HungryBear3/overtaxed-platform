@@ -7,6 +7,9 @@
 
 export const RETAIL_PRICE_PER_PROPERTY = 149
 
+/** Starter tier: up to 2 properties. Growth/Portfolio add on top of this. */
+export const STARTER_SLOTS = 2
+
 /** Growth tier: $124 per property per year. Min 1, max 9. */
 export const GROWTH_PRICE_PER_PROPERTY = 124
 export const GROWTH_MIN_PROPERTIES = 1

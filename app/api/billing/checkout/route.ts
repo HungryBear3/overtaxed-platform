@@ -11,6 +11,7 @@ import {
   PORTFOLIO_MAX_PROPERTIES,
   PORTFOLIO_PRICE_PER_PROPERTY,
   RETAIL_PRICE_PER_PROPERTY,
+  STARTER_SLOTS,
   requiresCustomPricing,
 } from "@/lib/billing/pricing"
 import { z } from "zod"
@@ -128,8 +129,15 @@ export async function POST(request: NextRequest) {
         )
       }
       priceId = PRICE_IDS.GROWTH_PER_PROPERTY
-      quantity = Math.max(propertyCount, GROWTH_MIN_PROPERTIES)
-      quantity = Math.min(quantity, GROWTH_MAX_PROPERTIES)
+      // From Starter: charge only for additional Growth slots (propertyCount - 2), not total
+      const currentTierForQty = user.subscriptionTier ?? "COMPS_ONLY"
+      if (currentTierForQty === "STARTER") {
+        quantity = Math.max(propertyCount - STARTER_SLOTS, GROWTH_MIN_PROPERTIES)
+        quantity = Math.min(quantity, GROWTH_MAX_PROPERTIES)
+      } else {
+        quantity = Math.max(propertyCount, GROWTH_MIN_PROPERTIES)
+        quantity = Math.min(quantity, GROWTH_MAX_PROPERTIES)
+      }
     } else if (parsed.data.plan === "PORTFOLIO") {
       if (propertyCount > PORTFOLIO_MAX_PROPERTIES) {
         return NextResponse.json(
@@ -138,8 +146,15 @@ export async function POST(request: NextRequest) {
         )
       }
       priceId = PRICE_IDS.PORTFOLIO_PER_PROPERTY
-      quantity = Math.max(propertyCount, PORTFOLIO_MIN_PROPERTIES)
-      quantity = Math.min(quantity, PORTFOLIO_MAX_PROPERTIES)
+      // From Growth: charge only for additional Portfolio slots (propertyCount - 9), not total
+      const currentTierForPortfolio = user.subscriptionTier ?? "COMPS_ONLY"
+      if (currentTierForPortfolio === "GROWTH") {
+        quantity = Math.max(propertyCount - GROWTH_MAX_PROPERTIES, PORTFOLIO_MIN_PROPERTIES)
+        quantity = Math.min(quantity, PORTFOLIO_MAX_PROPERTIES)
+      } else {
+        quantity = Math.max(propertyCount, PORTFOLIO_MIN_PROPERTIES)
+        quantity = Math.min(quantity, PORTFOLIO_MAX_PROPERTIES)
+      }
     }
 
     if (!priceId) {

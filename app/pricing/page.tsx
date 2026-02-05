@@ -560,7 +560,8 @@ export default function PricingPage() {
                                 ? n * (plan.id === "GROWTH" ? GROWTH_PRICE_PER_PROPERTY : PORTFOLIO_PRICE_PER_PROPERTY)
                                 : totalPrice
                             if (plan.id === "GROWTH" && (currentTier === "STARTER" || currentTier === null)) {
-                              return <option key={n} value={n}>Add {n} more ({count} total) — ${totalPrice.toLocaleString()}/yr</option>
+                              const additionalOnly = n * GROWTH_PRICE_PER_PROPERTY
+                              return <option key={n} value={n}>Add {n} more ({count} total) — ${additionalOnly.toLocaleString()}/yr</option>
                             }
                             if (plan.id === "GROWTH" && currentTier === "GROWTH") {
                               return <option key={n} value={n}>Add {n} more ({count} total) — +${additionalPrice.toLocaleString()}/yr</option>
@@ -582,11 +583,15 @@ export default function PricingPage() {
                         <span className="text-sm font-semibold text-gray-900">
                           {plan.id === "GROWTH" && currentTier === "GROWTH"
                             ? `= +$${(selectedQuantity * GROWTH_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)} total, $${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)).toLocaleString()}/yr subscription)`
-                            : plan.id === "PORTFOLIO" && currentTier === "PORTFOLIO"
-                              ? `= +$${(selectedQuantity * PORTFOLIO_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)} total, $${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)).toLocaleString()}/yr subscription)`
-                              : plan.id === "STARTER" && currentTier === "STARTER" && selectedQuantity > currentSlots
-                                ? `= +$${((selectedQuantity - currentSlots) * RETAIL_PRICE_PER_PROPERTY).toLocaleString()}/yr for 1 additional slot (${selectedQuantity} total)`
-                                : `= $${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)).toLocaleString()}/year`}
+                            : plan.id === "GROWTH" && (currentTier === "STARTER" || currentTier === null)
+                              ? `= $${(selectedQuantity * GROWTH_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)} total; first 2 already in Starter)`
+                              : plan.id === "PORTFOLIO" && currentTier === "PORTFOLIO"
+                                ? `= +$${(selectedQuantity * PORTFOLIO_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)} total, $${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)).toLocaleString()}/yr subscription)`
+                                : plan.id === "PORTFOLIO" && currentTier === "GROWTH"
+                                  ? `= $${(selectedQuantity * PORTFOLIO_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)} total; first 9 in Growth)`
+                                  : plan.id === "STARTER" && currentTier === "STARTER" && selectedQuantity > currentSlots
+                                    ? `= +$${((selectedQuantity - currentSlots) * RETAIL_PRICE_PER_PROPERTY).toLocaleString()}/yr for 1 additional slot (${selectedQuantity} total)`
+                                    : `= $${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)).toLocaleString()}/year`}
                         </span>
                       </div>
                       <p className="text-xs text-gray-600 mt-2">
