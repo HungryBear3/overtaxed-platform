@@ -66,12 +66,53 @@ export default async function DashboardPage() {
     (sum, p) => sum + (p.currentMarketValue ? Number(p.currentMarketValue) : 0),
     0
   )
-  const activeAppeals = await prisma.appeal.count({
-    where: {
-      userId: user.id,
-      status: { in: ["DRAFT", "PENDING_FILING", "FILED", "UNDER_REVIEW", "HEARING_SCHEDULED"] },
-    },
-  })
+  const [activeAppeals, appealStatusCounts, totalSavingsResult, upcomingDeadlines] = await Promise.all([
+    prisma.appeal.count({
+      where: {
+        userId: user.id,
+        status: { in: ["DRAFT", "PENDING_FILING", "FILED", "UNDER_REVIEW", "HEARING_SCHEDULED"] },
+      },
+    }),
+    prisma.appeal.groupBy({
+      by: ["status"],
+      where: { userId: user.id },
+      _count: true,
+    }),
+    prisma.appeal.aggregate({
+      where: {
+        userId: user.id,
+        taxSavings: { not: null },
+      },
+      _sum: { taxSavings: true },
+    }),
+    prisma.appeal.findMany({
+      where: {
+        userId: user.id,
+        filingDeadline: { gte: new Date() },
+      },
+      orderBy: { filingDeadline: "asc" },
+      take: 5,
+      include: {
+        property: { select: { address: true, pin: true } },
+      },
+    }),
+  ])
+
+  const totalTaxSavings = totalSavingsResult._sum.taxSavings
+    ? Number(totalSavingsResult._sum.taxSavings)
+    : 0
+  const statusLabels: Record<string, string> = {
+    DRAFT: "Draft",
+    PENDING_FILING: "Pending filing",
+    FILED: "Filed",
+    UNDER_REVIEW: "Under review",
+    HEARING_SCHEDULED: "Hearing scheduled",
+    DECISION_PENDING: "Decision pending",
+    APPROVED: "Approved",
+    PARTIALLY_APPROVED: "Partially approved",
+    DENIED: "Denied",
+    WITHDRAWN: "Withdrawn",
+  }
 
   function formatCurrency(value: number): string {
     return new Intl.NumberFormat("en-US", {
@@ -149,7 +190,7 @@ export default async function DashboardPage() {
         </div>
 
         {/* Summary Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 mb-8">
           <div className="bg-white rounded-lg shadow p-5">
             <p className="text-sm text-gray-500 uppercase tracking-wide">Properties</p>
             <p className="text-3xl font-bold text-gray-900">{totalProperties}</p>
@@ -166,7 +207,63 @@ export default async function DashboardPage() {
             <p className="text-sm text-gray-500 uppercase tracking-wide">Total Market Value</p>
             <p className="text-2xl font-bold text-gray-900">{formatCurrency(totalMarketValue)}</p>
           </div>
+          <div className="bg-white rounded-lg shadow p-5">
+            <p className="text-sm text-gray-500 uppercase tracking-wide">Tax Savings</p>
+            <p className="text-2xl font-bold text-green-600">{totalTaxSavings > 0 ? formatCurrency(totalTaxSavings) : "—"}</p>
+            <p className="text-xs text-gray-500 mt-0.5">From decided appeals</p>
+          </div>
         </div>
+
+        {/* Appeal status summary */}
+        {appealStatusCounts.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-6 mb-8">
+            <h3 className="text-lg font-medium text-gray-900 mb-3">Appeal status summary</h3>
+            <div className="flex flex-wrap gap-3">
+              {appealStatusCounts.map(({ status, _count }) => (
+                <span
+                  key={status}
+                  className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-800"
+                >
+                  {statusLabels[status] ?? status}: {_count}
+                </span>
+              ))}
+            </div>
+            <Link href="/appeals" className="text-sm text-blue-600 hover:text-blue-700 font-medium mt-3 inline-block">
+              View all appeals →
+            </Link>
+          </div>
+        )}
+
+        {/* Upcoming deadlines */}
+        {upcomingDeadlines.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-6 mb-8">
+            <h3 className="text-lg font-medium text-gray-900 mb-3">Upcoming filing deadlines</h3>
+            <ul className="space-y-2">
+              {upcomingDeadlines.map((appeal) => (
+                <li key={appeal.id} className="flex justify-between items-center py-2 border-b border-gray-100 last:border-0">
+                  <div>
+                    <p className="font-medium text-gray-900">{appeal.property.address}</p>
+                    <p className="text-xs text-gray-500">Tax year {appeal.taxYear} · PIN {appeal.property.pin}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-medium text-amber-700">
+                      {appeal.filingDeadline.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                    </p>
+                    <Link
+                      href={`/appeals/${appeal.id}`}
+                      className="text-sm text-blue-600 hover:text-blue-700"
+                    >
+                      Open appeal
+                    </Link>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <Link href="/appeals" className="text-sm text-blue-600 hover:text-blue-700 font-medium mt-3 inline-block">
+              View all appeals →
+            </Link>
+          </div>
+        )}
 
         {/* Account Status */}
         <div className="bg-white rounded-lg shadow p-6 mb-8">

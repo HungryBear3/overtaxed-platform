@@ -25,6 +25,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 18. [Property slot capping and production DB migration](#property-slot-capping-and-production-db-migration)
 19. [GitHub secret exposure – Stripe webhook signing secret](#github-secret-exposure--stripe-webhook-signing-secret)
 20. [Stripe: multiple customers per email; serverless DB pool](#20-stripe-multiple-customers-per-email-serverless-db-pool)
+21. [Pricing upgrade UX: additional slots and caps](#21-pricing-upgrade-ux-additional-slots-and-caps)
 
 ---
 
@@ -576,6 +577,32 @@ const user = { ...session.user, ...freshUser }
 **Solution:** In `lib/db/prisma.ts`, detect serverless (e.g. `process.env.VERCEL` or `AWS_LAMBDA_FUNCTION_NAME`) and set the pool **max to 1** for that environment. Each instance then uses at most one connection; the pooler can serve many more instances without hitting the limit.
 
 **Lesson:** In serverless, keep the Prisma/pg pool size per instance to 1 (or 2 at most) when using a connection pooler in Session mode. Use Transaction mode in Supabase if available for higher concurrency.
+
+---
+
+## 21. Pricing upgrade UX: additional slots and caps
+
+### Growth from Starter: show 1–7 additional, not 1–9
+**Context:** When a user is on Starter (2 slots) and upgrades to Growth, the dropdown was offering 1–9 properties. That implies they could buy 9 *additional* on top of 2 = 11 total, which exceeds Growth’s max of 9. Users expect “add 1–7 more” (total 3–9).
+
+**Solution:** On the pricing page, when `subscriptionTier` is STARTER (or null/unknown), for the Growth range “3–9” show only **1–7** options and send **total** = 2 + selected to checkout. Treat `null` tier as Starter so the UI is conservative (1–7) if plan-info hasn’t loaded.
+
+### Webhook must sum all subscriptions
+**Context:** After adding one Growth slot (user had 2 Starter), the dashboard showed “2 of 1” because the webhook set `subscriptionQuantity` to only the *new* subscription’s quantity (1), overwriting the previous 2.
+
+**Solution:** In both `checkout.session.completed` and `customer.subscription.updated`, **sum** quantities across all active/trialing/past_due subscriptions for that customer before writing to the DB. Sync already did this; the webhook now does too so the correct total is stored immediately.
+
+### Allow add-more when already on Growth or Portfolio
+**Context:** After upgrading to Growth, the user could not add more Growth slots because checkout required `currentTier === "STARTER"` for Growth.
+
+**Solution:** Allow Growth checkout when `currentTier === "STARTER"` (first upgrade) **or** `currentTier === "GROWTH"` (add more). Same for Portfolio: allow when GROWTH (first time) or PORTFOLIO (add more). Update pricing page `requiresStarterFirst` / `requiresGrowthFirstOrFullSlots` so the button is not disabled when already on that tier.
+
+### Cap “add more” by current slots
+**Context:** User on Growth with 3 slots could still select “add 9” in the dropdown, implying 12 total (over the 9 cap).
+
+**Solution:** Pass `currentSlots` (e.g. `subscriptionQuantity`) into the quantity options. For Growth when already on Growth: max additional = `9 - currentSlots` (e.g. 3 slots → offer 1–6 only). For Portfolio when already on Portfolio: max additional = `20 - currentSlots`, capped at 11. Same cap in `subscribe()` when sending `propertyCount` so checkout receives a valid total.
+
+**Lesson:** Upgrade flows must distinguish “first-time upgrade” (Starter→Growth: 1–7 additional) from “add more on same tier” (Growth: 1–(9−current) additional). Webhook and UI must use the *sum* of all subscriptions and cap dropdowns by tier max minus current slots.
 
 ---
 
