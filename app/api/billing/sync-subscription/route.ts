@@ -41,14 +41,11 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    let customerId = user.stripeCustomerId
+    // Find ALL Stripe customers with this email (same user can have multiple customer IDs if they checked out separately)
+    const customerList = await stripe.customers.list({ email: user.email, limit: 100 })
+    const customerIds = customerList.data.map((c) => c.id)
 
-    if (!customerId) {
-      const customers = await stripe.customers.list({ email: user.email, limit: 1 })
-      customerId = customers.data[0]?.id ?? null
-    }
-
-    if (!customerId) {
+    if (customerIds.length === 0) {
       return NextResponse.json(
         { error: "No Stripe customer found for this email. Complete a checkout first." },
         { status: 400 }
@@ -62,12 +59,18 @@ export async function POST(request: NextRequest) {
     ].filter(Boolean)
     const tierRank: Record<string, number> = { STARTER: 1, GROWTH: 2, PORTFOLIO: 3 }
 
-    const [activeSubs, trialedSubs, pastDueSubs] = await Promise.all([
-      stripe.subscriptions.list({ customer: customerId, status: "active", limit: 100 }),
-      stripe.subscriptions.list({ customer: customerId, status: "trialing", limit: 100 }),
-      stripe.subscriptions.list({ customer: customerId, status: "past_due", limit: 100 }),
-    ])
-    const allSubs = [...activeSubs.data, ...trialedSubs.data, ...pastDueSubs.data]
+    // Sum subscriptions across ALL customers with this email (handles multiple customer IDs from separate checkouts)
+    const allSubs: { id: string; customerId: string }[] = []
+    for (const cid of customerIds) {
+      const [activeSubs, trialedSubs, pastDueSubs] = await Promise.all([
+        stripe.subscriptions.list({ customer: cid, status: "active", limit: 100 }),
+        stripe.subscriptions.list({ customer: cid, status: "trialing", limit: 100 }),
+        stripe.subscriptions.list({ customer: cid, status: "past_due", limit: 100 }),
+      ])
+      for (const s of [...activeSubs.data, ...trialedSubs.data, ...pastDueSubs.data]) {
+        allSubs.push({ id: s.id, customerId: cid })
+      }
+    }
 
     if (allSubs.length === 0) {
       return NextResponse.json(
@@ -79,7 +82,11 @@ export async function POST(request: NextRequest) {
     let totalQuantity = 0
     let bestPlan: string | null = null
     let bestStatus: SubscriptionStatus = "INACTIVE"
-    let primarySubscriptionId: string | null = user.stripeSubscriptionId ?? allSubs[0]?.id ?? null
+    const primarySubscriptionId = user.stripeSubscriptionId ?? allSubs[0]?.id ?? null
+    const primaryCustomerId =
+      user.stripeCustomerId && customerIds.includes(user.stripeCustomerId)
+        ? user.stripeCustomerId
+        : allSubs[0]?.customerId ?? customerIds[0]
 
     for (const sub of allSubs) {
       const expanded = await stripe.subscriptions.retrieve(sub.id, { expand: ["items.data.price"] })
@@ -114,7 +121,7 @@ export async function POST(request: NextRequest) {
         subscriptionStatus: bestStatus,
         subscriptionQuantity: totalQuantity,
         ...(primarySubscriptionId && !user.stripeSubscriptionId && { stripeSubscriptionId: primarySubscriptionId }),
-        ...(customerId && !user.stripeCustomerId && { stripeCustomerId: customerId }),
+        ...(primaryCustomerId && !user.stripeCustomerId && { stripeCustomerId: primaryCustomerId }),
       },
     })
 

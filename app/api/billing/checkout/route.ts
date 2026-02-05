@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
 
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
-      select: { id: true, email: true, subscriptionTier: true, subscriptionStatus: true },
+      select: { id: true, email: true, subscriptionTier: true, subscriptionStatus: true, stripeCustomerId: true },
     })
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
@@ -125,7 +125,9 @@ export async function POST(request: NextRequest) {
 
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "subscription",
-      customer_email: user.email,
+      ...(user.stripeCustomerId
+        ? { customer: user.stripeCustomerId }
+        : { customer_email: user.email }),
       line_items: [{ price: priceId, quantity }],
       success_url: `${appUrl}/account?checkout=success`,
       cancel_url: `${appUrl}/pricing?checkout=cancelled`,
