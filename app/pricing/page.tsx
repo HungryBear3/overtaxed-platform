@@ -93,34 +93,35 @@ function isUpgradeFrom(currentTier: string | null, targetPlan: "STARTER" | "GROW
   return target > current
 }
 
-/** Growth requires Starter first. */
+/** Growth requires Starter first (or already on Growth to add more). */
 function requiresStarterFirst(
   plan: "STARTER" | "GROWTH" | "PORTFOLIO",
   currentTier: string | null | undefined
 ): boolean {
   if (plan !== "GROWTH") return false
-  if (!currentTier) return false
-  return currentTier !== "STARTER"
+  return currentTier != null && currentTier !== "STARTER" && currentTier !== "GROWTH"
 }
 
-/** Portfolio requires Growth and all 9 Growth slots used. */
+/** Portfolio requires Growth (or already on Portfolio to add more) and, for first-time upgrade, all 9 Growth slots used. */
 function requiresGrowthFirstOrFullSlots(
   plan: "STARTER" | "GROWTH" | "PORTFOLIO",
   currentTier: string | null | undefined,
   propertyCount: number
 ): boolean {
   if (plan !== "PORTFOLIO") return false
+  if (currentTier === "PORTFOLIO") return false
   if (currentTier !== "GROWTH") return true
   return propertyCount < 9
 }
 
 const RANGE_LABELS: PlanRange[] = ["1-2", "3-9", "10-20", "20+"]
 
-/** When upgrading: Starter→Growth show 1–7 additional (total 3–9); Growth→Portfolio show 1–11 additional (total 10–20). */
+/** When upgrading: Starter→Growth show 1–7 additional (total 3–9); Growth→Portfolio show 1–11 additional (total 10–20). When tier unknown (null), treat as Starter for 3–9 so we show 1–7. */
 function getQuantityRange(range: PlanRange, currentTier: string | null): number[] {
   if (range === "1-2") return [1, 2]
   if (range === "3-9") {
-    if (currentTier === "STARTER") return [1, 2, 3, 4, 5, 6, 7] // additional slots (2 + 1..7 = 3..9 total)
+    if (currentTier === "STARTER" || currentTier === null) return [1, 2, 3, 4, 5, 6, 7] // additional (2 + 1..7 = 3..9 total)
+    if (currentTier === "GROWTH") return [1, 2, 3, 4, 5, 6, 7, 8, 9] // already on Growth: add 1–9 more
     return [1, 2, 3, 4, 5, 6, 7, 8, 9]
   }
   if (range === "10-20") {
@@ -130,10 +131,10 @@ function getQuantityRange(range: PlanRange, currentTier: string | null): number[
   return []
 }
 
-/** Total property count for display/price: when upgrading from Starter, total = 2 + slotIndex; from Growth, total = 9 + slotIndex. */
+/** Total property count for display/price: when upgrading from Starter (or unknown), total = 2 + slotIndex; from Growth, total = 9 + slotIndex. */
 function slotIndexToPropertyCount(range: PlanRange, slotIndex: number, currentTier: string | null): number {
   if (range === "1-2") return slotIndex
-  if (range === "3-9") return currentTier === "STARTER" ? 2 + slotIndex : slotIndex
+  if (range === "3-9") return currentTier === "STARTER" || currentTier === null ? 2 + slotIndex : slotIndex
   if (range === "10-20") return currentTier === "GROWTH" ? 9 + slotIndex : slotIndex
   return slotIndex
 }
@@ -142,9 +143,10 @@ function slotIndexToPropertyCount(range: PlanRange, slotIndex: number, currentTi
 function propertyCountToSlotIndex(range: PlanRange, count: number, currentTier: string | null): number {
   if (range === "1-2") return Math.min(Math.max(count, 1), 2)
   if (range === "3-9") {
-    const max = currentTier === "STARTER" ? 7 : 9
+    const fromStarter = currentTier === "STARTER" || currentTier === null
+    const max = fromStarter ? 7 : 9
     const min = 1
-    return Math.min(Math.max(currentTier === "STARTER" ? count - 2 : count, min), max)
+    return Math.min(Math.max(fromStarter ? count - 2 : count, min), max)
   }
   if (range === "10-20") {
     const max = currentTier === "GROWTH" ? 11 : 20
@@ -203,7 +205,7 @@ export default function PricingPage() {
     const currentCount = planInfo?.propertyCount ?? 0
     const limit = planInfo?.propertyLimit
     const atLimit = limit != null && limit < 999 && currentCount >= limit
-    const nextUpgradeVal = atLimit && limit != null && currentTier === "STARTER" && effectiveRange === "3-9"
+    const nextUpgradeVal = atLimit && limit != null && (currentTier === "STARTER" || currentTier === null) && effectiveRange === "3-9"
       ? Math.min(Math.max(limit + 1 - 2, 1), 7)
       : atLimit && limit != null && currentTier === "GROWTH" && effectiveRange === "10-20"
         ? Math.min(Math.max(limit + 1 - 9, 1), 11)
@@ -221,7 +223,7 @@ export default function PricingPage() {
     try {
       // When upgrading: send total slots (Starter 2 + additional for Growth; Growth 9 + additional for Portfolio)
       let propertyCount: number
-      if (plan === "GROWTH" && currentTier === "STARTER") {
+      if (plan === "GROWTH" && (currentTier === "STARTER" || currentTier === null)) {
         propertyCount = Math.min(2 + selectedQuantity, 9)
       } else if (plan === "PORTFOLIO" && currentTier === "GROWTH") {
         propertyCount = Math.min(9 + selectedQuantity, 20)
@@ -235,9 +237,6 @@ export default function PricingPage() {
               : Math.max(Math.min(selectedQuantity, 20), 1)
       }
       const qty = propertyCount
-      // #region agent log
-      fetch("http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: "pricing/page.tsx:subscribe", message: "checkout request", data: { plan, effectiveRange, selectedQuantity, propertyCountSent: qty, subscriptionTier: planInfo?.subscriptionTier ?? null, subscriptionQuantity: planInfo?.subscriptionQuantity ?? null, quantityOptionsLen: quantityOptions.length }, timestamp: Date.now(), sessionId: "debug-session", hypothesisId: "H1-H2" }) }).catch(() => {})
-      // #endregion
       const res = await fetch("/api/billing/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -464,7 +463,7 @@ export default function PricingPage() {
                       )}
                       <label htmlFor={`qty-${plan.id}`} className="block text-sm font-medium text-gray-700 mb-2">
                         {plan.id === "GROWTH"
-                          ? currentTier === "STARTER"
+                          ? (currentTier === "STARTER" || currentTier === null)
                             ? `Add 1–7 properties (3–9 total) at $${GROWTH_PRICE_PER_PROPERTY}/property/year:`
                             : `Choose 1–9 properties at $${GROWTH_PRICE_PER_PROPERTY}/property/year (minimum 1):`
                           : plan.id === "PORTFOLIO"
@@ -494,7 +493,7 @@ export default function PricingPage() {
                       </div>
                       <p className="text-xs text-gray-600 mt-2">
                         {plan.id === "GROWTH"
-                          ? currentTier === "STARTER"
+                          ? (currentTier === "STARTER" || currentTier === null)
                             ? `Add 1–7 more (3–9 total). $${GROWTH_PRICE_PER_PROPERTY} each. You can add more later within 9.`
                             : `Growth: 1–9 properties at $${GROWTH_PRICE_PER_PROPERTY} each. You can add more later within that limit.`
                           : plan.id === "PORTFOLIO"
@@ -507,12 +506,14 @@ export default function PricingPage() {
                   )}
                   {plan.id === "GROWTH" &&
                     planInfo?.subscriptionTier != null &&
-                    planInfo.subscriptionTier !== "STARTER" && (
+                    planInfo.subscriptionTier !== "STARTER" &&
+                    planInfo.subscriptionTier !== "GROWTH" && (
                       <p className="text-sm text-amber-700 bg-amber-50 rounded px-3 py-2 mb-3">
                         Subscribe to <strong>Starter</strong> (1–2 properties) first; then you can upgrade to Growth here.
                       </p>
                     )}
                   {plan.id === "PORTFOLIO" &&
+                    planInfo?.subscriptionTier !== "PORTFOLIO" &&
                     (planInfo?.subscriptionTier !== "GROWTH" || (planInfo?.propertyCount ?? 0) < 9) &&
                     planInfo?.subscriptionTier != null && (
                       <p className="text-sm text-amber-700 bg-amber-50 rounded px-3 py-2 mb-3">
@@ -522,7 +523,7 @@ export default function PricingPage() {
                             Portfolio is available after you use all 9 Growth slots.
                           </>
                         ) : (
-                          `Use all 9 Growth slots first (you have ${planInfo.propertyCount ?? 0} properties). Then you can upgrade to Portfolio.`
+                          `Portfolio unlocks after 9 Growth slots. You have ${planInfo.propertyCount ?? 0} of 9 — add more Growth slots above, then you can upgrade to Portfolio.`
                         )}
                       </p>
                     )}

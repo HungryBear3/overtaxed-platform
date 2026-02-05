@@ -36,23 +36,20 @@ export async function POST(request: NextRequest) {
 
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
-      select: { id: true, email: true, subscriptionTier: true, subscriptionStatus: true, stripeCustomerId: true, subscriptionQuantity: true },
+      select: { id: true, email: true, subscriptionTier: true, subscriptionStatus: true, stripeCustomerId: true },
     })
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
 
-    // #region agent log
-    fetch("http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: "checkout/route.ts:POST", message: "checkout incoming", data: { plan: parsed.data.plan, propertyCountFromBody: parsed.data.propertyCount, userTier: user.subscriptionTier, userSubscriptionQuantity: user.subscriptionQuantity }, timestamp: Date.now(), sessionId: "debug-session", hypothesisId: "H2-H5" }) }).catch(() => {})
-    // #endregion
-
     // Get property count (from request or user's current count)
     const propertyCount = parsed.data.propertyCount ?? await prisma.property.count({ where: { userId: user.id } })
 
-    // Require Starter before Growth; require Growth with all slots used before Portfolio
+    // Require Starter before first Growth; allow existing Growth to add more. Same for Portfolio.
     const currentTier = user.subscriptionTier ?? "COMPS_ONLY"
     if (parsed.data.plan === "GROWTH") {
-      if (currentTier !== "STARTER") {
+      const allowedFromStarterOrGrowth = currentTier === "STARTER" || currentTier === "GROWTH"
+      if (!allowedFromStarterOrGrowth) {
         return NextResponse.json(
           {
             error:
@@ -63,7 +60,8 @@ export async function POST(request: NextRequest) {
       }
     }
     if (parsed.data.plan === "PORTFOLIO") {
-      if (currentTier !== "GROWTH") {
+      const allowedFromGrowthOrPortfolio = currentTier === "GROWTH" || currentTier === "PORTFOLIO"
+      if (!allowedFromGrowthOrPortfolio) {
         return NextResponse.json(
           {
             error:
@@ -72,7 +70,8 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         )
       }
-      if (propertyCount < GROWTH_MAX_PROPERTIES) {
+      // First-time upgrade to Portfolio: require 9 Growth slots used
+      if (currentTier === "GROWTH" && propertyCount < GROWTH_MAX_PROPERTIES) {
         return NextResponse.json(
           {
             error: `Portfolio is available after you use all 9 Growth slots. You have ${propertyCount} properties. Add more properties on Growth first, then upgrade to Portfolio.`,
@@ -126,10 +125,6 @@ export async function POST(request: NextRequest) {
     }
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
-
-    // #region agent log
-    fetch("http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: "checkout/route.ts:quantity", message: "stripe quantity", data: { plan: parsed.data.plan, quantitySentToStripe: quantity, propertyCount }, timestamp: Date.now(), sessionId: "debug-session", hypothesisId: "H5" }) }).catch(() => {})
-    // #endregion
 
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "subscription",

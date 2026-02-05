@@ -100,10 +100,6 @@ export async function POST(request: NextRequest) {
           if (sum > 0) quantityToStore = sum
         } catch (_) {}
       }
-      // #region agent log
-      const beforeUser = await prisma.user.findUnique({ where: { id: userId }, select: { subscriptionQuantity: true } }).catch(() => null)
-      fetch("http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: "webhook/route.ts:checkout.session.completed", message: "webhook quantity", data: { userId, plan, singleSubscriptionQuantity: subscriptionQuantity, quantityToStore, dbQuantityBefore: beforeUser?.subscriptionQuantity ?? null }, timestamp: Date.now(), sessionId: "debug-session", runId: "post-fix", hypothesisId: "H3-H4" }) }).catch(() => {})
-      // #endregion
       try {
         const updatedUser = await prisma.user.update({
           where: { id: userId },
@@ -165,10 +161,6 @@ export async function POST(request: NextRequest) {
             quantityToStore = sum > 0 ? sum : null
           } catch (_) {}
         }
-        // #region agent log
-        const beforeSubQty = (await prisma.user.findUnique({ where: { id: user.id }, select: { subscriptionQuantity: true } }))?.subscriptionQuantity ?? null
-        fetch("http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: "webhook/route.ts:subscription.updated", message: "sum quantity", data: { userId: user.id, quantityToStore, dbQuantityBefore: beforeSubQty }, timestamp: Date.now(), sessionId: "debug-session", runId: "post-fix", hypothesisId: "H3" }) }).catch(() => {})
-        // #endregion
 
         await prisma.user.update({
           where: { id: user.id },
