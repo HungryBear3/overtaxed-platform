@@ -393,10 +393,10 @@ export default function PricingPage() {
               type="button"
               onClick={() => {
                 setSelectedRange(range)
-                const opts = getQuantityRange(range)
+                const opts = getQuantityRange(range, currentTier)
                 if (opts.length > 0) {
                   const c = planInfo?.propertyCount ?? 0
-                  const slotIndex = propertyCountToSlotIndex(range, c)
+                  const slotIndex = propertyCountToSlotIndex(range, c, currentTier)
                   setSelectedQuantity(opts.includes(slotIndex) ? slotIndex : opts[0])
                 }
               }}
