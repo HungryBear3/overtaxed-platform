@@ -147,6 +147,20 @@ export async function POST(request: NextRequest) {
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
 
+    // If user has a Stripe customer ID that was deleted in Stripe, clear it so checkout uses customer_email (new customer)
+    let customerIdForCheckout: string | null = user.stripeCustomerId
+    if (user.stripeCustomerId) {
+      try {
+        await stripe.customers.retrieve(user.stripeCustomerId)
+      } catch {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { stripeCustomerId: null, stripeSubscriptionId: null, subscriptionQuantity: null },
+        })
+        customerIdForCheckout = null
+      }
+    }
+
     // When adding slots to existing Growth or Portfolio subscription, update subscription instead of new checkout (prorated charge for additional only)
     const isAddingSlots =
       parsed.data.plan === "GROWTH" &&
@@ -207,8 +221,8 @@ export async function POST(request: NextRequest) {
 
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "subscription",
-      ...(user.stripeCustomerId
-        ? { customer: user.stripeCustomerId }
+      ...(customerIdForCheckout
+        ? { customer: customerIdForCheckout }
         : { customer_email: user.email }),
       line_items: [{ price: priceId, quantity }],
       success_url: `${appUrl}/account?checkout=success`,
