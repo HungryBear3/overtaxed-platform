@@ -36,7 +36,8 @@ export async function GET(
     }
 
     // Validation: requested value required for a complete appeal packet (Task 8.6)
-    if (appeal.requestedAssessmentValue == null || appeal.requestedAssessmentValue <= 0) {
+    const requestedNum = appeal.requestedAssessmentValue != null ? Number(appeal.requestedAssessmentValue) : null
+    if (requestedNum == null || requestedNum <= 0) {
       return NextResponse.json(
         { error: "Set a requested assessment value on this appeal before downloading the summary." },
         { status: 400 }
