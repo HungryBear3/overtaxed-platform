@@ -10,6 +10,7 @@ import {
   PORTFOLIO_MIN_PROPERTIES,
   PORTFOLIO_MAX_PROPERTIES,
   PORTFOLIO_PRICE_PER_PROPERTY,
+  RETAIL_PRICE_PER_PROPERTY,
   requiresCustomPricing,
 } from "@/lib/billing/pricing"
 import { z } from "zod"
@@ -163,7 +164,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // When adding slots to existing Growth or Portfolio subscription, update subscription instead of new checkout (prorated charge for additional only)
+    // When adding slots to existing Starter, Growth, or Portfolio subscription, create invoice for additional only; subscription is updated in webhook on invoice.paid
+    const isAddingStarterSlots =
+      parsed.data.plan === "STARTER" &&
+      currentTier === "STARTER" &&
+      quantity > currentQty &&
+      currentQty > 0 &&
+      user.stripeSubscriptionId
     const isAddingSlots =
       parsed.data.plan === "GROWTH" &&
       currentTier === "GROWTH" &&
@@ -177,16 +184,17 @@ export async function POST(request: NextRequest) {
       currentQty > 0 &&
       user.stripeSubscriptionId
 
-    // Add slots: create invoice for proration only; subscription is updated in webhook on invoice.paid (so we don't show 10 slots before payment)
-    if ((isAddingSlots || isAddingPortfolioSlots) && user.stripeSubscriptionId) {
+    if ((isAddingStarterSlots || isAddingSlots || isAddingPortfolioSlots) && user.stripeSubscriptionId) {
       try {
         const sub = await stripe.subscriptions.retrieve(user.stripeSubscriptionId)
         const customerId = sub.customer as string
         const additionalSlots = quantity - currentQty
         const pricePerSlotCents =
-          parsed.data.plan === "GROWTH"
-            ? GROWTH_PRICE_PER_PROPERTY * 100
-            : PORTFOLIO_PRICE_PER_PROPERTY * 100
+          parsed.data.plan === "STARTER"
+            ? RETAIL_PRICE_PER_PROPERTY * 100
+            : parsed.data.plan === "GROWTH"
+              ? GROWTH_PRICE_PER_PROPERTY * 100
+              : PORTFOLIO_PRICE_PER_PROPERTY * 100
         const amountCents = additionalSlots * pricePerSlotCents
         // Create draft invoice first so the line item is attached to it (otherwise pending items can end up on subscription's next invoice → $0)
         const invoice = await stripe.invoices.create({

@@ -492,15 +492,19 @@ export default function PricingPage() {
                     <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                       {planInfo && plan.id === "STARTER" && (
                         <p className="text-sm font-medium text-gray-800 mb-2">
-                          {tierUsed.starter}/{STARTER_SLOTS} slots used
-                          {tierUsed.starter < STARTER_SLOTS && (
+                          {currentTier === "STARTER" ? currentSlots : tierUsed.starter}/{STARTER_SLOTS} slots used
+                          {currentTier === "STARTER" ? (
+                            currentSlots < STARTER_SLOTS ? (
+                              <span className="text-green-700"> · {STARTER_SLOTS - currentSlots} available (add below)</span>
+                            ) : (
+                              <span className="text-amber-700"> · Select Growth above to add more</span>
+                            )
+                          ) : tierUsed.starter < STARTER_SLOTS ? (
                             <span className="text-green-700"> · {STARTER_SLOTS - tierUsed.starter} available</span>
-                          )}
-                          {tierUsed.starter >= STARTER_SLOTS && currentTier === "STARTER" && (currentSlots >= STARTER_SLOTS) && (
-                            <span className="text-amber-700"> · Select Growth above to add more</span>
-                          )}
-                          {tierUsed.starter >= STARTER_SLOTS && (currentTier !== "STARTER" || currentSlots < STARTER_SLOTS) && (
+                          ) : tierUsed.starter >= STARTER_SLOTS && currentSlots < STARTER_SLOTS ? (
                             <span className="text-green-700"> · Subscribe to Starter below to cover your {tierUsed.starter} properties</span>
+                          ) : (
+                            <span className="text-amber-700"> · Select Growth above to add more</span>
                           )}
                         </p>
                       )}
@@ -537,7 +541,9 @@ export default function PricingPage() {
                               : currentTier === "PORTFOLIO"
                                 ? `Choose 1–${quantityOptions.length} additional (${PORTFOLIO_SLOTS - tierUsed.portfolio} available) at $${PORTFOLIO_PRICE_PER_PROPERTY}/property/year:`
                                 : `Choose 1–20 properties at $${PORTFOLIO_PRICE_PER_PROPERTY}/property/year (minimum 1):`
-                            : "How many properties to pay for (you'll be charged this at checkout):"}
+                            : plan.id === "STARTER" && currentTier === "STARTER"
+                              ? "Keep current or add 1 more slot:"
+                              : "How many properties to pay for (you'll be charged this at checkout):"}
                       </label>
                       <div className="flex items-center gap-2 flex-wrap">
                         <select
@@ -565,6 +571,11 @@ export default function PricingPage() {
                             if (plan.id === "PORTFOLIO" && currentTier === "PORTFOLIO") {
                               return <option key={n} value={n}>Add {n} more ({count} total) — +${additionalPrice.toLocaleString()}/yr</option>
                             }
+                            if (plan.id === "STARTER" && currentTier === "STARTER") {
+                              if (n === currentSlots) return <option key={n} value={n}>{n} slot{n === 1 ? "" : "s"} (current)</option>
+                              if (n > currentSlots) return <option key={n} value={n}>{n} slots — add {n - currentSlots} more (+${((n - currentSlots) * RETAIL_PRICE_PER_PROPERTY).toLocaleString()}/yr)</option>
+                              return <option key={n} value={n}>{n} slot{n === 1 ? "" : "s"} (${totalPrice.toLocaleString()}/yr)</option>
+                            }
                             return <option key={n} value={n}>{count} propert{count === 1 ? "y" : "ies"} (${totalPrice.toLocaleString()}/yr)</option>
                           })}
                         </select>
@@ -573,7 +584,9 @@ export default function PricingPage() {
                             ? `= +$${(selectedQuantity * GROWTH_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)} total, $${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)).toLocaleString()}/yr subscription)`
                             : plan.id === "PORTFOLIO" && currentTier === "PORTFOLIO"
                               ? `= +$${(selectedQuantity * PORTFOLIO_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)} total, $${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)).toLocaleString()}/yr subscription)`
-                              : `= $${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)).toLocaleString()}/year`}
+                              : plan.id === "STARTER" && currentTier === "STARTER" && selectedQuantity > currentSlots
+                                ? `= +$${((selectedQuantity - currentSlots) * RETAIL_PRICE_PER_PROPERTY).toLocaleString()}/yr for 1 additional slot (${selectedQuantity} total)`
+                                : `= $${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)).toLocaleString()}/year`}
                         </span>
                       </div>
                       <p className="text-xs text-gray-600 mt-2">
