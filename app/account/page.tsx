@@ -8,6 +8,7 @@ import { ManageSubscriptionButton } from "@/components/account/ManageSubscriptio
 import { RefreshSubscriptionButton } from "@/components/account/RefreshSubscriptionButton"
 import { getPropertyLimit } from "@/lib/billing/limits"
 import { formatPIN } from "@/lib/cook-county"
+import { isAppealSubmitted } from "@/lib/appeals/status"
 
 export default async function AccountPage() {
   const session = await getSession()
@@ -32,7 +33,15 @@ export default async function AccountPage() {
     }),
     prisma.property.findMany({
       where: { userId: session.user.id },
-      select: { id: true, pin: true, address: true, city: true, state: true, zipCode: true },
+      select: {
+        id: true,
+        pin: true,
+        address: true,
+        city: true,
+        state: true,
+        zipCode: true,
+        appeals: { select: { status: true }, orderBy: { taxYear: "desc" }, take: 5 },
+      },
       orderBy: { createdAt: "desc" },
     }),
   ])
@@ -53,14 +62,31 @@ export default async function AccountPage() {
   const propertyLimit = getPropertyLimit(tier, freshUser.subscriptionQuantity)
   const canAddMore = properties.length < propertyLimit || propertyLimit >= 999
 
-  const managedProperties = properties.map((p) => ({
-    id: p.id,
-    pin: formatPIN(p.pin),
-    address: p.address,
-    city: p.city,
-    state: p.state,
-    zipCode: p.zipCode,
-  }))
+  const managedProperties = properties.map((p, index) => {
+    const appeals = (p as { appeals: { status: string }[] }).appeals ?? []
+    const hasSubmittedAppeal = appeals.some((a) => isAppealSubmitted(a.status))
+    const appealStatusSummary =
+      appeals.length === 0
+        ? "No appeal"
+        : appeals.some((a) => a.status === "FILED" || a.status === "UNDER_REVIEW" || a.status === "HEARING_SCHEDULED" || a.status === "DECISION_PENDING")
+          ? "Appeal filed / in progress"
+          : appeals.some((a) => a.status === "DRAFT" || a.status === "PENDING_FILING")
+            ? "Draft appeal"
+            : appeals.some((a) => a.status === "APPROVED" || a.status === "PARTIALLY_APPROVED" || a.status === "DENIED")
+              ? "Appeal decided"
+              : "Appeal"
+    return {
+      id: p.id,
+      pin: formatPIN(p.pin),
+      address: p.address,
+      city: p.city,
+      state: p.state,
+      zipCode: p.zipCode,
+      slotNumber: index + 1,
+      appealStatusSummary,
+      canRemove: !hasSubmittedAppeal,
+    }
+  })
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">

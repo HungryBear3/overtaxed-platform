@@ -5,16 +5,20 @@ import { useState } from "react"
 export function PdfDownloadButton({ appealId }: { appealId: string }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [warning, setWarning] = useState("")
 
   async function fetchPdf(mode: "view" | "download") {
     setLoading(true)
     setError("")
+    setWarning("")
     try {
       const res = await fetch(`/api/appeals/${appealId}/download-summary`)
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         throw new Error(data.error || `Failed (${res.status})`)
       }
+      const warnHeader = res.headers.get("X-Appeal-Warning")
+      if (warnHeader) setWarning(warnHeader)
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
       if (mode === "view") {
@@ -75,6 +79,9 @@ export function PdfDownloadButton({ appealId }: { appealId: string }) {
       </div>
       {error && (
         <p className="text-xs text-red-600">{error}</p>
+      )}
+      {warning && !error && (
+        <p className="text-xs text-amber-700">{warning}</p>
       )}
     </div>
   )

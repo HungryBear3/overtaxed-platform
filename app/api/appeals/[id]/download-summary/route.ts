@@ -35,6 +35,21 @@ export async function GET(
       )
     }
 
+    // Validation: requested value required for a complete appeal packet (Task 8.6)
+    if (appeal.requestedAssessmentValue == null || appeal.requestedAssessmentValue <= 0) {
+      return NextResponse.json(
+        { error: "Set a requested assessment value on this appeal before downloading the summary." },
+        { status: 400 }
+      )
+    }
+
+    const salesCount = appeal.compsUsed.filter((c) => c.compType === "SALES").length
+    const equityCount = appeal.compsUsed.filter((c) => c.compType === "EQUITY").length
+    const warnComps =
+      salesCount < 3 || equityCount < 5
+        ? `Rule 15 recommends at least 3 sales comps and 5 equity comps (you have ${salesCount} sales, ${equityCount} equity).`
+        : null
+
     const safeFormatPIN = (pin: string | null | undefined) => formatPIN(String(pin ?? ""))
 
     const data = {
@@ -107,13 +122,16 @@ export async function GET(
     const filename = `overtaxed-appeal-${appeal.taxYear}-${pinRaw || "summary"}.pdf`
     const buf = typeof Buffer !== "undefined" ? Buffer.from(pdfBytes) : new Uint8Array(pdfBytes)
 
+    const headers: Record<string, string> = {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Length": String(buf.length),
+    }
+    if (warnComps) headers["X-Appeal-Warning"] = warnComps
+
     return new NextResponse(buf, {
       status: 200,
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${filename}"`,
-        "Content-Length": String(buf.length),
-      },
+      headers,
     })
   } catch (error) {
     const err = error as Error

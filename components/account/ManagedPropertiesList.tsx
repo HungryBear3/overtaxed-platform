@@ -11,6 +11,9 @@ interface Property {
   city: string
   state: string
   zipCode: string
+  slotNumber?: number
+  appealStatusSummary?: string
+  canRemove?: boolean
 }
 
 interface ManagedPropertiesListProps {
@@ -77,7 +80,27 @@ export function ManagedPropertiesList({
               className="flex items-center justify-between py-3 first:pt-0"
             >
               <div>
-                <p className="font-medium text-gray-900">{p.address}</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {p.slotNumber != null && (
+                    <span className="inline-flex items-center rounded bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-700">
+                      Slot {p.slotNumber}
+                    </span>
+                  )}
+                  {p.appealStatusSummary && p.appealStatusSummary !== "No appeal" && (
+                    <span
+                      className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${
+                        p.appealStatusSummary.includes("filed") || p.appealStatusSummary.includes("in progress")
+                          ? "bg-amber-100 text-amber-800"
+                          : p.appealStatusSummary.includes("Draft")
+                            ? "bg-blue-50 text-blue-700"
+                            : "bg-gray-100 text-gray-700"
+                      }`}
+                    >
+                      {p.appealStatusSummary}
+                    </span>
+                  )}
+                </div>
+                <p className="font-medium text-gray-900 mt-1">{p.address}</p>
                 <p className="text-sm text-gray-500">
                   PIN: {p.pin}
                   {p.city && ` · ${p.city}, ${p.state} ${p.zipCode}`}
@@ -90,13 +113,19 @@ export function ManagedPropertiesList({
                 >
                   View / Edit
                 </Link>
-                <button
-                  onClick={() => handleDelete(p.id, p.address)}
-                  disabled={!!deletingId}
-                  className="text-sm text-red-600 hover:text-red-700 disabled:opacity-50"
-                >
-                  {deletingId === p.id ? "Removing…" : "Remove"}
-                </button>
+                {p.canRemove !== false ? (
+                  <button
+                    onClick={() => handleDelete(p.id, p.address)}
+                    disabled={!!deletingId}
+                    className="text-sm text-red-600 hover:text-red-700 disabled:opacity-50"
+                  >
+                    {deletingId === p.id ? "Removing…" : "Remove"}
+                  </button>
+                ) : (
+                  <span className="text-xs text-gray-500" title="Property has filed appeal(s); cannot remove until appeal is withdrawn or decided">
+                    Locked
+                  </span>
+                )}
               </div>
             </div>
           ))}

@@ -439,6 +439,10 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   )
   drawLine()
 
+  // —— Filing instructions (Task 8.8) ——
+  drawText("Filing: File this packet with the Cook County Assessor via SmartFile (online) or attach to your paper appeal form. See cookcountyassessor.com/file-appeal for deadlines and submission.")
+  drawLine()
+
   // —— Conclusion (compelling closing for assessors) ——
   drawText("Conclusion", { bold: true, fontSize: 13 })
   if (requestedValue != null && data.comps.length > 0) {
