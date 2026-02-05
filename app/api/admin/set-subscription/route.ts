@@ -1,9 +1,9 @@
-// POST /api/admin/set-subscription - Manually set user subscription tier (for testing)
-// IMPORTANT: This endpoint is for testing purposes only.
-// In production, use a secure admin authentication mechanism.
+// POST /api/admin/set-subscription - Manually set user subscription tier (for testing / correcting slots)
+// When subscriptionQuantity is set and user has stripeSubscriptionId, Stripe subscription is updated to match.
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
+import { stripe } from "@/lib/stripe/client"
 import { z } from "zod"
 
 const schema = z.object({
@@ -70,6 +70,15 @@ export async function POST(request: NextRequest) {
     }
     const user = await prisma.user.findFirst({
       where,
+      select: {
+        id: true,
+        email: true,
+        subscriptionTier: true,
+        subscriptionStatus: true,
+        subscriptionStartDate: true,
+        subscriptionQuantity: true,
+        stripeSubscriptionId: true,
+      },
     })
 
     if (!user) {
@@ -77,6 +86,31 @@ export async function POST(request: NextRequest) {
         { error: "User not found" },
         { status: 404 }
       )
+    }
+
+    // If setting quantity and user has Stripe subscription, update Stripe so DB and Stripe stay in sync
+    if (
+      subscriptionQuantity !== undefined &&
+      subscriptionQuantity != null &&
+      user.stripeSubscriptionId &&
+      stripe
+    ) {
+      try {
+        const sub = await stripe.subscriptions.retrieve(user.stripeSubscriptionId)
+        const itemId = sub.items.data[0]?.id
+        if (itemId) {
+          await stripe.subscriptions.update(user.stripeSubscriptionId, {
+            items: [{ id: itemId, quantity: subscriptionQuantity }],
+          })
+          console.log(`[admin] Updated Stripe subscription ${user.stripeSubscriptionId} to quantity ${subscriptionQuantity}`)
+        }
+      } catch (err) {
+        console.error("[admin] Failed to update Stripe subscription quantity:", err)
+        return NextResponse.json(
+          { error: "Updated DB but Stripe subscription update failed. Check logs." },
+          { status: 500 }
+        )
+      }
     }
 
     // Update subscription (subscriptionQuantity caps slots when set; null = use tier default)

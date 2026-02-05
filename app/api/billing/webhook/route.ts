@@ -179,6 +179,31 @@ export async function POST(request: NextRequest) {
       break
     }
 
+    case "invoice.paid": {
+      const inv = data as { metadata?: Record<string, string>; subscription?: string }
+      const meta = inv.metadata ?? {}
+      const subscriptionId = meta.subscriptionId
+      const newQuantityStr = meta.newQuantity
+      if (subscriptionId && newQuantityStr) {
+        const newQuantity = parseInt(newQuantityStr, 10)
+        if (newQuantity >= 1) {
+          try {
+            const sub = await stripe.subscriptions.retrieve(subscriptionId)
+            const itemId = sub.items.data[0]?.id
+            if (itemId) {
+              await stripe.subscriptions.update(subscriptionId, {
+                items: [{ id: itemId, quantity: newQuantity }],
+              })
+              console.log(`[webhook] Updated subscription ${subscriptionId} to quantity ${newQuantity} after add-slots invoice paid`)
+            }
+          } catch (err) {
+            console.error("[webhook] Error updating subscription after invoice.paid:", err)
+          }
+        }
+      }
+      break
+    }
+
     case "invoice.payment_failed": {
       const customerId = data.customer as string | undefined
       console.log(`[webhook] Payment failed for customer ${customerId}`)

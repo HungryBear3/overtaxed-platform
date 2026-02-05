@@ -6,8 +6,10 @@ import { stripe, PRICE_IDS } from "@/lib/stripe/client"
 import {
   GROWTH_MIN_PROPERTIES,
   GROWTH_MAX_PROPERTIES,
+  GROWTH_PRICE_PER_PROPERTY,
   PORTFOLIO_MIN_PROPERTIES,
   PORTFOLIO_MAX_PROPERTIES,
+  PORTFOLIO_PRICE_PER_PROPERTY,
   requiresCustomPricing,
 } from "@/lib/billing/pricing"
 import { z } from "zod"
@@ -159,28 +161,43 @@ export async function POST(request: NextRequest) {
       currentQty > 0 &&
       user.stripeSubscriptionId
 
+    // Add slots: create invoice for proration only; subscription is updated in webhook on invoice.paid (so we don't show 10 slots before payment)
     if ((isAddingSlots || isAddingPortfolioSlots) && user.stripeSubscriptionId) {
       try {
         const sub = await stripe.subscriptions.retrieve(user.stripeSubscriptionId)
-        const itemId = sub.items.data[0]?.id
-        if (!itemId) {
-          return NextResponse.json({ error: "Subscription has no items to update" }, { status: 500 })
-        }
-        const updated = await stripe.subscriptions.update(user.stripeSubscriptionId, {
-          items: [{ id: itemId, quantity }],
-          proration_behavior: "create_prorations",
+        const customerId = sub.customer as string
+        const additionalSlots = quantity - currentQty
+        const pricePerSlotCents =
+          parsed.data.plan === "GROWTH"
+            ? GROWTH_PRICE_PER_PROPERTY * 100
+            : PORTFOLIO_PRICE_PER_PROPERTY * 100
+        const amountCents = additionalSlots * pricePerSlotCents
+        await stripe.invoiceItems.create({
+          customer: customerId,
+          amount: amountCents,
+          currency: "usd",
+          description: `Additional ${additionalSlots} slot(s) — ${parsed.data.plan} (prorated)`,
         })
-        // Create and finalize an invoice so the user is sent to Stripe to pay the proration now
         const invoice = await stripe.invoices.create({
-          subscription: updated.id,
+          customer: customerId,
+          collection_method: "charge_automatically",
+          metadata: {
+            userId: user.id,
+            subscriptionId: user.stripeSubscriptionId,
+            newQuantity: String(quantity),
+            plan: parsed.data.plan,
+          },
         })
         const finalized = await stripe.invoices.finalizeInvoice(invoice.id)
-        const payUrl = finalized.hosted_invoice_url || finalized.invoice_pdf || `${appUrl}/account?checkout=success&slots_added=1`
+        const payUrl =
+          finalized.hosted_invoice_url ||
+          finalized.invoice_pdf ||
+          `${appUrl}/account?checkout=success&slots_added=1`
         return NextResponse.json({ url: payUrl })
       } catch (err) {
-        console.error("Subscription update error:", err)
+        console.error("Add-slots invoice error:", err)
         return NextResponse.json(
-          { error: "Could not update subscription. Please try again or contact support." },
+          { error: "Could not create invoice. Please try again or contact support." },
           { status: 500 }
         )
       }
