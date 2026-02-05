@@ -36,7 +36,15 @@ export async function POST(request: NextRequest) {
 
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
-      select: { id: true, email: true, subscriptionTier: true, subscriptionStatus: true, stripeCustomerId: true },
+      select: {
+        id: true,
+        email: true,
+        subscriptionTier: true,
+        subscriptionStatus: true,
+        stripeCustomerId: true,
+        stripeSubscriptionId: true,
+        subscriptionQuantity: true,
+      },
     })
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
@@ -44,6 +52,7 @@ export async function POST(request: NextRequest) {
 
     // Get property count (from request or user's current count)
     const propertyCount = parsed.data.propertyCount ?? await prisma.property.count({ where: { userId: user.id } })
+    const currentQty = user.subscriptionQuantity ?? 0
 
     // Require Starter before first Growth; allow existing Growth to add more. Same for Portfolio.
     const currentTier = user.subscriptionTier ?? "COMPS_ONLY"
@@ -125,6 +134,42 @@ export async function POST(request: NextRequest) {
     }
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+
+    // When adding slots to existing Growth or Portfolio subscription, update subscription instead of new checkout (prorated charge for additional only)
+    const isAddingSlots =
+      parsed.data.plan === "GROWTH" &&
+      currentTier === "GROWTH" &&
+      propertyCount > currentQty &&
+      currentQty > 0 &&
+      user.stripeSubscriptionId
+    const isAddingPortfolioSlots =
+      parsed.data.plan === "PORTFOLIO" &&
+      currentTier === "PORTFOLIO" &&
+      propertyCount > currentQty &&
+      currentQty > 0 &&
+      user.stripeSubscriptionId
+
+    if ((isAddingSlots || isAddingPortfolioSlots) && user.stripeSubscriptionId) {
+      try {
+        const sub = await stripe.subscriptions.retrieve(user.stripeSubscriptionId)
+        const itemId = sub.items.data[0]?.id
+        if (!itemId) {
+          return NextResponse.json({ error: "Subscription has no items to update" }, { status: 500 })
+        }
+        await stripe.subscriptions.update(user.stripeSubscriptionId, {
+          items: [{ id: itemId, quantity }],
+          proration_behavior: "create_prorations",
+        })
+        // Webhook will sync subscriptionQuantity; redirect to account
+        return NextResponse.json({ url: `${appUrl}/account?checkout=success&slots_added=1` })
+      } catch (err) {
+        console.error("Subscription update error:", err)
+        return NextResponse.json(
+          { error: "Could not update subscription. Please try again or contact support." },
+          { status: 500 }
+        )
+      }
+    }
 
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "subscription",

@@ -527,11 +527,13 @@ export default function PricingPage() {
                         {plan.id === "GROWTH"
                           ? (currentTier === "STARTER" || currentTier === null)
                             ? `Add 1–7 properties (3–9 total) at $${GROWTH_PRICE_PER_PROPERTY}/property/year:`
-                            : `Choose 1–9 properties at $${GROWTH_PRICE_PER_PROPERTY}/property/year (minimum 1):`
+                            : `Choose 1–${quantityOptions.length} additional (${GROWTH_SLOTS - tierUsed.growth} available) at $${GROWTH_PRICE_PER_PROPERTY}/property/year:`
                           : plan.id === "PORTFOLIO"
                             ? currentTier === "GROWTH"
                               ? `Add 1–11 properties (10–20 total) at $${PORTFOLIO_PRICE_PER_PROPERTY}/property/year:`
-                              : `Choose 1–20 properties at $${PORTFOLIO_PRICE_PER_PROPERTY}/property/year (minimum 1):`
+                              : currentTier === "PORTFOLIO"
+                                ? `Choose 1–${quantityOptions.length} additional (${PORTFOLIO_SLOTS - tierUsed.portfolio} available) at $${PORTFOLIO_PRICE_PER_PROPERTY}/property/year:`
+                                : `Choose 1–20 properties at $${PORTFOLIO_PRICE_PER_PROPERTY}/property/year (minimum 1):`
                             : "How many properties to pay for (you'll be charged this at checkout):"}
                       </label>
                       <div className="flex items-center gap-2 flex-wrap">
@@ -543,35 +545,45 @@ export default function PricingPage() {
                         >
                           {quantityOptions.map((n) => {
                             const count = slotIndexToPropertyCount(effectiveRange, n, currentTier, currentSlots)
-                            const price = getAnnualPrice(plan.id, count)
+                            const totalPrice = getAnnualPrice(plan.id, count)
+                            const additionalPrice =
+                              (plan.id === "GROWTH" && currentTier === "GROWTH") || (plan.id === "PORTFOLIO" && currentTier === "PORTFOLIO")
+                                ? n * (plan.id === "GROWTH" ? GROWTH_PRICE_PER_PROPERTY : PORTFOLIO_PRICE_PER_PROPERTY)
+                                : totalPrice
                             if (plan.id === "GROWTH" && (currentTier === "STARTER" || currentTier === null)) {
-                              return <option key={n} value={n}>Add {n} more ({count} total) — ${price.toLocaleString()}/yr</option>
+                              return <option key={n} value={n}>Add {n} more ({count} total) — ${totalPrice.toLocaleString()}/yr</option>
                             }
                             if (plan.id === "GROWTH" && currentTier === "GROWTH") {
-                              return <option key={n} value={n}>Add {n} more ({count} total) — ${price.toLocaleString()}/yr</option>
+                              return <option key={n} value={n}>Add {n} more ({count} total) — +${additionalPrice.toLocaleString()}/yr</option>
                             }
                             if (plan.id === "PORTFOLIO" && currentTier === "GROWTH") {
-                              return <option key={n} value={n}>Add {n} more ({count} total) — ${price.toLocaleString()}/yr</option>
+                              return <option key={n} value={n}>Add {n} more ({count} total) — ${totalPrice.toLocaleString()}/yr</option>
                             }
                             if (plan.id === "PORTFOLIO" && currentTier === "PORTFOLIO") {
-                              return <option key={n} value={n}>Add {n} more ({count} total) — ${price.toLocaleString()}/yr</option>
+                              return <option key={n} value={n}>Add {n} more ({count} total) — +${additionalPrice.toLocaleString()}/yr</option>
                             }
-                            return <option key={n} value={n}>{count} propert{count === 1 ? "y" : "ies"} (${price.toLocaleString()}/yr)</option>
+                            return <option key={n} value={n}>{count} propert{count === 1 ? "y" : "ies"} (${totalPrice.toLocaleString()}/yr)</option>
                           })}
                         </select>
                         <span className="text-sm font-semibold text-gray-900">
-                          = ${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)).toLocaleString()}/year
+                          {plan.id === "GROWTH" && currentTier === "GROWTH"
+                            ? `= +$${(selectedQuantity * GROWTH_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)} total, $${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)).toLocaleString()}/yr subscription)`
+                            : plan.id === "PORTFOLIO" && currentTier === "PORTFOLIO"
+                              ? `= +$${(selectedQuantity * PORTFOLIO_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)} total, $${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)).toLocaleString()}/yr subscription)`
+                              : `= $${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)).toLocaleString()}/year`}
                         </span>
                       </div>
                       <p className="text-xs text-gray-600 mt-2">
                         {plan.id === "GROWTH"
                           ? (currentTier === "STARTER" || currentTier === null)
                             ? `Add 1–7 more (3–9 total). $${GROWTH_PRICE_PER_PROPERTY} each. You can add more later within 9.`
-                            : `Growth: 1–9 properties at $${GROWTH_PRICE_PER_PROPERTY} each. You can add more later within that limit.`
+                            : `Growth: 1–7 slots at $${GROWTH_PRICE_PER_PROPERTY} each. ${tierUsed.growth}/${GROWTH_SLOTS} used · ${GROWTH_SLOTS - tierUsed.growth} available.`
                           : plan.id === "PORTFOLIO"
                             ? currentTier === "GROWTH"
                               ? `Add 1–11 more (10–20 total). $${PORTFOLIO_PRICE_PER_PROPERTY} each. You can add more later within 20.`
-                              : `Portfolio: 1–20 properties at $${PORTFOLIO_PRICE_PER_PROPERTY} each. You can add more later within that limit.`
+                              : currentTier === "PORTFOLIO"
+                                ? `Portfolio: 1–11 slots at $${PORTFOLIO_PRICE_PER_PROPERTY} each. ${tierUsed.portfolio}/${PORTFOLIO_SLOTS} used · ${PORTFOLIO_SLOTS - tierUsed.portfolio} available.`
+                                : `Portfolio: 1–20 properties at $${PORTFOLIO_PRICE_PER_PROPERTY} each. You can add more later within that limit.`
                             : "Starter: up to 2 properties. You can add more later within that limit."}
                       </p>
                     </div>
