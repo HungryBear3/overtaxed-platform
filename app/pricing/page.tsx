@@ -116,42 +116,59 @@ function requiresGrowthFirstOrFullSlots(
 
 const RANGE_LABELS: PlanRange[] = ["1-2", "3-9", "10-20", "20+"]
 
-/** When upgrading: Starter→Growth show 1–7 additional (total 3–9); Growth→Portfolio show 1–11 additional (total 10–20). When tier unknown (null), treat as Starter for 3–9 so we show 1–7. */
-function getQuantityRange(range: PlanRange, currentTier: string | null): number[] {
+/** When upgrading: Starter→Growth show 1–7 additional (total 3–9); on Growth cap by slots left (9 - current); Portfolio same with 20 - current. */
+function getQuantityRange(range: PlanRange, currentTier: string | null, currentSlots: number): number[] {
   if (range === "1-2") return [1, 2]
   if (range === "3-9") {
     if (currentTier === "STARTER" || currentTier === null) return [1, 2, 3, 4, 5, 6, 7] // additional (2 + 1..7 = 3..9 total)
-    if (currentTier === "GROWTH") return [1, 2, 3, 4, 5, 6, 7, 8, 9] // already on Growth: add 1–9 more
+    if (currentTier === "GROWTH") {
+      const maxAdditional = Math.max(1, GROWTH_MAX_PROPERTIES - currentSlots)
+      return Array.from({ length: maxAdditional }, (_, i) => i + 1) // 1..maxAdditional
+    }
     return [1, 2, 3, 4, 5, 6, 7, 8, 9]
   }
   if (range === "10-20") {
     if (currentTier === "GROWTH") return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] // additional (9 + 1..11 = 10..20 total)
+    if (currentTier === "PORTFOLIO") {
+      const maxAdditional = Math.max(1, Math.min(11, PORTFOLIO_MAX_PROPERTIES - currentSlots))
+      return Array.from({ length: maxAdditional }, (_, i) => i + 1)
+    }
     return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
   }
   return []
 }
 
-/** Total property count for display/price: when upgrading from Starter (or unknown), total = 2 + slotIndex; from Growth, total = 9 + slotIndex. */
-function slotIndexToPropertyCount(range: PlanRange, slotIndex: number, currentTier: string | null): number {
+/** Total property count for display/price: when from Starter total = 2 + slotIndex; when on Growth total = currentSlots + slotIndex; when from Growth to Portfolio total = 9 + slotIndex; when on Portfolio total = currentSlots + slotIndex. */
+function slotIndexToPropertyCount(range: PlanRange, slotIndex: number, currentTier: string | null, currentSlots: number): number {
   if (range === "1-2") return slotIndex
-  if (range === "3-9") return currentTier === "STARTER" || currentTier === null ? 2 + slotIndex : slotIndex
-  if (range === "10-20") return currentTier === "GROWTH" ? 9 + slotIndex : slotIndex
+  if (range === "3-9") {
+    if (currentTier === "STARTER" || currentTier === null) return 2 + slotIndex
+    if (currentTier === "GROWTH") return currentSlots + slotIndex
+    return slotIndex
+  }
+  if (range === "10-20") {
+    if (currentTier === "GROWTH") return 9 + slotIndex
+    if (currentTier === "PORTFOLIO") return currentSlots + slotIndex
+    return slotIndex
+  }
   return slotIndex
 }
 
 /** Map current property count to dropdown selection. */
-function propertyCountToSlotIndex(range: PlanRange, count: number, currentTier: string | null): number {
+function propertyCountToSlotIndex(range: PlanRange, count: number, currentTier: string | null, currentSlots: number): number {
   if (range === "1-2") return Math.min(Math.max(count, 1), 2)
   if (range === "3-9") {
     const fromStarter = currentTier === "STARTER" || currentTier === null
-    const max = fromStarter ? 7 : 9
+    const max = fromStarter ? 7 : Math.max(1, GROWTH_MAX_PROPERTIES - currentSlots)
     const min = 1
-    return Math.min(Math.max(fromStarter ? count - 2 : count, min), max)
+    const raw = fromStarter ? count - 2 : (currentTier === "GROWTH" ? count - currentSlots : count)
+    return Math.min(Math.max(raw, min), max)
   }
   if (range === "10-20") {
-    const max = currentTier === "GROWTH" ? 11 : 20
+    const max = currentTier === "GROWTH" ? 11 : Math.max(1, Math.min(11, PORTFOLIO_MAX_PROPERTIES - currentSlots))
     const min = 1
-    return Math.min(Math.max(currentTier === "GROWTH" ? count - 9 : count, min), max)
+    const raw = currentTier === "GROWTH" ? count - 9 : (currentTier === "PORTFOLIO" ? count - currentSlots : count)
+    return Math.min(Math.max(raw, min), max)
   }
   return 1
 }
@@ -196,11 +213,12 @@ export default function PricingPage() {
   const planToRange: Record<string, PlanRange> = { STARTER: "1-2", GROWTH: "3-9", PORTFOLIO: "10-20", CUSTOM: "20+" }
   const effectiveRange = selectedRange ?? (planInfo?.recommendedPlan ? planToRange[planInfo.recommendedPlan] ?? "1-2" : "1-2")
   const currentTier = planInfo?.subscriptionTier ?? null
-  const quantityOptions = getQuantityRange(effectiveRange, currentTier)
+  const currentSlots = planInfo?.subscriptionQuantity ?? 0
+  const quantityOptions = getQuantityRange(effectiveRange, currentTier, currentSlots)
 
   // Reset selectedQuantity when range or planInfo changes; preselect current count or next upgrade when at limit
   useEffect(() => {
-    const opts = getQuantityRange(effectiveRange, currentTier)
+    const opts = getQuantityRange(effectiveRange, currentTier, currentSlots)
     if (opts.length === 0) return
     const currentCount = planInfo?.propertyCount ?? 0
     const limit = planInfo?.propertyLimit
@@ -212,10 +230,10 @@ export default function PricingPage() {
         : atLimit && limit != null
           ? Math.min(limit + 1, opts[opts.length - 1])
           : null
-    const slotIndex = nextUpgradeVal ?? propertyCountToSlotIndex(effectiveRange, currentCount, currentTier)
+    const slotIndex = nextUpgradeVal ?? propertyCountToSlotIndex(effectiveRange, currentCount, currentTier, currentSlots)
     const sel = opts.includes(slotIndex) ? slotIndex : opts[0]
     setSelectedQuantity(sel)
-  }, [effectiveRange, currentTier, planInfo?.propertyCount, planInfo?.propertyLimit])
+  }, [effectiveRange, currentTier, currentSlots, planInfo?.propertyCount, planInfo?.propertyLimit])
 
   async function subscribe(plan: "STARTER" | "GROWTH" | "PORTFOLIO") {
     setLoading(plan)
@@ -227,9 +245,13 @@ export default function PricingPage() {
         propertyCount = Math.min(2 + selectedQuantity, 9)
       } else if (plan === "PORTFOLIO" && currentTier === "GROWTH") {
         propertyCount = Math.min(9 + selectedQuantity, 20)
+      } else if (plan === "GROWTH" && currentTier === "GROWTH") {
+        propertyCount = Math.min(currentSlots + selectedQuantity, GROWTH_MAX_PROPERTIES)
+      } else if (plan === "PORTFOLIO" && currentTier === "PORTFOLIO") {
+        propertyCount = Math.min(currentSlots + selectedQuantity, PORTFOLIO_MAX_PROPERTIES)
       } else {
         propertyCount = RANGE_TO_PLAN[effectiveRange] === plan
-          ? slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier)
+          ? slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)
           : plan === "STARTER"
             ? Math.min(selectedQuantity, 2)
             : plan === "GROWTH"
@@ -392,10 +414,10 @@ export default function PricingPage() {
               type="button"
               onClick={() => {
                 setSelectedRange(range)
-                const opts = getQuantityRange(range, currentTier)
+                const opts = getQuantityRange(range, currentTier, currentSlots)
                 if (opts.length > 0) {
                   const c = planInfo?.propertyCount ?? 0
-                  const slotIndex = propertyCountToSlotIndex(range, c, currentTier)
+                  const slotIndex = propertyCountToSlotIndex(range, c, currentTier, currentSlots)
                   setSelectedQuantity(opts.includes(slotIndex) ? slotIndex : opts[0])
                 }
               }}
@@ -480,7 +502,7 @@ export default function PricingPage() {
                           className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-900 bg-white"
                         >
                           {quantityOptions.map((n) => {
-                            const count = slotIndexToPropertyCount(effectiveRange, n, currentTier)
+                            const count = slotIndexToPropertyCount(effectiveRange, n, currentTier, currentSlots)
                             if (plan.id === "GROWTH" || plan.id === "PORTFOLIO") {
                               return <option key={n} value={n}>{count} propert{count === 1 ? "y" : "ies"} (${getAnnualPrice(plan.id, count).toLocaleString()}/yr)</option>
                             }
@@ -488,7 +510,7 @@ export default function PricingPage() {
                           })}
                         </select>
                         <span className="text-sm font-semibold text-gray-900">
-                          = ${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier)).toLocaleString()}/year
+                          = ${getAnnualPrice(plan.id, slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)).toLocaleString()}/year
                         </span>
                       </div>
                       <p className="text-xs text-gray-600 mt-2">
