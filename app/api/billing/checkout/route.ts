@@ -151,7 +151,9 @@ export async function POST(request: NextRequest) {
     let customerIdForCheckout: string | null = user.stripeCustomerId
     if (user.stripeCustomerId) {
       try {
-        await stripe.customers.retrieve(user.stripeCustomerId)
+        const customer = await stripe.customers.retrieve(user.stripeCustomerId)
+        const isDeleted = customer && typeof customer === "object" && "deleted" in customer && (customer as { deleted?: boolean }).deleted
+        if (isDeleted) throw new Error("Customer deleted")
       } catch {
         await prisma.user.update({
           where: { id: user.id },
@@ -219,22 +221,41 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const checkoutSession = await stripe.checkout.sessions.create({
-      mode: "subscription",
-      ...(customerIdForCheckout
-        ? { customer: customerIdForCheckout }
-        : { customer_email: user.email }),
-      line_items: [{ price: priceId, quantity }],
-      success_url: `${appUrl}/account?checkout=success`,
-      cancel_url: `${appUrl}/pricing?checkout=cancelled`,
-      metadata: {
-        userId: user.id,
-        plan: parsed.data.plan,
-        propertyCount: String(quantity), // Use quantity charged (e.g. Starter capped at 2), not client request
-      },
-    })
+    let checkoutSession
+    try {
+      checkoutSession = await stripe.checkout.sessions.create({
+        mode: "subscription",
+        ...(customerIdForCheckout
+          ? { customer: customerIdForCheckout }
+          : { customer_email: user.email }),
+        line_items: [{ price: priceId, quantity }],
+        success_url: `${appUrl}/account?checkout=success`,
+        cancel_url: `${appUrl}/pricing?checkout=cancelled`,
+        metadata: {
+          userId: user.id,
+          plan: parsed.data.plan,
+          propertyCount: String(quantity), // Use quantity charged (e.g. Starter capped at 2), not client request
+        },
+      })
+    } catch (createErr: unknown) {
+      const createMsg = (createErr as { message?: string })?.message ?? ""
+      if (createMsg.includes("No such customer") && user.stripeCustomerId) {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { stripeCustomerId: null, stripeSubscriptionId: null, subscriptionQuantity: null },
+        })
+        return NextResponse.json(
+          {
+            error:
+              "Your previous billing account was deleted in Stripe. We've cleared it. Please try checkout again — a new account will be created.",
+          },
+          { status: 400 }
+        )
+      }
+      throw createErr
+    }
 
-    return NextResponse.json({ url: checkoutSession.url })
+    return NextResponse.json({ url: checkoutSession!.url })
   } catch (error: unknown) {
     console.error("Checkout error:", error)
     const err = error as { type?: string; message?: string; code?: string }
