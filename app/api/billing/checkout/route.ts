@@ -184,6 +184,7 @@ export async function POST(request: NextRequest) {
       currentQty > 0 &&
       user.stripeSubscriptionId
 
+    // Add-slots: use Checkout (one-time payment) so we get success_url/cancel_url and return to site after payment
     if ((isAddingStarterSlots || isAddingSlots || isAddingPortfolioSlots) && user.stripeSubscriptionId) {
       try {
         const sub = await stripe.subscriptions.retrieve(user.stripeSubscriptionId)
@@ -196,34 +197,37 @@ export async function POST(request: NextRequest) {
               ? GROWTH_PRICE_PER_PROPERTY * 100
               : PORTFOLIO_PRICE_PER_PROPERTY * 100
         const amountCents = additionalSlots * pricePerSlotCents
-        // Create draft invoice first so the line item is attached to it (otherwise pending items can end up on subscription's next invoice → $0)
-        const invoice = await stripe.invoices.create({
+        const addSlotsSession = await stripe.checkout.sessions.create({
+          mode: "payment",
           customer: customerId,
-          collection_method: "charge_automatically",
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                unit_amount: pricePerSlotCents,
+                product_data: {
+                  name: `Additional ${additionalSlots} slot(s) — ${parsed.data.plan}`,
+                  description: "Prorated add-on to your current plan",
+                },
+              },
+              quantity: additionalSlots,
+            },
+          ],
+          success_url: `${appUrl}/account?checkout=success&slots_added=1`,
+          cancel_url: `${appUrl}/pricing?checkout=cancelled`,
           metadata: {
             userId: user.id,
+            plan: parsed.data.plan,
+            addSlots: "true",
             subscriptionId: user.stripeSubscriptionId,
             newQuantity: String(quantity),
-            plan: parsed.data.plan,
           },
         })
-        await stripe.invoiceItems.create({
-          customer: customerId,
-          invoice: invoice.id,
-          amount: amountCents,
-          currency: "usd",
-          description: `Additional ${additionalSlots} slot(s) — ${parsed.data.plan} (prorated)`,
-        })
-        const finalized = await stripe.invoices.finalizeInvoice(invoice.id)
-        const payUrl =
-          finalized.hosted_invoice_url ||
-          finalized.invoice_pdf ||
-          `${appUrl}/account?checkout=success&slots_added=1`
-        return NextResponse.json({ url: payUrl })
+        return NextResponse.json({ url: addSlotsSession.url })
       } catch (err) {
-        console.error("Add-slots invoice error:", err)
+        console.error("Add-slots checkout error:", err)
         return NextResponse.json(
-          { error: "Could not create invoice. Please try again or contact support." },
+          { error: "Could not create checkout. Please try again or contact support." },
           { status: 500 }
         )
       }

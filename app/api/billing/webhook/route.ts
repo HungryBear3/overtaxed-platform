@@ -53,21 +53,47 @@ export async function POST(request: NextRequest) {
       const stripeCustomerId = (data.customer as string) ?? null
       const stripeSubscriptionId = (data.subscription as string) ?? null
 
-      // One-time payment (e.g. DIY/comps-only $69)
+      // One-time payment: add-slots (update existing subscription) or DIY/comps-only
       if (mode === "payment") {
-        try {
-          await prisma.user.update({
-            where: { id: userId },
-            data: {
-              subscriptionTier: "COMPS_ONLY",
-              subscriptionStatus: "ACTIVE",
-              subscriptionQuantity: 1,
-              stripeCustomerId: stripeCustomerId ?? undefined,
-            },
-          })
-          console.log(`[webhook] SUCCESS: User ${userId} DIY/comps-only payment completed`)
-        } catch (dbError) {
-          console.error(`[webhook] Database error updating user ${userId}:`, dbError)
+        const addSlots = metadata.addSlots === "true"
+        const subscriptionId = metadata.subscriptionId
+        const newQuantityStr = metadata.newQuantity
+
+        if (addSlots && subscriptionId && newQuantityStr) {
+          const newQuantity = parseInt(newQuantityStr, 10)
+          if (newQuantity >= 1 && stripe) {
+            try {
+              const sub = await stripe.subscriptions.retrieve(subscriptionId)
+              const itemId = sub.items.data[0]?.id
+              if (itemId) {
+                await stripe.subscriptions.update(subscriptionId, {
+                  items: [{ id: itemId, quantity: newQuantity }],
+                })
+                await prisma.user.update({
+                  where: { id: userId },
+                  data: { subscriptionQuantity: newQuantity },
+                })
+                console.log(`[webhook] Add-slots: updated subscription ${subscriptionId} to quantity ${newQuantity}`)
+              }
+            } catch (err) {
+              console.error("[webhook] Error updating subscription after add-slots payment:", err)
+            }
+          }
+        } else {
+          try {
+            await prisma.user.update({
+              where: { id: userId },
+              data: {
+                subscriptionTier: "COMPS_ONLY",
+                subscriptionStatus: "ACTIVE",
+                subscriptionQuantity: 1,
+                stripeCustomerId: stripeCustomerId ?? undefined,
+              },
+            })
+            console.log(`[webhook] SUCCESS: User ${userId} DIY/comps-only payment completed`)
+          } catch (dbError) {
+            console.error(`[webhook] Database error updating user ${userId}:`, dbError)
+          }
         }
         break
       }
