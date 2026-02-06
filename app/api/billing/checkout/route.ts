@@ -205,6 +205,13 @@ export async function POST(request: NextRequest) {
         const sub = await stripe.subscriptions.retrieve(user.stripeSubscriptionId)
         const customerId = sub.customer as string
         const additionalSlots = quantity - currentQty
+        // newQuantity for the subscription we're updating must be tier-only (that subscription's quantity), not total slots
+        const subscriptionNewQty =
+          parsed.data.plan === "STARTER"
+            ? quantity
+            : parsed.data.plan === "GROWTH"
+              ? quantity - STARTER_SLOTS
+              : quantity - STARTER_SLOTS - GROWTH_MAX_PROPERTIES
         const pricePerSlotCents =
           parsed.data.plan === "STARTER"
             ? RETAIL_PRICE_PER_PROPERTY * 100
@@ -235,7 +242,7 @@ export async function POST(request: NextRequest) {
             plan: parsed.data.plan,
             addSlots: "true",
             subscriptionId: user.stripeSubscriptionId,
-            newQuantity: String(quantity),
+            newQuantity: String(Math.max(1, subscriptionNewQty)),
           },
         })
         return NextResponse.json({ url: addSlotsSession.url })

@@ -26,6 +26,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 19. [GitHub secret exposure – Stripe webhook signing secret](#github-secret-exposure--stripe-webhook-signing-secret)
 20. [Stripe: multiple customers per email; serverless DB pool](#20-stripe-multiple-customers-per-email-serverless-db-pool)
 21. [Pricing upgrade UX: additional slots and caps](#21-pricing-upgrade-ux-additional-slots-and-caps)
+22. [Starter slots display, add-slots Checkout redirect, charge-only-additional (Growth/Portfolio)](#22-starter-slots-display-add-slots-checkout-redirect-charge-only-additional-growthportfolio)
 
 ---
 
@@ -603,6 +604,27 @@ const user = { ...session.user, ...freshUser }
 **Solution:** Pass `currentSlots` (e.g. `subscriptionQuantity`) into the quantity options. For Growth when already on Growth: max additional = `9 - currentSlots` (e.g. 3 slots → offer 1–6 only). For Portfolio when already on Portfolio: max additional = `20 - currentSlots`, capped at 11. Same cap in `subscribe()` when sending `propertyCount` so checkout receives a valid total.
 
 **Lesson:** Upgrade flows must distinguish “first-time upgrade” (Starter→Growth: 1–7 additional) from “add more on same tier” (Growth: 1–(9−current) additional). Webhook and UI must use the *sum* of all subscriptions and cap dropdowns by tier max minus current slots.
+
+---
+
+## 22. Starter slots display, add-slots Checkout redirect, charge-only-additional (Growth/Portfolio)
+
+### Starter: show paid slots, not property count
+**Context:** User had paid for 1 Starter slot but had 2 properties; UI showed "2/2 slots used" and suggested upgrading to Growth. The first 2 slots are the Starter bucket; display must reflect **paid** slots so "add one more" is clear.
+
+**Solution:** On the Starter card, when `currentTier === "STARTER"` show **paid** slots: `currentSlots/STARTER_SLOTS` (e.g. 1/2 slots used, 1 available). Dropdown: "1 slot (current)" and "2 slots — add 1 more (+$149/yr)" so the choice is "keep current" vs "add 1 more," not "choose 1 or 2" as if both were new. Label: "Keep current or add 1 more slot:". Export `STARTER_SLOTS = 2` from `lib/billing/pricing.ts` for use in checkout and UI.
+
+### Add-slots: use Checkout (not hosted invoice) for redirect
+**Context:** When adding a slot (e.g. Starter 1→2, or Growth add-more), we sent the user to Stripe's **hosted invoice page**. That page has no success/cancel URL — after payment the user stayed on Stripe with no "return to site" action.
+
+**Solution:** For add-slots, create a **Stripe Checkout session** with `mode: "payment"` (one-time), same customer, line item for the additional slot(s), and `success_url` / `cancel_url` pointing to the app (e.g. `/account?checkout=success&slots_added=1`, `/pricing?checkout=cancelled`). Webhook: on `checkout.session.completed` with `metadata.addSlots === "true"`, update the existing subscription quantity (and DB) instead of treating it as a new subscription or DIY payment.
+
+### Growth/Portfolio: charge only for additional slots
+**Context:** User on Starter with 2 slots selected "Add 1 more" on Growth; UI showed $372/yr and "3 total" because we charged for 3 Growth properties. The first 2 were already paid in Starter.
+
+**Solution:** When **creating** the Stripe subscription for Growth from Starter, set **quantity = propertyCount - STARTER_SLOTS** (e.g. 3 total → 1 Growth slot → $124). User keeps Starter subscription (qty 2) and gets a new Growth subscription (qty 1); webhook sums them so total slots = 3. Same for Portfolio from Growth: **quantity = propertyCount - GROWTH_MAX_PROPERTIES** (e.g. 10 total → 1 Portfolio slot → $99). Pricing page: for Growth from Starter show price as **n × $124** (additional only) and summary "first 2 already in Starter"; for Portfolio from Growth "first 9 in Growth."
+
+**Lesson:** Tier buckets are additive (Starter 2, then Growth 1–7, then Portfolio 1–11). Checkout must charge only for the **new** tier's slots; display and copy must make "already paid" vs "additional" explicit.
 
 ---
 

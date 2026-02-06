@@ -64,16 +64,29 @@ export async function POST(request: NextRequest) {
           if (newQuantity >= 1 && stripe) {
             try {
               const sub = await stripe.subscriptions.retrieve(subscriptionId)
+              const customerId = sub.customer as string
               const itemId = sub.items.data[0]?.id
               if (itemId) {
                 await stripe.subscriptions.update(subscriptionId, {
                   items: [{ id: itemId, quantity: newQuantity }],
                 })
+                // Store total slots: sum all subscriptions for this customer (Starter + Growth etc.), not just this subscription's quantity
+                let totalSlots: number | null = null
+                if (customerId) {
+                  try {
+                    const subs = await stripe.subscriptions.list({ customer: customerId, status: "active", limit: 100 })
+                    const trialing = await stripe.subscriptions.list({ customer: customerId, status: "trialing", limit: 100 })
+                    const pastDue = await stripe.subscriptions.list({ customer: customerId, status: "past_due", limit: 100 })
+                    const all = [...subs.data, ...trialing.data, ...pastDue.data]
+                    const sum = all.reduce((acc, s) => acc + (s.items?.data?.reduce((a, i) => a + (i.quantity ?? 0), 0) ?? 0), 0)
+                    if (sum > 0) totalSlots = sum
+                  } catch (_) {}
+                }
                 await prisma.user.update({
                   where: { id: userId },
-                  data: { subscriptionQuantity: newQuantity },
+                  data: { subscriptionQuantity: totalSlots ?? newQuantity },
                 })
-                console.log(`[webhook] Add-slots: updated subscription ${subscriptionId} to quantity ${newQuantity}`)
+                console.log(`[webhook] Add-slots: updated subscription ${subscriptionId} to quantity ${newQuantity}, total slots=${totalSlots ?? newQuantity}`)
               }
             } catch (err) {
               console.error("[webhook] Error updating subscription after add-slots payment:", err)
