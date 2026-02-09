@@ -42,7 +42,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
 
-    const updates: { name?: string; email?: string; passwordHash?: string; emailVerified?: Date | null } = {}
+    const updates: { name?: string | null; email?: string; passwordHash?: string; emailVerified?: Date | null } = {}
 
     if (name !== undefined) {
       updates.name = name.trim() || null

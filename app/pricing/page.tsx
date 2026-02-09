@@ -137,6 +137,7 @@ function getQuantityRange(range: PlanRange, currentTier: string | null, currentS
     if (currentTier === "STARTER" || currentTier === null) return [1, 2, 3, 4, 5, 6, 7] // additional (2 + 1..7 = 3..9 total)
     if (currentTier === "GROWTH") {
       const growthUsed = currentSlots - STARTER_SLOTS
+      if (growthUsed >= GROWTH_SLOTS) return [] // All 9 Growth slots used — must upgrade to Portfolio for 10+
       const maxAdditional = Math.max(1, GROWTH_SLOTS - growthUsed)
       return Array.from({ length: maxAdditional }, (_, i) => i + 1) // 1..maxAdditional
     }
@@ -217,9 +218,13 @@ export default function PricingPage() {
       .then((data) => {
         setPlanInfo(data)
         if (data.propertyCount > 0 && !selectedRange) {
+          const tier = data.subscriptionTier
           if (data.propertyCount <= 2) setSelectedRange("1-2")
-          else if (data.propertyCount <= 9) setSelectedRange("3-9")
-          else if (data.propertyCount <= 20) setSelectedRange("10-20")
+          else if (data.propertyCount <= 9) {
+            // At 9/9 Growth, recommend Portfolio (10-20) so dropdown and upgrade path show there
+            if (tier === "GROWTH" && data.propertyCount >= 9) setSelectedRange("10-20")
+            else setSelectedRange("3-9")
+          } else if (data.propertyCount <= 20) setSelectedRange("10-20")
           else setSelectedRange("20+")
         }
       })
