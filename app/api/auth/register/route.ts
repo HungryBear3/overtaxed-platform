@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { z } from "zod"
 import bcrypt from "bcryptjs"
+import { sendEmail } from "@/lib/email/send"
+import { createEmailVerificationToken } from "@/lib/auth/reset-token"
 
 const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -52,6 +54,8 @@ export async function POST(request: NextRequest) {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 12)
 
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+
     // Create user
     const user = await prisma.user.create({
       data: {
@@ -78,6 +82,16 @@ export async function POST(request: NextRequest) {
         subscriptionTier: true,
         createdAt: true,
       }
+    })
+
+    // Send verification email (2.5)
+    const verifyToken = createEmailVerificationToken(user.email)
+    const verifyUrl = `${appUrl}/auth/verify-email?token=${encodeURIComponent(verifyToken)}`
+    await sendEmail({
+      to: user.email,
+      subject: "Verify your Overtaxed email",
+      text: `Welcome! Please verify your email by opening this link (valid 24 hours):\n\n${verifyUrl}\n\nIf you didn't create an account, you can ignore this email.`,
+      html: `<p>Welcome! <a href="${verifyUrl}">Click here to verify your email</a> (link valid 24 hours).</p><p>If you didn't create an account, you can ignore this email.</p>`,
     })
 
     return NextResponse.json(

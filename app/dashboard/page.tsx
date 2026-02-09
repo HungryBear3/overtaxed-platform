@@ -66,7 +66,7 @@ export default async function DashboardPage() {
     (sum, p) => sum + (p.currentMarketValue ? Number(p.currentMarketValue) : 0),
     0
   )
-  const [activeAppeals, appealStatusCounts, totalSavingsResult, upcomingDeadlines] = await Promise.all([
+  const [activeAppeals, appealStatusCounts, totalSavingsResult, upcomingDeadlines, recentProperties, recentAppeals] = await Promise.all([
     prisma.appeal.count({
       where: {
         userId: user.id,
@@ -96,7 +96,49 @@ export default async function DashboardPage() {
         property: { select: { address: true, pin: true } },
       },
     }),
+    prisma.property.findMany({
+      where: { userId: user.id },
+      select: { id: true, address: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+    }),
+    prisma.appeal.findMany({
+      where: { userId: user.id },
+      select: {
+        id: true,
+        taxYear: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+        property: { select: { address: true, id: true } },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 10,
+    }),
   ])
+
+  // Recent activity: merge properties (added) and appeals (started/updated), sort by date desc
+  type ActivityItem =
+    | { kind: "property_added"; at: Date; propertyId: string; address: string }
+    | { kind: "appeal"; at: Date; appealId: string; address: string; taxYear: number; status: string }
+  const activityItems: ActivityItem[] = [
+    ...recentProperties.map((p) => ({
+      kind: "property_added" as const,
+      at: p.createdAt,
+      propertyId: p.id,
+      address: p.address,
+    })),
+    ...recentAppeals.map((a) => ({
+      kind: "appeal" as const,
+      at: a.updatedAt,
+      appealId: a.id,
+      address: a.property.address,
+      taxYear: a.taxYear,
+      status: a.status,
+    })),
+  ]
+  activityItems.sort((a, b) => b.at.getTime() - a.at.getTime())
+  const recentActivity = activityItems.slice(0, 15)
 
   const totalTaxSavings = totalSavingsResult._sum.taxSavings
     ? Number(totalSavingsResult._sum.taxSavings)
@@ -120,6 +162,17 @@ export default async function DashboardPage() {
       currency: "USD",
       maximumFractionDigits: 0,
     }).format(value)
+  }
+
+  function relativeTime(date: Date): string {
+    const now = new Date()
+    const sec = Math.floor((now.getTime() - date.getTime()) / 1000)
+    if (sec < 60) return "Just now"
+    if (sec < 3600) return `${Math.floor(sec / 60)}m ago`
+    if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`
+    if (sec < 2592000) return `${Math.floor(sec / 86400)}d ago`
+    if (sec < 31536000) return `${Math.floor(sec / 2592000)}mo ago`
+    return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
   }
 
   return (
@@ -262,6 +315,39 @@ export default async function DashboardPage() {
             <Link href="/appeals" className="text-sm text-blue-600 hover:text-blue-700 font-medium mt-3 inline-block">
               View all appeals →
             </Link>
+          </div>
+        )}
+
+        {/* Recent activity (11.6) */}
+        {recentActivity.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-6 mb-8">
+            <h3 className="text-lg font-medium text-gray-900 mb-3">Recent activity</h3>
+            <ul className="space-y-2">
+              {recentActivity.map((item) => (
+                <li key={item.kind === "property_added" ? `p-${item.propertyId}` : `a-${item.appealId}`} className="flex justify-between items-start py-2 border-b border-gray-100 last:border-0">
+                  <div>
+                    {item.kind === "property_added" ? (
+                      <>
+                        <p className="text-sm text-gray-900">Added property</p>
+                        <Link href={`/properties/${item.propertyId}`} className="text-sm font-medium text-blue-600 hover:text-blue-700">
+                          {item.address}
+                        </Link>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm text-gray-900">
+                          Appeal {item.status === "DRAFT" || item.status === "PENDING_FILING" ? "started" : "updated"} — {statusLabels[item.status] ?? item.status}
+                        </p>
+                        <Link href={`/appeals/${item.appealId}`} className="text-sm font-medium text-blue-600 hover:text-blue-700">
+                          {item.address} (tax year {item.taxYear})
+                        </Link>
+                      </>
+                    )}
+                  </div>
+                  <span className="text-xs text-gray-500 whitespace-nowrap ml-2">{relativeTime(item.at)}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 

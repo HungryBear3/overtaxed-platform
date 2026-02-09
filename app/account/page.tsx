@@ -6,6 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ManagedPropertiesList } from "@/components/account/ManagedPropertiesList"
 import { ManageSubscriptionButton } from "@/components/account/ManageSubscriptionButton"
 import { RefreshSubscriptionButton } from "@/components/account/RefreshSubscriptionButton"
+import { ProfileForm } from "@/components/account/ProfileForm"
+import { DeleteAccountSection } from "@/components/account/DeleteAccountSection"
 import { getPropertyLimit } from "@/lib/billing/limits"
 import { formatPIN } from "@/lib/cook-county"
 import { isAppealSubmitted } from "@/lib/appeals/status"
@@ -96,42 +98,38 @@ export default async function AccountPage() {
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>Profile</CardTitle>
-          <CardDescription>Your account details</CardDescription>
+          <CardDescription>Your account details and plan</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div>
-            <p className="text-sm text-gray-500">Email</p>
-            <p className="font-medium text-gray-900">{user.email}</p>
-          </div>
-          {user.name && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <p className="text-sm text-gray-500">Name</p>
-              <p className="font-medium text-gray-900">{user.name}</p>
-            </div>
-          )}
-          <div>
-            <p className="text-sm text-gray-500">Plan</p>
-            <p className="font-medium text-gray-900">
-              {user.subscriptionTier === "COMPS_ONLY" && "DIY reports only ($69/property)"}
-              {user.subscriptionTier === "STARTER" && "Starter (1–2 properties, $149/property/year)"}
-              {user.subscriptionTier === "GROWTH" && "Growth (3–9 properties, $124/property/year)"}
-              {user.subscriptionTier === "PORTFOLIO" && "Portfolio (10–20 properties, $99/property/year)"}
-              {user.subscriptionTier === "PERFORMANCE" && "Performance (4% of savings, deferred)"}
-            </p>
-            {user.subscriptionTier !== "COMPS_ONLY" && user.subscriptionTier !== "PERFORMANCE" && (
-              <p className="text-xs text-gray-500 mt-1">
-                Your plan allows up to {propertyLimit} property slots. To upgrade or downgrade, go to Pricing.
+              <p className="text-sm text-gray-500">Plan</p>
+              <p className="font-medium text-gray-900">
+                {user.subscriptionTier === "COMPS_ONLY" && "DIY reports only ($69/property)"}
+                {user.subscriptionTier === "STARTER" && "Starter (1–2 properties, $149/property/year)"}
+                {user.subscriptionTier === "GROWTH" && "Growth (3–9 properties, $124/property/year)"}
+                {user.subscriptionTier === "PORTFOLIO" && "Portfolio (10–20 properties, $99/property/year)"}
+                {user.subscriptionTier === "PERFORMANCE" && "Performance (4% of savings, deferred)"}
               </p>
-            )}
-          </div>
-          <div>
-            <p className="text-sm text-gray-500">Status</p>
-            <p className={`font-medium ${user.subscriptionStatus === "ACTIVE" ? "text-green-600" : "text-gray-600"}`}>
-              {user.subscriptionStatus === "INACTIVE" ? "Free Tier" : user.subscriptionStatus}
-            </p>
+              {user.subscriptionTier !== "COMPS_ONLY" && user.subscriptionTier !== "PERFORMANCE" && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Up to {propertyLimit} property slots. Change plan on Pricing.
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Status</p>
+              <p className={`font-medium ${user.subscriptionStatus === "ACTIVE" ? "text-green-600" : "text-gray-600"}`}>
+                {user.subscriptionStatus === "INACTIVE" ? "Free Tier" : user.subscriptionStatus}
+              </p>
+            </div>
           </div>
           <div className="pt-2 border-t border-gray-100">
             <RefreshSubscriptionButton />
+          </div>
+          <div className="pt-4 border-t border-gray-100">
+            <h4 className="text-sm font-medium text-gray-900 mb-3">Update name, email, or password</h4>
+            <ProfileForm initialName={freshUser.name} initialEmail={freshUser.email} />
           </div>
         </CardContent>
       </Card>
@@ -149,6 +147,16 @@ export default async function AccountPage() {
             propertyLimit={propertyLimit}
             canAddMore={canAddMore}
           />
+        </CardContent>
+      </Card>
+
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="text-red-700">Danger zone</CardTitle>
+          <CardDescription>Permanently delete your account</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <DeleteAccountSection />
         </CardContent>
       </Card>
 

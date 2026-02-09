@@ -123,9 +123,14 @@ export async function GET(
     const filename = `overtaxed-appeal-${appeal.taxYear}-${pinRaw || "summary"}.pdf`
     const buf = typeof Buffer !== "undefined" ? Buffer.from(pdfBytes) : new Uint8Array(pdfBytes)
 
+    // view=1 or disposition=inline: open in browser (avoids some antivirus blocking attachment download)
+    const url = new URL(request.url)
+    const inline = url.searchParams.get("view") === "1" || url.searchParams.get("disposition") === "inline"
+    const disposition = inline ? `inline; filename="${filename}"` : `attachment; filename="${filename}"`
+
     const headers: Record<string, string> = {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Disposition": disposition,
       "Content-Length": String(buf.length),
     }
     if (warnComps) headers["X-Appeal-Warning"] = warnComps

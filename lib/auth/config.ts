@@ -50,10 +50,11 @@ export const authOptions: NextAuthConfig = {
               role: true,
               subscriptionTier: true,
               subscriptionStatus: true,
+              deletedAt: true,
             }
           })
 
-          if (!user || !user.passwordHash) {
+          if (!user || !user.passwordHash || user.deletedAt) {
             throw new Error("No user found with this email")
           }
 
