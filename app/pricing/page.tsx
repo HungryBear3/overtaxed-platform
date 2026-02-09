@@ -250,9 +250,11 @@ export default function PricingPage() {
       ? Math.min(Math.max(limit + 1 - 2, 1), 7)
       : atLimit && limit != null && currentTier === "GROWTH" && effectiveRange === "10-20"
         ? Math.min(Math.max(limit + 1 - 9, 1), 11)
-        : atLimit && limit != null
-          ? Math.min(limit + 1, opts[opts.length - 1])
-          : null
+        : atLimit && limit != null && currentTier === "PORTFOLIO" && effectiveRange === "10-20"
+          ? 1
+          : atLimit && limit != null
+            ? Math.min(limit + 1, opts[opts.length - 1])
+            : null
     const slotIndex = nextUpgradeVal ?? propertyCountToSlotIndex(effectiveRange, currentCount, currentTier, currentSlots)
     const sel = opts.includes(slotIndex) ? slotIndex : opts[0]
     setSelectedQuantity(sel)
