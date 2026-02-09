@@ -418,24 +418,29 @@ export default function PropertyDetailPage({ params }: { params: Promise<{ id: s
                   </tr>
                 </thead>
                 <tbody className="text-gray-900">
-                  {property.assessmentHistory.map((history) => (
-                    <tr key={history.id} className="border-b border-gray-100">
-                      <td className="py-3 px-2 font-medium text-gray-900">{history.taxYear}</td>
-                      <td className="py-3 px-2 text-right text-gray-900">{formatCurrency(history.assessmentValue)}</td>
-                      <td className="py-3 px-2 text-right text-gray-900">{formatCurrency(history.marketValue)}</td>
-                      <td className="py-3 px-2 text-right">
-                        {history.changePercent !== null ? (
-                          <span className={history.changePercent > 0 ? "text-red-600" : "text-green-600"}>
-                            {history.changePercent > 0 ? "+" : ""}
-                            {history.changePercent.toFixed(1)}%
-                          </span>
-                        ) : (
-                          <span className="text-gray-400">—</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-2 text-sm text-gray-500">{history.source ?? "—"}</td>
-                    </tr>
-                  ))}
+                  {property.assessmentHistory.map((history) => {
+                    const unavailable = history.assessmentValue == null || history.assessmentValue === 0
+                    return (
+                      <tr key={history.id} className="border-b border-gray-100">
+                        <td className="py-3 px-2 font-medium text-gray-900">{history.taxYear}</td>
+                        <td className="py-3 px-2 text-right text-gray-900">{unavailable ? <span className="text-gray-500">Not available yet</span> : formatCurrency(history.assessmentValue)}</td>
+                        <td className="py-3 px-2 text-right text-gray-900">{unavailable ? <span className="text-gray-500">—</span> : formatCurrency(history.marketValue)}</td>
+                        <td className="py-3 px-2 text-right">
+                          {unavailable ? (
+                            <span className="text-gray-400">—</span>
+                          ) : history.changePercent !== null ? (
+                            <span className={history.changePercent > 0 ? "text-red-600" : "text-green-600"}>
+                              {history.changePercent > 0 ? "+" : ""}
+                              {history.changePercent.toFixed(1)}%
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-2 text-sm text-gray-500">{history.source ?? "—"}</td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

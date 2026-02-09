@@ -416,19 +416,24 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                             </tr>
                           </thead>
                           <tbody>
-                            {(appeal.property.assessmentHistory ?? []).map((ah) => (
-                              <tr key={ah.taxYear} className="border-b border-gray-100">
-                                <td className="py-1.5 pr-3 font-medium">{ah.taxYear}</td>
-                                <td className="py-1.5 pr-3">{formatCurrency(ah.assessmentValue)}</td>
-                                <td className="py-1.5">
-                                  {ah.changePercent != null ? (
-                                    <span className={ah.changePercent > 0 ? "text-red-600" : ah.changePercent < 0 ? "text-green-600" : "text-gray-500"}>
-                                      {ah.changePercent > 0 ? "+" : ""}{ah.changePercent.toFixed(1)}%
-                                    </span>
-                                  ) : "—"}
-                                </td>
-                              </tr>
-                            ))}
+                            {(appeal.property.assessmentHistory ?? []).map((ah) => {
+                              const unavailable = ah.assessmentValue == null || ah.assessmentValue === 0
+                              return (
+                                <tr key={ah.taxYear} className="border-b border-gray-100">
+                                  <td className="py-1.5 pr-3 font-medium">{ah.taxYear}</td>
+                                  <td className="py-1.5 pr-3">{unavailable ? <span className="text-gray-500">Not available yet</span> : formatCurrency(ah.assessmentValue)}</td>
+                                  <td className="py-1.5">
+                                    {unavailable ? (
+                                      <span className="text-gray-500">—</span>
+                                    ) : ah.changePercent != null ? (
+                                      <span className={ah.changePercent > 0 ? "text-red-600" : ah.changePercent < 0 ? "text-green-600" : "text-gray-500"}>
+                                        {ah.changePercent > 0 ? "+" : ""}{ah.changePercent.toFixed(1)}%
+                                      </span>
+                                    ) : "—"}
+                                  </td>
+                                </tr>
+                              )
+                            })}
                           </tbody>
                         </table>
                       </div>
