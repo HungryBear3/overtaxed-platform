@@ -27,6 +27,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 20. [Stripe: multiple customers per email; serverless DB pool](#20-stripe-multiple-customers-per-email-serverless-db-pool)
 21. [Pricing upgrade UX: additional slots and caps](#21-pricing-upgrade-ux-additional-slots-and-caps)
 22. [Starter slots display, add-slots Checkout redirect, charge-only-additional (Growth/Portfolio)](#22-starter-slots-display-add-slots-checkout-redirect-charge-only-additional-growthportfolio)
+23. [Assessment history: $0 / -100% → Not available yet](#23-assessment-history-0--100--not-available-yet)
 
 ---
 
@@ -625,6 +626,18 @@ const user = { ...session.user, ...freshUser }
 **Solution:** When **creating** the Stripe subscription for Growth from Starter, set **quantity = propertyCount - STARTER_SLOTS** (e.g. 3 total → 1 Growth slot → $124). User keeps Starter subscription (qty 2) and gets a new Growth subscription (qty 1); webhook sums them so total slots = 3. Same for Portfolio from Growth: **quantity = propertyCount - GROWTH_MAX_PROPERTIES** (e.g. 10 total → 1 Portfolio slot → $99). Pricing page: for Growth from Starter show price as **n × $124** (additional only) and summary "first 2 already in Starter"; for Portfolio from Growth "first 9 in Growth."
 
 **Lesson:** Tier buckets are additive (Starter 2, then Growth 1–7, then Portfolio 1–11). Checkout must charge only for the **new** tier's slots; display and copy must make "already paid" vs "additional" explicit.
+
+---
+
+## 23. Assessment history: $0 / -100% → Not available yet
+
+**Context:** For future tax years (e.g. 2026) the county may return assessed value $0; we computed change as (current − prior)/prior, yielding -100%. Showing "$0" and "-100%" was misleading.
+
+**Solution:** In the assessment history table (appeal detail and property detail), treat any row where **assessment value is 0 or null** as "not available yet": show **"Not available yet"** (gray) for the value column and **"—"** for the change column instead of $0 and -100%.
+
+**Where:** `app/appeals/[id]/page.tsx` and `app/properties/[id]/page.tsx`; condition `unavailable = assessmentValue == null || assessmentValue === 0`.
+
+**Lesson:** When displaying county assessment history, mask placeholder/missing data (e.g. future year not yet assessed) with clear copy instead of raw zeros and misleading percentages.
 
 ---
 
