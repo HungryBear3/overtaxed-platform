@@ -578,7 +578,7 @@ export default function PricingPage() {
                               return <option key={n} value={n}>Add {n} more ({count} total) — +${additionalPrice.toLocaleString()}/yr</option>
                             }
                             if (plan.id === "PORTFOLIO" && currentTier === "GROWTH") {
-                              return <option key={n} value={n}>Add {n} more ({count} total) — ${totalPrice.toLocaleString()}/yr</option>
+                              return <option key={n} value={n}>Add {n} more ({count} total) — ${(n * PORTFOLIO_PRICE_PER_PROPERTY).toLocaleString()}/yr</option>
                             }
                             if (plan.id === "PORTFOLIO" && currentTier === "PORTFOLIO") {
                               return <option key={n} value={n}>Add {n} more ({portfolioTotal} total) — +${(n * PORTFOLIO_PRICE_PER_PROPERTY).toLocaleString()}/yr</option>
