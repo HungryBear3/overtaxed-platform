@@ -73,6 +73,16 @@ export async function GET(
             taxCode: true,
             taxRate: true,
             stateEqualizer: true,
+            assessmentHistory: {
+              orderBy: { taxYear: 'desc' },
+              take: 15,
+              select: {
+                taxYear: true,
+                assessmentValue: true,
+                changeAmount: true,
+                changePercent: true,
+              },
+            },
           },
         },
         documents: {
@@ -124,6 +134,12 @@ export async function GET(
           taxCode: appeal.property.taxCode,
           taxRate: appeal.property.taxRate ? Number(appeal.property.taxRate) : null,
           stateEqualizer: appeal.property.stateEqualizer ? Number(appeal.property.stateEqualizer) : null,
+          assessmentHistory: appeal.property.assessmentHistory.map((ah) => ({
+            taxYear: ah.taxYear,
+            assessmentValue: Number(ah.assessmentValue),
+            changeAmount: ah.changeAmount != null ? Number(ah.changeAmount) : null,
+            changePercent: ah.changePercent != null ? Number(ah.changePercent) : null,
+          })),
         },
         taxYear: appeal.taxYear,
         status: appeal.status,

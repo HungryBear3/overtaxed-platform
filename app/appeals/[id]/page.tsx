@@ -26,6 +26,12 @@ interface Appeal {
     taxCode: string | null
     taxRate: number | null
     stateEqualizer: number | null
+    assessmentHistory?: Array<{
+      taxYear: number
+      assessmentValue: number
+      changeAmount: number | null
+      changePercent: number | null
+    }>
   }
   taxYear: number
   status: string
@@ -396,8 +402,43 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
               {/* Set requested assessment value — required for PDF download */}
               {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING") && (
                 <div className="mt-4 pt-4 border-t border-gray-200">
-                  <p className="text-sm font-medium text-gray-700 mb-2">
+                  {/* Assessment history context */}
+                  {appeal.property.assessmentHistory?.length > 0 && (
+                    <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+                      <p className="text-xs font-medium text-gray-600 uppercase tracking-wide mb-2">Assessment history (this property)</p>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-left text-gray-500 border-b border-gray-200">
+                              <th className="py-1 pr-3">Tax year</th>
+                              <th className="py-1 pr-3">Assessed value</th>
+                              <th className="py-1">Change</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {appeal.property.assessmentHistory.map((ah) => (
+                              <tr key={ah.taxYear} className="border-b border-gray-100">
+                                <td className="py-1.5 pr-3 font-medium">{ah.taxYear}</td>
+                                <td className="py-1.5 pr-3">{formatCurrency(ah.assessmentValue)}</td>
+                                <td className="py-1.5">
+                                  {ah.changePercent != null ? (
+                                    <span className={ah.changePercent > 0 ? "text-red-600" : ah.changePercent < 0 ? "text-green-600" : "text-gray-500"}>
+                                      {ah.changePercent > 0 ? "+" : ""}{ah.changePercent.toFixed(1)}%
+                                    </span>
+                                  ) : "—"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                  <p className="text-sm font-medium text-gray-700 mb-1">
                     Requested assessment value is required before you can download your appeal summary PDF.
+                  </p>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Choose a value <strong>lower than the current assessment</strong> that your comparable sales support. Use your comps’ sale prices and $/sq ft to justify the number. Typical reductions are 10–20%. Enter a whole number (no commas).
                   </p>
                   {editingRequested || !appeal.requestedAssessmentValue ? (
                     <div className="flex flex-wrap items-center gap-2">

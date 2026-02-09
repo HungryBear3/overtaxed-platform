@@ -7,14 +7,17 @@ import { defineConfig } from "prisma/config";
 config({ path: ".env.local" });
 config();
 
+// Use placeholder so prisma generate succeeds on Vercel when env is not yet loaded (build uses real DATABASE_URL at runtime)
+const databaseUrl = process.env["DATABASE_URL"] || "postgresql://placeholder:placeholder@localhost:5432/placeholder";
+const directUrl = process.env["DIRECT_URL"] || databaseUrl;
+
 export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
-    // directUrl is valid for Prisma 7+ but types may be outdated
-    directUrl: process.env["DIRECT_URL"],
+    url: databaseUrl,
+    directUrl,
   } as { url?: string; directUrl?: string },
 });

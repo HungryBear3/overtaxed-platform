@@ -61,3 +61,20 @@ After running the **separate-repos** flow (see `SEPARATE_REPOS.md` in the parent
 5. **Stripe webhook:** Add endpoint for your deployed URL, set `STRIPE_WEBHOOK_SECRET` in Vercel, redeploy
 
 No Root Directory override needed.
+
+---
+
+## Troubleshooting: Build failed on Vercel
+
+1. **Check the build log**  
+   Vercel → Project → Deployments → click the failed deployment → **Building** tab. The last error line (e.g. `Error: ...` or `Command failed`) is what to fix.
+
+2. **DATABASE_URL / Prisma**  
+   - Ensure `DATABASE_URL` (and `DIRECT_URL` if used) are set in Vercel → Settings → Environment Variables, and apply to **Build** (not only Production).
+   - The app uses a placeholder URL in `prisma.config.ts` when `DATABASE_URL` is missing so `prisma generate` can succeed; runtime still needs the real URL.
+
+3. **Install / Build command**  
+   Defaults are usually fine: Install = `npm install`, Build = `npm run build` (runs `prisma generate && next build`). Do not use install with `--production` or Prisma may be missing.
+
+4. **Node version**  
+   Vercel → Settings → General → Node.js Version. Use 18.x or 20.x if the build fails on an older default.
