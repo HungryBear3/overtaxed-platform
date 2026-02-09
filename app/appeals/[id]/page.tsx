@@ -403,7 +403,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
               {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING") && (
                 <div className="mt-4 pt-4 border-t border-gray-200">
                   {/* Assessment history context */}
-                  {appeal.property.assessmentHistory?.length > 0 && (
+                  {(appeal.property.assessmentHistory?.length ?? 0) > 0 && (
                     <div className="mb-4 p-3 bg-gray-50 rounded-lg">
                       <p className="text-xs font-medium text-gray-600 uppercase tracking-wide mb-2">Assessment history (this property)</p>
                       <div className="overflow-x-auto">
