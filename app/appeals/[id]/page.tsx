@@ -416,7 +416,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                             </tr>
                           </thead>
                           <tbody>
-                            {appeal.property.assessmentHistory.map((ah) => (
+                            {(appeal.property.assessmentHistory ?? []).map((ah) => (
                               <tr key={ah.taxYear} className="border-b border-gray-100">
                                 <td className="py-1.5 pr-3 font-medium">{ah.taxYear}</td>
                                 <td className="py-1.5 pr-3">{formatCurrency(ah.assessmentValue)}</td>
