@@ -70,17 +70,21 @@ export async function POST(request: NextRequest) {
                 await stripe.subscriptions.update(subscriptionId, {
                   items: [{ id: itemId, quantity: newQuantity }],
                 })
-                // Store total slots: sum all subscriptions for this customer (Starter + Growth etc.), not just this subscription's quantity
-                let totalSlots: number | null = null
-                if (customerId) {
-                  try {
-                    const subs = await stripe.subscriptions.list({ customer: customerId, status: "active", limit: 100 })
-                    const trialing = await stripe.subscriptions.list({ customer: customerId, status: "trialing", limit: 100 })
-                    const pastDue = await stripe.subscriptions.list({ customer: customerId, status: "past_due", limit: 100 })
-                    const all = [...subs.data, ...trialing.data, ...pastDue.data]
-                    const sum = all.reduce((acc, s) => acc + (s.items?.data?.reduce((a, i) => a + (i.quantity ?? 0), 0) ?? 0), 0)
-                    if (sum > 0) totalSlots = sum
-                  } catch (_) {}
+                // Store total slots: use propertyCount from metadata (add-slots sends new total); else sum all subscriptions
+                const propertyCountStr = metadata.propertyCount
+                let totalSlots: number | null = propertyCountStr ? parseInt(propertyCountStr, 10) : null
+                if (totalSlots == null || totalSlots < 1) {
+                  totalSlots = null
+                  if (customerId) {
+                    try {
+                      const subs = await stripe.subscriptions.list({ customer: customerId, status: "active", limit: 100 })
+                      const trialing = await stripe.subscriptions.list({ customer: customerId, status: "trialing", limit: 100 })
+                      const pastDue = await stripe.subscriptions.list({ customer: customerId, status: "past_due", limit: 100 })
+                      const all = [...subs.data, ...trialing.data, ...pastDue.data]
+                      const sum = all.reduce((acc, s) => acc + (s.items?.data?.reduce((a, i) => a + (i.quantity ?? 0), 0) ?? 0), 0)
+                      if (sum > 0) totalSlots = sum
+                    } catch (_) {}
+                  }
                 }
                 await prisma.user.update({
                   where: { id: userId },

@@ -204,14 +204,16 @@ export async function POST(request: NextRequest) {
       try {
         const sub = await stripe.subscriptions.retrieve(user.stripeSubscriptionId)
         const customerId = sub.customer as string
-        const additionalSlots = quantity - currentQty
-        // newQuantity for the subscription we're updating must be tier-only (that subscription's quantity), not total slots
+        // Charge by actual property delta (subscriptionQuantity can be tier-only e.g. Portfolio 1 when total is 10)
+        const currentPropertyCount = await prisma.property.count({ where: { userId: user.id } })
+        const additionalSlots = Math.max(0, propertyCount - currentPropertyCount)
+        // newQuantity for the subscription we're updating must be tier-only (that subscription's quantity)
         const subscriptionNewQty =
           parsed.data.plan === "STARTER"
             ? quantity
             : parsed.data.plan === "GROWTH"
               ? quantity - STARTER_SLOTS
-              : quantity - STARTER_SLOTS - GROWTH_MAX_PROPERTIES
+              : quantity - GROWTH_MAX_PROPERTIES
         const pricePerSlotCents =
           parsed.data.plan === "STARTER"
             ? RETAIL_PRICE_PER_PROPERTY * 100
@@ -243,6 +245,7 @@ export async function POST(request: NextRequest) {
             addSlots: "true",
             subscriptionId: user.stripeSubscriptionId,
             newQuantity: String(Math.max(1, subscriptionNewQty)),
+            propertyCount: String(propertyCount),
           },
         })
         return NextResponse.json({ url: addSlotsSession.url })
