@@ -118,6 +118,9 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
   const [error, setError] = useState("")
   const [updating, setUpdating] = useState(false)
   const [showAddComps, setShowAddComps] = useState(false)
+  const [editingRequested, setEditingRequested] = useState(false)
+  const [requestedInput, setRequestedInput] = useState("")
+  const [savingRequested, setSavingRequested] = useState(false)
 
   useEffect(() => {
     fetchAppeal()
@@ -141,6 +144,37 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
       setError(err instanceof Error ? err.message : "Failed to load appeal")
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function updateRequestedValue() {
+    if (!appeal) return
+    const num = requestedInput.trim() ? parseInt(requestedInput.replace(/[^0-9]/g, ""), 10) : null
+    if (num == null || num < 1) {
+      setError("Enter a valid requested assessment value (whole number).")
+      return
+    }
+    if (num >= appeal.originalAssessmentValue) {
+      setError("Requested value should be lower than the original assessment to support a reduction.")
+      return
+    }
+    setSavingRequested(true)
+    setError("")
+    try {
+      const response = await fetch(`/api/appeals/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestedAssessmentValue: num }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || "Failed to update")
+      setAppeal({ ...appeal, requestedAssessmentValue: num })
+      setEditingRequested(false)
+      setRequestedInput("")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save requested value")
+    } finally {
+      setSavingRequested(false)
     }
   }
 
@@ -358,6 +392,58 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                   </p>
                 </div>
               </div>
+
+              {/* Set requested assessment value — required for PDF download */}
+              {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING") && (
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <p className="text-sm font-medium text-gray-700 mb-2">
+                    Requested assessment value is required before you can download your appeal summary PDF.
+                  </p>
+                  {editingRequested || !appeal.requestedAssessmentValue ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label htmlFor="requested-value" className="sr-only">Requested assessment value</label>
+                      <input
+                        id="requested-value"
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="e.g. 250000"
+                        value={requestedInput || (appeal.requestedAssessmentValue ?? "")}
+                        onChange={(e) => setRequestedInput(e.target.value)}
+                        className="rounded-lg border border-gray-300 px-3 py-2 w-36 text-lg font-semibold"
+                      />
+                      <span className="text-gray-500 text-sm">(must be less than original {formatCurrency(appeal.originalAssessmentValue)})</span>
+                      <button
+                        type="button"
+                        onClick={updateRequestedValue}
+                        disabled={savingRequested}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {savingRequested ? "Saving…" : "Save requested value"}
+                      </button>
+                      {appeal.requestedAssessmentValue && (
+                        <button
+                          type="button"
+                          onClick={() => { setEditingRequested(false); setRequestedInput(""); setError(""); }}
+                          className="px-3 py-2 text-gray-600 hover:text-gray-800"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-600">Requested value: <strong>{formatCurrency(appeal.requestedAssessmentValue)}</strong></span>
+                      <button
+                        type="button"
+                        onClick={() => { setEditingRequested(true); setRequestedInput(String(appeal.requestedAssessmentValue)); }}
+                        className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {appeal.outcome && appeal.reductionAmount && (
                 <div className="mt-4 pt-4 border-t border-gray-100">
