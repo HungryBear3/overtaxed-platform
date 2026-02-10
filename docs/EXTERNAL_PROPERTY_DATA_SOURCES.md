@@ -25,16 +25,19 @@ If living area still doesn’t show for the **subject** property, that usually m
 
 ---
 
-## Realie Property Data API (enrichment fallback)
+## Realie Property Data API (enrichment)
 
-We use [Realie](https://www.realie.ai) as an optional enrichment source when Cook County Improvement Characteristics are missing for a PIN.
+We use [Realie](https://www.realie.ai) to add **rich property data** (living area, year built, beds/baths, assessments, etc.) when Cook County data is sparse. To stay within the free tier (25 requests/month), we call Realie only where it matters for the appeal and the summary report.
 
-- **When we call:** (a) **Subject property** — when `livingArea`, `yearBuilt`, `bedrooms`, or `bathrooms` are null (e.g. GET property by id); (b) **Comps** — when loading comparable sales, any comp with missing chars may be enriched before display (capped per request to preserve quota).
+- **When we call Realie:**
+  1. **Subject property (the PIN you’re appealing)** — When you view a property (GET property by id) or an appeal or generate the PDF: one call per subject, cached in DB.
+  2. **Comps that are already on an appeal** — When you view an appeal (GET appeal by id) or download the appeal summary PDF: we enrich only the comps attached to that appeal (up to 15), not the full comp picker list. Results are cached by PIN.
+- **When we do not call Realie:** The **comparable-properties list** (property comps page, “Find Comparable Properties”) uses **Cook County Open Data only**. By default the comps page uses 0 Realie calls. You can optionally click "Also include Realie recently sold comparables" on that page (1–2 calls: subject location + Premium Comparables Search, which returns many comps in one call). When you add comps to an appeal, we enrich those comps (and the subject) for the appeal detail view and the PDF. **Note:** Parcel ID Lookup does not include comparables; the "Recently Sold Comparables" in Realie's tool come from a separate endpoint (Premium Comparables Search). We support that via the optional include flow.
 - **Endpoint:** Parcel ID Lookup (`GET /api/public/property/parcelId`) with `state=IL`, `county=Cook`, `parcelId=<PIN digits>`.
-- **Fields we use:** `buildingArea` → living area, `yearBuilt`, `totalBedrooms`, `totalBathrooms`.
-- **Free tier:** 25 API requests per calendar month. We cache responses by PIN in memory and enforce the monthly limit; once the limit is reached, we skip Realie until the next month.
+- **Fields we use:** `buildingArea` → living area, `yearBuilt`, `totalBedrooms`, `totalBathrooms`, plus full property/assessment data for the PDF.
+- **Free tier:** 25 API requests per calendar month. We cache responses by PIN in the database; repeated views of the same property or appeal do not burn extra calls.
 - **Config:** Set `REALIE_API_KEY` in the environment to enable. Without it, no Realie calls are made.
-- **Upgrade path:** Paid tiers ($50–$350/month for higher request volumes) can be used when we have paying customers and need broader enrichment.
+- **Upgrade path:** Paid tiers ($50–$350/month for higher request volumes) when needed.
 
 See [Realie API docs](https://docs.realie.ai/) and [Pricing](https://docs.realie.ai/api-reference/pricing).
 
@@ -105,7 +108,7 @@ Same principles:
 | Source        | Use in app today | Pull data/photos? | How to use properly                    |
 |---------------|------------------|-------------------|----------------------------------------|
 | Cook County   | Yes (property + comps) | Yes (we do)        | Open Data APIs; we enrich comps with living area by PIN. |
-| Realie        | Yes (fallback)   | Yes (enrichment only) | Parcel ID lookup when Cook County chars missing; 25 req/month free; cache by PIN. |
+| Realie        | Yes (subject + appeal comps only) | Yes (enrichment) | Subject on property/appeal/PDF; comps only when attached to an appeal (appeal view + PDF). Comp picker list = Cook County only to limit calls. |
 | MLS           | No               | No (without license) | License/partnership with MLS or aggregator. |
 | Zillow        | No               | No                | Official API/partnership only; otherwise links only. |
 | Redfin        | No               | No                | Official API/partnership only; otherwise links only. |

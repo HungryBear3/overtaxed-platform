@@ -119,7 +119,7 @@ export async function GET(
           distanceFromSubject,
         }
       })
-      const enriched = await enrichCompsWithRealie(countyList, { maxRealie: 15 })
+      const enriched = await enrichCompsWithRealie(countyList, { maxRealie: Math.min(countyList.length, 15) })
       const comps = enriched.map((e) => ({
         pin: e.pin,
         address: e.address,

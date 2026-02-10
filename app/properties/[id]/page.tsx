@@ -213,16 +213,21 @@ export default function PropertyDetailPage({ params }: { params: Promise<{ id: s
                 </span>
               )}
             </div>
-            <button
-              type="button"
-              onClick={() => router.push(`/appeals/new?propertyId=${property.id}`)}
-              className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 flex items-center gap-2 text-sm"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              Start Appeal
-            </button>
+            <div className="flex flex-col items-end gap-1">
+              <button
+                type="button"
+                onClick={() => router.push(`/appeals/new?propertyId=${property.id}`)}
+                className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 flex items-center gap-2 text-sm"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Start Appeal
+              </button>
+              <p className="text-xs text-gray-500 max-w-[200px] text-right">
+                For a stronger appeal: <Link href={`/properties/${property.id}/comps`} className="underline">pick comps first</Link>, then start from the comps page.
+              </p>
+            </div>
           </div>
         </div>
       </header>

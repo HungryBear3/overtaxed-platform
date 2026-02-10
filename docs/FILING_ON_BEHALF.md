@@ -8,7 +8,7 @@ Today, **all users** (including paid Starter/Growth/Portfolio) use a **DIY filin
 2. The user downloads the PDF and submits it themselves at the [Cook County Assessor portal](https://www.cookcountyassessoril.gov/file-appeal).
 3. The user then clicks **Mark as Filed** in our app so we can track status.
 
-We do **not** submit the appeal to the county for them. The in-app copy says *"Filing on your behalf (Starter+) is coming soon."*
+We do **not** submit the appeal to the county for them. The in-app copy explains that we cannot submit on their behalf yet because the Cook County Assessor has not released a public e-filing API, and we will add filing-on-behalf (Starter+) once it is available.
 
 ## Why we don’t submit today
 

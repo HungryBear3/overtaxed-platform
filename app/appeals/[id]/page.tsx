@@ -160,18 +160,9 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
         if (!cancelled) setMapAvailable(false)
       })
     fetch(`/api/appeals/${id}/map-data`, { credentials: 'include' })
-      .then((r) => {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'appeals/[id]/page.tsx:map-data',message:'map-data fetch response',data:{status:r.status,ok:r.ok},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
-        return r.json()
-      })
+      .then((r) => r.json())
       .then((data) => {
         if (cancelled || !data.success) return
-        // #region agent log
-        const compsWithCoords = (data.comps ?? []).filter((c: unknown) => c != null).length
-        fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'appeals/[id]/page.tsx:mapData set',message:'mapData state set',data:{subjectPresent:!!data.subject,compsLength:(data.comps??[]).length,compsWithCoords},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
         setMapData({ subject: data.subject ?? null, comps: data.comps ?? [] })
       })
       .catch(() => {})
@@ -823,7 +814,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                     After you have submitted there, click <strong>Mark as Filed</strong> here so we can track your appeal status.
                   </li>
                   <li className="text-amber-700">
-                    Filing on your behalf (Starter+ plans) is coming soon.
+                    We cannot submit on your behalf yet: the Cook County Assessor has not released a public e-filing API. Once it is available, we will add filing-on-behalf for Starter+ plans.
                   </li>
                 </ul>
               </div>

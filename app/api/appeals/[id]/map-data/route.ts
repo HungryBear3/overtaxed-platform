@@ -31,9 +31,6 @@ export async function GET(
 
     const subjectPin = appeal.property.pin.replace(/\D/g, "") || appeal.property.pin
     const subjectAddr = await getAddressByPIN(subjectPin)
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'map-data/route.ts:subject',message:'map-data subject lookup',data:{appealId:id,subjectPin,subjectAddrNull:subjectAddr==null,hasLat:!!subjectAddr?.latitude,hasLng:!!subjectAddr?.longitude},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     const subject =
       subjectAddr?.latitude != null && subjectAddr?.longitude != null
         ? {
@@ -64,10 +61,6 @@ export async function GET(
       })
     }
 
-    // #region agent log
-    const compsWithCoordsCount = comps.filter((c) => c != null).length;
-    fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'map-data/route.ts:response',message:'map-data response',data:{appealId:id,subjectPresent:!!subject,compsTotal:comps.length,compsWithCoordsCount},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     return NextResponse.json({
       success: true,
       subject,

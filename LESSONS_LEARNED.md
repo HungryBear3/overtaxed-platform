@@ -31,6 +31,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 24. [Pricing dropdown: Add 1 more showing total not additional](#24-pricing-dropdown-add-1-more-showing-total-not-additional)
 25. [Comparison report value-add: Realie, map, similarity line](#25-comparison-report-value-add-realie-map-similarity-line)
 26. [PDF summary: enriched comps, table layout, map & photos in PDF](#26-pdf-summary-enriched-comps-table-layout-map--photos-in-pdf)
+27. [Local network permission prompt (overtaxed-il)](#27-local-network-permission-prompt-overtaxed-il)
 
 ---
 
@@ -514,9 +515,9 @@ const user = { ...session.user, ...freshUser }
 ### Ready to File vs Mark as Filed
 **Context:** Users thought "Ready to File" would submit the appeal. The platform does not submit to the county; users must file at the Cook County Assessor portal. "Mark as Filed" is for updating our status after they’ve filed there.
 
-**Solution:** On the appeal detail page, when status is DRAFT or PENDING_FILING, show an amber "How filing works" box: (1) Ready to File = packet prepared, does not submit; (2) User submits at [Cook County Assessor portal](https://www.cookcountyassessoril.gov/file-appeal); (3) After submitting there, click Mark as Filed here to track status; (4) "Filing on your behalf (Starter+) is coming soon." New appeal page step 3 copy updated to: "Submit at the Cook County Assessor portal (we'll link you). Filing on your behalf (Starter+) is coming soon."
+**Solution:** On the appeal detail page, when status is DRAFT or PENDING_FILING, show an amber "How filing works" box: (1) Ready to File = packet prepared, does not submit; (2) User submits at [Cook County Assessor portal](https://www.cookcountyassessoril.gov/file-appeal); (3) After submitting there, click Mark as Filed here to track status; (4) Explain that we cannot submit on their behalf yet because the Cook County Assessor has not released a public e-filing API, and we will add filing-on-behalf (Starter+) once it is available. New appeal page filing line: same explanation (submit at portal; we cannot file on your behalf yet—no public API; we will add when available).
 
-**Lesson:** Make it explicit that we prepare the packet and they file at the county; "Mark as Filed" is a status update in our app, not the actual filing.
+**Lesson:** Make it explicit that we prepare the packet and they file at the county; "Mark as Filed" is a status update in our app, not the actual filing. Clarify that filing-on-behalf is blocked on the county releasing an API, not on our roadmap only.
 
 ---
 
@@ -687,6 +688,18 @@ const user = { ...session.user, ...freshUser }
 **Where:** `app/api/appeals/[id]/download-summary/route.ts`, `lib/document-generation/appeal-summary.ts` (interface, table colXs, drawTableRow firstColMax, Map & Property Photos section with embedPng/embedJpg).
 
 **Lesson:** Keep PDF data source aligned with the app (same enrichment in download-summary as in GET appeal). Use fixed column positions and per-column character limits for table layout. Embed map and Street View only when the API key is present so the PDF still generates without them.
+
+---
+
+## 27. Local network permission prompt (overtaxed-il)
+
+**Context:** Users saw a system prompt that "overtaxed-il wants to look for and connect to any device on your local network." This is a browser/OS permission (e.g. macOS/iOS) triggered when the site makes requests to localhost or the local network.
+
+**Cause:** The app contained **debug ingest** code that sent `fetch()` requests to `http://127.0.0.1:7242/ingest/...` from both the client (appeal detail page map-data) and from API routes (map-image, streetview, map-data, appeal-summary PDF). When the browser sees requests to 127.0.0.1, it can treat that as "local network" and prompt for permission.
+
+**Solution:** Remove all `fetch('http://127.0.0.1:7242/...')` calls and the `DEBUG_LOG` helper that used them. They were leftover from a one-off experiment and are not needed in production. If you need local logging in development, use a build-time or env guard so it never runs in production or in client code that triggers the permission.
+
+**Lesson:** Do not ship client-side or server-side code that fetches to localhost (e.g. 127.0.0.1) in production; it can trigger "local network" permission prompts and confuse users.
 
 ---
 

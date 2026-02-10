@@ -23,6 +23,7 @@ interface Comp {
   currentAssessmentValue: number | null
   neighborhood: string | null
   distanceFromSubject?: number | null
+  dataSource?: string | null
 }
 
 export default function PropertyCompsPage() {
@@ -31,16 +32,26 @@ export default function PropertyCompsPage() {
   const propertyId = params.id as string
 
   const [comps, setComps] = useState<Comp[]>([])
+  const [dataSource, setDataSource] = useState<string | null>(null)
+  const [dataSourceNote, setDataSourceNote] = useState<string | null>(null)
+  const [realieCompsNote, setRealieCompsNote] = useState<string | null>(null)
+  const [includeRealie, setIncludeRealie] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [loadingRealie, setLoadingRealie] = useState(false)
   const [error, setError] = useState("")
 
   useEffect(() => {
-    fetchComps()
+    fetchComps(false)
   }, [propertyId])
 
-  async function fetchComps() {
+  async function fetchComps(includeRealieComps: boolean) {
+    if (includeRealieComps) setLoadingRealie(true)
+    else setLoading(true)
     try {
-      const res = await fetch(`/api/properties/${propertyId}/comps?limit=20`)
+      const url = includeRealieComps
+        ? `/api/properties/${propertyId}/comps?limit=20&includeRealieComps=1`
+        : `/api/properties/${propertyId}/comps?limit=20`
+      const res = await fetch(url)
       const data = await res.json()
 
       if (!res.ok) {
@@ -51,17 +62,21 @@ export default function PropertyCompsPage() {
         throw new Error(data.error || "Failed to fetch comps")
       }
 
-      // API returns buildingClass, zipCode; map for display (state, propertyClass)
       const list = (data.comps || []).map((c: Record<string, unknown>) => ({
         ...c,
         state: (c.state as string) ?? "IL",
         propertyClass: (c.buildingClass as string) ?? (c.propertyClass as string) ?? null,
       }))
       setComps(list)
+      setDataSource((data.dataSource as string) ?? null)
+      setDataSourceNote((data.dataSourceNote as string) ?? null)
+      setRealieCompsNote((data.realieCompsNote as string) ?? null)
+      if (includeRealieComps) setIncludeRealie(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load comps")
     } finally {
       setLoading(false)
+      setLoadingRealie(false)
     }
   }
 
@@ -115,12 +130,45 @@ export default function PropertyCompsPage() {
           </div>
         )}
 
-        {/* Comps guidance */}
-        <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 p-4">
-          <p className="font-medium text-blue-900 mb-1">How many comps do I need?</p>
-          <p className="text-sm text-blue-800">
-            Cook County typically expects <strong>at least 3–5 comparable sales</strong> for a strong appeal. We show up to 20 matches ranked by similarity (location, size, age, class). Use the <strong>best 5–10</strong> that are most similar to your property — quality matters more than quantity. Lower $/sq ft comps support a lower requested value.
-          </p>
+        {/* Data source & how to choose comps */}
+        <div className="mb-6 space-y-4">
+          {dataSource && (
+            <div className="rounded-lg bg-gray-50 border border-gray-200 p-4">
+              <p className="text-sm text-gray-700">
+                <span className="font-medium">Data source:</span> {dataSource}
+                {dataSourceNote && (
+                  <span className="block mt-1 text-gray-600">{dataSourceNote}</span>
+                )}
+              </p>
+              {realieCompsNote && (
+                <p className="text-sm text-green-700 mt-2 font-medium">{realieCompsNote}</p>
+              )}
+              {!includeRealie && comps.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => fetchComps(true)}
+                  disabled={loadingRealie}
+                  className="mt-3 text-sm font-medium text-blue-600 hover:text-blue-800 disabled:opacity-50"
+                >
+                  {loadingRealie ? "Loading…" : "Also include Realie recently sold comparables (1–2 API calls)"}
+                </button>
+              )}
+            </div>
+          )}
+          <div className="rounded-lg bg-blue-50 border border-blue-200 p-4">
+            <p className="font-medium text-blue-900 mb-2">How many comps do I need?</p>
+            <p className="text-sm text-blue-800 mb-3">
+              Cook County typically expects <strong>at least 3–5 comparable sales</strong> for a strong appeal. We show up to 20 matches ranked by similarity (location, size, age, class). Use the <strong>best 5–10</strong> that are most similar to your property — quality matters more than quantity. Lower $/sq ft comps support a lower requested value.
+            </p>
+            <p className="font-medium text-blue-900 mb-1">How to choose the best comps</p>
+            <ul className="text-sm text-blue-800 list-disc list-inside space-y-1">
+              <li><strong>Similar size</strong> — Prefer comps within ~20% of your property’s living area so the assessor can compare like to like. Cook County data is often sparse; when you add comps to an appeal we add richer data (Realie) for your summary and PDF.</li>
+              <li><strong>Same neighborhood & class</strong> — Same neighborhood and building class strengthen your argument (Rule 15).</li>
+              <li><strong>Recent sales</strong> — Newer sales carry more weight; we filter to recent years.</li>
+              <li><strong>Lower $/sq ft</strong> — Comps with lower $/sq ft support a lower requested value for your property.</li>
+              <li>If living area or beds/baths show as "—", that PIN has no detail in Cook County yet; your appeal PDF will still include any enriched data we have once these comps are on the appeal.</li>
+            </ul>
+          </div>
         </div>
 
         {comps.length === 0 ? (
@@ -187,6 +235,11 @@ export default function PropertyCompsPage() {
                       <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Assessment
                       </th>
+                      {comps.some((c) => c.dataSource) && (
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Source
+                        </th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
@@ -220,6 +273,11 @@ export default function PropertyCompsPage() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
                           {formatCurrency(comp.currentAssessmentValue)}
                         </td>
+                        {comps.some((c) => c.dataSource) && (
+                          <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-500">
+                            {comp.dataSource === "Realie (Premium Comparables)" ? "Realie" : "County"}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>

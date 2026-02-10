@@ -333,6 +333,20 @@ export default function NewAppealPage() {
               </div>
             )}
 
+            {/* Tip: direct to comps when property selected but no comps yet */}
+            {selectedPropertyId && (!pendingCompsFromProperty || pendingCompsFromProperty.propertyId !== selectedPropertyId) && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <p className="font-medium text-amber-900 mb-1">Stronger appeal with comparables</p>
+                <p className="text-sm text-amber-800">
+                  For best results, pick comparables first:{" "}
+                  <Link href={`/properties/${selectedPropertyId}/comps`} className="underline font-medium">
+                    View comps for this property
+                  </Link>
+                  . On that page, choose your comps and click <strong>Start Appeal with These Comps</strong> to return here with them attached. You can also add comps after creating the appeal.
+                </p>
+              </div>
+            )}
+
             {/* Property Selection */}
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-1">Step 1: Select Property</h2>
@@ -614,7 +628,7 @@ export default function NewAppealPage() {
                     </li>
                     <li className="flex gap-2">
                       <span className="bg-blue-200 text-blue-800 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>
-                      <span><strong>Filing:</strong> Submit at the Cook County Assessor portal (we’ll link you). Filing on your behalf (Starter+) is coming soon.</span>
+                      <span><strong>Filing:</strong> Submit at the Cook County Assessor portal (we’ll link you). We cannot file on your behalf yet because the Cook County Assessor has not released a public API; we will add this when it is available.</span>
                     </li>
                     <li className="flex gap-2">
                       <span className="bg-blue-200 text-blue-800 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">4</span>
