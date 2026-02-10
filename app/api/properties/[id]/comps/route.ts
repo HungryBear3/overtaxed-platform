@@ -89,7 +89,7 @@ export async function GET(
       return {
         pin: formatPIN(s.pin),
         pinRaw: s.pin,
-        address: enriched?.address ?? s.address || `PIN ${formatPIN(s.pin)}`,
+        address: enriched?.address ?? (s.address || `PIN ${formatPIN(s.pin)}`),
         city: enriched?.city ?? s.city ?? "",
         zipCode: enriched?.zipCode ?? s.zipCode ?? "",
         neighborhood: s.neighborhood,
