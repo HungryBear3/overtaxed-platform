@@ -18,6 +18,15 @@ export interface AppealSummaryData {
     yearBuilt: number | null
     bedrooms: number | null
     bathrooms: number | null
+    /** When we have both County and Realie and they differ, PDF can show both. */
+    livingAreaCounty?: number | null
+    livingAreaRealie?: number | null
+    yearBuiltCounty?: number | null
+    yearBuiltRealie?: number | null
+    bedroomsCounty?: number | null
+    bedroomsRealie?: number | null
+    bathroomsCounty?: number | null
+    bathroomsRealie?: number | null
     currentAssessmentValue: number | null
     currentLandValue: number | null
     currentImprovementValue: number | null
@@ -48,6 +57,12 @@ export interface AppealSummaryData {
     assessedMarketValue: number | null
     assessedMarketValuePerSqft: number | null
     distanceFromSubject: number | null
+    /** When true, comp has both County + Realie (prioritized). */
+    inBothSources?: boolean
+    livingAreaRealie?: number | null
+    yearBuiltRealie?: number | null
+    bedroomsRealie?: number | null
+    bathroomsRealie?: number | null
   }>
   /** Optional: static map PNG (subject + comp markers) for PDF */
   mapImagePng?: Uint8Array
@@ -352,13 +367,21 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     )
     const subjectBath =
       data.property.bathrooms != null ? Number(data.property.bathrooms) : null
-    // Subject row: use "Subject" only in first cell (PIN is in property block above) to avoid overlap
+    const subjectSqftCell =
+      data.property.livingAreaCounty != null && data.property.livingAreaRealie != null && data.property.livingAreaCounty !== data.property.livingAreaRealie
+        ? `${data.property.livingAreaCounty} / ${data.property.livingAreaRealie}`
+        : (data.property.livingArea != null ? String(data.property.livingArea) : "—")
+    const subjectYrCell =
+      data.property.yearBuiltCounty != null && data.property.yearBuiltRealie != null && data.property.yearBuiltCounty !== data.property.yearBuiltRealie
+        ? `${data.property.yearBuiltCounty} / ${data.property.yearBuiltRealie}`
+        : (data.property.yearBuilt != null ? String(data.property.yearBuilt) : "—")
+    const subjectBbStr = [data.property.bedrooms ?? "—", subjectBath != null ? subjectBath.toFixed(1) : "—"].join("/")
     drawTableRow(
       [
         "Subject",
-        data.property.livingArea != null ? String(data.property.livingArea) : "—",
-        data.property.yearBuilt != null ? String(data.property.yearBuilt) : "—",
-        [data.property.bedrooms ?? "—", subjectBath != null ? subjectBath.toFixed(1) : "—"].join("/"),
+        subjectSqftCell,
+        subjectYrCell,
+        subjectBbStr,
         formatCurrency(data.property.currentAssessmentValue),
         subjectSqft != null ? formatCurrencySqft(subjectSqft).replace("/sq ft", "") : "—",
         "—",
@@ -377,12 +400,25 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
       const distStr =
         c.distanceFromSubject != null ? `${Number(c.distanceFromSubject).toFixed(2)} mi` : "—"
       const baths = c.bathrooms != null ? Number(c.bathrooms).toFixed(1) : "—"
+      const sqftCell =
+        c.livingArea != null && c.livingAreaRealie != null && c.livingArea !== c.livingAreaRealie
+          ? `${c.livingArea} / ${c.livingAreaRealie}`
+          : (c.livingArea != null ? String(c.livingArea) : (c.livingAreaRealie != null ? String(c.livingAreaRealie) : "—"))
+      const yrCell =
+        c.yearBuilt != null && c.yearBuiltRealie != null && c.yearBuilt !== c.yearBuiltRealie
+          ? `${c.yearBuilt} / ${c.yearBuiltRealie}`
+          : (c.yearBuilt != null ? String(c.yearBuilt) : (c.yearBuiltRealie != null ? String(c.yearBuiltRealie) : "—"))
+      const bbRe = c.bathroomsRealie != null ? Number(c.bathroomsRealie).toFixed(1) : "—"
+      const bbCell =
+        c.bedrooms != null && c.bedroomsRealie != null && (c.bedrooms !== c.bedroomsRealie || c.bathrooms !== c.bathroomsRealie)
+          ? `${c.bedrooms ?? "—"}/${baths} / ${c.bedroomsRealie ?? "—"}/${bbRe}`
+          : `${c.bedrooms ?? "—"}/${baths}`
       drawTableRow(
         [
-          c.pin,
-          c.livingArea != null ? String(c.livingArea) : "—",
-          c.yearBuilt != null ? String(c.yearBuilt) : "—",
-          `${c.bedrooms ?? "—"}/${baths}`,
+          (c as { inBothSources?: boolean }).inBothSources ? `${c.pin} *` : c.pin,
+          sqftCell,
+          yrCell,
+          bbCell,
           saleOrVal,
           sqftVal,
           distStr,
@@ -390,6 +426,8 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
         colXs
       )
     }
+    if (data.comps.some((c) => (c as { inBothSources?: boolean }).inBothSources))
+      drawText(" * = in both County & Realie (prioritized)", { fontSize: 9 })
     drawLine()
   }
 

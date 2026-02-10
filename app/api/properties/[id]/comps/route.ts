@@ -4,11 +4,9 @@ import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
 import { getComparableSales, getAddressByPIN, formatPIN, haversineMiles } from "@/lib/cook-county"
 import { propertyDataFromDb } from "@/lib/comps/property-data"
-import { getEnrichmentByPin } from "@/lib/realie"
+import { enrichCompsWithRealie } from "@/lib/comps/enrich-with-realie"
 
 const ADDRESS_ENRICH_CONCURRENCY = 5
-/** Max comps to enrich via Realie per request to stay within free tier (25/month). */
-const MAX_REALIE_ENRICH_PER_REQUEST = 8
 
 type EnrichedAddress = {
   address: string
@@ -78,7 +76,7 @@ export async function GET(
     const subjectLat = subjectEnriched?.latitude ?? null
     const subjectLon = subjectEnriched?.longitude ?? null
 
-    let comps = result.data.map((s) => {
+    const countyComps = result.data.map((s) => {
       const enriched = addressByPin.get(s.pin)
       const compLat = enriched?.latitude ?? null
       const compLon = enriched?.longitude ?? null
@@ -106,35 +104,7 @@ export async function GET(
       }
     })
 
-    // Optional: enrich comps missing chars via Realie (free tier 25 req/month; cache by PIN)
-    const needsRealie = comps.filter(
-      (c) =>
-        c.livingArea == null || c.yearBuilt == null || c.bedrooms == null || c.bathrooms == null
-    )
-    const toEnrich = needsRealie.slice(0, MAX_REALIE_ENRICH_PER_REQUEST)
-    const realieByPin = new Map<string, Awaited<ReturnType<typeof getEnrichmentByPin>>>()
-    await Promise.all(
-      toEnrich.map(async (c) => {
-        const r = await getEnrichmentByPin(c.pinRaw)
-        if (r) realieByPin.set(c.pinRaw, r)
-      })
-    )
-    comps = comps.map((c) => {
-      const r = realieByPin.get(c.pinRaw)
-      if (!r) return c
-      return {
-        ...c,
-        livingArea: c.livingArea ?? r.livingArea,
-        yearBuilt: c.yearBuilt ?? r.yearBuilt,
-        bedrooms: c.bedrooms ?? r.bedrooms,
-        bathrooms: c.bathrooms ?? r.bathrooms,
-        pricePerSqft:
-          c.pricePerSqft ??
-          (r.livingArea != null && r.livingArea > 0 && c.salePrice > 0
-            ? c.salePrice / r.livingArea
-            : null),
-      }
-    })
+    const comps = await enrichCompsWithRealie(countyComps, { maxRealie: 15 })
 
     return NextResponse.json({
       success: true,

@@ -412,6 +412,8 @@ model RealieEnrichmentCache {
   yearBuilt  Int?
   bedrooms   Int?
   bathrooms  Decimal?
+  /** Full API response for subject property (richer data from 1 call); null for comp-only cache */
+  rawResponse Json?
   fetchedAt  DateTime @default(now())
 
   @@index([pin])

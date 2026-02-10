@@ -3,11 +3,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth/session'
 import { prisma } from '@/lib/db'
 import { formatPIN, getAddressByPIN, haversineMiles } from '@/lib/cook-county'
-import { getEnrichmentByPin } from '@/lib/realie'
+import { enrichCompsWithRealie } from '@/lib/comps/enrich-with-realie'
 import { canChangePropertyOnAppeal } from '@/lib/appeals/status'
 import { z } from 'zod'
-
-const MAX_REALIE_ENRICH_PER_APPEAL_GET = 8
 
 // Validation schema for updating an appeal
 const updateAppealSchema = z.object({
@@ -178,19 +176,7 @@ export async function GET(
         })),
         compsUsed: await (async () => {
           const comps = appeal.compsUsed
-          const needRealie = comps.filter(
-            (c) => c.livingArea == null || c.bedrooms == null || c.bathrooms == null
-          ).slice(0, MAX_REALIE_ENRICH_PER_APPEAL_GET)
-          const realieByPin = new Map<string, Awaited<ReturnType<typeof getEnrichmentByPin>>>()
-          if (process.env.REALIE_API_KEY) {
-            await Promise.all(
-              needRealie.map(async (c) => {
-                const r = await getEnrichmentByPin(c.pin.replace(/\D/g, '') || c.pin)
-                if (r) realieByPin.set(c.pin, r)
-              })
-            )
-          }
-          // Distance on the fly: get subject + comp coords from Cook County, compute haversine
+          // No Realie for comps (1 API call for subject only). Distance from Cook County coords.
           const subjectPin = appeal.property.pin.replace(/\D/g, '') || appeal.property.pin
           const subjectAddr = await getAddressByPIN(subjectPin)
           const subjectLat = subjectAddr?.latitude ?? null
@@ -209,12 +195,11 @@ export async function GET(
               }
             })
           }
-          return comps.map((comp) => {
-            const r = realieByPin.get(comp.pin)
-            const livingArea = comp.livingArea ?? r?.livingArea ?? null
-            const yearBuilt = comp.yearBuilt ?? r?.yearBuilt ?? null
-            const bedrooms = comp.bedrooms ?? r?.bedrooms ?? null
-            const bathrooms = comp.bathrooms != null ? Number(comp.bathrooms) : (r?.bathrooms ?? null)
+          const countyList = comps.map((comp) => {
+            const livingArea = comp.livingArea ?? null
+            const yearBuilt = comp.yearBuilt ?? null
+            const bedrooms = comp.bedrooms ?? null
+            const bathrooms = comp.bathrooms != null ? Number(comp.bathrooms) : null
             const salePrice = comp.salePrice ? Number(comp.salePrice) : null
             const pricePerSqft =
               comp.pricePerSqft != null
@@ -232,6 +217,7 @@ export async function GET(
             return {
               id: comp.id,
               pin: formatPIN(comp.pin),
+              pinRaw: comp.pin,
               address: comp.address,
               compType: comp.compType,
               neighborhood: comp.neighborhood,
@@ -248,6 +234,31 @@ export async function GET(
               distanceFromSubject,
             }
           })
+          const enriched = await enrichCompsWithRealie(countyList, { maxRealie: 15 })
+          return enriched.map((e) => ({
+            id: (e as { id?: string }).id,
+            pin: e.pin,
+            address: e.address,
+            compType: e.compType,
+            neighborhood: e.neighborhood,
+            buildingClass: e.buildingClass,
+            livingArea: e.livingArea,
+            yearBuilt: e.yearBuilt,
+            bedrooms: e.bedrooms,
+            bathrooms: e.bathrooms,
+            salePrice: e.salePrice,
+            saleDate: e.saleDate,
+            pricePerSqft: e.pricePerSqft,
+            assessedMarketValue: e.assessedMarketValue,
+            assessedMarketValuePerSqft: e.assessedMarketValuePerSqft,
+            distanceFromSubject: e.distanceFromSubject,
+            inBothSources: e.inBothSources,
+            livingAreaRealie: e.livingAreaRealie,
+            yearBuiltRealie: e.yearBuiltRealie,
+            bedroomsRealie: e.bedroomsRealie,
+            bathroomsRealie: e.bathroomsRealie,
+            realieData: e.realieData,
+          }))
         })(),
         relatedAppeals: appeal.relatedAppeals.map((ra) => ({
           id: ra.id,

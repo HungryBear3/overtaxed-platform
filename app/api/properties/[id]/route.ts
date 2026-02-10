@@ -4,7 +4,7 @@ import { getSession } from '@/lib/auth/session'
 import { prisma } from '@/lib/db'
 import { formatPIN } from '@/lib/cook-county'
 import { isAppealSubmitted } from '@/lib/appeals/status'
-import { getEnrichmentByPin } from '@/lib/realie'
+import { getFullPropertyByPin } from '@/lib/realie'
 
 // GET /api/properties/[id] - Get a single property with full details
 export async function GET(
@@ -67,23 +67,12 @@ export async function GET(
       ? Number(property.currentMarketValue)
       : (latestFromHistory?.marketValue ? Number(latestFromHistory.marketValue) : null)
 
-    // Optional: enrich subject from Realie when Cook County chars are missing (free tier 25 req/month)
-    let livingArea = property.livingArea
-    let yearBuilt = property.yearBuilt
-    let bedrooms = property.bedrooms
-    let bathrooms = property.bathrooms ? Number(property.bathrooms) : null
-    if (
-      (livingArea == null || yearBuilt == null || bedrooms == null || bathrooms == null) &&
-      process.env.REALIE_API_KEY
-    ) {
-      const realie = await getEnrichmentByPin(property.pin.replace(/\D/g, '') || property.pin)
-      if (realie) {
-        livingArea = livingArea ?? realie.livingArea
-        yearBuilt = yearBuilt ?? realie.yearBuilt
-        bedrooms = bedrooms ?? realie.bedrooms
-        bathrooms = bathrooms ?? realie.bathrooms
-      }
-    }
+    // 1 Realie API call for subject only: get full (rich) property data, merge into response
+    const realieFull = await getFullPropertyByPin(property.pin.replace(/\D/g, '') || property.pin)
+    const livingArea = property.livingArea ?? realieFull?.livingArea ?? null
+    const yearBuilt = property.yearBuilt ?? realieFull?.yearBuilt ?? null
+    const bedrooms = property.bedrooms ?? realieFull?.bedrooms ?? null
+    const bathrooms = property.bathrooms ? Number(property.bathrooms) : (realieFull?.bathrooms ?? null)
 
     return NextResponse.json({
       success: true,
@@ -95,13 +84,13 @@ export async function GET(
         state: property.state,
         zipCode: property.zipCode,
         county: property.county,
-        neighborhood: property.neighborhood,
-        subdivision: property.subdivision,
+        neighborhood: property.neighborhood ?? realieFull?.neighborhood ?? null,
+        subdivision: property.subdivision ?? realieFull?.subdivision ?? null,
         block: property.block,
         buildingClass: property.buildingClass,
         cdu: property.cdu,
         livingArea,
-        landSize: property.landSize,
+        landSize: property.landSize ?? realieFull?.landArea ?? null,
         yearBuilt,
         bedrooms,
         bathrooms,
@@ -149,6 +138,44 @@ export async function GET(
           decisionDate: appeal.decisionDate,
           createdAt: appeal.createdAt,
         })),
+        /** Rich data from Realie (1 API call per subject, cached) */
+        realieData: realieFull
+          ? {
+              totalAssessedValue: realieFull.totalAssessedValue,
+              totalLandValue: realieFull.totalLandValue,
+              totalBuildingValue: realieFull.totalBuildingValue,
+              totalMarketValue: realieFull.totalMarketValue,
+              taxValue: realieFull.taxValue,
+              taxYear: realieFull.taxYear,
+              landArea: realieFull.landArea,
+              acres: realieFull.acres,
+              garage: realieFull.garage,
+              garageCount: realieFull.garageCount,
+              fireplace: realieFull.fireplace,
+              basementType: realieFull.basementType,
+              roofType: realieFull.roofType,
+              modelValue: realieFull.modelValue,
+              assessments: realieFull.assessments,
+            }
+          : null,
+        /** When we have both County and Realie, show both for discrepancy (County / Realie) */
+        countyVsRealie:
+          realieFull &&
+          (property.livingArea != null ||
+            property.yearBuilt != null ||
+            property.bedrooms != null ||
+            property.bathrooms != null)
+            ? {
+                livingAreaCounty: property.livingArea ?? null,
+                livingAreaRealie: realieFull.livingArea ?? null,
+                yearBuiltCounty: property.yearBuilt ?? null,
+                yearBuiltRealie: realieFull.yearBuilt ?? null,
+                bedroomsCounty: property.bedrooms ?? null,
+                bedroomsRealie: realieFull.bedrooms ?? null,
+                bathroomsCounty: property.bathrooms ? Number(property.bathrooms) : null,
+                bathroomsRealie: realieFull.bathrooms ?? null,
+              }
+            : null,
         // Recent comps
         recentComps: property.comps.map((comp) => ({
           id: comp.id,

@@ -3,10 +3,10 @@ import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
 import { formatPIN, getAddressByPIN, haversineMiles } from "@/lib/cook-county"
-import { getEnrichmentByPin } from "@/lib/realie"
+import { getFullPropertyByPin } from "@/lib/realie"
+import { enrichCompsWithRealie } from "@/lib/comps/enrich-with-realie"
 import { generateAppealSummaryPdf } from "@/lib/document-generation/appeal-summary"
 
-const MAX_REALIE_ENRICH_PER_PDF = 8
 const ADDRESS_CONCURRENCY = 5
 
 export async function GET(
@@ -57,21 +57,9 @@ export async function GET(
 
     const safeFormatPIN = (pin: string | null | undefined) => formatPIN(String(pin ?? ""))
 
-    // Enrich comps same as GET appeal: Realie (livingArea, beds/baths, etc.) + on-the-fly distance; keep coords for map/Street View
+    const subjectRealie = await getFullPropertyByPin(appeal.property.pin.replace(/\D/g, "") || appeal.property.pin)
     const { comps, subjectLat, subjectLon, compCoordsList } = await (async () => {
       const list = appeal.compsUsed
-      const needRealie = list
-        .filter((c) => c.livingArea == null || c.bedrooms == null || c.bathrooms == null)
-        .slice(0, MAX_REALIE_ENRICH_PER_PDF)
-      const realieByPin = new Map<string, Awaited<ReturnType<typeof getEnrichmentByPin>>>()
-      if (process.env.REALIE_API_KEY) {
-        await Promise.all(
-          needRealie.map(async (c) => {
-            const r = await getEnrichmentByPin(c.pin.replace(/\D/g, "") || c.pin)
-            if (r) realieByPin.set(c.pin, r)
-          })
-        )
-      }
       const subjectPin = appeal.property.pin.replace(/\D/g, "") || appeal.property.pin
       const subjectAddr = await getAddressByPIN(subjectPin)
       const subjectLat = subjectAddr?.latitude ?? null
@@ -90,12 +78,11 @@ export async function GET(
         })
       }
       const compCoordsList = list.map((c) => compCoordsByPin.get(c.pin) ?? null)
-      const comps = list.map((c) => {
-        const r = realieByPin.get(c.pin)
-        const livingArea = c.livingArea ?? r?.livingArea ?? null
-        const yearBuilt = c.yearBuilt ?? r?.yearBuilt ?? null
-        const bedrooms = c.bedrooms ?? r?.bedrooms ?? null
-        const bathrooms = c.bathrooms != null ? Number(c.bathrooms) : (r?.bathrooms ?? null)
+      const countyList = list.map((c) => {
+        const livingArea = c.livingArea ?? null
+        const yearBuilt = c.yearBuilt ?? null
+        const bedrooms = c.bedrooms ?? null
+        const bathrooms = c.bathrooms != null ? Number(c.bathrooms) : null
         const salePrice = c.salePrice ? Number(c.salePrice) : null
         const pricePerSqft =
           c.pricePerSqft != null
@@ -113,6 +100,7 @@ export async function GET(
         }
         return {
           pin: safeFormatPIN(c.pin),
+          pinRaw: c.pin,
           address: c.address ?? "",
           compType: c.compType,
           neighborhood: c.neighborhood ?? null,
@@ -131,9 +119,40 @@ export async function GET(
           distanceFromSubject,
         }
       })
+      const enriched = await enrichCompsWithRealie(countyList, { maxRealie: 15 })
+      const comps = enriched.map((e) => ({
+        pin: e.pin,
+        address: e.address,
+        compType: e.compType,
+        neighborhood: e.neighborhood,
+        buildingClass: e.buildingClass,
+        bedrooms: e.bedrooms,
+        bathrooms: e.bathrooms,
+        salePrice: e.salePrice,
+        saleDate: e.saleDate,
+        livingArea: e.livingArea,
+        yearBuilt: e.yearBuilt,
+        pricePerSqft: e.pricePerSqft,
+        assessedMarketValue: e.assessedMarketValue,
+        assessedMarketValuePerSqft: e.assessedMarketValuePerSqft,
+        distanceFromSubject: e.distanceFromSubject,
+        inBothSources: e.inBothSources,
+        livingAreaRealie: e.livingAreaRealie,
+        yearBuiltRealie: e.yearBuiltRealie,
+        bedroomsRealie: e.bedroomsRealie,
+        bathroomsRealie: e.bathroomsRealie,
+      }))
       return { comps, subjectLat, subjectLon, compCoordsList }
     })()
 
+    const subLivingCo = appeal.property.livingArea ?? null
+    const subLivingRe = subjectRealie?.livingArea ?? null
+    const subYrCo = appeal.property.yearBuilt ?? null
+    const subYrRe = subjectRealie?.yearBuilt ?? null
+    const subBedCo = appeal.property.bedrooms ?? null
+    const subBedRe = subjectRealie?.bedrooms ?? null
+    const subBathCo = appeal.property.bathrooms ? Number(appeal.property.bathrooms) : null
+    const subBathRe = subjectRealie?.bathrooms ?? null
     const data = {
       property: {
         address: appeal.property.address ?? "",
@@ -142,18 +161,24 @@ export async function GET(
         zipCode: appeal.property.zipCode ?? "",
         pin: safeFormatPIN(appeal.property.pin),
         county: appeal.property.county,
-        neighborhood: appeal.property.neighborhood,
-        subdivision: appeal.property.subdivision,
+        neighborhood: appeal.property.neighborhood ?? subjectRealie?.neighborhood ?? null,
+        subdivision: appeal.property.subdivision ?? subjectRealie?.subdivision ?? null,
         block: appeal.property.block,
         buildingClass: appeal.property.buildingClass,
         cdu: appeal.property.cdu,
-        livingArea: appeal.property.livingArea,
-        landSize: appeal.property.landSize,
-        yearBuilt: appeal.property.yearBuilt,
-        bedrooms: appeal.property.bedrooms,
-        bathrooms: appeal.property.bathrooms
-          ? Number(appeal.property.bathrooms)
-          : null,
+        livingArea: subLivingCo ?? subLivingRe ?? null,
+        landSize: appeal.property.landSize ?? subjectRealie?.landArea ?? null,
+        yearBuilt: subYrCo ?? subYrRe ?? null,
+        bedrooms: subBedCo ?? subBedRe ?? null,
+        bathrooms: subBathCo ?? subBathRe ?? null,
+        livingAreaCounty: subLivingCo,
+        livingAreaRealie: subLivingRe,
+        yearBuiltCounty: subYrCo,
+        yearBuiltRealie: subYrRe,
+        bedroomsCounty: subBedCo,
+        bedroomsRealie: subBedRe,
+        bathroomsCounty: subBathCo,
+        bathroomsRealie: subBathRe,
         currentAssessmentValue: appeal.property.currentAssessmentValue
           ? Number(appeal.property.currentAssessmentValue)
           : null,

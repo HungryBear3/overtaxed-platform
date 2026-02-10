@@ -1,1 +1,7 @@
-export { getEnrichmentByPin, fetchByParcelId, type RealieEnrichment } from "./client"
+export {
+  getEnrichmentByPin,
+  getFullPropertyByPin,
+  fetchByParcelId,
+  type RealieEnrichment,
+  type RealiePropertyFull,
+} from "./client"
