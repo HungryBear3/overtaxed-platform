@@ -10,6 +10,9 @@ export async function GET(request: NextRequest) {
     }
 
     const key = process.env.GOOGLE_MAPS_API_KEY
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'streetview/route.ts:key',message:'streetview key check',data:{hasKey:!!key,lat:request.nextUrl.searchParams.get('lat'),lng:request.nextUrl.searchParams.get('lng')},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     if (!key) {
       return new NextResponse(null, { status: 503 })
     }
@@ -34,6 +37,9 @@ export async function GET(request: NextRequest) {
     })
     const url = `https://maps.googleapis.com/maps/api/streetview?${params.toString()}`
     const res = await fetch(url, { next: { revalidate: 0 } })
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'streetview/route.ts:google',message:'streetview Google response',data:{ok:res.ok,status:res.status},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     if (!res.ok) {
       return new NextResponse(null, { status: 502 })
     }

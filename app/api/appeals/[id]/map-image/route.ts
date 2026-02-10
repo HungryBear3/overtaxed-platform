@@ -17,6 +17,9 @@ export async function GET(
     }
 
     const key = process.env.GOOGLE_MAPS_API_KEY
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'map-image/route.ts:key',message:'map-image key check',data:{hasKey:!!key,keyLen:key?.length??0},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     if (!key) {
       return new NextResponse(null, { status: 503 })
     }
@@ -50,19 +53,43 @@ export async function GET(
       )
     }
 
-    const centerLat =
-      subjectAddr?.latitude ??
-      compAddrs.find((c) => c != null)?.latitude ??
-      41.8781
-    const centerLng =
-      subjectAddr?.longitude ??
-      compAddrs.find((c) => c != null)?.longitude ??
-      -87.6298
+    // Collect all points (subject + comps) to compute center and zoom that fit all markers
+    const points: Array<{ lat: number; lng: number }> = []
+    if (subjectAddr?.latitude != null && subjectAddr?.longitude != null) {
+      points.push({ lat: subjectAddr.latitude, lng: subjectAddr.longitude })
+    }
+    compAddrs.forEach((c) => {
+      if (c) points.push({ lat: c.latitude, lng: c.longitude })
+    })
+
+    const WORLD_DIM = 256
+    const MAP_WIDTH = 600
+    const MAP_HEIGHT = 400
+    let centerLat = 41.8781
+    let centerLng = -87.6298
+    let zoom = 14
+
+    if (points.length > 0) {
+      const lats = points.map((p) => p.lat)
+      const lngs = points.map((p) => p.lng)
+      const minLat = Math.min(...lats)
+      const maxLat = Math.max(...lats)
+      const minLng = Math.min(...lngs)
+      const maxLng = Math.max(...lngs)
+      centerLat = (minLat + maxLat) / 2
+      centerLng = (minLng + maxLng) / 2
+      const latSpan = Math.max(maxLat - minLat, 0.002)
+      const lngSpan = Math.max(maxLng - minLng, 0.002)
+      // Zoom so bounds fit in MAP_WIDTH x MAP_HEIGHT with padding (zoom out 1 level so no markers clipped)
+      const zLng = Math.log2((MAP_WIDTH * 360) / (WORLD_DIM * lngSpan))
+      const zLat = Math.log2((MAP_HEIGHT * 180) / (WORLD_DIM * latSpan))
+      zoom = Math.max(0, Math.min(21, Math.floor(Math.min(zLng, zLat)) - 1))
+    }
 
     const paramsList = new URLSearchParams({
       center: `${centerLat},${centerLng}`,
-      zoom: "14",
-      size: "600x400",
+      zoom: String(zoom),
+      size: `${MAP_WIDTH}x${MAP_HEIGHT}`,
       maptype: "roadmap",
       key,
     })
@@ -86,6 +113,9 @@ export async function GET(
 
     const url = `https://maps.googleapis.com/maps/api/staticmap?${paramsList.toString()}`
     const res = await fetch(url, { next: { revalidate: 0 } })
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'map-image/route.ts:google',message:'map-image Google response',data:{ok:res.ok,status:res.status,subjectHasCoords:!!(subjectAddr?.latitude!=null&&subjectAddr?.longitude!=null),compCoordsCount:compAddrs.filter(c=>c!=null).length},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     if (!res.ok) {
       return new NextResponse(null, { status: 502 })
     }

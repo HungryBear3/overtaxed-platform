@@ -139,6 +139,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
     subject: { lat: number; lng: number; address: string } | null
     comps: Array<{ pin: string; address: string; lat: number; lng: number } | null>
   } | null>(null)
+  const [mapAvailable, setMapAvailable] = useState<boolean | null>(null)
 
   useEffect(() => {
     fetchAppeal()
@@ -150,10 +151,27 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
       return
     }
     let cancelled = false
-    fetch(`/api/appeals/${id}/map-data`)
+    fetch(`/api/map/status`, { credentials: "include" })
       .then((r) => r.json())
       .then((data) => {
+        if (!cancelled) setMapAvailable(!!data?.available)
+      })
+      .catch(() => {
+        if (!cancelled) setMapAvailable(false)
+      })
+    fetch(`/api/appeals/${id}/map-data`, { credentials: 'include' })
+      .then((r) => {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'appeals/[id]/page.tsx:map-data',message:'map-data fetch response',data:{status:r.status,ok:r.ok},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+        return r.json()
+      })
+      .then((data) => {
         if (cancelled || !data.success) return
+        // #region agent log
+        const compsWithCoords = (data.comps ?? []).filter((c: unknown) => c != null).length
+        fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'appeals/[id]/page.tsx:mapData set',message:'mapData state set',data:{subjectPresent:!!data.subject,compsLength:(data.comps??[]).length,compsWithCoords},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
         setMapData({ subject: data.subject ?? null, comps: data.comps ?? [] })
       })
       .catch(() => {})
@@ -627,28 +645,42 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
             {(appeal.compsUsed.length > 0 || mapData?.subject) && (
               <div className="bg-white rounded-lg shadow p-6">
                 <h2 className="text-lg font-semibold text-gray-900 mb-3">Map & building photos</h2>
-                <p className="text-sm text-gray-500 mb-3">
-                  Subject (red S) and comparable locations. Building images from Google Street View. Map data © Google.
-                </p>
-                <div className="space-y-4">
-                  <div className="rounded-lg overflow-hidden border border-gray-200">
-                    <img
-                      src={`/api/appeals/${appeal.id}/map-image`}
-                      alt="Subject and comps map"
-                      className="w-full h-auto min-h-[200px] bg-gray-100"
-                    />
+                {mapAvailable === false ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    <p className="font-medium">Map and building photos are not available.</p>
+                    <p className="mt-1">
+                      Add <code className="bg-amber-100 px-1 rounded">GOOGLE_MAPS_API_KEY</code> to your environment (and enable Maps Static API and Street View Static API in Google Cloud Console) to show the map and Street View images.
+                    </p>
                   </div>
-                  {mapData?.subject && (
-                    <div>
-                      <p className="text-sm font-medium text-gray-700 mb-1">Subject property</p>
-                      <img
-                        src={`/api/map/streetview?lat=${mapData.subject.lat}&lng=${mapData.subject.lng}&size=300x200`}
-                        alt="Subject building"
-                        className="rounded-lg border border-gray-200 w-full max-w-sm h-auto"
-                      />
+                ) : (
+                  <>
+                    <p className="text-sm text-gray-500 mb-3">
+                      Subject (red S) and comparable locations. Building images from Google Street View. Map data © Google.
+                    </p>
+                    <div className="space-y-4">
+                      <div className="rounded-lg overflow-hidden border border-gray-200">
+                        <img
+                          src={`/api/appeals/${appeal.id}/map-image`}
+                          alt="Subject and comps map"
+                          className="w-full h-auto min-h-[200px] bg-gray-100"
+                        />
+                        <p className="mt-2 text-xs text-gray-500">
+                          <strong>S</strong> = your property. <strong>1, 2, 3…</strong> = comps in the same order as the list below.
+                        </p>
+                      </div>
+                      {mapData?.subject && (
+                        <div>
+                          <p className="text-sm font-medium text-gray-700 mb-1">Subject property</p>
+                          <img
+                            src={`/api/map/streetview?lat=${mapData.subject.lat}&lng=${mapData.subject.lng}&size=300x200`}
+                            alt="Subject building"
+                            className="rounded-lg border border-gray-200 w-full max-w-sm h-auto"
+                          />
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -692,10 +724,15 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                     <div key={comp.id} className="border border-gray-200 rounded-lg p-3">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
-                          <p className="font-medium text-gray-900">{comp.address}</p>
-                          <p className="text-sm text-gray-500">PIN: {comp.pin}</p>
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700" title="Same number as on map">
+                              {compIndex + 1}
+                            </span>
+                            <p className="font-medium text-gray-900">{comp.address}</p>
+                          </div>
+                          <p className="text-sm text-gray-500 pl-8">PIN: {comp.pin}</p>
                         </div>
-                        {compCoords && (
+                        {mapAvailable !== false && compCoords && (
                           <img
                             src={`/api/map/streetview?lat=${compCoords.lat}&lng=${compCoords.lng}&size=120x90`}
                             alt=""
@@ -739,7 +776,11 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                         </div>
                         <div>
                           <p className="text-gray-500">Beds / Baths</p>
-                          <p className="text-gray-900">{comp.bedrooms != null || comp.bathrooms != null ? `${comp.bedrooms ?? "—"} / ${comp.bathrooms != null ? comp.bathrooms.toFixed(1) : "—"}` : "—"}</p>
+                          <p className="text-gray-900">
+                            {(comp.bedrooms != null && comp.bedrooms > 0) || (comp.bathrooms != null && comp.bathrooms > 0)
+                              ? `${(comp.bedrooms != null && comp.bedrooms > 0) ? comp.bedrooms : "—"} / ${(comp.bathrooms != null && comp.bathrooms > 0) ? comp.bathrooms.toFixed(1) : "—"}`
+                              : "—"}
+                          </p>
                         </div>
                         <div>
                           <p className="text-gray-500">Distance</p>

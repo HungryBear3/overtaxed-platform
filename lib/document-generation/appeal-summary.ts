@@ -49,6 +49,12 @@ export interface AppealSummaryData {
     assessedMarketValuePerSqft: number | null
     distanceFromSubject: number | null
   }>
+  /** Optional: static map PNG (subject + comp markers) for PDF */
+  mapImagePng?: Uint8Array
+  /** Optional: subject property Street View JPEG for PDF */
+  subjectStreetViewJpeg?: Uint8Array
+  /** Optional: comp Street View JPEGs (same order as comps, null if unavailable) */
+  compStreetViewJpegs?: (Uint8Array | null)[]
 }
 
 function formatCurrency(n: number | null | unknown): string {
@@ -246,7 +252,14 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   }
 
   const tableFontSize = 9
-  const drawTableRow = (cells: string[], columnXs: number[], bold = false) => {
+  const defaultCellMaxChars = 18
+  const firstColumnMaxChars = 22 // formatted PIN e.g. 14-08-211-050-1001
+  const drawTableRow = (
+    cells: string[],
+    columnXs: number[],
+    bold = false,
+    firstColMax = firstColumnMaxChars
+  ) => {
     if (y < 50) {
       doc.addPage()
       y = 750
@@ -254,7 +267,8 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     const page = doc.getPage(doc.getPageCount() - 1)
     const f = bold ? fontBold : font
     for (let i = 0; i < cells.length; i++) {
-      const cell = (cells[i] ?? "").slice(0, 18)
+      const maxLen = i === 0 ? firstColMax : defaultCellMaxChars
+      const cell = (cells[i] ?? "").slice(0, maxLen)
       page.drawText(cell, {
         x: columnXs[i] ?? margin,
         y,
@@ -329,7 +343,8 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   // —— Subject vs comparables table (one place to compare) ——
   if (data.comps.length > 0) {
     drawText("Subject vs Comparables", { bold: true, fontSize: 13 })
-    const colXs = [margin, 110, 155, 195, 265, 350, 420]
+    // Column X positions: Property/PIN needs room for formatted PIN (e.g. 14-08-211-050-1001)
+    const colXs = [margin, 158, 193, 228, 303, 383, 458]
     drawTableRow(
       ["Property", "Sq ft", "Yr", "B/B", "Sale/Val", "$/sqft", "Dist"],
       colXs,
@@ -337,9 +352,10 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     )
     const subjectBath =
       data.property.bathrooms != null ? Number(data.property.bathrooms) : null
+    // Subject row: use "Subject" only in first cell (PIN is in property block above) to avoid overlap
     drawTableRow(
       [
-        `Subject ${data.property.pin}`,
+        "Subject",
         data.property.livingArea != null ? String(data.property.livingArea) : "—",
         data.property.yearBuilt != null ? String(data.property.yearBuilt) : "—",
         [data.property.bedrooms ?? "—", subjectBath != null ? subjectBath.toFixed(1) : "—"].join("/"),
@@ -373,6 +389,101 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
         ],
         colXs
       )
+    }
+    drawLine()
+  }
+
+  // —— Map & property photos (when images provided) ——
+  const hasMap = data.mapImagePng && data.mapImagePng.length > 0
+  const hasSubjectPhoto = data.subjectStreetViewJpeg && data.subjectStreetViewJpeg.length > 0
+  const hasCompPhotos =
+    data.compStreetViewJpegs && data.compStreetViewJpegs.some((b) => b != null && b.length > 0)
+  if (hasMap || hasSubjectPhoto || hasCompPhotos) {
+    const minYForImages = 420
+    if (y < minYForImages) {
+      doc.addPage()
+      y = 750
+    }
+    drawText("Map & Property Photos", { bold: true, fontSize: 13 })
+    y -= 6
+
+    const mapDrawWidth = maxWidth
+    const mapDrawHeight = 280
+
+    if (hasMap && data.mapImagePng) {
+      try {
+        const img = await doc.embedPng(data.mapImagePng)
+        const scale = Math.min(mapDrawWidth / img.width, mapDrawHeight / img.height)
+        const w = img.width * scale
+        const h = img.height * scale
+        const currentPage = doc.getPage(doc.getPageCount() - 1)
+        currentPage.drawImage(img, { x: margin, y: y - h, width: w, height: h })
+        y -= h + 10
+      } catch {
+        // ignore embed failure
+      }
+    }
+
+    if (hasSubjectPhoto && data.subjectStreetViewJpeg) {
+      try {
+        drawText("Subject property", { bold: true, fontSize: 11 })
+        y -= 4
+        const img = await doc.embedJpg(data.subjectStreetViewJpeg)
+        const w = 280
+        const h = (img.height / img.width) * w
+        if (y - h < 50) {
+          doc.addPage()
+          y = 750
+        }
+        const currentPage = doc.getPage(doc.getPageCount() - 1)
+        currentPage.drawImage(img, { x: margin, y: y - h, width: w, height: h })
+        y -= h + 12
+      } catch {
+        // ignore embed failure
+      }
+    }
+
+    if (hasCompPhotos && data.compStreetViewJpegs) {
+      const compImages = data.compStreetViewJpegs.filter((b) => b != null && b.length > 0) as Uint8Array[]
+      if (compImages.length > 0) {
+        drawText("Comparable properties", { bold: true, fontSize: 11 })
+        y -= 4
+        const cols = 3
+        const cellW = 120
+        const cellH = 90
+        let col = 0
+        for (let i = 0; i < compImages.length; i++) {
+          if (y - cellH < 50) {
+            doc.addPage()
+            y = 750
+          }
+          try {
+            const img = await doc.embedJpg(compImages[i]!)
+            const scale = Math.min(cellW / img.width, cellH / img.height)
+            const w = img.width * scale
+            const h = img.height * scale
+            const x = margin + col * (cellW + 8)
+            const currentPage = doc.getPage(doc.getPageCount() - 1)
+            currentPage.drawImage(img, { x, y: y - h, width: w, height: h })
+            currentPage.drawText(`Comp ${i + 1}`, {
+              x,
+              y: y - h - 12,
+              size: 8,
+              font,
+              color: rgb(0.3, 0.3, 0.3),
+            })
+            col += 1
+            if (col >= cols) {
+              col = 0
+              y -= cellH + 20
+            }
+          } catch {
+            // skip failed embed
+          }
+        }
+        if (col > 0) y -= cellH + 20
+        y -= 8
+      }
     }
     drawLine()
   }

@@ -17,6 +17,8 @@ interface CompItem {
   pricePerSqft: number | null
   livingArea: number | null
   yearBuilt: number | null
+  bedrooms: number | null
+  bathrooms: number | null
   buildingClass: string | null
   distanceFromSubject?: number | null
 }
@@ -79,6 +81,8 @@ export function AddCompsDialog({
           buildingClass: c.buildingClass,
           livingArea: c.livingArea,
           yearBuilt: c.yearBuilt,
+          bedrooms: c.bedrooms ?? null,
+          bathrooms: c.bathrooms ?? null,
           salePrice: c.salePrice,
           saleDate: c.saleDate,
           pricePerSqft: c.pricePerSqft,

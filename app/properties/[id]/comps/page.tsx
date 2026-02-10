@@ -15,6 +15,8 @@ interface Comp {
   buildingClass?: string | null
   livingArea: number | null
   yearBuilt: number | null
+  bedrooms: number | null
+  bathrooms: number | null
   saleDate: string | null
   salePrice: number | null
   pricePerSqft?: number | null
@@ -249,6 +251,8 @@ export default function PropertyCompsPage() {
                         buildingClass: c.buildingClass ?? c.propertyClass ?? undefined,
                         livingArea: c.livingArea ?? undefined,
                         yearBuilt: c.yearBuilt ?? undefined,
+                        bedrooms: c.bedrooms ?? undefined,
+                        bathrooms: c.bathrooms ?? undefined,
                         saleDate: c.saleDate ?? undefined,
                         salePrice: c.salePrice ?? undefined,
                         pricePerSqft: c.pricePerSqft ?? undefined,

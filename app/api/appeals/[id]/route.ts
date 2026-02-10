@@ -2,9 +2,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth/session'
 import { prisma } from '@/lib/db'
-import { formatPIN } from '@/lib/cook-county'
+import { formatPIN, getAddressByPIN, haversineMiles } from '@/lib/cook-county'
+import { getEnrichmentByPin } from '@/lib/realie'
 import { canChangePropertyOnAppeal } from '@/lib/appeals/status'
 import { z } from 'zod'
+
+const MAX_REALIE_ENRICH_PER_APPEAL_GET = 8
 
 // Validation schema for updating an appeal
 const updateAppealSchema = z.object({
@@ -173,24 +176,79 @@ export async function GET(
           photoDate: doc.photoDate,
           createdAt: doc.createdAt,
         })),
-        compsUsed: appeal.compsUsed.map((comp) => ({
-          id: comp.id,
-          pin: formatPIN(comp.pin),
-          address: comp.address,
-          compType: comp.compType,
-          neighborhood: comp.neighborhood,
-          buildingClass: comp.buildingClass,
-          livingArea: comp.livingArea,
-          yearBuilt: comp.yearBuilt,
-          bedrooms: comp.bedrooms,
-          bathrooms: comp.bathrooms != null ? Number(comp.bathrooms) : null,
-          salePrice: comp.salePrice ? Number(comp.salePrice) : null,
-          saleDate: comp.saleDate?.toISOString() ?? null,
-          pricePerSqft: comp.pricePerSqft ? Number(comp.pricePerSqft) : null,
-          assessedMarketValue: comp.assessedMarketValue ? Number(comp.assessedMarketValue) : null,
-          assessedMarketValuePerSqft: comp.assessedMarketValuePerSqft ? Number(comp.assessedMarketValuePerSqft) : null,
-          distanceFromSubject: comp.distanceFromSubject != null ? Number(comp.distanceFromSubject) : null,
-        })),
+        compsUsed: await (async () => {
+          const comps = appeal.compsUsed
+          const needRealie = comps.filter(
+            (c) => c.livingArea == null || c.bedrooms == null || c.bathrooms == null
+          ).slice(0, MAX_REALIE_ENRICH_PER_APPEAL_GET)
+          const realieByPin = new Map<string, Awaited<ReturnType<typeof getEnrichmentByPin>>>()
+          if (process.env.REALIE_API_KEY) {
+            await Promise.all(
+              needRealie.map(async (c) => {
+                const r = await getEnrichmentByPin(c.pin.replace(/\D/g, '') || c.pin)
+                if (r) realieByPin.set(c.pin, r)
+              })
+            )
+          }
+          // Distance on the fly: get subject + comp coords from Cook County, compute haversine
+          const subjectPin = appeal.property.pin.replace(/\D/g, '') || appeal.property.pin
+          const subjectAddr = await getAddressByPIN(subjectPin)
+          const subjectLat = subjectAddr?.latitude ?? null
+          const subjectLon = subjectAddr?.longitude ?? null
+          const ADDRESS_CONCURRENCY = 5
+          const compCoordsByPin = new Map<string, { lat: number; lng: number }>()
+          for (let i = 0; i < comps.length; i += ADDRESS_CONCURRENCY) {
+            const batch = comps.slice(i, i + ADDRESS_CONCURRENCY)
+            const results = await Promise.all(
+              batch.map((c) => getAddressByPIN(c.pin.replace(/\D/g, '') || c.pin))
+            )
+            batch.forEach((c, j) => {
+              const addr = results[j]
+              if (addr?.latitude != null && addr?.longitude != null) {
+                compCoordsByPin.set(c.pin, { lat: addr.latitude, lng: addr.longitude })
+              }
+            })
+          }
+          return comps.map((comp) => {
+            const r = realieByPin.get(comp.pin)
+            const livingArea = comp.livingArea ?? r?.livingArea ?? null
+            const yearBuilt = comp.yearBuilt ?? r?.yearBuilt ?? null
+            const bedrooms = comp.bedrooms ?? r?.bedrooms ?? null
+            const bathrooms = comp.bathrooms != null ? Number(comp.bathrooms) : (r?.bathrooms ?? null)
+            const salePrice = comp.salePrice ? Number(comp.salePrice) : null
+            const pricePerSqft =
+              comp.pricePerSqft != null
+                ? Number(comp.pricePerSqft)
+                : livingArea != null && livingArea > 0 && salePrice != null && salePrice > 0
+                  ? salePrice / livingArea
+                  : null
+            let distanceFromSubject: number | null = comp.distanceFromSubject != null ? Number(comp.distanceFromSubject) : null
+            if (distanceFromSubject == null && subjectLat != null && subjectLon != null) {
+              const coords = compCoordsByPin.get(comp.pin)
+              if (coords) {
+                distanceFromSubject = haversineMiles(subjectLat, subjectLon, coords.lat, coords.lng)
+              }
+            }
+            return {
+              id: comp.id,
+              pin: formatPIN(comp.pin),
+              address: comp.address,
+              compType: comp.compType,
+              neighborhood: comp.neighborhood,
+              buildingClass: comp.buildingClass,
+              livingArea,
+              yearBuilt,
+              bedrooms,
+              bathrooms,
+              salePrice,
+              saleDate: comp.saleDate?.toISOString() ?? null,
+              pricePerSqft,
+              assessedMarketValue: comp.assessedMarketValue ? Number(comp.assessedMarketValue) : null,
+              assessedMarketValuePerSqft: comp.assessedMarketValuePerSqft ? Number(comp.assessedMarketValuePerSqft) : null,
+              distanceFromSubject,
+            }
+          })
+        })(),
         relatedAppeals: appeal.relatedAppeals.map((ra) => ({
           id: ra.id,
           taxYear: ra.taxYear,

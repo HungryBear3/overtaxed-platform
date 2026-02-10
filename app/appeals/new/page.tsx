@@ -205,9 +205,12 @@ export default function NewAppealPage() {
           buildingClass: c.buildingClass ?? undefined,
           livingArea: c.livingArea ?? undefined,
           yearBuilt: c.yearBuilt ?? undefined,
+          bedrooms: (c as { bedrooms?: number | null }).bedrooms ?? undefined,
+          bathrooms: (c as { bathrooms?: number | null }).bathrooms ?? undefined,
           salePrice: c.salePrice ?? undefined,
           saleDate: c.saleDate ?? undefined,
           pricePerSqft: c.pricePerSqft ?? undefined,
+          distanceFromSubject: (c as { distanceFromSubject?: number | null }).distanceFromSubject ?? undefined,
           compType: "SALES" as const,
         }))
       }

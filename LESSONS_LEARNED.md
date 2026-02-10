@@ -30,6 +30,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 23. [Assessment history: $0 / -100% → Not available yet](#23-assessment-history-0--100--not-available-yet)
 24. [Pricing dropdown: Add 1 more showing total not additional](#24-pricing-dropdown-add-1-more-showing-total-not-additional)
 25. [Comparison report value-add: Realie, map, similarity line](#25-comparison-report-value-add-realie-map-similarity-line)
+26. [PDF summary: enriched comps, table layout, map & photos in PDF](#26-pdf-summary-enriched-comps-table-layout-map--photos-in-pdf)
 
 ---
 
@@ -674,6 +675,21 @@ const user = { ...session.user, ...freshUser }
 
 ---
 
+## 26. PDF summary: enriched comps, table layout, map & photos in PDF
+
+**Context:** The appeal summary PDF was not reflecting the same comp (and subject) data as the app (enriched living area, $/sq ft, distance, beds/baths), and the Subject vs Comparables table had PINs overlapping adjacent columns. Map and property pictures (Street View) did not appear in the PDF.
+
+**Implementation:**
+- **Enriched comps in PDF:** In `GET /api/appeals/[id]/download-summary`, comps are now built the same way as GET appeal: Realie enrichment (up to 8 comps with missing livingArea/beds/baths) and on-the-fly distance (subject + comp coords via `getAddressByPIN`, then `haversineMiles`). The same `subjectLat`/`subjectLon` and `compCoordsList` are reused for map/Street View image fetching.
+- **Subject vs Comparables table:** In `lib/document-generation/appeal-summary.ts`, column X positions were widened (e.g. first column 50→158) so the Property/PIN column fits formatted PINs (e.g. 14-08-211-050-1001). Subject row first cell shows "Subject" only (PIN is in the property block above). `drawTableRow` allows a longer first column (22 chars) via optional `firstColMax` so full PINs are not truncated into the next column.
+- **Map & property photos in PDF:** When `GOOGLE_MAPS_API_KEY` is set, download-summary fetches: (1) Google Static Map PNG (same center/zoom/markers as map-image API); (2) subject Street View JPEG (280×186); (3) up to 6 comp Street View JPEGs (120×90). These are passed as optional `mapImagePng`, `subjectStreetViewJpeg`, `compStreetViewJpegs` on `AppealSummaryData`. The PDF generator adds a "Map & Property Photos" section after the Subject vs Comparables table: static map scaled to page width, then "Subject property" image, then "Comparable properties" grid (3 per row, "Comp 1" … labels). New pages are added when y runs low. Requires Maps Static API and Street View Static API enabled in Google Cloud Console.
+
+**Where:** `app/api/appeals/[id]/download-summary/route.ts`, `lib/document-generation/appeal-summary.ts` (interface, table colXs, drawTableRow firstColMax, Map & Property Photos section with embedPng/embedJpg).
+
+**Lesson:** Keep PDF data source aligned with the app (same enrichment in download-summary as in GET appeal). Use fixed column positions and per-column character limits for table layout. Embed map and Street View only when the API key is present so the PDF still generates without them.
+
+---
+
 ## Stripe Webhook Debugging
 
 ### Issue: Subscription doesn't update after checkout
@@ -786,4 +802,4 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 **Last Updated:** January 2026
 
-**Jan 2026:** §25 — Comparison report value-add (Realie, map, Street View, PDF similarity line).
+**Jan 2026:** §26 — PDF summary: enriched comps in download-summary, Subject vs Comparables table layout (PIN overlap fix), map & Street View embedded in PDF when GOOGLE_MAPS_API_KEY set. §25 — Comparison report value-add (Realie, map, Street View, PDF similarity line).

@@ -2,8 +2,12 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
-import { formatPIN } from "@/lib/cook-county"
+import { formatPIN, getAddressByPIN, haversineMiles } from "@/lib/cook-county"
+import { getEnrichmentByPin } from "@/lib/realie"
 import { generateAppealSummaryPdf } from "@/lib/document-generation/appeal-summary"
+
+const MAX_REALIE_ENRICH_PER_PDF = 8
+const ADDRESS_CONCURRENCY = 5
 
 export async function GET(
   request: NextRequest,
@@ -53,6 +57,83 @@ export async function GET(
 
     const safeFormatPIN = (pin: string | null | undefined) => formatPIN(String(pin ?? ""))
 
+    // Enrich comps same as GET appeal: Realie (livingArea, beds/baths, etc.) + on-the-fly distance; keep coords for map/Street View
+    const { comps, subjectLat, subjectLon, compCoordsList } = await (async () => {
+      const list = appeal.compsUsed
+      const needRealie = list
+        .filter((c) => c.livingArea == null || c.bedrooms == null || c.bathrooms == null)
+        .slice(0, MAX_REALIE_ENRICH_PER_PDF)
+      const realieByPin = new Map<string, Awaited<ReturnType<typeof getEnrichmentByPin>>>()
+      if (process.env.REALIE_API_KEY) {
+        await Promise.all(
+          needRealie.map(async (c) => {
+            const r = await getEnrichmentByPin(c.pin.replace(/\D/g, "") || c.pin)
+            if (r) realieByPin.set(c.pin, r)
+          })
+        )
+      }
+      const subjectPin = appeal.property.pin.replace(/\D/g, "") || appeal.property.pin
+      const subjectAddr = await getAddressByPIN(subjectPin)
+      const subjectLat = subjectAddr?.latitude ?? null
+      const subjectLon = subjectAddr?.longitude ?? null
+      const compCoordsByPin = new Map<string, { lat: number; lng: number }>()
+      for (let i = 0; i < list.length; i += ADDRESS_CONCURRENCY) {
+        const batch = list.slice(i, i + ADDRESS_CONCURRENCY)
+        const results = await Promise.all(
+          batch.map((c) => getAddressByPIN(c.pin.replace(/\D/g, "") || c.pin))
+        )
+        batch.forEach((c, j) => {
+          const addr = results[j]
+          if (addr?.latitude != null && addr?.longitude != null) {
+            compCoordsByPin.set(c.pin, { lat: addr.latitude, lng: addr.longitude })
+          }
+        })
+      }
+      const compCoordsList = list.map((c) => compCoordsByPin.get(c.pin) ?? null)
+      const comps = list.map((c) => {
+        const r = realieByPin.get(c.pin)
+        const livingArea = c.livingArea ?? r?.livingArea ?? null
+        const yearBuilt = c.yearBuilt ?? r?.yearBuilt ?? null
+        const bedrooms = c.bedrooms ?? r?.bedrooms ?? null
+        const bathrooms = c.bathrooms != null ? Number(c.bathrooms) : (r?.bathrooms ?? null)
+        const salePrice = c.salePrice ? Number(c.salePrice) : null
+        const pricePerSqft =
+          c.pricePerSqft != null
+            ? Number(c.pricePerSqft)
+            : livingArea != null && livingArea > 0 && salePrice != null && salePrice > 0
+              ? salePrice / livingArea
+              : null
+        let distanceFromSubject: number | null =
+          c.distanceFromSubject != null ? Number(c.distanceFromSubject) : null
+        if (distanceFromSubject == null && subjectLat != null && subjectLon != null) {
+          const coords = compCoordsByPin.get(c.pin)
+          if (coords) {
+            distanceFromSubject = haversineMiles(subjectLat, subjectLon, coords.lat, coords.lng)
+          }
+        }
+        return {
+          pin: safeFormatPIN(c.pin),
+          address: c.address ?? "",
+          compType: c.compType,
+          neighborhood: c.neighborhood ?? null,
+          buildingClass: c.buildingClass ?? null,
+          bedrooms,
+          bathrooms,
+          salePrice,
+          saleDate: c.saleDate?.toISOString() ?? null,
+          livingArea,
+          yearBuilt,
+          pricePerSqft,
+          assessedMarketValue: c.assessedMarketValue ? Number(c.assessedMarketValue) : null,
+          assessedMarketValuePerSqft: c.assessedMarketValuePerSqft
+            ? Number(c.assessedMarketValuePerSqft)
+            : null,
+          distanceFromSubject,
+        }
+      })
+      return { comps, subjectLat, subjectLon, compCoordsList }
+    })()
+
     const data = {
       property: {
         address: appeal.property.address ?? "",
@@ -97,28 +178,106 @@ export async function GET(
         filingDeadline: appeal.filingDeadline.toISOString(),
         noticeDate: appeal.noticeDate?.toISOString() ?? null,
       },
-      comps: appeal.compsUsed.map((c) => ({
-        pin: safeFormatPIN(c.pin),
-        address: c.address ?? "",
-        compType: c.compType,
-        neighborhood: c.neighborhood ?? null,
-        buildingClass: c.buildingClass ?? null,
-        bedrooms: c.bedrooms ?? null,
-        bathrooms: c.bathrooms != null ? Number(c.bathrooms) : null,
-        salePrice: c.salePrice ? Number(c.salePrice) : null,
-        saleDate: c.saleDate?.toISOString() ?? null,
-        livingArea: c.livingArea,
-        yearBuilt: c.yearBuilt,
-        pricePerSqft: c.pricePerSqft ? Number(c.pricePerSqft) : null,
-        assessedMarketValue: c.assessedMarketValue ? Number(c.assessedMarketValue) : null,
-        assessedMarketValuePerSqft: c.assessedMarketValuePerSqft
-          ? Number(c.assessedMarketValuePerSqft)
-          : null,
-        distanceFromSubject: c.distanceFromSubject != null ? Number(c.distanceFromSubject) : null,
-      })),
+      comps,
     }
 
-    const pdfBytes = await generateAppealSummaryPdf(data)
+    // Fetch map and Street View images for PDF when Google Maps API key is set
+    const googleKey = process.env.GOOGLE_MAPS_API_KEY
+    let mapImagePng: Uint8Array | null = null
+    let subjectStreetViewJpeg: Uint8Array | null = null
+    const compStreetViewJpegs: (Uint8Array | null)[] = []
+
+    if (googleKey) {
+      const points: Array<{ lat: number; lng: number }> = []
+      if (subjectLat != null && subjectLon != null) points.push({ lat: subjectLat, lng: subjectLon })
+      compCoordsList.forEach((c) => {
+        if (c) points.push({ lat: c.lat, lng: c.lng })
+      })
+
+      const MAP_WIDTH = 600
+      const MAP_HEIGHT = 400
+      const WORLD_DIM = 256
+      let centerLat = 41.8781
+      let centerLng = -87.6298
+      let zoom = 14
+      if (points.length > 0) {
+        const lats = points.map((p) => p.lat)
+        const lngs = points.map((p) => p.lng)
+        const minLat = Math.min(...lats)
+        const maxLat = Math.max(...lats)
+        const minLng = Math.min(...lngs)
+        const maxLng = Math.max(...lngs)
+        centerLat = (minLat + maxLat) / 2
+        centerLng = (minLng + maxLng) / 2
+        const latSpan = Math.max(maxLat - minLat, 0.002)
+        const lngSpan = Math.max(maxLng - minLng, 0.002)
+        const zLng = Math.log2((MAP_WIDTH * 360) / (WORLD_DIM * lngSpan))
+        const zLat = Math.log2((MAP_HEIGHT * 180) / (WORLD_DIM * latSpan))
+        zoom = Math.max(0, Math.min(21, Math.floor(Math.min(zLng, zLat)) - 1))
+      }
+
+      const mapParams = new URLSearchParams({
+        center: `${centerLat},${centerLng}`,
+        zoom: String(zoom),
+        size: `${MAP_WIDTH}x${MAP_HEIGHT}`,
+        maptype: "roadmap",
+        key: googleKey,
+      })
+      if (subjectLat != null && subjectLon != null) {
+        mapParams.append("markers", `color:red|label:S|${subjectLat},${subjectLon}`)
+      }
+      compCoordsList.forEach((c, i) => {
+        if (c) mapParams.append("markers", `color:blue|label:${i + 1}|${c.lat},${c.lng}`)
+      })
+
+      const STREETVIEW_SIZE = "280x186" // subject; comps use 120x90
+      const MAX_COMP_STREETVIEW = 6
+
+      const [mapRes, subjectSvRes, ...compSvResList] = await Promise.all([
+        fetch(`https://maps.googleapis.com/maps/api/staticmap?${mapParams.toString()}`, {
+          next: { revalidate: 0 },
+        }),
+        subjectLat != null && subjectLon != null
+          ? fetch(
+              `https://maps.googleapis.com/maps/api/streetview?size=${STREETVIEW_SIZE}&location=${subjectLat},${subjectLon}&key=${googleKey}`,
+              { next: { revalidate: 0 } }
+            )
+          : Promise.resolve(null),
+        ...compCoordsList.slice(0, MAX_COMP_STREETVIEW).map((c) =>
+          c
+            ? fetch(
+                `https://maps.googleapis.com/maps/api/streetview?size=120x90&location=${c.lat},${c.lng}&key=${googleKey}`,
+                { next: { revalidate: 0 } }
+              )
+            : Promise.resolve(null)
+        ),
+      ])
+
+      if (mapRes?.ok) {
+        const buf = await mapRes.arrayBuffer()
+        mapImagePng = new Uint8Array(buf)
+      }
+      if (subjectSvRes?.ok) {
+        const buf = await subjectSvRes.arrayBuffer()
+        subjectStreetViewJpeg = new Uint8Array(buf)
+      }
+      for (let i = 0; i < compSvResList.length; i++) {
+        const res = compSvResList[i]
+        if (res?.ok) {
+          const buf = await res.arrayBuffer()
+          compStreetViewJpegs.push(new Uint8Array(buf))
+        } else {
+          compStreetViewJpegs.push(null)
+        }
+      }
+    }
+
+    const pdfBytes = await generateAppealSummaryPdf({
+      ...data,
+      mapImagePng: mapImagePng ?? undefined,
+      subjectStreetViewJpeg: subjectStreetViewJpeg ?? undefined,
+      compStreetViewJpegs: compStreetViewJpegs.length > 0 ? compStreetViewJpegs : undefined,
+    })
     const pinRaw = String(appeal.property.pin ?? "").replace(/\D/g, "").slice(-6)
     const filename = `overtaxed-appeal-${appeal.taxYear}-${pinRaw || "summary"}.pdf`
     const buf = typeof Buffer !== "undefined" ? Buffer.from(pdfBytes) : new Uint8Array(pdfBytes)
