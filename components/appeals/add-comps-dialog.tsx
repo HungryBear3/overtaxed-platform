@@ -18,6 +18,7 @@ interface CompItem {
   livingArea: number | null
   yearBuilt: number | null
   buildingClass: string | null
+  distanceFromSubject?: number | null
 }
 
 export function AddCompsDialog({
@@ -81,6 +82,7 @@ export function AddCompsDialog({
           salePrice: c.salePrice,
           saleDate: c.saleDate,
           pricePerSqft: c.pricePerSqft,
+          distanceFromSubject: c.distanceFromSubject ?? null,
           compType: "SALES" as const,
         })),
       }

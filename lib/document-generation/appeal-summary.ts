@@ -245,6 +245,27 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     y -= lineHeightFor(size)
   }
 
+  const tableFontSize = 9
+  const drawTableRow = (cells: string[], columnXs: number[], bold = false) => {
+    if (y < 50) {
+      doc.addPage()
+      y = 750
+    }
+    const page = doc.getPage(doc.getPageCount() - 1)
+    const f = bold ? fontBold : font
+    for (let i = 0; i < cells.length; i++) {
+      const cell = (cells[i] ?? "").slice(0, 18)
+      page.drawText(cell, {
+        x: columnXs[i] ?? margin,
+        y,
+        size: tableFontSize,
+        font: f,
+        color: rgb(0.1, 0.1, 0.1),
+      })
+    }
+    y -= lineHeightFor(tableFontSize)
+  }
+
   // —— Title & generated date ——
   drawText("OverTaxed — Property Tax Appeal Summary", { bold: true, fontSize: 16 })
   y -= 4
@@ -305,6 +326,57 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     drawText(`Subject assessed $/sq ft: ${formatCurrencySqft(subjectSqft)}`)
   drawLine()
 
+  // —— Subject vs comparables table (one place to compare) ——
+  if (data.comps.length > 0) {
+    drawText("Subject vs Comparables", { bold: true, fontSize: 13 })
+    const colXs = [margin, 110, 155, 195, 265, 350, 420]
+    drawTableRow(
+      ["Property", "Sq ft", "Yr", "B/B", "Sale/Val", "$/sqft", "Dist"],
+      colXs,
+      true
+    )
+    const subjectBath =
+      data.property.bathrooms != null ? Number(data.property.bathrooms) : null
+    drawTableRow(
+      [
+        `Subject ${data.property.pin}`,
+        data.property.livingArea != null ? String(data.property.livingArea) : "—",
+        data.property.yearBuilt != null ? String(data.property.yearBuilt) : "—",
+        [data.property.bedrooms ?? "—", subjectBath != null ? subjectBath.toFixed(1) : "—"].join("/"),
+        formatCurrency(data.property.currentAssessmentValue),
+        subjectSqft != null ? formatCurrencySqft(subjectSqft).replace("/sq ft", "") : "—",
+        "—",
+      ],
+      colXs
+    )
+    for (const c of data.comps) {
+      const saleOrVal =
+        c.compType === "SALES"
+          ? formatCurrency(c.salePrice)
+          : formatCurrency(c.assessedMarketValue)
+      const sqftVal =
+        c.compType === "SALES"
+          ? (c.pricePerSqft != null ? formatCurrencySqft(c.pricePerSqft).replace("/sq ft", "") : "—")
+          : (c.assessedMarketValuePerSqft != null ? formatCurrencySqft(c.assessedMarketValuePerSqft).replace("/sq ft", "") : "—")
+      const distStr =
+        c.distanceFromSubject != null ? `${Number(c.distanceFromSubject).toFixed(2)} mi` : "—"
+      const baths = c.bathrooms != null ? Number(c.bathrooms).toFixed(1) : "—"
+      drawTableRow(
+        [
+          c.pin,
+          c.livingArea != null ? String(c.livingArea) : "—",
+          c.yearBuilt != null ? String(c.yearBuilt) : "—",
+          `${c.bedrooms ?? "—"}/${baths}`,
+          saleOrVal,
+          sqftVal,
+          distStr,
+        ],
+        colXs
+      )
+    }
+    drawLine()
+  }
+
   // —— Appeal details ——
   drawText("Appeal Details", { bold: true, fontSize: 13 })
   drawText(`Tax year: ${data.appeal.taxYear}  |  Type: ${data.appeal.appealType}  |  Status: ${data.appeal.status}`)
@@ -359,6 +431,17 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
       }
       if (c.distanceFromSubject != null)
         drawText(`   Distance from subject: ${Number(c.distanceFromSubject).toFixed(2)} mi`)
+      const simParts: string[] = []
+      if (data.property.neighborhood && c.neighborhood && data.property.neighborhood === c.neighborhood)
+        simParts.push("same neighborhood")
+      if (data.property.buildingClass != null && c.buildingClass != null && data.property.buildingClass === c.buildingClass)
+        simParts.push("same class")
+      if (data.property.livingArea != null && c.livingArea != null && data.property.livingArea > 0) {
+        const ratio = c.livingArea / data.property.livingArea
+        if (ratio >= 0.8 && ratio <= 1.2) simParts.push("within 20% living area")
+      }
+      if (c.distanceFromSubject != null) simParts.push(`${Number(c.distanceFromSubject).toFixed(2)} mi from subject`)
+      if (simParts.length > 0) drawText(`   Similarity: ${simParts.join("; ")}.`)
     }
     drawLine()
   }
@@ -387,6 +470,17 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
       }
       if (c.distanceFromSubject != null)
         drawText(`   Distance from subject: ${Number(c.distanceFromSubject).toFixed(2)} mi`)
+      const simPartsEq: string[] = []
+      if (data.property.neighborhood && c.neighborhood && data.property.neighborhood === c.neighborhood)
+        simPartsEq.push("same neighborhood")
+      if (data.property.buildingClass != null && c.buildingClass != null && data.property.buildingClass === c.buildingClass)
+        simPartsEq.push("same class")
+      if (data.property.livingArea != null && c.livingArea != null && data.property.livingArea > 0) {
+        const ratio = c.livingArea / data.property.livingArea
+        if (ratio >= 0.8 && ratio <= 1.2) simPartsEq.push("within 20% living area")
+      }
+      if (c.distanceFromSubject != null) simPartsEq.push(`${Number(c.distanceFromSubject).toFixed(2)} mi from subject`)
+      if (simPartsEq.length > 0) drawText(`   Similarity: ${simPartsEq.join("; ")}.`)
     }
     drawLine()
   }

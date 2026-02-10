@@ -20,6 +20,7 @@ interface Comp {
   pricePerSqft?: number | null
   currentAssessmentValue: number | null
   neighborhood: string | null
+  distanceFromSubject?: number | null
 }
 
 export default function PropertyCompsPage() {
@@ -251,6 +252,7 @@ export default function PropertyCompsPage() {
                         saleDate: c.saleDate ?? undefined,
                         salePrice: c.salePrice ?? undefined,
                         pricePerSqft: c.pricePerSqft ?? undefined,
+                        distanceFromSubject: c.distanceFromSubject ?? undefined,
                       }))
                       sessionStorage.setItem(
                         "overtaxed_appeal_comps",

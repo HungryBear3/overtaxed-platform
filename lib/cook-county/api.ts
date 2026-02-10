@@ -450,9 +450,15 @@ export async function searchPropertiesByAddress(
 }
 
 /**
- * Fetch address (and city, zip) by PIN from Parcel Universe. Used to enrich comps list.
+ * Fetch address (and city, zip, lat/lon) by PIN from Parcel Universe. Used to enrich comps list and compute distance.
  */
-async function getAddressByPIN(pin: PIN): Promise<{ address: string; city: string; zipCode: string } | null> {
+export async function getAddressByPIN(pin: PIN): Promise<{
+  address: string
+  city: string
+  zipCode: string
+  latitude: number | null
+  longitude: number | null
+} | null> {
   const parcel = await getParcelUniverseByPIN(pin)
   if (!parcel) return null
   const p = parcel as unknown as Record<string, unknown>
@@ -460,8 +466,34 @@ async function getAddressByPIN(pin: PIN): Promise<{ address: string; city: strin
     (p.prop_address_full ?? p.property_address ?? p.addr ?? "") as string
   const city = (p.prop_address_city_name ?? p.property_city ?? p.cook_municipality_name ?? "") as string
   const zipCode = (p.prop_address_zipcode_1 ?? p.property_zip ?? p.zip_code ?? "") as string
+  const lat = p.lat != null ? parseFloat(String(p.lat)) : (p.latitude != null ? parseFloat(String(p.latitude)) : null)
+  const lon = p.lon != null ? parseFloat(String(p.lon)) : (p.longitude != null ? parseFloat(String(p.longitude)) : null)
+  const latitude = lat != null && !Number.isNaN(lat) ? lat : null
+  const longitude = lon != null && !Number.isNaN(lon) ? lon : null
   if (!address && !city) return null
-  return { address: address || `PIN ${formatPIN(String(p.pin ?? pin))}`, city, zipCode }
+  return { address: address || `PIN ${formatPIN(String(p.pin ?? pin))}`, city, zipCode, latitude, longitude }
+}
+
+/**
+ * Haversine distance in miles between two (lat, lon) points.
+ */
+export function haversineMiles(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const R = 3959 // Earth radius in miles
+  const dLat = ((lat2 - lat1) * Math.PI) / 180
+  const dLon = ((lon2 - lon1) * Math.PI) / 180
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return R * c
 }
 
 /**

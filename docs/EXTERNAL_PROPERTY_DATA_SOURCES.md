@@ -21,7 +21,33 @@ No photos or listing data from Cook County.
 3. **Distance** — We can compute distance from subject when we have lat/lon (e.g. from Parcel Universe). Showing “distance from subject” in the comp list and PDF helps assessors see proximity.
 4. **Rule 15** — Our PDF and UI guidance stress same neighborhood, same class, similar size, no cherry-picking, and PINs for verification.
 
-If living area still doesn’t show for the **subject** property, that usually means the PIN has no row in Single- or Multi-Family Improvement Characteristics (e.g. some condos or special classes). Refreshing or re-adding the property won’t add it unless Cook County adds that PIN to those datasets.
+If living area still doesn’t show for the **subject** property, that usually means the PIN has no row in Single- or Multi-Family Improvement Characteristics (e.g. some condos or special classes). Refreshing or re-adding the property won’t add it unless Cook County adds that PIN to those datasets. We can backfill from **Realie** (see below) when those fields are missing.
+
+---
+
+## Realie Property Data API (enrichment fallback)
+
+We use [Realie](https://www.realie.ai) as an optional enrichment source when Cook County Improvement Characteristics are missing for a PIN.
+
+- **When we call:** (a) **Subject property** — when `livingArea`, `yearBuilt`, `bedrooms`, or `bathrooms` are null (e.g. GET property by id); (b) **Comps** — when loading comparable sales, any comp with missing chars may be enriched before display (capped per request to preserve quota).
+- **Endpoint:** Parcel ID Lookup (`GET /api/public/property/parcelId`) with `state=IL`, `county=Cook`, `parcelId=<PIN digits>`.
+- **Fields we use:** `buildingArea` → living area, `yearBuilt`, `totalBedrooms`, `totalBathrooms`.
+- **Free tier:** 25 API requests per calendar month. We cache responses by PIN in memory and enforce the monthly limit; once the limit is reached, we skip Realie until the next month.
+- **Config:** Set `REALIE_API_KEY` in the environment to enable. Without it, no Realie calls are made.
+- **Upgrade path:** Paid tiers ($50–$350/month for higher request volumes) can be used when we have paying customers and need broader enrichment.
+
+See [Realie API docs](https://docs.realie.ai/) and [Pricing](https://docs.realie.ai/api-reference/pricing).
+
+---
+
+## Google Maps (map + building images)
+
+We use **Google Maps Platform** for the appeal comps map and building photos (Street View).
+
+- **When we use it:** On the appeal detail page we show (1) a **static map** with subject (red “S”) and comp markers (blue “1”, “2”, …), and (2) **Street View** thumbnails for the subject and each comp when coordinates are available.
+- **APIs:** Static Maps API (one image with markers), Street View Static API (per-location image). Both are called from the server (API key not exposed to the client).
+- **Config:** Set `GOOGLE_MAPS_API_KEY` in the environment to enable. Without it, the map and Street View sections are not shown (or return 503). Enable “Maps Static API” and “Street View Static API” in Google Cloud Console; billing may be required (pay-as-you-go with free tier).
+- **Attribution:** We show “Map data © Google” in the UI per Google’s terms.
 
 ---
 
@@ -79,6 +105,7 @@ Same principles:
 | Source        | Use in app today | Pull data/photos? | How to use properly                    |
 |---------------|------------------|-------------------|----------------------------------------|
 | Cook County   | Yes (property + comps) | Yes (we do)        | Open Data APIs; we enrich comps with living area by PIN. |
+| Realie        | Yes (fallback)   | Yes (enrichment only) | Parcel ID lookup when Cook County chars missing; 25 req/month free; cache by PIN. |
 | MLS           | No               | No (without license) | License/partnership with MLS or aggregator. |
 | Zillow        | No               | No                | Official API/partnership only; otherwise links only. |
 | Redfin        | No               | No                | Official API/partnership only; otherwise links only. |

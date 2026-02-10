@@ -5,6 +5,8 @@ export {
   getPropertyByPIN,
   searchPropertiesByAddress,
   getComparableSales,
+  getAddressByPIN,
+  haversineMiles,
   normalizePIN,
   formatPIN,
   isValidPIN,

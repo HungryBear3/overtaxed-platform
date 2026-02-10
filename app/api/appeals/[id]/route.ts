@@ -89,8 +89,7 @@ export async function GET(
           orderBy: { createdAt: 'desc' },
         },
         compsUsed: {
-          orderBy: { createdAt: 'desc' },
-          take: 10,
+          orderBy: { createdAt: 'asc' },
         },
         relatedAppeals: {
           select: {
@@ -179,11 +178,18 @@ export async function GET(
           pin: formatPIN(comp.pin),
           address: comp.address,
           compType: comp.compType,
+          neighborhood: comp.neighborhood,
+          buildingClass: comp.buildingClass,
           livingArea: comp.livingArea,
           yearBuilt: comp.yearBuilt,
+          bedrooms: comp.bedrooms,
+          bathrooms: comp.bathrooms != null ? Number(comp.bathrooms) : null,
           salePrice: comp.salePrice ? Number(comp.salePrice) : null,
-          saleDate: comp.saleDate,
+          saleDate: comp.saleDate?.toISOString() ?? null,
+          pricePerSqft: comp.pricePerSqft ? Number(comp.pricePerSqft) : null,
           assessedMarketValue: comp.assessedMarketValue ? Number(comp.assessedMarketValue) : null,
+          assessedMarketValuePerSqft: comp.assessedMarketValuePerSqft ? Number(comp.assessedMarketValuePerSqft) : null,
+          distanceFromSubject: comp.distanceFromSubject != null ? Number(comp.distanceFromSubject) : null,
         })),
         relatedAppeals: appeal.relatedAppeals.map((ra) => ({
           id: ra.id,

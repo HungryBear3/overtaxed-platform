@@ -28,6 +28,8 @@ This document captures bugs, deployment issues, and solutions encountered during
 21. [Pricing upgrade UX: additional slots and caps](#21-pricing-upgrade-ux-additional-slots-and-caps)
 22. [Starter slots display, add-slots Checkout redirect, charge-only-additional (Growth/Portfolio)](#22-starter-slots-display-add-slots-checkout-redirect-charge-only-additional-growthportfolio)
 23. [Assessment history: $0 / -100% → Not available yet](#23-assessment-history-0--100--not-available-yet)
+24. [Pricing dropdown: Add 1 more showing total not additional](#24-pricing-dropdown-add-1-more-showing-total-not-additional)
+25. [Comparison report value-add: Realie, map, similarity line](#25-comparison-report-value-add-realie-map-similarity-line)
 
 ---
 
@@ -641,6 +643,37 @@ const user = { ...session.user, ...freshUser }
 
 ---
 
+## 24. Pricing dropdown: Add 1 more showing total not additional
+
+**Context:** On the Pricing page, the Portfolio card dropdown showed "Add 1 more (10 total) — $990/yr" instead of $99/yr in two scenarios: (1) **Growth → Portfolio** (user on Growth with 9 properties, adding 1 to reach 10); (2) **Portfolio add-more** (user already on Portfolio with 10 properties, adding 1 more). Checkout correctly charged $99; only the dropdown label was wrong.
+
+**Causes:**
+- **Growth → Portfolio:** The option label used `totalPrice` = `getAnnualPrice(PORTFOLIO, count)` (10 × $99 = $990) instead of the **additional** price for the selected quantity (n × $99).
+- **Portfolio add-more:** `subscriptionQuantity` from Stripe can be 1 (one Portfolio “slot”) while the user actually has 10 properties. The UI used it as total, so preselection and "X total" were wrong (e.g. "Add 10 more (10 total)" or "Add 1 more (2 total)"); checkout sent wrong `propertyCount` when using `currentSlots + selectedQuantity`.
+
+**Solution:**
+- **Growth → Portfolio:** For `plan.id === "PORTFOLIO" && currentTier === "GROWTH"`, show **additional** price only: `n * PORTFOLIO_PRICE_PER_PROPERTY` in the option label (e.g. "Add 1 more (10 total) — $99/yr").
+- **Portfolio add-more:** (1) Preselect 1 when `currentTier === "PORTFOLIO"` and `effectiveRange === "10-20"` and `currentCount` is 10–19, so the dropdown defaults to "Add 1 more" at $99. (2) Use **totalProperties** (from `/api/billing/plan-info`) for "X total" in option labels and summary, and for checkout `propertyCount`, so display and API stay correct regardless of `subscriptionQuantity`.
+
+**Where:** `app/pricing/page.tsx` — option label for PORTFOLIO + GROWTH; preselection in `useEffect`; `portfolioTotal = totalProperties + n` for Portfolio options; summary and `subscribe()` use `totalProperties + selectedQuantity` for Portfolio add-more.
+
+**Lesson:** Pricing dropdowns for add-more flows must show **per-additional** cost (n × per-property price), not total tier price. When Stripe quantity doesn’t match “total properties” (e.g. Portfolio slot count), use API `propertyCount` for display and checkout.
+
+---
+
+## 25. Comparison report value-add: Realie, map, similarity line
+
+**Context:** To make the comparison report more valuable for assessors (and align with competitors like SquareDeal.tax), we added: (1) **Similarity line** in the PDF per comp when we have subject vs comp data (same neighborhood, same class, within 20% living area, distance); (2) **Realie free tier** to backfill living area / year built / beds / baths when Cook County Improvement Chars are missing (e.g. some condos); (3) **Map and building images** on the appeal detail page (Google Static Maps + Street View).
+
+**Implementation:**
+- **PDF** (`lib/document-generation/appeal-summary.ts`): After each comp's details, add a "Similarity:" line built from subject vs comp (neighborhood match, building class match, living area within ±20%, distance from subject). Applied to both sales and equity comp sections.
+- **Realie** (`lib/realie/`): Client calls Parcel ID Lookup (state=IL, county=Cook). In-memory cache by PIN; 25 requests per calendar month (free tier). Used in GET property by id (subject enrichment when chars null) and in GET comps (enrich up to 8 comps per request with missing chars). Set `REALIE_API_KEY` to enable; see `docs/EXTERNAL_PROPERTY_DATA_SOURCES.md`.
+- **Map & Street View:** `GET /api/appeals/[id]/map-data` returns subject + comp lat/lng (via Cook County `getAddressByPIN`); comps array is same length as `compsUsed` (null entry when coords missing). `GET /api/appeals/[id]/map-image` proxies Google Static Maps (subject red "S", comps blue "1","2",…). `GET /api/map/streetview?lat=&lng=&size=` proxies Google Street View Static. Appeal detail page shows map section and Street View thumbnails for subject and each comp when coords exist. Set `GOOGLE_MAPS_API_KEY` and enable Maps Static API + Street View Static API in Google Cloud Console.
+
+**Lesson:** Optional env vars (`REALIE_API_KEY`, `GOOGLE_MAPS_API_KEY`) keep the app working without them; map/Street View and Realie enrichment are additive. Map-data comps array must match appeal comp order (one entry per comp, null when coords unavailable) so UI can index by comp index for thumbnails.
+
+---
+
 ## Stripe Webhook Debugging
 
 ### Issue: Subscription doesn't update after checkout
@@ -751,4 +784,6 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 ---
 
-**Last Updated:** February 2026
+**Last Updated:** January 2026
+
+**Jan 2026:** §25 — Comparison report value-add (Realie, map, Street View, PDF similarity line).

@@ -4,6 +4,7 @@ import { getSession } from '@/lib/auth/session'
 import { prisma } from '@/lib/db'
 import { formatPIN } from '@/lib/cook-county'
 import { isAppealSubmitted } from '@/lib/appeals/status'
+import { getEnrichmentByPin } from '@/lib/realie'
 
 // GET /api/properties/[id] - Get a single property with full details
 export async function GET(
@@ -65,7 +66,25 @@ export async function GET(
     const currentMarketValue = property.currentMarketValue
       ? Number(property.currentMarketValue)
       : (latestFromHistory?.marketValue ? Number(latestFromHistory.marketValue) : null)
-    
+
+    // Optional: enrich subject from Realie when Cook County chars are missing (free tier 25 req/month)
+    let livingArea = property.livingArea
+    let yearBuilt = property.yearBuilt
+    let bedrooms = property.bedrooms
+    let bathrooms = property.bathrooms ? Number(property.bathrooms) : null
+    if (
+      (livingArea == null || yearBuilt == null || bedrooms == null || bathrooms == null) &&
+      process.env.REALIE_API_KEY
+    ) {
+      const realie = await getEnrichmentByPin(property.pin.replace(/\D/g, '') || property.pin)
+      if (realie) {
+        livingArea = livingArea ?? realie.livingArea
+        yearBuilt = yearBuilt ?? realie.yearBuilt
+        bedrooms = bedrooms ?? realie.bedrooms
+        bathrooms = bathrooms ?? realie.bathrooms
+      }
+    }
+
     return NextResponse.json({
       success: true,
       property: {
@@ -81,11 +100,11 @@ export async function GET(
         block: property.block,
         buildingClass: property.buildingClass,
         cdu: property.cdu,
-        livingArea: property.livingArea,
+        livingArea,
         landSize: property.landSize,
-        yearBuilt: property.yearBuilt,
-        bedrooms: property.bedrooms,
-        bathrooms: property.bathrooms ? Number(property.bathrooms) : null,
+        yearBuilt,
+        bedrooms,
+        bathrooms,
         exteriorWall: property.exteriorWall,
         roofType: property.roofType,
         heatingType: property.heatingType,

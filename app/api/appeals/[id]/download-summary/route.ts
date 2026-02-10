@@ -114,7 +114,7 @@ export async function GET(
         assessedMarketValuePerSqft: c.assessedMarketValuePerSqft
           ? Number(c.assessedMarketValuePerSqft)
           : null,
-        distanceFromSubject: c.distanceFromSubject ? Number(c.distanceFromSubject) : null,
+        distanceFromSubject: c.distanceFromSubject != null ? Number(c.distanceFromSubject) : null,
       })),
     }
 

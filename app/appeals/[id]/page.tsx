@@ -68,10 +68,18 @@ interface Appeal {
     pin: string
     address: string
     compType: string
+    neighborhood: string | null
+    buildingClass: string | null
     livingArea: number | null
     yearBuilt: number | null
+    bedrooms: number | null
+    bathrooms: number | null
     salePrice: number | null
     saleDate: string | null
+    pricePerSqft: number | null
+    assessedMarketValue: number | null
+    assessedMarketValuePerSqft: number | null
+    distanceFromSubject: number | null
   }>
   relatedAppeals: Array<{
     id: string
@@ -127,10 +135,32 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
   const [editingRequested, setEditingRequested] = useState(false)
   const [requestedInput, setRequestedInput] = useState("")
   const [savingRequested, setSavingRequested] = useState(false)
+  const [mapData, setMapData] = useState<{
+    subject: { lat: number; lng: number; address: string } | null
+    comps: Array<{ pin: string; address: string; lat: number; lng: number } | null>
+  } | null>(null)
 
   useEffect(() => {
     fetchAppeal()
   }, [id])
+
+  useEffect(() => {
+    if (!appeal?.id) {
+      setMapData(null)
+      return
+    }
+    let cancelled = false
+    fetch(`/api/appeals/${id}/map-data`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled || !data.success) return
+        setMapData({ subject: data.subject ?? null, comps: data.comps ?? [] })
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [id, appeal?.id])
 
   async function fetchAppeal() {
     try {
@@ -593,6 +623,35 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
               </div>
             </div>
 
+            {/* Map & building photos (requires GOOGLE_MAPS_API_KEY) */}
+            {(appeal.compsUsed.length > 0 || mapData?.subject) && (
+              <div className="bg-white rounded-lg shadow p-6">
+                <h2 className="text-lg font-semibold text-gray-900 mb-3">Map & building photos</h2>
+                <p className="text-sm text-gray-500 mb-3">
+                  Subject (red S) and comparable locations. Building images from Google Street View. Map data © Google.
+                </p>
+                <div className="space-y-4">
+                  <div className="rounded-lg overflow-hidden border border-gray-200">
+                    <img
+                      src={`/api/appeals/${appeal.id}/map-image`}
+                      alt="Subject and comps map"
+                      className="w-full h-auto min-h-[200px] bg-gray-100"
+                    />
+                  </div>
+                  {mapData?.subject && (
+                    <div>
+                      <p className="text-sm font-medium text-gray-700 mb-1">Subject property</p>
+                      <img
+                        src={`/api/map/streetview?lat=${mapData.subject.lat}&lng=${mapData.subject.lng}&size=300x200`}
+                        alt="Subject building"
+                        className="rounded-lg border border-gray-200 w-full max-w-sm h-auto"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Comparable Properties */}
             <div className="bg-white rounded-lg shadow p-6">
               <div className="flex items-center justify-between mb-3">
@@ -627,27 +686,36 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {appeal.compsUsed.map((comp) => (
+                  {appeal.compsUsed.map((comp, compIndex) => {
+                    const compCoords = mapData?.comps?.[compIndex]
+                    return (
                     <div key={comp.id} className="border border-gray-200 rounded-lg p-3">
-                      <div className="flex items-start justify-between">
-                        <div>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
                           <p className="font-medium text-gray-900">{comp.address}</p>
                           <p className="text-sm text-gray-500">PIN: {comp.pin}</p>
                         </div>
+                        {compCoords && (
+                          <img
+                            src={`/api/map/streetview?lat=${compCoords.lat}&lng=${compCoords.lng}&size=120x90`}
+                            alt=""
+                            className="rounded border border-gray-200 shrink-0 w-[120px] h-[90px] object-cover"
+                          />
+                        )}
                         <span className={`px-2 py-1 rounded text-xs font-medium ${
                           comp.compType === "SALES" ? "bg-blue-100 text-blue-700" : "bg-purple-100 text-purple-700"
                         }`}>
                           {comp.compType === "SALES" ? "Sales Comp" : "Equity Comp"}
                         </span>
                       </div>
-                      <div className="mt-2 grid grid-cols-4 gap-2 text-sm">
+                      <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
                         <div>
                           <p className="text-gray-500">Living Area</p>
                           <p className="text-gray-900">{comp.livingArea ? `${formatNumber(comp.livingArea)} sqft` : "—"}</p>
                         </div>
                         <div>
                           <p className="text-gray-500">Year Built</p>
-                          <p className="text-gray-900">{comp.yearBuilt || "—"}</p>
+                          <p className="text-gray-900">{comp.yearBuilt ?? "—"}</p>
                         </div>
                         <div>
                           <p className="text-gray-500">Sale Price</p>
@@ -657,9 +725,29 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                           <p className="text-gray-500">Sale Date</p>
                           <p className="text-gray-900">{comp.saleDate ? formatDate(comp.saleDate) : "—"}</p>
                         </div>
+                        <div>
+                          <p className="text-gray-500">$/sq ft</p>
+                          <p className="text-gray-900">{comp.pricePerSqft != null ? `$${Math.round(comp.pricePerSqft).toLocaleString()}/sq ft` : "—"}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500">Neighborhood</p>
+                          <p className="text-gray-900">{comp.neighborhood ?? "—"}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500">Class</p>
+                          <p className="text-gray-900">{comp.buildingClass ?? "—"}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500">Beds / Baths</p>
+                          <p className="text-gray-900">{comp.bedrooms != null || comp.bathrooms != null ? `${comp.bedrooms ?? "—"} / ${comp.bathrooms != null ? comp.bathrooms.toFixed(1) : "—"}` : "—"}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500">Distance</p>
+                          <p className="text-gray-900">{comp.distanceFromSubject != null ? `${comp.distanceFromSubject.toFixed(2)} mi` : "—"}</p>
+                        </div>
                       </div>
                     </div>
-                  ))}
+                  ); })}
                 </div>
               )}
             </div>

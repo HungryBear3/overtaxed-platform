@@ -2,9 +2,34 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
-import { getComparableSales } from "@/lib/cook-county"
-import { formatPIN } from "@/lib/cook-county"
+import { getComparableSales, getAddressByPIN, formatPIN, haversineMiles } from "@/lib/cook-county"
 import { propertyDataFromDb } from "@/lib/comps/property-data"
+import { getEnrichmentByPin } from "@/lib/realie"
+
+const ADDRESS_ENRICH_CONCURRENCY = 5
+/** Max comps to enrich via Realie per request to stay within free tier (25/month). */
+const MAX_REALIE_ENRICH_PER_REQUEST = 8
+
+type EnrichedAddress = {
+  address: string
+  city: string
+  zipCode: string
+  latitude: number | null
+  longitude: number | null
+}
+
+async function enrichAddressesForPins(pins: string[]): Promise<Map<string, EnrichedAddress>> {
+  const map = new Map<string, EnrichedAddress>()
+  for (let i = 0; i < pins.length; i += ADDRESS_ENRICH_CONCURRENCY) {
+    const batch = pins.slice(i, i + ADDRESS_ENRICH_CONCURRENCY)
+    const results = await Promise.all(batch.map((pin) => getAddressByPIN(pin)))
+    batch.forEach((pin, j) => {
+      const addr = results[j]
+      if (addr) map.set(pin, addr)
+    })
+  }
+  return map
+}
 
 export async function GET(
   request: NextRequest,
@@ -46,23 +71,70 @@ export async function GET(
       )
     }
 
-    const comps = result.data.map((s) => ({
-      pin: formatPIN(s.pin),
-      pinRaw: s.pin,
-      address: s.address || `PIN ${formatPIN(s.pin)}`,
-      city: s.city,
-      zipCode: s.zipCode,
-      neighborhood: s.neighborhood,
-      saleDate: s.saleDate,
-      salePrice: s.salePrice,
-      pricePerSqft: s.pricePerSqft,
-      buildingClass: s.buildingClass,
-      livingArea: s.livingArea,
-      yearBuilt: s.yearBuilt,
-      bedrooms: s.bedrooms,
-      bathrooms: s.bathrooms,
-      dataSource: s.dataSource,
-    }))
+    const uniquePins = [...new Set(result.data.map((s) => s.pin))]
+    const subjectEnriched = await getAddressByPIN(property.pin.replace(/\D/g, ""))
+    const addressByPin = await enrichAddressesForPins(uniquePins)
+
+    const subjectLat = subjectEnriched?.latitude ?? null
+    const subjectLon = subjectEnriched?.longitude ?? null
+
+    let comps = result.data.map((s) => {
+      const enriched = addressByPin.get(s.pin)
+      const compLat = enriched?.latitude ?? null
+      const compLon = enriched?.longitude ?? null
+      const distanceFromSubject =
+        subjectLat != null && subjectLon != null && compLat != null && compLon != null
+          ? haversineMiles(subjectLat, subjectLon, compLat, compLon)
+          : null
+      return {
+        pin: formatPIN(s.pin),
+        pinRaw: s.pin,
+        address: enriched?.address ?? s.address || `PIN ${formatPIN(s.pin)}`,
+        city: enriched?.city ?? s.city ?? "",
+        zipCode: enriched?.zipCode ?? s.zipCode ?? "",
+        neighborhood: s.neighborhood,
+        saleDate: s.saleDate,
+        salePrice: s.salePrice,
+        pricePerSqft: s.pricePerSqft,
+        buildingClass: s.buildingClass,
+        livingArea: s.livingArea,
+        yearBuilt: s.yearBuilt,
+        bedrooms: s.bedrooms,
+        bathrooms: s.bathrooms,
+        dataSource: s.dataSource,
+        distanceFromSubject,
+      }
+    })
+
+    // Optional: enrich comps missing chars via Realie (free tier 25 req/month; cache by PIN)
+    const needsRealie = comps.filter(
+      (c) =>
+        c.livingArea == null || c.yearBuilt == null || c.bedrooms == null || c.bathrooms == null
+    )
+    const toEnrich = needsRealie.slice(0, MAX_REALIE_ENRICH_PER_REQUEST)
+    const realieByPin = new Map<string, Awaited<ReturnType<typeof getEnrichmentByPin>>>()
+    await Promise.all(
+      toEnrich.map(async (c) => {
+        const r = await getEnrichmentByPin(c.pinRaw)
+        if (r) realieByPin.set(c.pinRaw, r)
+      })
+    )
+    comps = comps.map((c) => {
+      const r = realieByPin.get(c.pinRaw)
+      if (!r) return c
+      return {
+        ...c,
+        livingArea: c.livingArea ?? r.livingArea,
+        yearBuilt: c.yearBuilt ?? r.yearBuilt,
+        bedrooms: c.bedrooms ?? r.bedrooms,
+        bathrooms: c.bathrooms ?? r.bathrooms,
+        pricePerSqft:
+          c.pricePerSqft ??
+          (r.livingArea != null && r.livingArea > 0 && c.salePrice > 0
+            ? c.salePrice / r.livingArea
+            : null),
+      }
+    })
 
     return NextResponse.json({
       success: true,

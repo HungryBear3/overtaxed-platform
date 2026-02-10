@@ -19,6 +19,7 @@ const compSchema = z.object({
   salePrice: z.number().optional().nullable(),
   saleDate: z.string().datetime().optional().nullable(),
   pricePerSqft: z.number().optional().nullable(),
+  distanceFromSubject: z.number().optional().nullable(),
   compType: z.enum(["SALES", "EQUITY"]).default("SALES"),
 })
 
@@ -88,6 +89,7 @@ export async function POST(
           salePrice: c.salePrice ?? null,
           saleDate: c.saleDate ? new Date(c.saleDate) : null,
           pricePerSqft: c.pricePerSqft ?? null,
+          distanceFromSubject: c.distanceFromSubject ?? null,
           dataSource: "Cook County Open Data",
           appeals: { connect: { id: appealId } },
         },
