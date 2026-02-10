@@ -401,6 +401,23 @@ enum CompType {
 }
 
 // ============================================
+// Realie enrichment cache (1 API call per PIN)
+// ============================================
+
+model RealieEnrichmentCache {
+  id         String   @id @default(cuid())
+  /** Normalized PIN (digits only); unique so we only call Realie once per PIN */
+  pin        String   @unique
+  livingArea Int?
+  yearBuilt  Int?
+  bedrooms   Int?
+  bathrooms  Decimal?
+  fetchedAt  DateTime @default(now())
+
+  @@index([pin])
+}
+
+// ============================================
 // Appeal Documents
 // ============================================
 
