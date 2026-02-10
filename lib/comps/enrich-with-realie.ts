@@ -21,7 +21,7 @@ export type CountyCompBase = {
   bedrooms: number | null
   bathrooms: number | null
   salePrice: number | null
-  saleDate?: string | null
+  saleDate?: string | Date | null
   pricePerSqft: number | null
   assessedMarketValue?: number | null
   assessedMarketValuePerSqft?: number | null
