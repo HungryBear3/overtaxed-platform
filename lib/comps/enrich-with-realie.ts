@@ -86,7 +86,7 @@ export async function enrichCompsWithRealie<T extends CountyCompBase>(
     const bedroomsRealie = realie?.bedrooms ?? null
     const bathroomsRealie = realie?.bathrooms ?? null
 
-    return {
+    const item: EnrichedComp<T> = {
       ...c,
       inBothSources,
       ...(inBothSources
@@ -108,7 +108,8 @@ export async function enrichCompsWithRealie<T extends CountyCompBase>(
               : null,
           }
         : {}),
-    } as EnrichedComp<T>)
+    }
+    return item
   })
 
   // Higher priority: comps that have Realie data (in both sources) first
