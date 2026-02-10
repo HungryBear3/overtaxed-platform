@@ -105,7 +105,27 @@ export async function GET(
     })
 
     const countyPinSet = new Set(countyComps.map((c) => c.pinRaw ?? (c.pin.replace(/\D/g, "") || c.pin)))
-    let comps = [...countyComps]
+    type CompResponse = {
+      pin: string
+      pinRaw?: string
+      address: string
+      city: string
+      zipCode: string
+      neighborhood?: string | null
+      saleDate?: Date | string | null
+      salePrice?: number | null
+      pricePerSqft?: number | null
+      buildingClass?: string | null
+      livingArea?: number | null
+      yearBuilt?: number | null
+      bedrooms?: number | null
+      bathrooms?: number | null
+      dataSource?: string
+      distanceFromSubject?: number | null
+      state?: string
+      currentAssessmentValue?: number | null
+    }
+    let comps: CompResponse[] = [...countyComps]
     let realieCompsCount = 0
 
     const includeRealieComps = searchParams.get("includeRealieComps") === "1"
@@ -115,7 +135,7 @@ export async function GET(
       const lng = subject?.longitude ?? null
       if (lat != null && lng != null) {
         const realieList = await getComparablesByLocation(lat, lng, { maxResults: 15, radiusMiles: 1, timeFrameMonths: 18 })
-        const realieMapped = realieList
+        const realieMapped: CompResponse[] = realieList
           .filter((r) => !countyPinSet.has(r.pin))
           .map((r) => ({
             pin: r.pinFormatted,
