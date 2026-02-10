@@ -32,6 +32,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 25. [Comparison report value-add: Realie, map, similarity line](#25-comparison-report-value-add-realie-map-similarity-line)
 26. [PDF summary: enriched comps, table layout, map & photos in PDF](#26-pdf-summary-enriched-comps-table-layout-map--photos-in-pdf)
 27. [Local network permission prompt (overtaxed-il)](#27-local-network-permission-prompt-overtaxed-il)
+28. [Realie API: comps list vs subject/appeal; Premium Comparables](#28-realie-api-comps-list-vs-subjectappeal-premium-comparables)
 
 ---
 
@@ -287,7 +288,9 @@ declare module "next-auth/jwt" {
 | Env / Stripe secrets | `docs/OVERTAXED_SECRETS_AND_PRICES.md` |
 | Admin set-subscription (testing tiers) | `POST /api/admin/set-subscription` — see [Admin Set-Subscription](#admin-set-subscription-testing) |
 | Testing subscriptions & limits | `docs/TESTING_SUBSCRIPTION_AND_LIMITS.md` — reduce test account tier, test property limits |
-| Filing on behalf of users | `docs/FILING_ON_BEHALF.md` — options (staff-assisted vs API); why DIY-only today |
+| Filing on behalf of users | `docs/FILING_ON_BEHALF.md` — options (staff-assisted vs API); why DIY-only today (Cook County API not released) |
+| Appeal flow & comps guidance | `docs/APPEAL_FLOW_AND_COMPS.md` — when to select comps; direct to comps first; optional Realie on comps page |
+| Realie: when we call; comps list | `docs/EXTERNAL_PROPERTY_DATA_SOURCES.md` — comps list = Cook County only by default; optional Premium Comparables (1–2 calls). See [§28 Realie API](#28-realie-api-comps-list-vs-subjectappeal-premium-comparables). |
 | GitHub sync (monorepo → overtaxed-platform) | **Use robocopy** — [Sync to overtaxed-platform Repo](#sync-to-overtaxed-platform-repo-robocopy). Alternative: `SYNC_OVERTAXED.md` (subtree, slower) |
 
 ---
@@ -669,7 +672,7 @@ const user = { ...session.user, ...freshUser }
 
 **Implementation:**
 - **PDF** (`lib/document-generation/appeal-summary.ts`): After each comp's details, add a "Similarity:" line built from subject vs comp (neighborhood match, building class match, living area within ±20%, distance from subject). Applied to both sales and equity comp sections.
-- **Realie** (`lib/realie/`): Client calls Parcel ID Lookup (state=IL, county=Cook). In-memory cache by PIN; 25 requests per calendar month (free tier). Used in GET property by id (subject enrichment when chars null) and in GET comps (enrich up to 8 comps per request with missing chars). Set `REALIE_API_KEY` to enable; see `docs/EXTERNAL_PROPERTY_DATA_SOURCES.md`.
+- **Realie** (`lib/realie/`): Parcel ID Lookup (state=IL, county=Cook); 25 requests/month (free tier). Used for subject (GET property, appeal, PDF) and for comps **on an appeal** (appeal GET + download-summary). Comps list (property comps page) is Cook County only by default; optional "Include Realie recently sold" uses Premium Comparables Search (see [§28](#28-realie-api-comps-list-vs-subjectappeal-premium-comparables)). Set `REALIE_API_KEY`; see `docs/EXTERNAL_PROPERTY_DATA_SOURCES.md`.
 - **Map & Street View:** `GET /api/appeals/[id]/map-data` returns subject + comp lat/lng (via Cook County `getAddressByPIN`); comps array is same length as `compsUsed` (null entry when coords missing). `GET /api/appeals/[id]/map-image` proxies Google Static Maps (subject red "S", comps blue "1","2",…). `GET /api/map/streetview?lat=&lng=&size=` proxies Google Street View Static. Appeal detail page shows map section and Street View thumbnails for subject and each comp when coords exist. Set `GOOGLE_MAPS_API_KEY` and enable Maps Static API + Street View Static API in Google Cloud Console.
 
 **Lesson:** Optional env vars (`REALIE_API_KEY`, `GOOGLE_MAPS_API_KEY`) keep the app working without them; map/Street View and Realie enrichment are additive. Map-data comps array must match appeal comp order (one entry per comp, null when coords unavailable) so UI can index by comp index for thumbnails.
@@ -700,6 +703,20 @@ const user = { ...session.user, ...freshUser }
 **Solution:** Remove all `fetch('http://127.0.0.1:7242/...')` calls and the `DEBUG_LOG` helper that used them. They were leftover from a one-off experiment and are not needed in production. If you need local logging in development, use a build-time or env guard so it never runs in production or in client code that triggers the permission.
 
 **Lesson:** Do not ship client-side or server-side code that fetches to localhost (e.g. 127.0.0.1) in production; it can trigger "local network" permission prompts and confuse users.
+
+---
+
+## 28. Realie API: comps list vs subject/appeal; Premium Comparables
+
+**Context:** Realie free tier is 25 requests/month. We need rich data for the subject and for comps used in the appeal/PDF, but we must limit calls. The Parcel ID Lookup (subject property) response does **not** include a "Recently Sold Comparables" list; that list in Realie's own tool comes from a **separate** endpoint (Premium Comparables Search, which takes lat/lng and returns many comps in one call).
+
+**Decisions:**
+- **Comps list (property comps page):** Cook County Open Data only by default — **0 Realie calls** when loading the page. Optional "Also include Realie recently sold comparables" uses 1–2 calls (subject location from `getFullPropertyByPin`, then **Premium Comparables Search** with that lat/lng). See `GET /api/properties/[id]/comps?includeRealieComps=1`.
+- **Subject:** Realie used when viewing a property, an appeal, or generating the PDF (1 call per subject, cached in DB).
+- **Comps on an appeal:** Realie enrichment only for comps **already attached to that appeal** (appeal GET + download-summary), capped at comp count (max 15). Not for the full comp picker list.
+- **Premium Comparables:** `lib/realie/client.ts` — `getComparablesByLocation(lat, lng, options?)` calls Realie's `/api/public/premium/comparables`; one API call returns up to 15–50 recently sold comps with address, sq ft, beds/baths, sale price, $/sq ft.
+
+**Lesson:** To stay within quota, use Realie only for subject + appeal comps (and optional Premium Comparables when the user opts in). Parcel ID Lookup does not include comparables; use Premium Comparables Search for "Recently Sold Comparables." See `docs/EXTERNAL_PROPERTY_DATA_SOURCES.md`.
 
 ---
 
@@ -813,6 +830,8 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 ---
 
-**Last Updated:** January 2026
+**Last Updated:** February 2026
+
+**Feb 2026:** §27 — Local network permission fix (removed 127.0.0.1 ingest). §28 — Realie API: comps list = Cook County only by default; optional Premium Comparables (1–2 calls); Parcel ID Lookup does not include comparables. Filing copy updated (Cook County API not released). Appeal flow: direct to comps first (property + new appeal tips); comps page data source + "how to choose comps"; docs/APPEAL_FLOW_AND_COMPS.md. Quick Reference: appeal flow doc, Realie/comps.
 
 **Jan 2026:** §26 — PDF summary: enriched comps in download-summary, Subject vs Comparables table layout (PIN overlap fix), map & Street View embedded in PDF when GOOGLE_MAPS_API_KEY set. §25 — Comparison report value-add (Realie, map, Street View, PDF similarity line).

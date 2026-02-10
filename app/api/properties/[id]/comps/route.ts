@@ -104,7 +104,7 @@ export async function GET(
       }
     })
 
-    const countyPinSet = new Set(countyComps.map((c) => (c.pinRaw ?? c.pin.replace(/\D/g, "") || c.pin)))
+    const countyPinSet = new Set(countyComps.map((c) => c.pinRaw ?? (c.pin.replace(/\D/g, "") || c.pin)))
     let comps = [...countyComps]
     let realieCompsCount = 0
 
