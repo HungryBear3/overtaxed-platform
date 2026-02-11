@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ManagedPropertiesList } from "@/components/account/ManagedPropertiesList"
+import { SignOutButton } from "@/components/auth/SignOutButton"
 import { ManageSubscriptionButton } from "@/components/account/ManageSubscriptionButton"
 import { RefreshSubscriptionButton } from "@/components/account/RefreshSubscriptionButton"
 import { ProfileForm } from "@/components/account/ProfileForm"
@@ -170,12 +171,7 @@ export default async function AccountPage() {
         {freshUser.stripeCustomerId && (
           <ManageSubscriptionButton />
         )}
-        <Link
-          href="/api/auth/signout"
-          className="inline-flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium hover:bg-gray-50"
-        >
-          Sign out
-        </Link>
+        <SignOutButton variant="button" />
       </div>
     </div>
   )
