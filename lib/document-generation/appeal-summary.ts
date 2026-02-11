@@ -140,11 +140,15 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
 
   const salesComps = data.comps.filter((c) => c.compType === "SALES")
   const equityComps = data.comps.filter((c) => c.compType === "EQUITY")
+  // Subject $/sq ft = same value as Sale/Val (noticed market value when available) / living area — actual value per sq ft
+  const subjectValueForSqft =
+    data.property.currentMarketValue ?? data.property.currentAssessmentValue
   const subjectSqft =
     data.property.livingArea != null &&
     data.property.livingArea > 0 &&
-    data.property.currentAssessmentValue != null
-      ? data.property.currentAssessmentValue / data.property.livingArea
+    subjectValueForSqft != null &&
+    subjectValueForSqft > 0
+      ? subjectValueForSqft / data.property.livingArea
       : null
 
   // Wrap text to maxWidth so we can advance y by lineHeight per line (avoids overlap)
@@ -296,7 +300,7 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   if (data.property.currentMarketValue != null)
     drawText(`Noticed market value: ${formatCurrency(data.property.currentMarketValue)}`)
   if (subjectSqft != null)
-    drawText(`Subject assessed $/sq ft: ${formatCurrencySqft(subjectSqft)}`)
+    drawText(`Subject $/sq ft (value ÷ living area): ${formatCurrencySqft(subjectSqft)}`)
   drawLine()
 
   // —— Subject vs comparables table (one place to compare) ——
@@ -620,7 +624,7 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   if (subjectSqft != null && compMedianSqftAll != null && compMedianSqftAll > 0) {
     const pctAbove = ((subjectSqft - compMedianSqftAll) / compMedianSqftAll) * 100
     drawText(
-      `Subject assessed $/sq ft (${formatCurrencySqft(subjectSqft)}) is ${pctAbove >= 0 ? formatPct(pctAbove) + " above" : formatPct(-pctAbove) + " below"} the median comparable $/sq ft (${formatCurrencySqft(compMedianSqftAll)}), supporting a reduction.`
+      `Subject $/sq ft (${formatCurrencySqft(subjectSqft)}) is ${pctAbove >= 0 ? formatPct(pctAbove) + " above" : formatPct(-pctAbove) + " below"} the median comparable $/sq ft (${formatCurrencySqft(compMedianSqftAll)}), supporting a reduction.`
     )
     drawLine()
   }
