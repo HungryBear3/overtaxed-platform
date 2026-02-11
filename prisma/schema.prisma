@@ -134,6 +134,7 @@ model Property {
   county    String   @default("Cook") // MVP: Cook County only
   
   // Property details (from Cook County Open Data)
+  township        String?  // For monitoring: only check when township appeal window is active
   neighborhood    String?
   subdivision     String?
   block           String?

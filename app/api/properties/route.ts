@@ -225,6 +225,7 @@ export async function POST(request: NextRequest) {
         state: propertyData.state,
         zipCode: validation.data.zipCode || propertyData.zipCode,
         county: propertyData.county,
+        township: propertyData.township ?? null,
         neighborhood: propertyData.neighborhood,
         buildingClass: propertyData.buildingClass,
         cdu: propertyData.cdu,

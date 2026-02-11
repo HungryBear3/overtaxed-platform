@@ -1,6 +1,9 @@
 /**
  * Automated assessment check: fetch Cook County data for monitored properties,
  * upsert AssessmentHistory, update lastCheckedAt. Optionally email on increase.
+ *
+ * Schedule-gated: only runs during reassessment season (Jan–Aug) and only for
+ * properties in townships with an active appeal window (aligns with gov't data releases).
  */
 import { prisma } from "@/lib/db"
 import { getPropertyByPIN, formatPIN } from "@/lib/cook-county"
@@ -8,6 +11,11 @@ import { sendEmail } from "@/lib/email"
 import { isEmailConfigured } from "@/lib/email/config"
 import { assessmentIncreaseTemplate } from "@/lib/email/templates"
 import type { AssessmentHistoryRecord } from "@/lib/cook-county/types"
+import {
+  isInReassessmentSeason,
+  getActiveTownshipNamesForChecks,
+  normalizeTownshipForMatch,
+} from "@/lib/monitoring/schedule"
 
 const ASSESSMENT_CHECK_SOURCE = "Cook County Open Data (automated check)"
 
@@ -20,10 +28,36 @@ export interface AssessmentCheckResult {
   error?: string
 }
 
-export async function runAssessmentChecks(): Promise<AssessmentCheckResult[]> {
-  const properties = await prisma.property.findMany({
+export interface AssessmentCheckRunResult {
+  results: AssessmentCheckResult[]
+  skipped: boolean
+  skipReason?: string
+  propertiesChecked: number
+}
+
+export async function runAssessmentChecks(): Promise<AssessmentCheckRunResult> {
+  const now = new Date()
+
+  if (!isInReassessmentSeason(now)) {
+    return {
+      results: [],
+      skipped: true,
+      skipReason: "Outside reassessment season (Sep–Dec); no checks to reduce API usage.",
+      propertiesChecked: 0,
+    }
+  }
+
+  const activeTownshipNames = getActiveTownshipNamesForChecks(now)
+  const allMonitored = await prisma.property.findMany({
     where: { monitoringEnabled: true },
     include: { user: { select: { id: true, email: true, name: true } } },
+  })
+
+  // Only check properties in active townships, or properties without township (one-time backfill)
+  const properties = allMonitored.filter((p) => {
+    const townshipNorm = normalizeTownshipForMatch(p.township)
+    if (!townshipNorm) return true // No township yet: check once to backfill
+    return activeTownshipNames.has(townshipNorm)
   })
 
   const results: AssessmentCheckResult[] = []
@@ -48,9 +82,11 @@ export async function runAssessmentChecks(): Promise<AssessmentCheckResult[]> {
       const history = (api.data.assessmentHistory ?? []) as AssessmentHistoryRecord[]
       const sorted = [...history].sort((a, b) => b.year - a.year)
       if (sorted.length === 0) {
+        const noHistoryUpdate: { lastCheckedAt: Date; township?: string } = { lastCheckedAt: new Date() }
+        if (api.data.township != null && !prop.township) noHistoryUpdate.township = api.data.township
         await prisma.property.update({
           where: { id: prop.id },
-          data: { lastCheckedAt: new Date() },
+          data: noHistoryUpdate,
         })
         r.updated = true
         results.push(r)
@@ -128,6 +164,7 @@ export async function runAssessmentChecks(): Promise<AssessmentCheckResult[]> {
         currentLandValue?: number | null
         currentImprovementValue?: number | null
         currentMarketValue?: number | null
+        township?: string | null
       } = {
         lastCheckedAt: new Date(),
         currentAssessmentValue: currLatestVal,
@@ -135,6 +172,9 @@ export async function runAssessmentChecks(): Promise<AssessmentCheckResult[]> {
         currentImprovementValue: newLatest.assessedBuildingValue ?? null,
       }
       if (newLatest.marketValue != null) updateData.currentMarketValue = newLatest.marketValue
+      // Cache township for future schedule filtering (reduces need to look up)
+      if (api.data.township != null && !prop.township)
+        updateData.township = api.data.township
       await prisma.property.update({ where: { id: prop.id }, data: updateData })
 
       if (r.increaseDetected && isEmailConfigured() && prop.user?.email) {
@@ -159,5 +199,9 @@ export async function runAssessmentChecks(): Promise<AssessmentCheckResult[]> {
     results.push(r)
   }
 
-  return results
+  return {
+    results,
+    skipped: false,
+    propertiesChecked: properties.length,
+  }
 }
