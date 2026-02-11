@@ -276,7 +276,8 @@ export default function PricingPage() {
       } else if (plan === "GROWTH" && currentTier === "GROWTH") {
         propertyCount = Math.min(currentSlots + selectedQuantity, GROWTH_MAX_PROPERTIES)
       } else if (plan === "PORTFOLIO" && currentTier === "PORTFOLIO") {
-        propertyCount = Math.min(totalProperties + selectedQuantity, PORTFOLIO_MAX_PROPERTIES)
+        // Add slots: use currentSlots (subscription qty) not totalProperties — user may have more slots than properties
+        propertyCount = Math.min(currentSlots + selectedQuantity, PORTFOLIO_MAX_PROPERTIES)
       } else {
         propertyCount = RANGE_TO_PLAN[effectiveRange] === plan
           ? slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)
@@ -564,7 +565,7 @@ export default function PricingPage() {
                         >
                           {quantityOptions.map((n) => {
                             const count = slotIndexToPropertyCount(effectiveRange, n, currentTier, currentSlots)
-                            const portfolioTotal = plan.id === "PORTFOLIO" ? totalProperties + n : count
+                            const portfolioTotal = plan.id === "PORTFOLIO" && currentTier === "PORTFOLIO" ? currentSlots + n : plan.id === "PORTFOLIO" ? totalProperties + n : count
                             const totalPrice = getAnnualPrice(plan.id, count)
                             const additionalPrice =
                               (plan.id === "GROWTH" && currentTier === "GROWTH") || (plan.id === "PORTFOLIO" && currentTier === "PORTFOLIO")
@@ -600,7 +601,7 @@ export default function PricingPage() {
                             : plan.id === "GROWTH" && (currentTier === "STARTER" || currentTier === null)
                               ? `= $${(selectedQuantity * GROWTH_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)} total; first 2 already in Starter)`
                               : plan.id === "PORTFOLIO" && currentTier === "PORTFOLIO"
-                                ? `= +$${(selectedQuantity * PORTFOLIO_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${totalProperties + selectedQuantity} total, $${getAnnualPrice(plan.id, totalProperties + selectedQuantity).toLocaleString()}/yr subscription)`
+                                ? `= +$${(selectedQuantity * PORTFOLIO_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${currentSlots + selectedQuantity} total, $${getAnnualPrice(plan.id, currentSlots + selectedQuantity).toLocaleString()}/yr subscription)`
                                 : plan.id === "PORTFOLIO" && currentTier === "GROWTH"
                                   ? `= $${(selectedQuantity * PORTFOLIO_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)} total; first 9 in Growth)`
                                   : plan.id === "STARTER" && currentTier === "STARTER" && selectedQuantity > currentSlots

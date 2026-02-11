@@ -205,8 +205,8 @@ export async function POST(request: NextRequest) {
         const sub = await stripe.subscriptions.retrieve(user.stripeSubscriptionId)
         const customerId = sub.customer as string
         // Charge by actual property delta (subscriptionQuantity can be tier-only e.g. Portfolio 1 when total is 10)
-        const currentPropertyCount = await prisma.property.count({ where: { userId: user.id } })
-        const additionalSlots = Math.max(0, propertyCount - currentPropertyCount)
+        // Charge for subscription slot delta, not property delta — user may have more slots than properties
+        const additionalSlots = Math.max(0, propertyCount - currentQty)
         // newQuantity for the subscription we're updating must be tier-only (that subscription's quantity)
         const subscriptionNewQty =
           parsed.data.plan === "STARTER"
