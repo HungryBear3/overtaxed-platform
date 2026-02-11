@@ -320,17 +320,22 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
         ? `${data.property.yearBuiltCounty} / ${data.property.yearBuiltRealie}`
         : (data.property.yearBuilt != null ? String(data.property.yearBuilt) : "—")
     const subjectBbStr = [data.property.bedrooms ?? "—", subjectBath != null ? subjectBath.toFixed(1) : "—"].join("/")
+    // Subject row: use noticed market value in Sale/Val (not assessed) so it compares to comp sale prices and supports reduction case
+    const subjectSaleOrVal = formatCurrency(
+      data.property.currentMarketValue ?? data.property.currentAssessmentValue
+    )
     drawTableRow(
       [
-        "Subject",
+        "Subject (PIN)",
         subjectSqftCell,
         subjectYrCell,
         subjectBbStr,
-        formatCurrency(data.property.currentAssessmentValue),
+        subjectSaleOrVal,
         subjectSqft != null ? formatCurrencySqft(subjectSqft).replace("/sq ft", "") : "—",
         "—",
       ],
-      colXs
+      colXs,
+      true
     )
     for (const c of data.comps) {
       const saleOrVal =
@@ -408,7 +413,7 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
 
     if (hasSubjectPhoto && data.subjectStreetViewJpeg) {
       try {
-        drawText("Subject property", { bold: true, fontSize: 11 })
+        drawText("Subject (PIN)", { bold: true, fontSize: 11 })
         y -= 4
         const img = await doc.embedJpg(data.subjectStreetViewJpeg)
         const w = 280

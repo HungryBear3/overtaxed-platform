@@ -824,16 +824,44 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Actions</h2>
               <div className="space-y-3">
+                {/* Add comps first when none — primary next step before PDF / Ready to File */}
+                {appeal.status === "DRAFT" && appeal.compsUsed.length === 0 && (
+                  <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 mb-2">
+                    <p className="text-sm text-amber-900 font-medium mb-2">Next: add comparable properties</p>
+                    <p className="text-xs text-amber-800 mb-3">Add at least 3 comps (5–8 recommended). Then set requested value, download your PDF, and mark Ready to File.</p>
+                    <button
+                      onClick={() => setShowAddComps(true)}
+                      className="w-full bg-amber-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-amber-700"
+                    >
+                      Add Comps
+                    </button>
+                  </div>
+                )}
+                {appeal.status === "DRAFT" && appeal.compsUsed.length > 0 && (
+                  <button
+                    onClick={() => setShowAddComps(true)}
+                    className="w-full border border-gray-300 text-gray-700 py-2 px-4 rounded-lg font-medium hover:bg-gray-50"
+                  >
+                    + Add more comps
+                  </button>
+                )}
+                {appeal.compsUsed.length === 0 && (
+                  <p className="text-xs text-gray-500">PDF and Ready to File are available after you add comps.</p>
+                )}
                 <PdfDownloadButton appealId={appeal.id} />
                 {appeal.status === "DRAFT" && (
                   <>
                     <button
                       onClick={() => updateStatus("PENDING_FILING")}
-                      disabled={updating}
-                      className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50"
+                      disabled={updating || appeal.compsUsed.length < 3}
+                      title={appeal.compsUsed.length < 3 ? "Add at least 3 comps first (Rule 15)" : undefined}
+                      className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Ready to File
                     </button>
+                    {appeal.compsUsed.length > 0 && appeal.compsUsed.length < 3 && (
+                      <p className="text-xs text-amber-700">Add at least 3 comps before marking Ready to File.</p>
+                    )}
                     <button
                       onClick={deleteAppeal}
                       className="w-full border border-red-300 text-red-600 py-2 px-4 rounded-lg font-medium hover:bg-red-50"
