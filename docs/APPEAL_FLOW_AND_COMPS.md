@@ -1,34 +1,34 @@
 # Appeal flow and when to select comparables
 
-## Design decision: comps before vs after starting an appeal
+## Primary flow (no extra step)
 
-We support **both** flows and **direct** users toward picking comps first for a stronger appeal, without requiring it.
+We keep the path short: **input PIN (or select property) → appeal that property → review/select comps from all sources on the appeal page → generate PDF.**
 
-### Option A: Comps before starting appeal (recommended path)
+1. User selects the property to appeal (from Properties or after adding by PIN).
+2. User clicks **Start Appeal** → new appeal page with property pre-selected.
+3. User clicks **Create Appeal** → lands on appeal detail.
+4. On appeal detail: **Add Comps** (dialog) — Cook County comps by default; optional **Include Realie recently sold** for more comps from one extra API call. User selects 5–8 comps, adds them.
+5. User sets requested value and downloads the PDF.
 
-1. User opens **Property** → **Find Comparable Properties** (comps page).
-2. User selects 3+ sales comps (and optionally equity comps).
-3. User clicks **Start Appeal with These Comps** → lands on new appeal page with property pre-selected and comps in sessionStorage.
-4. User clicks **Create Appeal** → comps are attached automatically; then set requested value and download PDF.
+No detour to a separate “comps page” is required. All comp selection (County + optional Realie) happens in the **Add Comps** dialog on the appeal.
 
-**Pros:** One clear path; user sees comps and evidence before committing to an appeal; comps are attached at creation.  
-**Cons:** Extra step if the user just wants to create a draft and add comps later.
+## Optional: comps page first
 
-### Option B: Start appeal first, add comps after
+Users who prefer to review comps on a full page before creating an appeal can still:
 
-1. User clicks **Start Appeal** (from property or dashboard) → new appeal page.
-2. User selects property, tax year, deadline → **Create Appeal**.
-3. On appeal detail page, user clicks **Add Comps** (dialog) to attach comparables, then sets requested value and downloads PDF.
+1. Open **Property** → **Find Comparable Properties** (comps page).
+2. Optionally include Realie comps there, select comps, then **Start Appeal with These Comps**.
+3. They land on new appeal with property and comps pre-filled; **Create Appeal** attaches those comps.
 
-**Pros:** Fast for users who want to create the appeal shell first.  
-**Cons:** User may forget to add comps or add them late; PDF is weaker without comps.
+So: **primary path is appeal-first, add comps on the appeal; comps page is optional.**
 
-### What we do in the product
+## In-product copy
 
-- **Don’t require** comps before creating an appeal (keeps flow flexible; some users want to create then fill in).
-- **Do direct** users to comps first:
-  - **Property detail:** Under "Start Appeal" we show: "For a stronger appeal: pick comps first, then start from the comps page" with a link to the property comps page.
-  - **New appeal page:** When a property is selected and they don’t have comps from the comps page, we show an amber tip: "For best results, pick comparables first: View comps for this property. On that page, choose your comps and click Start Appeal with These Comps to return here with them attached. You can also add comps after creating the appeal."
-- **Comps page:** Clear CTA "Start Appeal with These Comps" so the primary path is property → comps → start appeal with comps attached.
+- **Property detail:** Single CTA **Start Appeal** (no “pick comps first” nudge).
+- **New appeal page:** Tip that after creating the appeal they’ll add comparables (County + optional Realie), set value, and download PDF — all on the appeal page.
+- **Appeal detail:** **Add Comps** opens the dialog with County comps; button to **Include Realie recently sold comps** for all sources in one place.
 
-So: **direct before, allow after**. We recommend comps first when coming from a property; we don’t block appeal creation so users can still start an appeal and add comps on the appeal detail page.
+## Data sources in Add Comps dialog
+
+- **Cook County:** Default; no extra API calls.
+- **Realie (Premium Comparables):** Optional; one extra call when user clicks “Include Realie recently sold comps.” Each comp shows its source (e.g. “Cook County Open Data” or “Realie (Premium Comparables)”).

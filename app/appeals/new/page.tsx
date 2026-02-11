@@ -333,16 +333,11 @@ export default function NewAppealPage() {
               </div>
             )}
 
-            {/* Tip: direct to comps when property selected but no comps yet */}
-            {selectedPropertyId && (!pendingCompsFromProperty || pendingCompsFromProperty.propertyId !== selectedPropertyId) && (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                <p className="font-medium text-amber-900 mb-1">Stronger appeal with comparables</p>
-                <p className="text-sm text-amber-800">
-                  For best results, pick comparables first:{" "}
-                  <Link href={`/properties/${selectedPropertyId}/comps`} className="underline font-medium">
-                    View comps for this property
-                  </Link>
-                  . On that page, choose your comps and click <strong>Start Appeal with These Comps</strong> to return here with them attached. You can also add comps after creating the appeal.
+            {/* After create: add comps on the appeal page (County + optional Realie), then set value and download PDF */}
+            {selectedPropertyId && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-sm text-blue-800">
+                  After you create the appeal, you&apos;ll add comparables (Cook County + optional Realie), set your requested value, and download your PDF — all on the appeal page. No need to visit another page first.
                 </p>
               </div>
             )}

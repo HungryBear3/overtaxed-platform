@@ -13,7 +13,7 @@ interface CompItem {
   zipCode: string
   neighborhood: string | null
   saleDate: string | null
-  salePrice: number
+  salePrice: number | null
   pricePerSqft: number | null
   livingArea: number | null
   yearBuilt: number | null
@@ -21,6 +21,7 @@ interface CompItem {
   bathrooms: number | null
   buildingClass: string | null
   distanceFromSubject?: number | null
+  dataSource?: string
 }
 
 export function AddCompsDialog({
@@ -39,12 +40,15 @@ export function AddCompsDialog({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [includeRealieComps, setIncludeRealieComps] = useState(false)
+  const [realieLoading, setRealieLoading] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     setError("")
     setLoading(true)
-    fetch(`/api/properties/${propertyId}/comps?limit=20`)
+    const url = `/api/properties/${propertyId}/comps?limit=20${includeRealieComps ? "&includeRealieComps=1" : ""}`
+    fetch(url)
       .then((r) => r.json())
       .then((d) => {
         if (cancelled) return
@@ -54,7 +58,24 @@ export function AddCompsDialog({
       .catch((e) => !cancelled && setError(e.message))
       .finally(() => !cancelled && setLoading(false))
     return () => { cancelled = true }
-  }, [propertyId])
+  }, [propertyId, includeRealieComps])
+
+  async function loadRealieComps() {
+    if (includeRealieComps) return
+    setError("")
+    setRealieLoading(true)
+    try {
+      const r = await fetch(`/api/properties/${propertyId}/comps?limit=20&includeRealieComps=1`)
+      const d = await r.json()
+      if (!d.success) throw new Error(d.error || "Failed to fetch comps")
+      setComps(d.comps)
+      setIncludeRealieComps(true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load Realie comps")
+    } finally {
+      setRealieLoading(false)
+    }
+  }
 
   function toggle(pinRaw: string) {
     setSelected((s) => {
@@ -83,7 +104,7 @@ export function AddCompsDialog({
           yearBuilt: c.yearBuilt,
           bedrooms: c.bedrooms ?? null,
           bathrooms: c.bathrooms ?? null,
-          salePrice: c.salePrice,
+          salePrice: c.salePrice ?? null,
           saleDate: c.saleDate,
           pricePerSqft: c.pricePerSqft,
           distanceFromSubject: c.distanceFromSubject ?? null,
@@ -130,9 +151,24 @@ export function AddCompsDialog({
             <p className="text-amber-800 mb-2">
               <strong>5–8 strong comps</strong> is usually best — you don&apos;t need all 20. Rule 15 requires at least 3 for sales analysis.
             </p>
-            <p className="text-amber-800">
+            <p className="text-amber-800 mb-2">
               <strong>Best comps:</strong> Recent sales (within 2 years), similar size (±25% living area), same neighborhood. Pick the ones with <strong>lower price per sqft</strong> than your property — they support a lower assessment.
             </p>
+            {!includeRealieComps && (
+              <p className="text-amber-800 mt-2">
+                <button
+                  type="button"
+                  onClick={loadRealieComps}
+                  disabled={realieLoading || loading}
+                  className="font-medium underline hover:no-underline disabled:opacity-50"
+                >
+                  {realieLoading ? "Loading…" : "Include Realie recently sold comps (1 extra API call)"}
+                </button>
+              </p>
+            )}
+            {includeRealieComps && (
+              <p className="text-amber-800 mt-2 text-xs">Realie recently sold comps are included. Source is shown in the list.</p>
+            )}
           </div>
           {error && (
             <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -165,6 +201,7 @@ export function AddCompsDialog({
                     <p className="text-sm text-gray-500">PIN: {c.pin}</p>
                     <p className="text-sm text-gray-600">
                       Sale {formatCurrency(c.salePrice)} • {formatDate(c.saleDate)} • {c.livingArea ?? "—"} sq ft
+                      {c.dataSource && <span className="ml-2 text-gray-500">({c.dataSource})</span>}
                     </p>
                   </div>
                 </label>
