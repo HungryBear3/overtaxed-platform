@@ -394,14 +394,7 @@ export default function PricingPage() {
                 <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600 shrink-0" />PDF evidence packet</li>
                 <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600 shrink-0" />No monitoring or filing</li>
               </ul>
-              {planInfo?.hasPaidForDiy ? (
-                <Link
-                  href="/properties"
-                  className="flex h-10 w-full items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium hover:bg-gray-50"
-                >
-                  Pick a property & get comps
-                </Link>
-              ) : (
+              <div className="space-y-3">
                 <Button
                   className="w-full"
                   variant="outline"
@@ -428,9 +421,21 @@ export default function PricingPage() {
                   }}
                   disabled={!!loading}
                 >
-                  {loading === "COMPS_ONLY" ? "Redirecting…" : "Get comps — $69"}
+                  {loading === "COMPS_ONLY"
+                    ? "Redirecting…"
+                    : planInfo?.hasPaidForDiy
+                      ? "Add 1 more property — $69"
+                      : "Get comps — $69"}
                 </Button>
-              )}
+                {planInfo?.hasPaidForDiy && (
+                  <Link
+                    href="/properties"
+                    className="flex h-10 w-full items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium hover:bg-gray-50"
+                  >
+                    Pick a property & get comps
+                  </Link>
+                )}
+              </div>
             </CardContent>
           </Card>
         </div>

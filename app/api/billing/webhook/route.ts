@@ -98,16 +98,24 @@ export async function POST(request: NextRequest) {
           }
         } else {
           try {
+            const existing = await prisma.user.findUnique({
+              where: { id: userId },
+              select: { subscriptionTier: true, subscriptionQuantity: true },
+            })
+            const isDiyUser = existing?.subscriptionTier === "COMPS_ONLY"
+            const currentQty = existing?.subscriptionQuantity ?? 0
+            const newQuantity = isDiyUser && currentQty >= 1 ? currentQty + 1 : 1
+
             await prisma.user.update({
               where: { id: userId },
               data: {
                 subscriptionTier: "COMPS_ONLY",
                 subscriptionStatus: "ACTIVE",
-                subscriptionQuantity: 1,
+                subscriptionQuantity: newQuantity,
                 stripeCustomerId: stripeCustomerId ?? undefined,
               },
             })
-            console.log(`[webhook] SUCCESS: User ${userId} DIY/comps-only payment completed`)
+            console.log(`[webhook] SUCCESS: User ${userId} DIY/comps-only payment completed (slots=${newQuantity})`)
           } catch (dbError) {
             console.error(`[webhook] Database error updating user ${userId}:`, dbError)
           }
