@@ -1,5 +1,8 @@
 import Link from "next/link"
 import { prisma } from "@/lib/db"
+
+export const dynamic = "force-dynamic"
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Users, Building2, FileText, AlertCircle } from "lucide-react"
 
