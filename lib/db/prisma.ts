@@ -7,7 +7,14 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
-const connectionString = process.env.DATABASE_URL
+// Append connect_timeout for serverless to reduce ETIMEDOUT on cold starts (pg/libpq respects this)
+function withConnectTimeout(url: string | undefined, seconds: number): string | undefined {
+  if (!url || url.includes("placeholder")) return url
+  if (url.includes("connect_timeout=")) return url
+  const sep = url.includes("?") ? "&" : "?"
+  return `${url}${sep}connect_timeout=${seconds}`
+}
+const connectionString = withConnectTimeout(process.env.DATABASE_URL, 60)
 
 // Apply TLS relaxation at module load time (before Prisma initialization)
 // Required for Supabase connection pooler: Prisma's engine enforces TLS verification
