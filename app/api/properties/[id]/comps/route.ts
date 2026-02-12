@@ -130,6 +130,28 @@ export async function GET(
 
     const includeRealieComps = searchParams.get("includeRealieComps") === "1"
     if (includeRealieComps) {
+      // Require payment for Realie Premium Comparables (DIY or Starter+)
+      const dbUser = await prisma.user.findUnique({
+        where: { id: session.user.id },
+        select: { subscriptionTier: true, subscriptionStatus: true },
+      })
+      const tier = dbUser?.subscriptionTier ?? "COMPS_ONLY"
+      const status = dbUser?.subscriptionStatus ?? "INACTIVE"
+      const hasPaid =
+        ["STARTER", "GROWTH", "PORTFOLIO", "PERFORMANCE"].includes(tier) ||
+        (tier === "COMPS_ONLY" && status === "ACTIVE")
+      if (!hasPaid) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Premium comp features (Realie recently sold) are available with a paid plan. Purchase DIY ($69) or subscribe to a plan.",
+            code: "REALIE_REQUIRES_PAYMENT",
+          },
+          { status: 403 }
+        )
+      }
+
       const subject = await getFullPropertyByPin(property.pin.replace(/\D/g, "") || property.pin)
       const lat = subject?.latitude ?? null
       const lng = subject?.longitude ?? null

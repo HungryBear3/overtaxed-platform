@@ -39,10 +39,18 @@ export default function PropertyCompsPage() {
   const [loading, setLoading] = useState(true)
   const [loadingRealie, setLoadingRealie] = useState(false)
   const [error, setError] = useState("")
+  const [canUseRealieComps, setCanUseRealieComps] = useState(true)
 
   useEffect(() => {
     fetchComps(false)
   }, [propertyId])
+
+  useEffect(() => {
+    fetch("/api/billing/plan-info")
+      .then((r) => r.json())
+      .then((d) => setCanUseRealieComps(d.canUseRealieComps !== false))
+      .catch(() => {})
+  }, [])
 
   async function fetchComps(includeRealieComps: boolean) {
     if (includeRealieComps) setLoadingRealie(true)
@@ -57,6 +65,10 @@ export default function PropertyCompsPage() {
       if (!res.ok) {
         if (res.status === 401) {
           router.push("/auth/signin")
+          return
+        }
+        if (res.status === 403 && data?.code === "REALIE_REQUIRES_PAYMENT") {
+          setError(data.error || "Premium comp features require a paid plan.")
           return
         }
         throw new Error(data.error || "Failed to fetch comps")
@@ -143,7 +155,7 @@ export default function PropertyCompsPage() {
               {realieCompsNote && (
                 <p className="text-sm text-green-700 mt-2 font-medium">{realieCompsNote}</p>
               )}
-              {!includeRealie && comps.length > 0 && (
+              {!includeRealie && comps.length > 0 && canUseRealieComps && (
                 <button
                   type="button"
                   onClick={() => fetchComps(true)}
@@ -152,6 +164,14 @@ export default function PropertyCompsPage() {
                 >
                   {loadingRealie ? "Loading…" : "Also include Realie recently sold comparables (1–2 API calls)"}
                 </button>
+              )}
+              {!includeRealie && comps.length > 0 && !canUseRealieComps && (
+                <p className="mt-3 text-sm text-gray-600">
+                  Premium comp features (Realie recently sold) are available with a paid plan.{" "}
+                  <Link href="/pricing" className="font-medium text-blue-600 hover:text-blue-800">
+                    View plans & pricing
+                  </Link>
+                </p>
               )}
             </div>
           )}

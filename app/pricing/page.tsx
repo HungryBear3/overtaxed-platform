@@ -204,10 +204,12 @@ export default function PricingPage() {
   const [planInfo, setPlanInfo] = useState<{
     propertyCount: number
     subscriptionTier: string | null
+    subscriptionStatus?: string
     subscriptionQuantity: number | null
     propertyLimit?: number
     recommendedPlan: string | null
     atLimit?: boolean
+    hasPaidForDiy?: boolean
   } | null>(null)
   const [selectedRange, setSelectedRange] = useState<PlanRange | null>(null)
   const [selectedQuantity, setSelectedQuantity] = useState<number>(1)
@@ -392,7 +394,7 @@ export default function PricingPage() {
                 <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600 shrink-0" />PDF evidence packet</li>
                 <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600 shrink-0" />No monitoring or filing</li>
               </ul>
-              {planInfo?.subscriptionTier ? (
+              {planInfo?.hasPaidForDiy ? (
                 <Link
                   href="/properties"
                   className="flex h-10 w-full items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium hover:bg-gray-50"

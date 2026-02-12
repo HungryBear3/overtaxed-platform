@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import Link from "next/link"
 import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -29,11 +30,13 @@ export function AddCompsDialog({
   appealId,
   onAdded,
   onClose,
+  canUseRealieComps = true,
 }: {
   propertyId: string
   appealId: string
   onAdded: () => void
   onClose: () => void
+  canUseRealieComps?: boolean
 }) {
   const [comps, setComps] = useState<CompItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -154,7 +157,7 @@ export function AddCompsDialog({
             <p className="text-amber-800 mb-2">
               <strong>Best comps:</strong> Recent sales (within 2 years), similar size (±25% living area), same neighborhood. Pick the ones with <strong>lower price per sqft</strong> than your property — they support a lower assessment.
             </p>
-            {!includeRealieComps && (
+            {!includeRealieComps && canUseRealieComps && (
               <p className="text-amber-800 mt-2">
                 <button
                   type="button"
@@ -164,6 +167,14 @@ export function AddCompsDialog({
                 >
                   {realieLoading ? "Loading…" : "Include Realie recently sold comps (1 extra API call)"}
                 </button>
+              </p>
+            )}
+            {!includeRealieComps && !canUseRealieComps && (
+              <p className="text-amber-800 mt-2 text-sm">
+                Premium comp features (Realie recently sold) are available with a paid plan.{" "}
+                <Link href="/pricing" className="font-medium underline hover:no-underline" onClick={onClose}>
+                  View plans & pricing
+                </Link>
               </p>
             )}
             {includeRealieComps && (

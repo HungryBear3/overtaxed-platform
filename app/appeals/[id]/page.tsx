@@ -702,6 +702,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                   appealId={appeal.id}
                   onAdded={fetchAppeal}
                   onClose={() => setShowAddComps(false)}
+                  canUseRealieComps={canDownloadReport}
                 />
               )}
               {appeal.compsUsed.length === 0 ? (
