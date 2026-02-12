@@ -50,7 +50,8 @@ export async function GET(
     const { id } = await params
     const isAdmin = (session.user as { role?: string }).role === 'ADMIN'
 
-    const appeal = await prisma.appeal.findFirst({
+    const [appeal, dbUser] = await Promise.all([
+      prisma.appeal.findFirst({
       where: {
         id,
         ...(isAdmin ? {} : { userId: session.user.id }),
@@ -103,7 +104,12 @@ export async function GET(
           },
         },
       },
-    })
+    }),
+      prisma.user.findUnique({
+        where: { id: session.user.id },
+        select: { subscriptionTier: true, subscriptionStatus: true },
+      }),
+    ])
 
     if (!appeal) {
       return NextResponse.json(
@@ -112,8 +118,15 @@ export async function GET(
       )
     }
 
+    const tier = dbUser?.subscriptionTier ?? "COMPS_ONLY"
+    const status = dbUser?.subscriptionStatus ?? "INACTIVE"
+    const canDownloadReport =
+      ["STARTER", "GROWTH", "PORTFOLIO", "PERFORMANCE"].includes(tier) ||
+      (tier === "COMPS_ONLY" && status === "ACTIVE")
+
     return NextResponse.json({
       success: true,
+      canDownloadReport,
       appeal: {
         id: appeal.id,
         propertyId: appeal.propertyId,

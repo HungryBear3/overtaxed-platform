@@ -52,9 +52,11 @@ export default async function DashboardPage() {
     prisma.property.count({ where: { userId: user.id } }),
   ])
 
-  const propertyLimit = getPropertyLimit(user.subscriptionTier ?? "COMPS_ONLY", freshUser.subscriptionQuantity)
+  const tier = user.subscriptionTier ?? "COMPS_ONLY"
+  const propertyLimit = getPropertyLimit(tier, freshUser.subscriptionQuantity)
   const atLimit = totalPropertyCount >= propertyLimit && propertyLimit < 999
   const slotsRemaining = Math.max(0, propertyLimit - totalPropertyCount)
+  const isNewFreeUser = tier === "COMPS_ONLY" && totalPropertyCount === 0 && (freshUser.subscriptionQuantity == null || freshUser.subscriptionQuantity === 0)
 
   // Calculate summary stats
   const totalProperties = totalPropertyCount
@@ -192,14 +194,18 @@ export default async function DashboardPage() {
             <div>
               <h3 className="text-lg font-semibold text-gray-900">Property Slots</h3>
               <p className="text-2xl font-bold text-gray-900 mt-1">
-                {totalProperties} of {propertyLimit === 999 ? "∞" : propertyLimit} used
+                {isNewFreeUser
+                  ? "Add your first property"
+                  : `${totalProperties} of ${propertyLimit === 999 ? "∞" : propertyLimit} used`}
               </p>
               <p className="text-sm text-gray-500 mt-1">
-                {propertyLimit === 999
-                  ? "Unlimited properties on Performance plan"
-                  : slotsRemaining === 0
-                    ? "All slots used — upgrade to add more properties"
-                    : `${slotsRemaining} slot${slotsRemaining === 1 ? "" : "s"} remaining`}
+                {isNewFreeUser
+                  ? "1 free property included — add yours to get started"
+                  : propertyLimit === 999
+                    ? "Unlimited properties on Performance plan"
+                    : slotsRemaining === 0
+                      ? "All slots used — upgrade to add more properties"
+                      : `${slotsRemaining} slot${slotsRemaining === 1 ? "" : "s"} remaining`}
               </p>
             </div>
             <div className="flex items-center gap-3">

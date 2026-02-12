@@ -20,12 +20,14 @@ interface ManagedPropertiesListProps {
   properties: Property[]
   propertyLimit: number
   canAddMore: boolean
+  isNewFreeUser?: boolean
 }
 
 export function ManagedPropertiesList({
   properties,
   propertyLimit,
   canAddMore,
+  isNewFreeUser = false,
 }: ManagedPropertiesListProps) {
   const router = useRouter()
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -53,7 +55,9 @@ export function ManagedPropertiesList({
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <p className="text-sm text-gray-600">
-          {properties.length} of {limitLabel} slots used — each property below uses one active seat on your plan.
+          {isNewFreeUser
+            ? "Add your first property — 1 free property included with your account."
+            : `${properties.length} of ${limitLabel} slots used — each property below uses one active seat on your plan.`}
         </p>
         {canAddMore && (
           <Link

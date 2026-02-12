@@ -128,6 +128,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
   const { id } = use(params)
   const router = useRouter()
   const [appeal, setAppeal] = useState<Appeal | null>(null)
+  const [canDownloadReport, setCanDownloadReport] = useState(true)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [updating, setUpdating] = useState(false)
@@ -185,6 +186,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
       }
 
       setAppeal(data.appeal)
+      setCanDownloadReport(data.canDownloadReport !== false)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load appeal")
     } finally {
@@ -848,7 +850,22 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                 {appeal.compsUsed.length === 0 && (
                   <p className="text-xs text-gray-500">PDF and Ready to File are available after you add comps.</p>
                 )}
-                <PdfDownloadButton appealId={appeal.id} />
+                {!canDownloadReport ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                    <p className="font-medium text-amber-900 mb-2">Download your appeal report</p>
+                    <p className="text-sm text-amber-800 mb-3">
+                      Purchase DIY ($69) or subscribe to a plan to download your appeal summary PDF.
+                    </p>
+                    <Link
+                      href="/pricing"
+                      className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700"
+                    >
+                      View plans & pricing
+                    </Link>
+                  </div>
+                ) : (
+                  <PdfDownloadButton appealId={appeal.id} />
+                )}
                 {appeal.status === "DRAFT" && (
                   <>
                     <button

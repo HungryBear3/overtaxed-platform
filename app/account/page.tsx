@@ -64,6 +64,7 @@ export default async function AccountPage() {
   const tier = user.subscriptionTier ?? "COMPS_ONLY"
   const propertyLimit = getPropertyLimit(tier, freshUser.subscriptionQuantity)
   const canAddMore = properties.length < propertyLimit || propertyLimit >= 999
+  const isNewFreeUser = tier === "COMPS_ONLY" && properties.length === 0 && (freshUser.subscriptionQuantity == null || freshUser.subscriptionQuantity === 0)
 
   const managedProperties = properties.map((p, index) => {
     const appeals = (p as { appeals: { status: string }[] }).appeals ?? []
@@ -147,6 +148,7 @@ export default async function AccountPage() {
             properties={managedProperties}
             propertyLimit={propertyLimit}
             canAddMore={canAddMore}
+            isNewFreeUser={isNewFreeUser}
           />
         </CardContent>
       </Card>
