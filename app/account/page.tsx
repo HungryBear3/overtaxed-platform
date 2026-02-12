@@ -107,12 +107,21 @@ export default async function AccountPage() {
             <div>
               <p className="text-sm text-gray-500">Plan</p>
               <p className="font-medium text-gray-900">
-                {user.subscriptionTier === "COMPS_ONLY" && "DIY reports only ($69/property)"}
-                {user.subscriptionTier === "STARTER" && "Starter (1–2 properties, $149/property/year)"}
-                {user.subscriptionTier === "GROWTH" && "Growth (3–9 properties, $124/property/year)"}
-                {user.subscriptionTier === "PORTFOLIO" && "Portfolio (10–20 properties, $99/property/year)"}
+                {user.subscriptionTier === "COMPS_ONLY" && (
+                  freshUser.subscriptionQuantity != null && freshUser.subscriptionQuantity >= 1
+                    ? `DIY (${freshUser.subscriptionQuantity} slot${freshUser.subscriptionQuantity === 1 ? "" : "s"}, $69/property)`
+                    : "DIY reports only ($69/property)"
+                )}
+                {user.subscriptionTier === "STARTER" && (freshUser.subscriptionQuantity != null ? `Starter (${freshUser.subscriptionQuantity} slot${freshUser.subscriptionQuantity === 1 ? "" : "s"}, $149/property/year)` : "Starter (1–2 properties, $149/property/year)")}
+                {user.subscriptionTier === "GROWTH" && (freshUser.subscriptionQuantity != null ? `Growth (${freshUser.subscriptionQuantity} slots, $124/property/year)` : "Growth (3–9 properties, $124/property/year)")}
+                {user.subscriptionTier === "PORTFOLIO" && (freshUser.subscriptionQuantity != null ? `Portfolio (${freshUser.subscriptionQuantity} slots, $99/property/year)` : "Portfolio (10–20 properties, $99/property/year)")}
                 {user.subscriptionTier === "PERFORMANCE" && "Performance (4% of savings, deferred)"}
               </p>
+              {user.subscriptionTier === "COMPS_ONLY" && freshUser.subscriptionQuantity != null && freshUser.subscriptionQuantity >= 1 && (
+                <p className="text-xs text-gray-500 mt-1">
+                  {propertyLimit} DIY slot{propertyLimit === 1 ? "" : "s"}. Add more on Pricing.
+                </p>
+              )}
               {user.subscriptionTier !== "COMPS_ONLY" && user.subscriptionTier !== "PERFORMANCE" && (
                 <p className="text-xs text-gray-500 mt-1">
                   Up to {propertyLimit} property slots. Change plan on Pricing.
