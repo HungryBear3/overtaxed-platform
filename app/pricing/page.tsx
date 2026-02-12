@@ -394,6 +394,9 @@ export default function PricingPage() {
                 <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600 shrink-0" />PDF evidence packet</li>
                 <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600 shrink-0" />No monitoring or filing</li>
               </ul>
+              <p className="text-sm text-gray-600 mb-6">
+                PIN monitoring and deadline notifications are not included. Those features are available on Starter and above.
+              </p>
               <div className="space-y-3">
                 <Button
                   className="w-full"

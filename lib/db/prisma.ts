@@ -63,12 +63,14 @@ function createPrismaClient() {
   // Serverless (Vercel): use 1 connection per instance to avoid "MaxClientsInSessionMode" from pooler
   const isServerless = typeof process.env.VERCEL === "string" || process.env.AWS_LAMBDA_FUNCTION_NAME != null
   const poolSize = isServerless ? 1 : 5
+  // Serverless cold starts need longer timeout; "timeout exceeded when trying to connect" on sign-in
+  const connectionTimeoutMillis = isServerless ? 60_000 : 10_000
 
   const pool = new Pool({
     connectionString,
     max: poolSize,
     idleTimeoutMillis: 10_000,
-    connectionTimeoutMillis: 10_000,
+    connectionTimeoutMillis,
     ssl: sslConfig,
   })
 
