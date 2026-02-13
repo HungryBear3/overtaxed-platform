@@ -35,6 +35,8 @@ This document captures bugs, deployment issues, and solutions encountered during
 28. [Realie API: comps list vs subject/appeal; Premium Comparables](#28-realie-api-comps-list-vs-subjectappeal-premium-comparables)
 29. [Sign-out, paywalls, admin build, DB timeouts](#29-sign-out-paywalls-admin-build-db-timeouts)
 30. [Contact form, visitor counter, legal pages](#30-contact-form-visitor-counter-legal-pages)
+31. [Analytics: GA4, Google Ads, Meta Pixel](#31-analytics-ga4-google-ads-meta-pixel)
+32. [Contact form email: GoDaddy vs SendGrid SMTP](#32-contact-form-email-godaddy-vs-sendgrid-smtp)
 
 ---
 
@@ -294,6 +296,7 @@ declare module "next-auth/jwt" {
 | Appeal flow & comps guidance | `docs/APPEAL_FLOW_AND_COMPS.md` — when to select comps; direct to comps first; optional Realie on comps page |
 | Realie: when we call; comps list | `docs/EXTERNAL_PROPERTY_DATA_SOURCES.md` — comps list = Cook County only by default; optional Premium Comparables (1–2 calls). See [§28 Realie API](#28-realie-api-comps-list-vs-subjectappeal-premium-comparables). |
 | GitHub sync (monorepo → overtaxed-platform) | **Use robocopy** — [Sync to overtaxed-platform Repo](#sync-to-overtaxed-platform-repo-robocopy). Alternative: `SYNC_OVERTAXED.md` (subtree, slower) |
+| Email / SMTP (contact form) | [§32 Contact form email](#32-contact-form-email-godaddy-vs-sendgrid-smtp) — GoDaddy vs SendGrid; support@ must be main mailbox. See `docs/EMAIL_SETUP.md`. |
 
 ---
 
@@ -770,7 +773,19 @@ const user = { ...session.user, ...freshUser }
 ### Visitor counter
 **Context:** Track unique visitors without cookies (session-based, privacy-friendly). Per newstart-il LESSONS_LEARNED §1013: use `sessionStorage.getItem('visitor_tracked')` to count once per session.
 
-**Implementation:** `VisitorCount` model in Prisma (date, count); `GET/POST /api/visitors`; `VisitorCounter` component. Client POSTs on first load if not tracked; GET fetches total and today. Graceful degradation: returns 0 if DB unavailable. **Migration:** Run `npx prisma db push` from `overtaxed-platform/` when Supabase is reachable (or create `visitor_counts` via Supabase SQL Editor). Until the table exists in production, the API returns 0; page still renders. Add to `prisma/enable_rls.sql` when enabling RLS.
+**Implementation:** `VisitorCount` model in Prisma (date, count); `GET/POST /api/visitors`; `VisitorCounter` component. Client POSTs on first load if not tracked; GET fetches total and today. Graceful degradation: returns 0 if DB unavailable. **Migration:** Create `visitor_counts` via Supabase SQL Editor:
+```sql
+CREATE TABLE IF NOT EXISTS "visitor_counts" (
+  "id" TEXT NOT NULL,
+  "date" DATE NOT NULL,
+  "count" INTEGER NOT NULL DEFAULT 1,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "visitor_counts_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "visitor_counts_date_key" UNIQUE ("date")
+);
+```
+Alternative: `npx prisma db push` when Supabase reachable. Add to `prisma/enable_rls.sql` when enabling RLS.
 
 ### Legal pages
 - **Terms:** `/terms` — 30-day refund policy (§6a), authorization, liability, contact.
@@ -780,6 +795,59 @@ const user = { ...session.user, ...freshUser }
 
 ### Footer links
 Landing page and app footer include Contact, FAQ, Terms, Privacy, Disclaimer, and VisitorCounter (showToday).
+
+---
+
+## 31. Analytics: GA4, Google Ads, Meta Pixel
+
+**Context:** Set up analytics like newstart-il (FreshStart) for conversion tracking and UTM attribution.
+
+**Implementation:** Per `../newstart-il/LESSONS_LEARNED.md` (Analytics Setup):
+- **GA4 + Google Ads:** Load gtag.js with GA4 measurement ID as script source; configure Google Ads via `gtag('config')`, not as script URL
+- **Meta Pixel:** Optional; loads only when `NEXT_PUBLIC_META_PIXEL_ID` set
+- **UTM capture:** `lib/analytics/utm-tracking.ts` — captures on load, stores in localStorage (30-day attribution)
+- **Page views:** Automatic on route change via AnalyticsProvider
+- **Events:** `lib/analytics/events.ts` — signUp, login, propertyAdded, appealStarted, appealFiled, checkoutStarted, subscriptionComplete, diyPurchase, pdfDownload, contactFormSubmit
+- **CheckoutSuccessTracker:** In account layout; fires purchase when `?checkout=success` or `?checkout=diy_success`
+
+**Env vars (Vercel):** `NEXT_PUBLIC_GA_MEASUREMENT_ID`, `NEXT_PUBLIC_GOOGLE_ADS_ID`, `NEXT_PUBLIC_META_PIXEL_ID`. All optional. **Redeploy** after adding/changing (build-time replacement).
+
+**Testing:** Disable ad blockers; check `window.gtag`, GA4 Realtime. Some users block tracking — expected.
+
+**Files:** `components/analytics/`, `lib/analytics/`, `docs/ANALYTICS_SETUP.md`
+
+---
+
+## 32. Contact form email: GoDaddy vs SendGrid SMTP
+
+**Context:** Contact form was failing with `535 Authentication Failed` (EAUTH). The app was initially configured for SendGrid; production uses **GoDaddy Workspace** email.
+
+### Provider differences
+| Provider | SMTP Host | User | Password |
+|----------|-----------|------|----------|
+| **SendGrid** | smtp.sendgrid.net | `apikey` (literal) | SendGrid API key (starts with SG.) |
+| **GoDaddy** | smtpout.secureserver.net | Full email (e.g. support@domain.com) | Mailbox password |
+
+**Lesson:** SMTP_USER and SMTP_PASSWORD mean different things per provider. SendGrid uses an API key as password, not a mailbox password. GoDaddy uses full email + mailbox password.
+
+### Transport auto-detection
+`lib/email/transport.ts` detects SendGrid by host (`smtp.sendgrid.net`) and forces `auth.user = "apikey"` so the password field is used as the API key. For other providers (GoDaddy, Postmark, etc.), use SMTP_USER as-is.
+
+### GoDaddy: main mailbox required
+**Issue:** If support@ is configured as an **alias** (forwards to another address), GoDaddy SMTP auth fails — aliases typically cannot authenticate for sending.
+
+**Solution:** Use support@ as a **main mailbox** (real inbox), not an alias. SMTP_USER and SMTP_FROM should match the mailbox address.
+
+### GoDaddy env vars (.env.local / Vercel)
+```env
+SMTP_HOST="smtpout.secureserver.net"
+SMTP_PORT="465"
+SMTP_USER="support@overtaxed-il.com"
+SMTP_PASSWORD="your-mailbox-password"
+SMTP_FROM="support@overtaxed-il.com"
+```
+
+**Lesson:** When switching providers, update all four SMTP vars. Verify SMTP authentication is enabled in GoDaddy Workspace settings (often off by default).
 
 ---
 
@@ -895,6 +963,6 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 **Last Updated:** February 2026
 
-**Feb 2026:** §30 — Contact form (SUPPORT_EMAIL in Vercel); visitor counter (session-based, graceful degradation); legal pages (Terms w/ 30-day refund, Privacy, Disclaimer, FAQ); footer links. Deployed via robocopy → overtaxed-platform-deploy. Verify deployment in Vercel Dashboard; run `npx prisma db push` for visitor_counts when DB reachable. §27 — Local network permission fix (removed 127.0.0.1 ingest). §28 — Realie API: comps list = Cook County only by default; optional Premium Comparables (1–2 calls); Parcel ID Lookup does not include comparables. Filing copy updated (Cook County API not released). Appeal flow: direct to comps first (property + new appeal tips); comps page data source + "how to choose comps"; docs/APPEAL_FLOW_AND_COMPS.md.
+**Feb 2026:** §32 — Contact form email: GoDaddy SMTP (smtpout.secureserver.net, port 465); support@ must be main mailbox not alias; SendGrid uses "apikey" as user; transport auto-detects provider. §31 — Analytics (GA4, Google Ads, Meta Pixel) per newstart-il; UTM capture; CheckoutSuccessTracker. §30 — Contact form; visitor counter; legal pages. Deployed via robocopy. §27 — Local network permission fix (removed 127.0.0.1 ingest). §28 — Realie API: comps list = Cook County only by default; optional Premium Comparables (1–2 calls); Parcel ID Lookup does not include comparables. Filing copy updated (Cook County API not released). Appeal flow: direct to comps first (property + new appeal tips); comps page data source + "how to choose comps"; docs/APPEAL_FLOW_AND_COMPS.md.
 
 **Jan 2026:** §26 — PDF summary: enriched comps in download-summary, Subject vs Comparables table layout (PIN overlap fix), map & Street View embedded in PDF when GOOGLE_MAPS_API_KEY set. §25 — Comparison report value-add (Realie, map, Street View, PDF similarity line).

@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
+import { analytics } from "@/lib/analytics/events"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
@@ -83,6 +84,7 @@ export function ContactForm() {
 
       if (!response.ok) throw new Error(data.error || "Failed to send message")
 
+      analytics.contactFormSubmit(formData.category || undefined)
       setSubmitStatus({ type: "success", message: data.message || "Your message has been sent successfully!" })
       setFormData({ name: "", email: "", subject: "", message: "", category: "" })
     } catch (error) {

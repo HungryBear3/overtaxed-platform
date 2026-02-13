@@ -4,13 +4,14 @@ Overtaxed uses **nodemailer** with SMTP. Configure any provider that supports SM
 
 ## GoDaddy (overtaxed-il.com)
 
-If you use **GoDaddy** for domain + email (e.g. `noreply@overtaxed-il.com`):
+If you use **GoDaddy** for domain + email (e.g. `support@overtaxed-il.com`):
 
-1. **Create** the email account in GoDaddy (My Products → Domains → overtaxed-il.com → Email).
-2. **SMTP:** `smtpout.secureserver.net`, port **587** (TLS), user = full email, password = email account password.
+1. **Create** the email account in GoDaddy (My Products → Domains → overtaxed-il.com → Email). Use a **main mailbox**, not an alias — SMTP auth fails with aliases.
+2. **SMTP:** `smtpout.secureserver.net`, port **465** (SSL) or 587 (TLS). User = full email, password = mailbox password.
 3. **Vercel:** Add `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` in Environment Variables, then **Redeploy**.
+4. **Enable SMTP auth** in GoDaddy Workspace if not already on (often off by default).
 
-Full steps (Vercel + GoDaddy URL + GoDaddy email): **`docs/OVERTAXED_VERCEL_GODADDY.md`** (Parts 2–3 for domain, **Part 5** for email).
+Full steps (Vercel + GoDaddy URL + GoDaddy email): **`docs/OVERTAXED_VERCEL_GODADDY.md`** (Parts 2–3 for domain, **Part 5** for email). See **LESSONS_LEARNED.md §32** for troubleshooting.
 
 ---
 
