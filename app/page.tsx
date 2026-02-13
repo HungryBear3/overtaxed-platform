@@ -1,4 +1,5 @@
 import Link from "next/link"
+import { VisitorCounter } from "@/components/visitor-counter"
 
 export default function HomePage() {
   return (
@@ -280,18 +281,33 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="bg-gray-50 border-t border-gray-200 mt-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <div className="flex justify-between items-center">
-            <p className="text-gray-500 text-sm">
-              &copy; {new Date().getFullYear()} OverTaxed. All rights reserved.
-            </p>
-            <div className="flex gap-6">
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-6">
+            <div className="flex flex-col sm:flex-row items-center gap-4">
+              <p className="text-gray-500 text-sm">
+                © {new Date().getFullYear()} OverTaxed. Illinois property tax appeals.
+              </p>
+              <VisitorCounter showToday className="text-sm" />
+            </div>
+            <nav className="flex flex-wrap justify-center gap-x-6 gap-y-1">
+              <Link href="/contact" className="text-gray-500 hover:text-gray-700 text-sm">
+                Contact
+              </Link>
+              <Link href="/faq" className="text-gray-500 hover:text-gray-700 text-sm">
+                FAQ
+              </Link>
               <Link href="/terms" className="text-gray-500 hover:text-gray-700 text-sm">
                 Terms
               </Link>
               <Link href="/privacy" className="text-gray-500 hover:text-gray-700 text-sm">
                 Privacy
               </Link>
-            </div>
+              <Link href="/disclaimer" className="text-gray-500 hover:text-gray-700 text-sm">
+                Disclaimer
+              </Link>
+              <Link href="/pricing" className="text-gray-500 hover:text-gray-700 text-sm">
+                Pricing
+              </Link>
+            </nav>
           </div>
         </div>
       </footer>

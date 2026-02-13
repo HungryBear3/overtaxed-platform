@@ -33,6 +33,8 @@ This document captures bugs, deployment issues, and solutions encountered during
 26. [PDF summary: enriched comps, table layout, map & photos in PDF](#26-pdf-summary-enriched-comps-table-layout-map--photos-in-pdf)
 27. [Local network permission prompt (overtaxed-il)](#27-local-network-permission-prompt-overtaxed-il)
 28. [Realie API: comps list vs subject/appeal; Premium Comparables](#28-realie-api-comps-list-vs-subjectappeal-premium-comparables)
+29. [Sign-out, paywalls, admin build, DB timeouts](#29-sign-out-paywalls-admin-build-db-timeouts)
+30. [Contact form, visitor counter, legal pages](#30-contact-form-visitor-counter-legal-pages)
 
 ---
 
@@ -720,6 +722,67 @@ const user = { ...session.user, ...freshUser }
 
 ---
 
+## 29. Sign-out, paywalls, admin build, DB timeouts
+
+### Sign-out button broken (Link vs signOut)
+**Context:** A sign-out link using `<Link href="/api/auth/signout">` did not reliably sign the user out; Auth.js session/cookie handling expects the client to call `signOut()`.
+
+**Solution:** Use Auth.js client `signOut({ redirectTo: "/auth/signin" })` from `next-auth/react`. Create a `SignOutButton` component that calls `signOut()`; use it in header, account page, and delete-account section instead of a Link. See `components/auth/SignOutButton.tsx`.
+
+**Lesson:** For Auth.js (NextAuth) v5, use the client `signOut()` function rather than linking to the signout API route.
+
+### Report and Realie paywalls
+**Context:** Unpaid users (COMPS_ONLY without DIY purchase) could download PDF appeal summaries and use Realie comps. PDF download and Realie enrichment are premium features.
+
+**Solution:** (1) **PDF download:** In `GET /api/appeals/[id]/download-summary`, check payment before generating; return 403 if unpaid. Appeal page shows paywall UI when `!canDownloadReport`. (2) **Realie comps:** In `GET /api/properties/[id]/comps?includeRealieComps=1`, return 403 for unpaid users. AddCompsDialog and property comps page use `canUseRealieComps` from plan-info; show paywall message when false. DIY ($69) or Starter+ unlocks both.
+
+### DIY checkout and slots
+**Context:** DIY/comps-only users needed clear UX: pay $69 for one property slot, see "Pick a property & get comps" only when paid; repeat DIY purchases should add slots.
+
+**Solution:** `hasPaidForDiy` in plan-info; pricing page always shows DIY checkout; when paid, also shows "Pick a property & get comps." Webhook on `checkout.session.completed` with `metadata.plan === "COMPS_ONLY"` increments `subscriptionQuantity` for additional DIY purchases. DIY card disclaimer: "PIN monitoring and deadline notifications are not included. Those features are available on Starter and above."
+
+### New-user slots copy
+**Context:** COMPS_ONLY users with 0 properties saw "0 of 1 used," which felt confusing for first-time users.
+
+**Solution:** For COMPS_ONLY, 0 properties, no subscriptionQuantity → show "Add your first property" and "1 free property included" instead of "0 of 1 used." ManagedPropertiesList uses `isNewFreeUser` prop for this copy.
+
+### Admin build failing (prerender + DB)
+**Context:** Admin pages (`/admin`, `/admin/appeals`) prerendered at Vercel build time and ran `prisma.user.findMany()` etc., causing build failures when DB was unreachable or schema mismatched.
+
+**Solution:** Add `export const dynamic = "force-dynamic"` to admin page components so they are not statically generated.
+
+### DB connection ETIMEDOUT (Supabase slow)
+**Context:** Dashboard and sign-in sometimes failed with `PrismaClientKnownRequestError: ETIMEDOUT` during `prisma.user.findUnique()`. Supabase can be slow to respond, especially when paused (free tier) or under load.
+
+**Solution:** (1) In `lib/db/prisma.ts`, append `connect_timeout=60` to the connection string (pg/libpq respects this for the TCP connect phase). (2) Keep `connectionTimeoutMillis: 60_000` for the pg Pool. (3) Use Supabase **pooler** (port 6543, `?pgbouncer=true`) in `DATABASE_URL` for Vercel. (4) If Supabase is slow, ETIMEDOUT may persist despite our timeouts—check status.supabase.com, ensure project is not paused, consider same-region Vercel + Supabase.
+
+**Lesson:** ETIMEDOUT during DB calls can be Supabase-side (their system, cold starts, pauses). Our timeouts give more headroom; if issues persist, the bottleneck is often external.
+
+---
+
+## 30. Contact form, visitor counter, legal pages
+
+### Contact form
+**Context:** Users need a way to reach support (support@overtaxed-il.com) for questions, refunds, or technical issues.
+
+**Implementation:** `app/contact/page.tsx` with `ContactForm` component; `POST /api/contact` sends to support and confirmation to user via `sendContactEmail` in `lib/email/send.ts`. Rate-limited (5 req/15 min). Categories: general, appeal-question, technical, billing, refund, other. **Vercel:** Set `SUPPORT_EMAIL` in Vercel env vars (Production) — defaults to support@overtaxed-il.com if not set.
+
+### Visitor counter
+**Context:** Track unique visitors without cookies (session-based, privacy-friendly). Per newstart-il LESSONS_LEARNED §1013: use `sessionStorage.getItem('visitor_tracked')` to count once per session.
+
+**Implementation:** `VisitorCount` model in Prisma (date, count); `GET/POST /api/visitors`; `VisitorCounter` component. Client POSTs on first load if not tracked; GET fetches total and today. Graceful degradation: returns 0 if DB unavailable. **Migration:** Run `npx prisma db push` from `overtaxed-platform/` when Supabase is reachable (or create `visitor_counts` via Supabase SQL Editor). Until the table exists in production, the API returns 0; page still renders. Add to `prisma/enable_rls.sql` when enabling RLS.
+
+### Legal pages
+- **Terms:** `/terms` — 30-day refund policy (§6a), authorization, liability, contact.
+- **Privacy:** `/privacy` — data collection, use, sharing, retention, rights, support@overtaxed-il.com.
+- **Disclaimer:** `/disclaimer` — not legal/tax advice, no guarantee of results, Cook County only.
+- **FAQ:** `/faq` — PIN, deadlines, DIY vs full automation, comps, filing, refunds.
+
+### Footer links
+Landing page and app footer include Contact, FAQ, Terms, Privacy, Disclaimer, and VisitorCounter (showToday).
+
+---
+
 ## Stripe Webhook Debugging
 
 ### Issue: Subscription doesn't update after checkout
@@ -832,6 +895,6 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 **Last Updated:** February 2026
 
-**Feb 2026:** §27 — Local network permission fix (removed 127.0.0.1 ingest). §28 — Realie API: comps list = Cook County only by default; optional Premium Comparables (1–2 calls); Parcel ID Lookup does not include comparables. Filing copy updated (Cook County API not released). Appeal flow: direct to comps first (property + new appeal tips); comps page data source + "how to choose comps"; docs/APPEAL_FLOW_AND_COMPS.md. Quick Reference: appeal flow doc, Realie/comps.
+**Feb 2026:** §30 — Contact form (SUPPORT_EMAIL in Vercel); visitor counter (session-based, graceful degradation); legal pages (Terms w/ 30-day refund, Privacy, Disclaimer, FAQ); footer links. Deployed via robocopy → overtaxed-platform-deploy. Verify deployment in Vercel Dashboard; run `npx prisma db push` for visitor_counts when DB reachable. §27 — Local network permission fix (removed 127.0.0.1 ingest). §28 — Realie API: comps list = Cook County only by default; optional Premium Comparables (1–2 calls); Parcel ID Lookup does not include comparables. Filing copy updated (Cook County API not released). Appeal flow: direct to comps first (property + new appeal tips); comps page data source + "how to choose comps"; docs/APPEAL_FLOW_AND_COMPS.md.
 
 **Jan 2026:** §26 — PDF summary: enriched comps in download-summary, Subject vs Comparables table layout (PIN overlap fix), map & Street View embedded in PDF when GOOGLE_MAPS_API_KEY set. §25 — Comparison report value-add (Realie, map, Street View, PDF similarity line).

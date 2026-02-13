@@ -25,6 +25,7 @@ ALTER TABLE "public"."MonitoringJob" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "public"."CountyConfig" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "public"."RealieEnrichmentCache" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "public"."_AppealToComparableProperty" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."visitor_counts" ENABLE ROW LEVEL SECURITY;
 
 -- No policies are added intentionally.
 -- With RLS enabled and zero permissive policies:
