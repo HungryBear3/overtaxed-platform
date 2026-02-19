@@ -91,7 +91,7 @@ export async function GET(
         city: enriched?.city ?? s.city ?? "",
         zipCode: enriched?.zipCode ?? s.zipCode ?? "",
         neighborhood: s.neighborhood,
-        saleDate: s.saleDate,
+        saleDate: s.saleDate instanceof Date ? s.saleDate.toISOString() : (s.saleDate ?? null),
         salePrice: s.salePrice,
         pricePerSqft: s.pricePerSqft,
         buildingClass: s.buildingClass,

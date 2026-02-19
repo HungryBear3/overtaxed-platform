@@ -571,6 +571,17 @@ enum JobStatus {
 }
 
 // ============================================
+// Visitor Counter
+// ============================================
+
+model VisitorCount {
+  date  DateTime @id @db.Date
+  count Int      @default(0)
+
+  @@map("visitor_count")
+}
+
+// ============================================
 // County Configuration (for future expansion)
 // ============================================
 
