@@ -3,7 +3,6 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Menu, X, Home, Building2, FileText, User, CreditCard } from "lucide-react"
-import { SignOutButton } from "@/components/auth/SignOutButton"
 import { useState } from "react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -58,7 +57,12 @@ export function Header() {
         </nav>
 
         <div className="hidden md:flex md:items-center md:gap-2">
-          <SignOutButton />
+          <Link
+            href="/api/auth/signout"
+            className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+          >
+            Sign out
+          </Link>
         </div>
 
         {/* Mobile menu toggle */}
@@ -106,12 +110,13 @@ export function Header() {
               <User className="h-4 w-4" />
               Account
             </Link>
-            <div className="mt-2">
-              <SignOutButton
-                className="flex w-full items-center justify-start rounded-lg px-3 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-100"
-                onClick={() => setMobileOpen(false)}
-              />
-            </div>
+            <Link
+              href="/api/auth/signout"
+              onClick={() => setMobileOpen(false)}
+              className="mt-2 flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-100"
+            >
+              Sign out
+            </Link>
           </nav>
         </div>
       )}

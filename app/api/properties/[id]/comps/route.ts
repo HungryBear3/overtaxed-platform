@@ -1,10 +1,10 @@
-// GET /api/properties/[id]/comps - Fetch comparable sales from Cook County; optionally add Realie Premium Comparables (1 extra API call)
+// GET /api/properties/[id]/comps - Fetch comparable sales for a property from Cook County
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
 import { getComparableSales, getAddressByPIN, formatPIN, haversineMiles } from "@/lib/cook-county"
 import { propertyDataFromDb } from "@/lib/comps/property-data"
-import { getFullPropertyByPin, getComparablesByLocation } from "@/lib/realie"
+import { enrichCompsWithRealie } from "@/lib/comps/enrich-with-realie"
 
 const ADDRESS_ENRICH_CONCURRENCY = 5
 
@@ -104,96 +104,12 @@ export async function GET(
       }
     })
 
-    const countyPinSet = new Set(countyComps.map((c) => c.pinRaw ?? (c.pin.replace(/\D/g, "") || c.pin)))
-    type CompResponse = {
-      pin: string
-      pinRaw?: string
-      address: string
-      city: string
-      zipCode: string
-      neighborhood?: string | null
-      saleDate?: Date | string | null
-      salePrice?: number | null
-      pricePerSqft?: number | null
-      buildingClass?: string | null
-      livingArea?: number | null
-      yearBuilt?: number | null
-      bedrooms?: number | null
-      bathrooms?: number | null
-      dataSource?: string
-      distanceFromSubject?: number | null
-      state?: string
-      currentAssessmentValue?: number | null
-    }
-    let comps: CompResponse[] = [...countyComps]
-    let realieCompsCount = 0
-
-    const includeRealieComps = searchParams.get("includeRealieComps") === "1"
-    if (includeRealieComps) {
-      // Require payment for Realie Premium Comparables (DIY or Starter+)
-      const dbUser = await prisma.user.findUnique({
-        where: { id: session.user.id },
-        select: { subscriptionTier: true, subscriptionStatus: true },
-      })
-      const tier = dbUser?.subscriptionTier ?? "COMPS_ONLY"
-      const status = dbUser?.subscriptionStatus ?? "INACTIVE"
-      const hasPaid =
-        ["STARTER", "GROWTH", "PORTFOLIO", "PERFORMANCE"].includes(tier) ||
-        (tier === "COMPS_ONLY" && status === "ACTIVE")
-      if (!hasPaid) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Premium comp features (Realie recently sold) are available with a paid plan. Purchase DIY ($69) or subscribe to a plan.",
-            code: "REALIE_REQUIRES_PAYMENT",
-          },
-          { status: 403 }
-        )
-      }
-
-      const subject = await getFullPropertyByPin(property.pin.replace(/\D/g, "") || property.pin)
-      const lat = subject?.latitude ?? null
-      const lng = subject?.longitude ?? null
-      if (lat != null && lng != null) {
-        const realieList = await getComparablesByLocation(lat, lng, { maxResults: 15, radiusMiles: 1, timeFrameMonths: 18 })
-        const realieMapped: CompResponse[] = realieList
-          .filter((r) => !countyPinSet.has(r.pin))
-          .map((r) => ({
-            pin: r.pinFormatted,
-            pinRaw: r.pin,
-            address: r.address,
-            city: r.city,
-            zipCode: r.zipCode,
-            state: r.state ?? "IL",
-            neighborhood: null,
-            saleDate: r.saleDate,
-            salePrice: r.salePrice,
-            pricePerSqft: r.pricePerSqft,
-            buildingClass: null,
-            livingArea: r.livingArea,
-            yearBuilt: r.yearBuilt,
-            bedrooms: r.bedrooms,
-            bathrooms: r.bathrooms,
-            dataSource: "Realie (Premium Comparables)",
-            distanceFromSubject: r.distanceMiles,
-            currentAssessmentValue: null,
-          }))
-        realieCompsCount = realieMapped.length
-        comps = [...countyComps, ...realieMapped]
-      }
-    }
+    const comps = await enrichCompsWithRealie(countyComps, { maxRealie: 15 })
 
     return NextResponse.json({
       success: true,
       comps,
       source: result.source,
-      dataSource: "Cook County Open Data",
-      dataSourceNote:
-        "Living area and other details may be sparse for some PINs. When you add comps to an appeal, we enrich them with Realie for your summary and PDF.",
-      ...(realieCompsCount > 0 && {
-        realieCompsNote: `Included ${realieCompsCount} Realie recently sold comparables (1 extra API call using your property's location).`,
-      }),
     })
   } catch (error) {
     console.error("Error fetching comps:", error)

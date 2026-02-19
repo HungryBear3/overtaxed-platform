@@ -105,17 +105,7 @@ When prompted, name your migration: `init`
 
 This will create all tables in your Supabase database.
 
-### 7. Enable Row Level Security (RLS)
-
-Run the RLS migration to fix Supabase Security Advisor warnings:
-
-1. Go to **Supabase Dashboard** → **SQL Editor**
-2. Open `prisma/enable_rls.sql` and copy its contents
-3. Paste and run in the SQL Editor
-
-This enables RLS on all public tables. With no permissive policies, PostgREST/Data API access is denied while Prisma (postgres role) continues to work normally.
-
-### 8. Verify in Supabase Dashboard
+### 7. Verify in Supabase Dashboard
 
 1. Go to **Table Editor** in Supabase dashboard
 2. You should see all tables:
@@ -126,7 +116,7 @@ This enables RLS on all public tables. With no permissive policies, PostgREST/Da
    - `Invoice`
    - etc.
 
-### 9. (Optional) Open Prisma Studio
+### 8. (Optional) Open Prisma Studio
 
 View and edit your database:
 ```bash
@@ -192,9 +182,8 @@ postgresql://postgres:[PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres
 4. ✅ Database connection tested
 5. ✅ Prisma client generated
 6. ✅ Initial migration run
-7. ✅ RLS enabled (optional but recommended)
-8. 🔄 Set up NextAuth.js authentication
-9. 🔄 Start building features!
+7. 🔄 Set up NextAuth.js authentication
+8. 🔄 Start building features!
 
 ## Quick Reference
 

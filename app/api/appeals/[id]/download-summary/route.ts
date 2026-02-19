@@ -20,24 +20,6 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Require payment before generating report: DIY ($69) or Starter+ subscription
-    const dbUser = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { subscriptionTier: true, subscriptionStatus: true },
-    })
-    const tier = dbUser?.subscriptionTier ?? "COMPS_ONLY"
-    const status = dbUser?.subscriptionStatus ?? "INACTIVE"
-    const hasPaid = ["STARTER", "GROWTH", "PORTFOLIO", "PERFORMANCE"].includes(tier) || (tier === "COMPS_ONLY" && status === "ACTIVE")
-    if (!hasPaid) {
-      return NextResponse.json(
-        {
-          error:
-            "Purchase DIY ($69) or subscribe to a plan to download your appeal report. Visit Pricing to get started.",
-        },
-        { status: 403 }
-      )
-    }
-
     const appeal = await prisma.appeal.findFirst({
       where: { id, userId: session.user.id },
       include: {
@@ -137,7 +119,7 @@ export async function GET(
           distanceFromSubject,
         }
       })
-      const enriched = await enrichCompsWithRealie(countyList, { maxRealie: Math.min(countyList.length, 15) })
+      const enriched = await enrichCompsWithRealie(countyList, { maxRealie: 15 })
       const comps = enriched.map((e) => ({
         pin: e.pin,
         address: e.address,

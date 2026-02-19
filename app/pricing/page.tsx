@@ -204,12 +204,10 @@ export default function PricingPage() {
   const [planInfo, setPlanInfo] = useState<{
     propertyCount: number
     subscriptionTier: string | null
-    subscriptionStatus?: string
     subscriptionQuantity: number | null
     propertyLimit?: number
     recommendedPlan: string | null
     atLimit?: boolean
-    hasPaidForDiy?: boolean
   } | null>(null)
   const [selectedRange, setSelectedRange] = useState<PlanRange | null>(null)
   const [selectedQuantity, setSelectedQuantity] = useState<number>(1)
@@ -278,8 +276,7 @@ export default function PricingPage() {
       } else if (plan === "GROWTH" && currentTier === "GROWTH") {
         propertyCount = Math.min(currentSlots + selectedQuantity, GROWTH_MAX_PROPERTIES)
       } else if (plan === "PORTFOLIO" && currentTier === "PORTFOLIO") {
-        // Add slots: use currentSlots (subscription qty) not totalProperties — user may have more slots than properties
-        propertyCount = Math.min(currentSlots + selectedQuantity, PORTFOLIO_MAX_PROPERTIES)
+        propertyCount = Math.min(totalProperties + selectedQuantity, PORTFOLIO_MAX_PROPERTIES)
       } else {
         propertyCount = RANGE_TO_PLAN[effectiveRange] === plan
           ? slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)
@@ -338,7 +335,7 @@ export default function PricingPage() {
         <div className="text-center mb-12">
           <h1 className="text-4xl font-bold text-gray-900 mb-4">Simple, transparent pricing</h1>
           <p className="text-lg text-gray-600">
-            DIY reports only · $149/property/year · Commercial tiers · Or 4% of savings deferred.
+            DIY reports only · $149/property/year · Commercial tiers · Or 4% of savings deferred (coming soon).
           </p>
         </div>
 
@@ -394,10 +391,14 @@ export default function PricingPage() {
                 <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600 shrink-0" />PDF evidence packet</li>
                 <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600 shrink-0" />No monitoring or filing</li>
               </ul>
-              <p className="text-sm text-gray-600 mb-6">
-                PIN monitoring and deadline notifications are not included. Those features are available on Starter and above.
-              </p>
-              <div className="space-y-3">
+              {planInfo?.subscriptionTier ? (
+                <Link
+                  href="/properties"
+                  className="flex h-10 w-full items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium hover:bg-gray-50"
+                >
+                  Pick a property & get comps
+                </Link>
+              ) : (
                 <Button
                   className="w-full"
                   variant="outline"
@@ -424,21 +425,9 @@ export default function PricingPage() {
                   }}
                   disabled={!!loading}
                 >
-                  {loading === "COMPS_ONLY"
-                    ? "Redirecting…"
-                    : planInfo?.hasPaidForDiy
-                      ? "Add 1 more property — $69"
-                      : "Get comps — $69"}
+                  {loading === "COMPS_ONLY" ? "Redirecting…" : "Get comps — $69"}
                 </Button>
-                {planInfo?.hasPaidForDiy && (
-                  <Link
-                    href="/properties"
-                    className="flex h-10 w-full items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium hover:bg-gray-50"
-                  >
-                    Pick a property & get comps
-                  </Link>
-                )}
-              </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -575,7 +564,7 @@ export default function PricingPage() {
                         >
                           {quantityOptions.map((n) => {
                             const count = slotIndexToPropertyCount(effectiveRange, n, currentTier, currentSlots)
-                            const portfolioTotal = plan.id === "PORTFOLIO" && currentTier === "PORTFOLIO" ? currentSlots + n : plan.id === "PORTFOLIO" ? totalProperties + n : count
+                            const portfolioTotal = plan.id === "PORTFOLIO" ? totalProperties + n : count
                             const totalPrice = getAnnualPrice(plan.id, count)
                             const additionalPrice =
                               (plan.id === "GROWTH" && currentTier === "GROWTH") || (plan.id === "PORTFOLIO" && currentTier === "PORTFOLIO")
@@ -611,7 +600,7 @@ export default function PricingPage() {
                             : plan.id === "GROWTH" && (currentTier === "STARTER" || currentTier === null)
                               ? `= $${(selectedQuantity * GROWTH_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)} total; first 2 already in Starter)`
                               : plan.id === "PORTFOLIO" && currentTier === "PORTFOLIO"
-                                ? `= +$${(selectedQuantity * PORTFOLIO_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${currentSlots + selectedQuantity} total, $${getAnnualPrice(plan.id, currentSlots + selectedQuantity).toLocaleString()}/yr subscription)`
+                                ? `= +$${(selectedQuantity * PORTFOLIO_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${totalProperties + selectedQuantity} total, $${getAnnualPrice(plan.id, totalProperties + selectedQuantity).toLocaleString()}/yr subscription)`
                                 : plan.id === "PORTFOLIO" && currentTier === "GROWTH"
                                   ? `= $${(selectedQuantity * PORTFOLIO_PRICE_PER_PROPERTY).toLocaleString()}/yr for ${selectedQuantity} additional (${slotIndexToPropertyCount(effectiveRange, selectedQuantity, currentTier, currentSlots)} total; first 9 in Growth)`
                                   : plan.id === "STARTER" && currentTier === "STARTER" && selectedQuantity > currentSlots
@@ -695,14 +684,17 @@ export default function PricingPage() {
         {/* Performance / 4% deferred */}
         <Card className="max-w-xl mx-auto border-green-200 bg-gradient-to-br from-green-50/50 to-white mb-12">
           <CardHeader>
-            <CardTitle>Performance</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle>Performance</CardTitle>
+              <span className="text-xs bg-amber-200 text-amber-900 px-2 py-1 rounded font-medium">Coming soon</span>
+            </div>
             <CardDescription>Pay only when you save. No upfront cost.</CardDescription>
             <div className="mt-4">
               <span className="text-3xl font-bold text-gray-900">4%</span>
               <span className="text-gray-500 ml-1">of 3‑year tax savings (deferred)</span>
             </div>
             <p className="text-sm text-amber-700 mt-2 bg-amber-50 rounded px-3 py-2">
-              Custom setup required — we track multi-year appeals and savings to calculate your fee. Contact us to get started.
+              Coming soon — we&apos;re building the fee calculation and multi-year tracking. Interested? Contact us to be notified when it&apos;s available.
             </p>
           </CardHeader>
           <CardContent>
@@ -712,10 +704,10 @@ export default function PricingPage() {
               <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600 shrink-0" />No payment if no savings</li>
             </ul>
             <a
-              href="mailto:support@overtaxed-il.com?subject=Performance%20plan"
+              href="mailto:support@overtaxed-il.com?subject=Performance%20plan%20-%20notify%20when%20available"
               className="flex h-10 w-full items-center justify-center rounded-lg border border-green-300 bg-green-50 px-4 text-sm font-medium text-green-800 hover:bg-green-100"
             >
-              Contact us to set up Performance plan
+              Notify me when Performance plan is available
             </a>
           </CardContent>
         </Card>

@@ -1,5 +1,4 @@
 import Link from "next/link"
-import { VisitorCounter } from "@/components/visitor-counter"
 
 export default function HomePage() {
   return (
@@ -245,7 +244,10 @@ export default function HomePage() {
 
             {/* Performance */}
             <div className="border border-gray-200 rounded-lg p-6 bg-gradient-to-br from-green-50 to-white">
-              <h5 className="font-semibold text-gray-900 text-lg">Performance</h5>
+              <div className="flex items-center gap-2">
+                <h5 className="font-semibold text-gray-900 text-lg">Performance</h5>
+                <span className="text-xs bg-amber-200 text-amber-900 px-2 py-0.5 rounded font-medium">Coming soon</span>
+              </div>
               <p className="text-2xl font-bold text-gray-900 mt-2">4%</p>
               <p className="text-gray-500 text-sm">of 3-year savings (deferred)</p>
               <p className="text-sm text-gray-600 mt-3 mb-3">
@@ -281,33 +283,18 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="bg-gray-50 border-t border-gray-200 mt-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <div className="flex flex-col sm:flex-row justify-between items-center gap-6">
-            <div className="flex flex-col sm:flex-row items-center gap-4">
-              <p className="text-gray-500 text-sm">
-                © {new Date().getFullYear()} OverTaxed. Illinois property tax appeals.
-              </p>
-              <VisitorCounter showToday className="text-sm" />
-            </div>
-            <nav className="flex flex-wrap justify-center gap-x-6 gap-y-1">
-              <Link href="/contact" className="text-gray-500 hover:text-gray-700 text-sm">
-                Contact
-              </Link>
-              <Link href="/faq" className="text-gray-500 hover:text-gray-700 text-sm">
-                FAQ
-              </Link>
+          <div className="flex justify-between items-center">
+            <p className="text-gray-500 text-sm">
+              &copy; {new Date().getFullYear()} OverTaxed. All rights reserved.
+            </p>
+            <div className="flex gap-6">
               <Link href="/terms" className="text-gray-500 hover:text-gray-700 text-sm">
                 Terms
               </Link>
               <Link href="/privacy" className="text-gray-500 hover:text-gray-700 text-sm">
                 Privacy
               </Link>
-              <Link href="/disclaimer" className="text-gray-500 hover:text-gray-700 text-sm">
-                Disclaimer
-              </Link>
-              <Link href="/pricing" className="text-gray-500 hover:text-gray-700 text-sm">
-                Pricing
-              </Link>
-            </nav>
+            </div>
           </div>
         </div>
       </footer>

@@ -128,7 +128,6 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
   const { id } = use(params)
   const router = useRouter()
   const [appeal, setAppeal] = useState<Appeal | null>(null)
-  const [canDownloadReport, setCanDownloadReport] = useState(true)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [updating, setUpdating] = useState(false)
@@ -161,9 +160,18 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
         if (!cancelled) setMapAvailable(false)
       })
     fetch(`/api/appeals/${id}/map-data`, { credentials: 'include' })
-      .then((r) => r.json())
+      .then((r) => {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'appeals/[id]/page.tsx:map-data',message:'map-data fetch response',data:{status:r.status,ok:r.ok},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+        return r.json()
+      })
       .then((data) => {
         if (cancelled || !data.success) return
+        // #region agent log
+        const compsWithCoords = (data.comps ?? []).filter((c: unknown) => c != null).length
+        fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'appeals/[id]/page.tsx:mapData set',message:'mapData state set',data:{subjectPresent:!!data.subject,compsLength:(data.comps??[]).length,compsWithCoords},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
         setMapData({ subject: data.subject ?? null, comps: data.comps ?? [] })
       })
       .catch(() => {})
@@ -186,7 +194,6 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
       }
 
       setAppeal(data.appeal)
-      setCanDownloadReport(data.canDownloadReport !== false)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load appeal")
     } finally {
@@ -702,7 +709,6 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                   appealId={appeal.id}
                   onAdded={fetchAppeal}
                   onClose={() => setShowAddComps(false)}
-                  canUseRealieComps={canDownloadReport}
                 />
               )}
               {appeal.compsUsed.length === 0 ? (
@@ -817,7 +823,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                     After you have submitted there, click <strong>Mark as Filed</strong> here so we can track your appeal status.
                   </li>
                   <li className="text-amber-700">
-                    We cannot submit on your behalf yet: the Cook County Assessor has not released a public e-filing API. Once it is available, we will add filing-on-behalf for Starter+ plans.
+                    Filing on your behalf (Starter+ plans) is coming soon.
                   </li>
                 </ul>
               </div>
@@ -827,59 +833,16 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Actions</h2>
               <div className="space-y-3">
-                {/* Add comps first when none — primary next step before PDF / Ready to File */}
-                {appeal.status === "DRAFT" && appeal.compsUsed.length === 0 && (
-                  <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 mb-2">
-                    <p className="text-sm text-amber-900 font-medium mb-2">Next: add comparable properties</p>
-                    <p className="text-xs text-amber-800 mb-3">Add at least 3 comps (5–8 recommended). Then set requested value, download your PDF, and mark Ready to File.</p>
-                    <button
-                      onClick={() => setShowAddComps(true)}
-                      className="w-full bg-amber-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-amber-700"
-                    >
-                      Add Comps
-                    </button>
-                  </div>
-                )}
-                {appeal.status === "DRAFT" && appeal.compsUsed.length > 0 && (
-                  <button
-                    onClick={() => setShowAddComps(true)}
-                    className="w-full border border-gray-300 text-gray-700 py-2 px-4 rounded-lg font-medium hover:bg-gray-50"
-                  >
-                    + Add more comps
-                  </button>
-                )}
-                {appeal.compsUsed.length === 0 && (
-                  <p className="text-xs text-gray-500">PDF and Ready to File are available after you add comps.</p>
-                )}
-                {!canDownloadReport ? (
-                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-                    <p className="font-medium text-amber-900 mb-2">Download your appeal report</p>
-                    <p className="text-sm text-amber-800 mb-3">
-                      Purchase DIY ($69) or subscribe to a plan to download your appeal summary PDF.
-                    </p>
-                    <Link
-                      href="/pricing"
-                      className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700"
-                    >
-                      View plans & pricing
-                    </Link>
-                  </div>
-                ) : (
-                  <PdfDownloadButton appealId={appeal.id} />
-                )}
+                <PdfDownloadButton appealId={appeal.id} />
                 {appeal.status === "DRAFT" && (
                   <>
                     <button
                       onClick={() => updateStatus("PENDING_FILING")}
-                      disabled={updating || appeal.compsUsed.length < 3}
-                      title={appeal.compsUsed.length < 3 ? "Add at least 3 comps first (Rule 15)" : undefined}
-                      className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={updating}
+                      className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50"
                     >
                       Ready to File
                     </button>
-                    {appeal.compsUsed.length > 0 && appeal.compsUsed.length < 3 && (
-                      <p className="text-xs text-amber-700">Add at least 3 comps before marking Ready to File.</p>
-                    )}
                     <button
                       onClick={deleteAppeal}
                       className="w-full border border-red-300 text-red-600 py-2 px-4 rounded-lg font-medium hover:bg-red-50"

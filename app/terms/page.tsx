@@ -75,13 +75,6 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-gray-900 mb-3">6a. Refund Policy</h2>
-            <p className="text-gray-700 mb-3">
-              We offer a <strong>30-day satisfaction guarantee</strong> for subscription plans (Starter, Growth, Portfolio). If you are not satisfied with our service within 30 days of your initial signup, contact us at support@overtaxed-il.com for a full refund. No refunds for subscription renewals. DIY/comps-only purchases and comp packets already generated are generally non-refundable once delivered, but we may consider refund requests on a case-by-case basis within 30 days. Performance Plan fees, once calculated and invoiced based on actual tax savings, are non-refundable.
-            </p>
-          </section>
-
-          <section>
             <h2 className="text-xl font-semibold text-gray-900 mb-3">7. Cancellation and Changes</h2>
             <p className="text-gray-700">
               You may cancel your subscription in accordance with the cancellation process provided in your account or billing settings. Material changes to these Terms may require your renewed acceptance. Continued use of the service after notice of changes constitutes acceptance.

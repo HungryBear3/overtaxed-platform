@@ -31,12 +31,6 @@ This document captures bugs, deployment issues, and solutions encountered during
 24. [Pricing dropdown: Add 1 more showing total not additional](#24-pricing-dropdown-add-1-more-showing-total-not-additional)
 25. [Comparison report value-add: Realie, map, similarity line](#25-comparison-report-value-add-realie-map-similarity-line)
 26. [PDF summary: enriched comps, table layout, map & photos in PDF](#26-pdf-summary-enriched-comps-table-layout-map--photos-in-pdf)
-27. [Local network permission prompt (overtaxed-il)](#27-local-network-permission-prompt-overtaxed-il)
-28. [Realie API: comps list vs subject/appeal; Premium Comparables](#28-realie-api-comps-list-vs-subjectappeal-premium-comparables)
-29. [Sign-out, paywalls, admin build, DB timeouts](#29-sign-out-paywalls-admin-build-db-timeouts)
-30. [Contact form, visitor counter, legal pages](#30-contact-form-visitor-counter-legal-pages)
-31. [Analytics: GA4, Google Ads, Meta Pixel](#31-analytics-ga4-google-ads-meta-pixel)
-32. [Contact form email: GoDaddy vs SendGrid SMTP](#32-contact-form-email-godaddy-vs-sendgrid-smtp)
 
 ---
 
@@ -292,11 +286,8 @@ declare module "next-auth/jwt" {
 | Env / Stripe secrets | `docs/OVERTAXED_SECRETS_AND_PRICES.md` |
 | Admin set-subscription (testing tiers) | `POST /api/admin/set-subscription` — see [Admin Set-Subscription](#admin-set-subscription-testing) |
 | Testing subscriptions & limits | `docs/TESTING_SUBSCRIPTION_AND_LIMITS.md` — reduce test account tier, test property limits |
-| Filing on behalf of users | `docs/FILING_ON_BEHALF.md` — options (staff-assisted vs API); why DIY-only today (Cook County API not released) |
-| Appeal flow & comps guidance | `docs/APPEAL_FLOW_AND_COMPS.md` — when to select comps; direct to comps first; optional Realie on comps page |
-| Realie: when we call; comps list | `docs/EXTERNAL_PROPERTY_DATA_SOURCES.md` — comps list = Cook County only by default; optional Premium Comparables (1–2 calls). See [§28 Realie API](#28-realie-api-comps-list-vs-subjectappeal-premium-comparables). |
+| Filing on behalf of users | `docs/FILING_ON_BEHALF.md` — options (staff-assisted vs API); why DIY-only today |
 | GitHub sync (monorepo → overtaxed-platform) | **Use robocopy** — [Sync to overtaxed-platform Repo](#sync-to-overtaxed-platform-repo-robocopy). Alternative: `SYNC_OVERTAXED.md` (subtree, slower) |
-| Email / SMTP (contact form) | [§32 Contact form email](#32-contact-form-email-godaddy-vs-sendgrid-smtp) — GoDaddy vs SendGrid; support@ must be main mailbox. See `docs/EMAIL_SETUP.md`. |
 
 ---
 
@@ -523,9 +514,9 @@ const user = { ...session.user, ...freshUser }
 ### Ready to File vs Mark as Filed
 **Context:** Users thought "Ready to File" would submit the appeal. The platform does not submit to the county; users must file at the Cook County Assessor portal. "Mark as Filed" is for updating our status after they’ve filed there.
 
-**Solution:** On the appeal detail page, when status is DRAFT or PENDING_FILING, show an amber "How filing works" box: (1) Ready to File = packet prepared, does not submit; (2) User submits at [Cook County Assessor portal](https://www.cookcountyassessoril.gov/file-appeal); (3) After submitting there, click Mark as Filed here to track status; (4) Explain that we cannot submit on their behalf yet because the Cook County Assessor has not released a public e-filing API, and we will add filing-on-behalf (Starter+) once it is available. New appeal page filing line: same explanation (submit at portal; we cannot file on your behalf yet—no public API; we will add when available).
+**Solution:** On the appeal detail page, when status is DRAFT or PENDING_FILING, show an amber "How filing works" box: (1) Ready to File = packet prepared, does not submit; (2) User submits at [Cook County Assessor portal](https://www.cookcountyassessoril.gov/file-appeal); (3) After submitting there, click Mark as Filed here to track status; (4) "Filing on your behalf (Starter+) is coming soon." New appeal page step 3 copy updated to: "Submit at the Cook County Assessor portal (we'll link you). Filing on your behalf (Starter+) is coming soon."
 
-**Lesson:** Make it explicit that we prepare the packet and they file at the county; "Mark as Filed" is a status update in our app, not the actual filing. Clarify that filing-on-behalf is blocked on the county releasing an API, not on our roadmap only.
+**Lesson:** Make it explicit that we prepare the packet and they file at the county; "Mark as Filed" is a status update in our app, not the actual filing.
 
 ---
 
@@ -677,7 +668,7 @@ const user = { ...session.user, ...freshUser }
 
 **Implementation:**
 - **PDF** (`lib/document-generation/appeal-summary.ts`): After each comp's details, add a "Similarity:" line built from subject vs comp (neighborhood match, building class match, living area within ±20%, distance from subject). Applied to both sales and equity comp sections.
-- **Realie** (`lib/realie/`): Parcel ID Lookup (state=IL, county=Cook); 25 requests/month (free tier). Used for subject (GET property, appeal, PDF) and for comps **on an appeal** (appeal GET + download-summary). Comps list (property comps page) is Cook County only by default; optional "Include Realie recently sold" uses Premium Comparables Search (see [§28](#28-realie-api-comps-list-vs-subjectappeal-premium-comparables)). Set `REALIE_API_KEY`; see `docs/EXTERNAL_PROPERTY_DATA_SOURCES.md`.
+- **Realie** (`lib/realie/`): Client calls Parcel ID Lookup (state=IL, county=Cook). In-memory cache by PIN; 25 requests per calendar month (free tier). Used in GET property by id (subject enrichment when chars null) and in GET comps (enrich up to 8 comps per request with missing chars). Set `REALIE_API_KEY` to enable; see `docs/EXTERNAL_PROPERTY_DATA_SOURCES.md`.
 - **Map & Street View:** `GET /api/appeals/[id]/map-data` returns subject + comp lat/lng (via Cook County `getAddressByPIN`); comps array is same length as `compsUsed` (null entry when coords missing). `GET /api/appeals/[id]/map-image` proxies Google Static Maps (subject red "S", comps blue "1","2",…). `GET /api/map/streetview?lat=&lng=&size=` proxies Google Street View Static. Appeal detail page shows map section and Street View thumbnails for subject and each comp when coords exist. Set `GOOGLE_MAPS_API_KEY` and enable Maps Static API + Street View Static API in Google Cloud Console.
 
 **Lesson:** Optional env vars (`REALIE_API_KEY`, `GOOGLE_MAPS_API_KEY`) keep the app working without them; map/Street View and Realie enrichment are additive. Map-data comps array must match appeal comp order (one entry per comp, null when coords unavailable) so UI can index by comp index for thumbnails.
@@ -696,158 +687,6 @@ const user = { ...session.user, ...freshUser }
 **Where:** `app/api/appeals/[id]/download-summary/route.ts`, `lib/document-generation/appeal-summary.ts` (interface, table colXs, drawTableRow firstColMax, Map & Property Photos section with embedPng/embedJpg).
 
 **Lesson:** Keep PDF data source aligned with the app (same enrichment in download-summary as in GET appeal). Use fixed column positions and per-column character limits for table layout. Embed map and Street View only when the API key is present so the PDF still generates without them.
-
----
-
-## 27. Local network permission prompt (overtaxed-il)
-
-**Context:** Users saw a system prompt that "overtaxed-il wants to look for and connect to any device on your local network." This is a browser/OS permission (e.g. macOS/iOS) triggered when the site makes requests to localhost or the local network.
-
-**Cause:** The app contained **debug ingest** code that sent `fetch()` requests to `http://127.0.0.1:7242/ingest/...` from both the client (appeal detail page map-data) and from API routes (map-image, streetview, map-data, appeal-summary PDF). When the browser sees requests to 127.0.0.1, it can treat that as "local network" and prompt for permission.
-
-**Solution:** Remove all `fetch('http://127.0.0.1:7242/...')` calls and the `DEBUG_LOG` helper that used them. They were leftover from a one-off experiment and are not needed in production. If you need local logging in development, use a build-time or env guard so it never runs in production or in client code that triggers the permission.
-
-**Lesson:** Do not ship client-side or server-side code that fetches to localhost (e.g. 127.0.0.1) in production; it can trigger "local network" permission prompts and confuse users.
-
----
-
-## 28. Realie API: comps list vs subject/appeal; Premium Comparables
-
-**Context:** Realie free tier is 25 requests/month. We need rich data for the subject and for comps used in the appeal/PDF, but we must limit calls. The Parcel ID Lookup (subject property) response does **not** include a "Recently Sold Comparables" list; that list in Realie's own tool comes from a **separate** endpoint (Premium Comparables Search, which takes lat/lng and returns many comps in one call).
-
-**Decisions:**
-- **Comps list (property comps page):** Cook County Open Data only by default — **0 Realie calls** when loading the page. Optional "Also include Realie recently sold comparables" uses 1–2 calls (subject location from `getFullPropertyByPin`, then **Premium Comparables Search** with that lat/lng). See `GET /api/properties/[id]/comps?includeRealieComps=1`.
-- **Subject:** Realie used when viewing a property, an appeal, or generating the PDF (1 call per subject, cached in DB).
-- **Comps on an appeal:** Realie enrichment only for comps **already attached to that appeal** (appeal GET + download-summary), capped at comp count (max 15). Not for the full comp picker list.
-- **Premium Comparables:** `lib/realie/client.ts` — `getComparablesByLocation(lat, lng, options?)` calls Realie's `/api/public/premium/comparables`; one API call returns up to 15–50 recently sold comps with address, sq ft, beds/baths, sale price, $/sq ft.
-
-**Lesson:** To stay within quota, use Realie only for subject + appeal comps (and optional Premium Comparables when the user opts in). Parcel ID Lookup does not include comparables; use Premium Comparables Search for "Recently Sold Comparables." See `docs/EXTERNAL_PROPERTY_DATA_SOURCES.md`.
-
----
-
-## 29. Sign-out, paywalls, admin build, DB timeouts
-
-### Sign-out button broken (Link vs signOut)
-**Context:** A sign-out link using `<Link href="/api/auth/signout">` did not reliably sign the user out; Auth.js session/cookie handling expects the client to call `signOut()`.
-
-**Solution:** Use Auth.js client `signOut({ redirectTo: "/auth/signin" })` from `next-auth/react`. Create a `SignOutButton` component that calls `signOut()`; use it in header, account page, and delete-account section instead of a Link. See `components/auth/SignOutButton.tsx`.
-
-**Lesson:** For Auth.js (NextAuth) v5, use the client `signOut()` function rather than linking to the signout API route.
-
-### Report and Realie paywalls
-**Context:** Unpaid users (COMPS_ONLY without DIY purchase) could download PDF appeal summaries and use Realie comps. PDF download and Realie enrichment are premium features.
-
-**Solution:** (1) **PDF download:** In `GET /api/appeals/[id]/download-summary`, check payment before generating; return 403 if unpaid. Appeal page shows paywall UI when `!canDownloadReport`. (2) **Realie comps:** In `GET /api/properties/[id]/comps?includeRealieComps=1`, return 403 for unpaid users. AddCompsDialog and property comps page use `canUseRealieComps` from plan-info; show paywall message when false. DIY ($69) or Starter+ unlocks both.
-
-### DIY checkout and slots
-**Context:** DIY/comps-only users needed clear UX: pay $69 for one property slot, see "Pick a property & get comps" only when paid; repeat DIY purchases should add slots.
-
-**Solution:** `hasPaidForDiy` in plan-info; pricing page always shows DIY checkout; when paid, also shows "Pick a property & get comps." Webhook on `checkout.session.completed` with `metadata.plan === "COMPS_ONLY"` increments `subscriptionQuantity` for additional DIY purchases. DIY card disclaimer: "PIN monitoring and deadline notifications are not included. Those features are available on Starter and above."
-
-### New-user slots copy
-**Context:** COMPS_ONLY users with 0 properties saw "0 of 1 used," which felt confusing for first-time users.
-
-**Solution:** For COMPS_ONLY, 0 properties, no subscriptionQuantity → show "Add your first property" and "1 free property included" instead of "0 of 1 used." ManagedPropertiesList uses `isNewFreeUser` prop for this copy.
-
-### Admin build failing (prerender + DB)
-**Context:** Admin pages (`/admin`, `/admin/appeals`) prerendered at Vercel build time and ran `prisma.user.findMany()` etc., causing build failures when DB was unreachable or schema mismatched.
-
-**Solution:** Add `export const dynamic = "force-dynamic"` to admin page components so they are not statically generated.
-
-### DB connection ETIMEDOUT (Supabase slow)
-**Context:** Dashboard and sign-in sometimes failed with `PrismaClientKnownRequestError: ETIMEDOUT` during `prisma.user.findUnique()`. Supabase can be slow to respond, especially when paused (free tier) or under load.
-
-**Solution:** (1) In `lib/db/prisma.ts`, append `connect_timeout=60` to the connection string (pg/libpq respects this for the TCP connect phase). (2) Keep `connectionTimeoutMillis: 60_000` for the pg Pool. (3) Use Supabase **pooler** (port 6543, `?pgbouncer=true`) in `DATABASE_URL` for Vercel. (4) If Supabase is slow, ETIMEDOUT may persist despite our timeouts—check status.supabase.com, ensure project is not paused, consider same-region Vercel + Supabase.
-
-**Lesson:** ETIMEDOUT during DB calls can be Supabase-side (their system, cold starts, pauses). Our timeouts give more headroom; if issues persist, the bottleneck is often external.
-
----
-
-## 30. Contact form, visitor counter, legal pages
-
-### Contact form
-**Context:** Users need a way to reach support (support@overtaxed-il.com) for questions, refunds, or technical issues.
-
-**Implementation:** `app/contact/page.tsx` with `ContactForm` component; `POST /api/contact` sends to support and confirmation to user via `sendContactEmail` in `lib/email/send.ts`. Rate-limited (5 req/15 min). Categories: general, appeal-question, technical, billing, refund, other. **Vercel:** Set `SUPPORT_EMAIL` in Vercel env vars (Production) — defaults to support@overtaxed-il.com if not set.
-
-### Visitor counter
-**Context:** Track unique visitors without cookies (session-based, privacy-friendly). Per newstart-il LESSONS_LEARNED §1013: use `sessionStorage.getItem('visitor_tracked')` to count once per session.
-
-**Implementation:** `VisitorCount` model in Prisma (date, count); `GET/POST /api/visitors`; `VisitorCounter` component. Client POSTs on first load if not tracked; GET fetches total and today. Graceful degradation: returns 0 if DB unavailable. **Migration:** Create `visitor_counts` via Supabase SQL Editor:
-```sql
-CREATE TABLE IF NOT EXISTS "visitor_counts" (
-  "id" TEXT NOT NULL,
-  "date" DATE NOT NULL,
-  "count" INTEGER NOT NULL DEFAULT 1,
-  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT "visitor_counts_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "visitor_counts_date_key" UNIQUE ("date")
-);
-```
-Alternative: `npx prisma db push` when Supabase reachable. Add to `prisma/enable_rls.sql` when enabling RLS.
-
-### Legal pages
-- **Terms:** `/terms` — 30-day refund policy (§6a), authorization, liability, contact.
-- **Privacy:** `/privacy` — data collection, use, sharing, retention, rights, support@overtaxed-il.com.
-- **Disclaimer:** `/disclaimer` — not legal/tax advice, no guarantee of results, Cook County only.
-- **FAQ:** `/faq` — PIN, deadlines, DIY vs full automation, comps, filing, refunds.
-
-### Footer links
-Landing page and app footer include Contact, FAQ, Terms, Privacy, Disclaimer, and VisitorCounter (showToday).
-
----
-
-## 31. Analytics: GA4, Google Ads, Meta Pixel
-
-**Context:** Set up analytics like newstart-il (FreshStart) for conversion tracking and UTM attribution.
-
-**Implementation:** Per `../newstart-il/LESSONS_LEARNED.md` (Analytics Setup):
-- **GA4 + Google Ads:** Load gtag.js with GA4 measurement ID as script source; configure Google Ads via `gtag('config')`, not as script URL
-- **Meta Pixel:** Optional; loads only when `NEXT_PUBLIC_META_PIXEL_ID` set
-- **UTM capture:** `lib/analytics/utm-tracking.ts` — captures on load, stores in localStorage (30-day attribution)
-- **Page views:** Automatic on route change via AnalyticsProvider
-- **Events:** `lib/analytics/events.ts` — signUp, login, propertyAdded, appealStarted, appealFiled, checkoutStarted, subscriptionComplete, diyPurchase, pdfDownload, contactFormSubmit
-- **CheckoutSuccessTracker:** In account layout; fires purchase when `?checkout=success` or `?checkout=diy_success`
-
-**Env vars (Vercel):** `NEXT_PUBLIC_GA_MEASUREMENT_ID`, `NEXT_PUBLIC_GOOGLE_ADS_ID`, `NEXT_PUBLIC_META_PIXEL_ID`. All optional. **Redeploy** after adding/changing (build-time replacement).
-
-**Testing:** Disable ad blockers; check `window.gtag`, GA4 Realtime. Some users block tracking — expected.
-
-**Files:** `components/analytics/`, `lib/analytics/`, `docs/ANALYTICS_SETUP.md`
-
----
-
-## 32. Contact form email: GoDaddy vs SendGrid SMTP
-
-**Context:** Contact form was failing with `535 Authentication Failed` (EAUTH). The app was initially configured for SendGrid; production uses **GoDaddy Workspace** email.
-
-### Provider differences
-| Provider | SMTP Host | User | Password |
-|----------|-----------|------|----------|
-| **SendGrid** | smtp.sendgrid.net | `apikey` (literal) | SendGrid API key (starts with SG.) |
-| **GoDaddy** | smtpout.secureserver.net | Full email (e.g. support@domain.com) | Mailbox password |
-
-**Lesson:** SMTP_USER and SMTP_PASSWORD mean different things per provider. SendGrid uses an API key as password, not a mailbox password. GoDaddy uses full email + mailbox password.
-
-### Transport auto-detection
-`lib/email/transport.ts` detects SendGrid by host (`smtp.sendgrid.net`) and forces `auth.user = "apikey"` so the password field is used as the API key. For other providers (GoDaddy, Postmark, etc.), use SMTP_USER as-is.
-
-### GoDaddy: main mailbox required
-**Issue:** If support@ is configured as an **alias** (forwards to another address), GoDaddy SMTP auth fails — aliases typically cannot authenticate for sending.
-
-**Solution:** Use support@ as a **main mailbox** (real inbox), not an alias. SMTP_USER and SMTP_FROM should match the mailbox address.
-
-### GoDaddy env vars (.env.local / Vercel)
-```env
-SMTP_HOST="smtpout.secureserver.net"
-SMTP_PORT="465"
-SMTP_USER="support@overtaxed-il.com"
-SMTP_PASSWORD="your-mailbox-password"
-SMTP_FROM="support@overtaxed-il.com"
-```
-
-**Lesson:** When switching providers, update all four SMTP vars. Verify SMTP authentication is enabled in GoDaddy Workspace settings (often off by default).
 
 ---
 
@@ -961,8 +800,6 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 ---
 
-**Last Updated:** February 2026
-
-**Feb 2026:** §32 — Contact form email: GoDaddy SMTP (smtpout.secureserver.net, port 465); support@ must be main mailbox not alias; SendGrid uses "apikey" as user; transport auto-detects provider. §31 — Analytics (GA4, Google Ads, Meta Pixel) per newstart-il; UTM capture; CheckoutSuccessTracker. §30 — Contact form; visitor counter; legal pages. Deployed via robocopy. §27 — Local network permission fix (removed 127.0.0.1 ingest). §28 — Realie API: comps list = Cook County only by default; optional Premium Comparables (1–2 calls); Parcel ID Lookup does not include comparables. Filing copy updated (Cook County API not released). Appeal flow: direct to comps first (property + new appeal tips); comps page data source + "how to choose comps"; docs/APPEAL_FLOW_AND_COMPS.md.
+**Last Updated:** January 2026
 
 **Jan 2026:** §26 — PDF summary: enriched comps in download-summary, Subject vs Comparables table layout (PIN overlap fix), map & Street View embedded in PDF when GOOGLE_MAPS_API_KEY set. §25 — Comparison report value-add (Realie, map, Street View, PDF similarity line).

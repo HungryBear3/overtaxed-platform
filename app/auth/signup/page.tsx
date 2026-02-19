@@ -3,7 +3,6 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { analytics } from "@/lib/analytics/events"
 
 export default function SignUpPage() {
   const router = useRouter()
@@ -70,7 +69,7 @@ export default function SignUpPage() {
         throw new Error(data.error || "Registration failed")
       }
 
-      analytics.signUp("email")
+      // Redirect to sign in page on success
       router.push("/auth/signin?registered=true")
     } catch (err) {
       setError(err instanceof Error ? err.message : "An unexpected error occurred")

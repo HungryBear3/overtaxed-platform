@@ -14,15 +14,11 @@ export async function GET(request: NextRequest) {
       prisma.property.count({ where: { userId: session.user.id } }),
       prisma.user.findUnique({
         where: { id: session.user.id },
-        select: { subscriptionTier: true, subscriptionStatus: true, subscriptionQuantity: true },
+        select: { subscriptionTier: true, subscriptionQuantity: true },
       }),
     ])
 
     const tier = dbUser?.subscriptionTier ?? session.user.subscriptionTier ?? "COMPS_ONLY"
-    const status = dbUser?.subscriptionStatus ?? "INACTIVE"
-    const canUseRealieComps =
-      ["STARTER", "GROWTH", "PORTFOLIO", "PERFORMANCE"].includes(tier) ||
-      (tier === "COMPS_ONLY" && status === "ACTIVE")
     const limit = getPropertyLimit(tier, dbUser?.subscriptionQuantity)
 
     // Recommend plan based on current property count (for upgrade path)
@@ -36,13 +32,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       propertyCount,
       subscriptionTier: tier,
-      subscriptionStatus: status,
       subscriptionQuantity: dbUser?.subscriptionQuantity ?? null,
       propertyLimit: limit,
       atLimit: propertyCount >= limit && limit < 999,
       recommendedPlan,
-      canUseRealieComps,
-      hasPaidForDiy: tier === "COMPS_ONLY" && status === "ACTIVE",
     })
   } catch (error) {
     console.error("Plan info error:", error)

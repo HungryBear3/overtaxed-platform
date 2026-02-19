@@ -100,7 +100,6 @@ export async function refreshPropertyFromCookCounty(
     city?: string
     zipCode?: string
     neighborhood?: string | null
-    township?: string | null
   } = {
     lastCheckedAt: new Date(),
     currentAssessmentValue: assessmentValue != null ? assessmentValue : null,
@@ -124,7 +123,6 @@ export async function refreshPropertyFromCookCounty(
   if (api.data.city) updateData.city = api.data.city
   if (api.data.zipCode) updateData.zipCode = api.data.zipCode
   if (api.data.neighborhood != null) updateData.neighborhood = api.data.neighborhood
-  if (api.data.township != null) updateData.township = api.data.township
 
   await prisma.property.update({ where: { id: propertyId }, data: updateData })
 

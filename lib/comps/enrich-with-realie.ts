@@ -21,7 +21,7 @@ export type CountyCompBase = {
   bedrooms: number | null
   bathrooms: number | null
   salePrice: number | null
-  saleDate?: string | Date | null
+  saleDate?: string | null
   pricePerSqft: number | null
   assessedMarketValue?: number | null
   assessedMarketValuePerSqft?: number | null
@@ -64,7 +64,7 @@ export async function enrichCompsWithRealie<T extends CountyCompBase>(
   options?: { maxRealie?: number }
 ): Promise<EnrichedComp<T>[]> {
   const maxRealie = options?.maxRealie ?? 20
-  const pinList = comps.map((c) => c.pinRaw ?? (c.pin.replace(/\D/g, "") || c.pin))
+  const pinList = comps.map((c) => c.pinRaw ?? c.pin.replace(/\D/g, "") || c.pin)
   const realieByPin = new Map<string, RealiePropertyFull | null>()
 
   for (let i = 0; i < Math.min(pinList.length, maxRealie); i += REALE_CONCURRENCY) {
@@ -77,7 +77,7 @@ export async function enrichCompsWithRealie<T extends CountyCompBase>(
   }
 
   const enriched: EnrichedComp<T>[] = comps.map((c) => {
-    const pinRaw = c.pinRaw ?? (c.pin.replace(/\D/g, "") || c.pin)
+    const pinRaw = c.pinRaw ?? c.pin.replace(/\D/g, "") || c.pin
     const realie = realieByPin.get(pinRaw) ?? null
     const inBothSources = realie != null
 
@@ -86,7 +86,7 @@ export async function enrichCompsWithRealie<T extends CountyCompBase>(
     const bedroomsRealie = realie?.bedrooms ?? null
     const bathroomsRealie = realie?.bathrooms ?? null
 
-    const item: EnrichedComp<T> = {
+    return {
       ...c,
       inBothSources,
       ...(inBothSources
@@ -108,8 +108,7 @@ export async function enrichCompsWithRealie<T extends CountyCompBase>(
               : null,
           }
         : {}),
-    }
-    return item
+    } as EnrichedComp<T>)
   })
 
   // Higher priority: comps that have Realie data (in both sources) first

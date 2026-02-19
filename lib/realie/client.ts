@@ -1,16 +1,13 @@
 /**
  * Realie Property Data API client (free tier: 25 requests/month).
- * - Parcel ID Lookup: 1 call per subject (cached). Response does NOT include comparables.
- * - Premium Comparables Search: separate endpoint; 1 call returns many recently sold comps (lat/lng required).
+ * We use 1 API call per subject property only (not for comps). Full response is cached so we get rich data from that single call.
  * @see https://docs.realie.ai/api-reference/property/parcel-id-lookup
- * @see https://docs.realie.ai/api-reference/premium/premium-comparables-search
  * @see https://docs.realie.ai/api-reference/property-data-schema
  */
 
 import { prisma } from "@/lib/db"
 
 const REALIE_BASE = "https://app.realie.ai/api/public/property/parcelId"
-const REALIE_PREMIUM_COMPARABLES = "https://app.realie.ai/api/public/premium/comparables"
 const FREE_TIER_MONTHLY_REQUESTS = 25
 
 export type RealieEnrichment = {
@@ -46,24 +43,6 @@ export type RealiePropertyFull = RealieEnrichment & {
   assessments: Array<{ assessedYear: number; totalAssessedValue: number; totalMarketValue: number; taxValue: number; taxYear: number }>
 }
 
-/** One comparable from Premium Comparables Search (recently sold; rich data in one API call). */
-export type RealieComparable = {
-  pin: string
-  pinFormatted: string
-  address: string
-  city: string
-  state: string
-  zipCode: string
-  livingArea: number | null
-  yearBuilt: number | null
-  bedrooms: number | null
-  bathrooms: number | null
-  salePrice: number | null
-  saleDate: string | null
-  pricePerSqft: number | null
-  distanceMiles: number | null
-}
-
 /** In-memory cache by normalized PIN (avoids repeated DB reads in same process). */
 const memoryCache = new Map<string, RealieEnrichment>()
 /** In-memory cache for full property (subject only). */
@@ -92,15 +71,6 @@ function recordRequest(): void {
 
 export function normalizePin(pin: string): string {
   return pin.replace(/\D/g, "") || pin
-}
-
-/** Format 14-digit PIN as XX-XX-XXX-XXX-XXXX for display. */
-function formatPinDisplay(pin: string): string {
-  const digits = normalizePin(pin)
-  if (digits.length === 14) {
-    return `${digits.slice(0, 2)}-${digits.slice(2, 4)}-${digits.slice(4, 7)}-${digits.slice(7, 10)}-${digits.slice(10, 14)}`
-  }
-  return pin
 }
 
 const num = (v: unknown): number | null => {
@@ -282,78 +252,6 @@ export async function fetchByParcelId(
  */
 export async function getEnrichmentByPin(pin: string): Promise<RealieEnrichment | null> {
   return fetchByParcelId(pin, { state: "IL", county: "Cook" })
-}
-
-/** Parse one comparable from Premium Comparables API response (property object). */
-function parseComparable(raw: Record<string, unknown> | null, distanceMiles: number | null): RealieComparable | null {
-  if (!raw || typeof raw !== "object") return null
-  const pin = typeof raw.parcelId === "string" ? normalizePin(raw.parcelId) : ""
-  if (!pin) return null
-  const address = typeof raw.addressFull === "string" ? raw.addressFull : (typeof raw.address === "string" ? raw.address : `PIN ${formatPinDisplay(pin)}`)
-  const livingArea = num(raw.buildingArea)
-  const salePrice = num(raw.transferPrice)
-  const saleDateRaw = raw.transferDateObject ?? raw.transferDate
-  const saleDate =
-    typeof saleDateRaw === "string"
-      ? saleDateRaw
-      : saleDateRaw instanceof Date
-        ? saleDateRaw.toISOString().slice(0, 10)
-        : null
-  const pricePerSqft =
-    livingArea != null && livingArea > 0 && salePrice != null && salePrice > 0 ? salePrice / livingArea : null
-  return {
-    pin,
-    pinFormatted: formatPinDisplay(pin),
-    address,
-    city: typeof raw.city === "string" ? raw.city : "",
-    state: typeof raw.state === "string" ? raw.state : "IL",
-    zipCode: typeof raw.zipCode === "string" ? raw.zipCode : "",
-    livingArea: livingArea ?? null,
-    yearBuilt: num(raw.yearBuilt),
-    bedrooms: raw.totalBedrooms != null ? Math.floor(Number(raw.totalBedrooms)) : null,
-    bathrooms: num(raw.totalBathrooms),
-    salePrice: salePrice ?? null,
-    saleDate,
-    pricePerSqft: pricePerSqft ?? null,
-    distanceMiles: typeof raw.distance === "number" ? raw.distance : distanceMiles,
-  }
-}
-
-/**
- * Premium Comparables Search: recently sold comps by location (1 API call returns many).
- * Uses same monthly quota as Parcel ID Lookup. Requires subject lat/lng (e.g. from getFullPropertyByPin).
- * Parcel ID Lookup response does NOT include comparables; this is the only way to get Realie's "Recently Sold Comparables".
- */
-export async function getComparablesByLocation(
-  latitude: number,
-  longitude: number,
-  options: { radiusMiles?: number; timeFrameMonths?: number; maxResults?: number } = {}
-): Promise<RealieComparable[]> {
-  if (!process.env.REALIE_API_KEY) return []
-  if (!canMakeRequest()) return []
-  const { radiusMiles = 1, timeFrameMonths = 18, maxResults = 15 } = options
-  const params = new URLSearchParams({
-    latitude: String(latitude),
-    longitude: String(longitude),
-    radius: String(radiusMiles),
-    timeFrame: String(timeFrameMonths),
-    maxResults: String(Math.min(maxResults, 50)),
-  })
-  try {
-    const res = await fetch(`${REALIE_PREMIUM_COMPARABLES}?${params.toString()}`, {
-      headers: { Authorization: process.env.REALIE_API_KEY },
-      next: { revalidate: 0 },
-    })
-    recordRequest()
-    if (!res.ok) return []
-    const json = (await res.json()) as { comparables?: Array<Record<string, unknown>> }
-    const list = Array.isArray(json.comparables) ? json.comparables : []
-    return list
-      .map((r) => parseComparable(r, null))
-      .filter((c): c is RealieComparable => c != null)
-  } catch {
-    return []
-  }
 }
 
 /**

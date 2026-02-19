@@ -7,14 +7,7 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
-// Append connect_timeout for serverless to reduce ETIMEDOUT on cold starts (pg/libpq respects this)
-function withConnectTimeout(url: string | undefined, seconds: number): string | undefined {
-  if (!url || url.includes("placeholder")) return url
-  if (url.includes("connect_timeout=")) return url
-  const sep = url.includes("?") ? "&" : "?"
-  return `${url}${sep}connect_timeout=${seconds}`
-}
-const connectionString = withConnectTimeout(process.env.DATABASE_URL, 60)
+const connectionString = process.env.DATABASE_URL
 
 // Apply TLS relaxation at module load time (before Prisma initialization)
 // Required for Supabase connection pooler: Prisma's engine enforces TLS verification
@@ -70,14 +63,12 @@ function createPrismaClient() {
   // Serverless (Vercel): use 1 connection per instance to avoid "MaxClientsInSessionMode" from pooler
   const isServerless = typeof process.env.VERCEL === "string" || process.env.AWS_LAMBDA_FUNCTION_NAME != null
   const poolSize = isServerless ? 1 : 5
-  // Serverless cold starts need longer timeout; "timeout exceeded when trying to connect" on sign-in
-  const connectionTimeoutMillis = isServerless ? 60_000 : 10_000
 
   const pool = new Pool({
     connectionString,
     max: poolSize,
     idleTimeoutMillis: 10_000,
-    connectionTimeoutMillis,
+    connectionTimeoutMillis: 10_000,
     ssl: sslConfig,
   })
 

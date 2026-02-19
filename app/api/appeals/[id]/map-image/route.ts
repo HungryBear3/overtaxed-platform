@@ -17,6 +17,9 @@ export async function GET(
     }
 
     const key = process.env.GOOGLE_MAPS_API_KEY
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'map-image/route.ts:key',message:'map-image key check',data:{hasKey:!!key,keyLen:key?.length??0},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     if (!key) {
       return new NextResponse(null, { status: 503 })
     }
@@ -110,6 +113,9 @@ export async function GET(
 
     const url = `https://maps.googleapis.com/maps/api/staticmap?${paramsList.toString()}`
     const res = await fetch(url, { next: { revalidate: 0 } })
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'map-image/route.ts:google',message:'map-image Google response',data:{ok:res.ok,status:res.status,subjectHasCoords:!!(subjectAddr?.latitude!=null&&subjectAddr?.longitude!=null),compCoordsCount:compAddrs.filter(c=>c!=null).length},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     if (!res.ok) {
       return new NextResponse(null, { status: 502 })
     }

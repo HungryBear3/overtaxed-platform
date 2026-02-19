@@ -1,9 +1,10 @@
 "use client"
 
 import { useState } from "react"
-import { signOut } from "next-auth/react"
+import { useRouter } from "next/navigation"
 
 export function DeleteAccountSection() {
+  const router = useRouter()
   const [password, setPassword] = useState("")
   const [confirm, setConfirm] = useState("")
   const [loading, setLoading] = useState(false)
@@ -32,7 +33,8 @@ export function DeleteAccountSection() {
         setError(data.error || "Failed to delete account")
         return
       }
-      await signOut({ redirectTo: "/auth/signin" })
+      router.push("/api/auth/signout")
+      router.refresh()
     } catch {
       setError("Something went wrong")
     } finally {

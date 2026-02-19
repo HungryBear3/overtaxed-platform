@@ -333,15 +333,6 @@ export default function NewAppealPage() {
               </div>
             )}
 
-            {/* After create: add comps on the appeal page (County + optional Realie), then set value and download PDF */}
-            {selectedPropertyId && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-blue-800">
-                  After you create the appeal, you&apos;ll add comparables (Cook County + optional Realie), set your requested value, and download your PDF — all on the appeal page. No need to visit another page first.
-                </p>
-              </div>
-            )}
-
             {/* Property Selection */}
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-1">Step 1: Select Property</h2>
@@ -623,7 +614,7 @@ export default function NewAppealPage() {
                     </li>
                     <li className="flex gap-2">
                       <span className="bg-blue-200 text-blue-800 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>
-                      <span><strong>Filing:</strong> Submit at the Cook County Assessor portal (we’ll link you). We cannot file on your behalf yet because the Cook County Assessor has not released a public API; we will add this when it is available.</span>
+                      <span><strong>Filing:</strong> Submit at the Cook County Assessor portal (we’ll link you). Filing on your behalf (Starter+) is coming soon.</span>
                     </li>
                     <li className="flex gap-2">
                       <span className="bg-blue-200 text-blue-800 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">4</span>

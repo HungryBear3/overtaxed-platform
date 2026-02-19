@@ -84,7 +84,7 @@ export const authOptions: NextAuthConfig = {
   },
   pages: {
     signIn: "/auth/signin",
-    signOut: "/auth/signin", // Redirect to signin after sign out (no /auth/signout page)
+    signOut: "/auth/signout",
     error: "/auth/error",
   },
   callbacks: {

@@ -134,7 +134,6 @@ model Property {
   county    String   @default("Cook") // MVP: Cook County only
   
   // Property details (from Cook County Open Data)
-  township        String?  // For monitoring: only check when township appeal window is active
   neighborhood    String?
   subdivision     String?
   block           String?
@@ -602,16 +601,4 @@ model CountyConfig {
   
   @@index([county])
   @@index([state])
-}
-
-// Visitor counter (session-based, privacy-friendly)
-model VisitorCount {
-  id        String   @id @default(cuid())
-  date      DateTime @default(now()) @db.Date
-  count     Int      @default(1)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([date])
-  @@map("visitor_counts")
 }

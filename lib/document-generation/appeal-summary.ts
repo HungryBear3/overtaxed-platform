@@ -116,7 +116,20 @@ function median(values: number[]): number | null {
   return sorted.length % 2 !== 0 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2
 }
 
+const DEBUG_LOG = (payload: { location: string; message: string; data?: Record<string, unknown>; hypothesisId?: string }) => {
+  // #region agent log
+  fetch("http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, timestamp: Date.now(), sessionId: "debug-session" }),
+  }).catch(() => {})
+  // #endregion
+}
+
 export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise<Uint8Array> {
+  // #region agent log
+  DEBUG_LOG({ location: "appeal-summary.ts:entry", message: "generateAppealSummaryPdf called", hypothesisId: "A" })
+  // #endregion
   const doc = await PDFDocument.create()
   doc.addPage() // pdf-lib starts with 0 pages; getPage(0) requires at least one page
   const font = await doc.embedFont(StandardFonts.Helvetica)
@@ -140,15 +153,11 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
 
   const salesComps = data.comps.filter((c) => c.compType === "SALES")
   const equityComps = data.comps.filter((c) => c.compType === "EQUITY")
-  // Subject $/sq ft = same value as Sale/Val (noticed market value when available) / living area — actual value per sq ft
-  const subjectValueForSqft =
-    data.property.currentMarketValue ?? data.property.currentAssessmentValue
   const subjectSqft =
     data.property.livingArea != null &&
     data.property.livingArea > 0 &&
-    subjectValueForSqft != null &&
-    subjectValueForSqft > 0
-      ? subjectValueForSqft / data.property.livingArea
+    data.property.currentAssessmentValue != null
+      ? data.property.currentAssessmentValue / data.property.livingArea
       : null
 
   // Wrap text to maxWidth so we can advance y by lineHeight per line (avoids overlap)
@@ -163,11 +172,33 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
       if (w > maxWidth && current) {
         lines.push(current)
         current = word
+        // #region agent log
+        const singleWordW = f.widthOfTextAtSize(word, fs)
+        if (singleWordW > maxWidth) {
+          DEBUG_LOG({
+            location: "appeal-summary.ts:wrapLines",
+            message: "single word exceeds maxWidth",
+            data: { wordLen: word.length, singleWordW, maxWidth, hypothesisId: "B" },
+            hypothesisId: "B",
+          })
+        }
+        // #endregion
       } else {
         current = candidate
       }
     }
     if (current) {
+      const singleWordW = f.widthOfTextAtSize(current, fs)
+      if (singleWordW > maxWidth) {
+        // #region agent log
+        DEBUG_LOG({
+          location: "appeal-summary.ts:wrapLines",
+          message: "final line (word) exceeds maxWidth",
+          data: { len: current.length, singleWordW, maxWidth, hypothesisId: "B" },
+          hypothesisId: "B",
+        })
+        // #endregion
+      }
       lines.push(current)
     }
     return lines
@@ -182,6 +213,17 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     const x = opts?.x ?? margin
     const lineHeight = lineHeightFor(fs)
     const lines = wrapLines(text, f, fs)
+    // #region agent log
+    if (lines.length > 1) {
+      DEBUG_LOG({
+        location: "appeal-summary.ts:drawText",
+        message: "multi-line draw",
+        data: { lineCount: lines.length, yBefore: y, fontSize: fs, lineHeight, hypothesisId: "C,D,E" },
+        hypothesisId: "C",
+      })
+    }
+    // #endregion
+    const yBeforeDraw = y
     for (const line of lines) {
       if (y < 50) {
         doc.addPage()
@@ -197,6 +239,16 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
       })
       y -= lineHeight
     }
+    // #region agent log
+    if (lines.length > 1) {
+      DEBUG_LOG({
+        location: "appeal-summary.ts:drawText",
+        message: "multi-line draw done",
+        data: { lineCount: lines.length, yAfter: y, yDelta: yBeforeDraw - y, expectedDelta: lines.length * lineHeight, hypothesisId: "D" },
+        hypothesisId: "D",
+      })
+    }
+    // #endregion
   }
 
   const drawLine = () => {
@@ -300,7 +352,7 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   if (data.property.currentMarketValue != null)
     drawText(`Noticed market value: ${formatCurrency(data.property.currentMarketValue)}`)
   if (subjectSqft != null)
-    drawText(`Subject $/sq ft (value ÷ living area): ${formatCurrencySqft(subjectSqft)}`)
+    drawText(`Subject assessed $/sq ft: ${formatCurrencySqft(subjectSqft)}`)
   drawLine()
 
   // —— Subject vs comparables table (one place to compare) ——
@@ -324,22 +376,17 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
         ? `${data.property.yearBuiltCounty} / ${data.property.yearBuiltRealie}`
         : (data.property.yearBuilt != null ? String(data.property.yearBuilt) : "—")
     const subjectBbStr = [data.property.bedrooms ?? "—", subjectBath != null ? subjectBath.toFixed(1) : "—"].join("/")
-    // Subject row: use noticed market value in Sale/Val (not assessed) so it compares to comp sale prices and supports reduction case
-    const subjectSaleOrVal = formatCurrency(
-      data.property.currentMarketValue ?? data.property.currentAssessmentValue
-    )
     drawTableRow(
       [
-        "Subject (PIN)",
+        "Subject",
         subjectSqftCell,
         subjectYrCell,
         subjectBbStr,
-        subjectSaleOrVal,
+        formatCurrency(data.property.currentAssessmentValue),
         subjectSqft != null ? formatCurrencySqft(subjectSqft).replace("/sq ft", "") : "—",
         "—",
       ],
-      colXs,
-      true
+      colXs
     )
     for (const c of data.comps) {
       const saleOrVal =
@@ -417,7 +464,7 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
 
     if (hasSubjectPhoto && data.subjectStreetViewJpeg) {
       try {
-        drawText("Subject (PIN)", { bold: true, fontSize: 11 })
+        drawText("Subject property", { bold: true, fontSize: 11 })
         y -= 4
         const img = await doc.embedJpg(data.subjectStreetViewJpeg)
         const w = 280
@@ -624,7 +671,7 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   if (subjectSqft != null && compMedianSqftAll != null && compMedianSqftAll > 0) {
     const pctAbove = ((subjectSqft - compMedianSqftAll) / compMedianSqftAll) * 100
     drawText(
-      `Subject $/sq ft (${formatCurrencySqft(subjectSqft)}) is ${pctAbove >= 0 ? formatPct(pctAbove) + " above" : formatPct(-pctAbove) + " below"} the median comparable $/sq ft (${formatCurrencySqft(compMedianSqftAll)}), supporting a reduction.`
+      `Subject assessed $/sq ft (${formatCurrencySqft(subjectSqft)}) is ${pctAbove >= 0 ? formatPct(pctAbove) + " above" : formatPct(-pctAbove) + " below"} the median comparable $/sq ft (${formatCurrencySqft(compMedianSqftAll)}), supporting a reduction.`
     )
     drawLine()
   }
