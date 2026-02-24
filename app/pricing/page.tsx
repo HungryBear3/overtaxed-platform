@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
+import { Logo } from "@/components/navigation/Logo"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -313,11 +314,9 @@ export default function PricingPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white shadow-sm">
+      <header className="bg-gradient-to-r from-blue-50 to-white shadow-sm border-b border-gray-100">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
-          <Link href="/" className="text-xl font-bold text-blue-900">
-            Over<span className="text-blue-600">Taxed</span>
-          </Link>
+          <Logo href="/" />
           <div className="flex gap-4">
             {planInfo?.subscriptionTier && (
               <Link href="/dashboard" className="text-sm font-medium text-blue-600 hover:text-blue-700">
@@ -333,6 +332,9 @@ export default function PricingPage() {
 
       <main className="mx-auto max-w-5xl px-4 py-12 sm:px-6 lg:px-8">
         <div className="text-center mb-12">
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-100 text-blue-800 text-sm font-medium mb-4">
+            DIY from $69 · Full automation from $149/property
+          </div>
           <h1 className="text-4xl font-bold text-gray-900 mb-4">Simple, transparent pricing</h1>
           <p className="text-lg text-gray-600">
             DIY reports only · $149/property/year · Commercial tiers · Or 4% of savings deferred (coming soon).

@@ -1,5 +1,7 @@
 import Link from "next/link"
+import { HelpCircle } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Logo } from "@/components/navigation/Logo"
 
 export const metadata = {
   title: "FAQ | OverTaxed",
@@ -47,9 +49,7 @@ export default function FAQPage() {
       <header className="bg-white shadow-sm">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
-            <Link href="/" className="text-xl font-bold text-blue-900">
-              Over<span className="text-blue-600">Taxed</span>
-            </Link>
+            <Logo href="/" />
             <Link href="/" className="text-sm text-blue-600 hover:text-blue-700 font-medium">
               Back to home
             </Link>
@@ -58,7 +58,10 @@ export default function FAQPage() {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Frequently Asked Questions</h1>
+        <div className="flex items-center gap-3 mb-2">
+          <HelpCircle className="h-8 w-8 text-blue-600 flex-shrink-0" />
+          <h1 className="text-3xl font-bold text-gray-900">Frequently Asked Questions</h1>
+        </div>
         <p className="text-gray-500 mb-8">
           Common questions about property tax appeals, Cook County, and OverTaxed.
         </p>

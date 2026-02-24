@@ -1,5 +1,6 @@
 import Link from "next/link"
 import { Mail, Clock, MessageSquare } from "lucide-react"
+import { Logo } from "@/components/navigation/Logo"
 import { ContactForm } from "@/components/contact/ContactForm"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -15,9 +16,7 @@ export default function ContactPage() {
       <header className="bg-white shadow-sm">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
-            <Link href="/" className="text-xl font-bold text-blue-900">
-              Over<span className="text-blue-600">Taxed</span>
-            </Link>
+            <Logo href="/" />
             <Link href="/" className="text-sm text-blue-600 hover:text-blue-700 font-medium">
               Back to home
             </Link>
@@ -26,8 +25,10 @@ export default function ContactPage() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="mb-8 text-center">
-          <Mail className="h-12 w-12 text-blue-600 mx-auto mb-4" />
+        <div className="mb-8 text-center p-8 rounded-2xl bg-gradient-to-b from-blue-50/80 to-transparent">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-blue-100 flex items-center justify-center">
+            <Mail className="h-8 w-8 text-blue-600" />
+          </div>
           <h1 className="text-4xl font-bold text-gray-900 mb-4">Contact Us</h1>
           <p className="text-lg text-gray-600 max-w-2xl mx-auto">
             Have questions or need help? Fill out the form below or email us and we&apos;ll get back to you within 2-3 business days.

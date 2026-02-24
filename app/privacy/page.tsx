@@ -1,4 +1,5 @@
 import Link from "next/link"
+import { Logo } from "@/components/navigation/Logo"
 
 export const metadata = {
   title: "Privacy Policy | OverTaxed",
@@ -11,9 +12,7 @@ export default function PrivacyPage() {
       <header className="bg-white shadow-sm">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
-            <Link href="/" className="text-xl font-bold text-blue-900">
-              Over<span className="text-blue-600">Taxed</span>
-            </Link>
+            <Logo href="/" />
             <Link href="/" className="text-sm text-blue-600 hover:text-blue-700 font-medium">
               Back to home
             </Link>

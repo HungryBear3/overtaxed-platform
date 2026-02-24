@@ -34,6 +34,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 27. [Requested assessment input: white text in dark mode](#27-requested-assessment-input-white-text-in-dark-mode)
 28. [Comps improvements: fallbacks, manual upload, Realie clarification](#28-comps-improvements-fallbacks-manual-upload-realie-clarification)
 29. [Detailed submission instructions for Cook County Assessor](#29-detailed-submission-instructions-for-cook-county-assessor)
+30. [Legal website design: hero, testimonials, logo, trust blocks](#30-legal-website-design-hero-testimonials-logo-trust-blocks)
 
 ---
 
@@ -737,6 +738,26 @@ This forces dark text on white background regardless of system color scheme.
 
 ---
 
+## 30. Legal website design: hero, testimonials, logo, trust blocks
+
+**Context:** Feedback indicated the design needed to resemble a prominent legal help website. The addition of visual elements (photographs, imagery) would enhance appeal and effectiveness.
+
+**Implementation:**
+- **Hero:** Split layout with Unsplash residential home image (via `next.config.ts` `images.remotePatterns` for images.unsplash.com), headline + CTA left, image right (stacked on mobile).
+- **Logo:** SVG wordmark (`public/logo.svg`) — "Over" dark blue, "Taxed" accent blue. Reusable `Logo` component in `components/navigation/Logo.tsx`. Replaced text branding across home nav, pricing, contact, FAQ, terms, privacy, disclaimer, and app Header.
+- **Testimonials:** `TestimonialsSection` with placeholder testimonial cards (quote, location, savings).
+- **How It Works:** 3-step visual (Monitor → Build → Save) with icons.
+- **Stats bar:** "Save $500–$1,500 Per Year" prominent block.
+- **Cook County badge:** "Built for Cook County" with location icon.
+- **Pricing/Contact/FAQ:** Gradient headers, pill hints, HelpCircle icon.
+- **Public assets:** `public/` directory; `next.config.ts` allows Unsplash remote images.
+
+**Where:** `app/page.tsx`, `components/home/`, `components/navigation/Logo.tsx`, `next.config.ts`, `public/logo.svg`.
+
+**Lesson:** Legal-style sites benefit from hero imagery, social proof (testimonials), trust blocks (stats, badges), and consistent logo branding. Use `remotePatterns` for external images when local files aren't available.
+
+---
+
 ## Stripe Webhook Debugging
 
 ### Issue: Subscription doesn't update after checkout
@@ -849,6 +870,6 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 **Last Updated:** February 2026
 
-**Feb 2026:** §27 — Requested assessment input: explicit `bg-white text-gray-900` so text visible in dark mode. §28 — Comps: Cook County fallbacks (class, 3-year, township), ASSESSED_VALUES enrichment, manual comp upload, Realie clarification in Add Comps. §29 — 8-step submission instructions on appeal page; PDF filing section expanded to 6 steps.
+**Feb 2026:** §30 — Legal website design: hero image (Unsplash), logo, testimonials, How It Works, stats bar, Cook County badge; Logo component; gradient refinements on Pricing/Contact/FAQ. §27 — Requested assessment input: explicit `bg-white text-gray-900` so text visible in dark mode. §28 — Comps: Cook County fallbacks (class, 3-year, township), ASSESSED_VALUES enrichment, manual comp upload, Realie clarification in Add Comps. §29 — 8-step submission instructions on appeal page; PDF filing section expanded to 6 steps.
 
 **Jan 2026:** §26 — PDF summary: enriched comps in download-summary, Subject vs Comparables table layout (PIN overlap fix), map & Street View embedded in PDF when GOOGLE_MAPS_API_KEY set. §25 — Comparison report value-add (Realie, map, Street View, PDF similarity line).

@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { Logo } from "@/components/navigation/Logo"
 import { Menu, X, Home, Building2, FileText, User, CreditCard } from "lucide-react"
 import { useState } from "react"
 import { cn } from "@/lib/utils"
@@ -21,9 +22,7 @@ export function Header() {
   return (
     <header className="sticky top-0 z-50 w-full border-b border-gray-200 bg-white/95 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        <Link href="/dashboard" className="flex items-center gap-2 font-bold text-blue-900">
-          Over<span className="text-blue-600">Taxed</span>
-        </Link>
+        <Logo href="/dashboard" size="sm" className="h-7 w-auto" />
 
         {/* Desktop nav */}
         <nav className="hidden md:flex md:items-center md:gap-1">
