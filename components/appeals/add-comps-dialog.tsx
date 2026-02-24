@@ -37,6 +37,7 @@ export function AddCompsDialog({
   onClose: () => void
 }) {
   const [comps, setComps] = useState<CompItem[]>([])
+  const [compsSource, setCompsSource] = useState<string>("")
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
@@ -67,6 +68,7 @@ export function AddCompsDialog({
         if (cancelled) return
         if (!d.success) throw new Error(d.error || "Failed to fetch comps")
         setComps(d.comps)
+        setCompsSource(d.source ?? "")
       })
       .catch((e) => !cancelled && setError(e.message))
       .finally(() => !cancelled && setLoading(false))
@@ -217,7 +219,11 @@ export function AddCompsDialog({
               <strong>Best comps:</strong> Recent sales (within 2 years), similar size (±25% living area), same neighborhood. Pick the ones with <strong>lower price per sqft</strong> than your property — they support a lower assessment.
             </p>
             <p className="text-amber-700 text-xs">
-              Comps are sourced from Cook County and enriched with Realie when available (marked with * in the PDF). You can also add comps manually if needed.
+              {compsSource ? (
+                <>Comps from <strong>{compsSource}</strong>. {compsSource.includes("Realie") ? "Realie provides sqft, beds, baths when available." : "Enriched with Realie when available (marked with * in the PDF)."} You can also add comps manually if needed.</>
+              ) : (
+                <>Comps are sourced from Cook County and enriched with Realie when available (marked with * in the PDF). You can also add comps manually if needed.</>
+              )}
             </p>
           </div>
           {error && (

@@ -35,6 +35,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 28. [Comps improvements: fallbacks, manual upload, Realie clarification](#28-comps-improvements-fallbacks-manual-upload-realie-clarification)
 29. [Detailed submission instructions for Cook County Assessor](#29-detailed-submission-instructions-for-cook-county-assessor)
 30. [Legal website design: hero, testimonials, logo, trust blocks](#30-legal-website-design-hero-testimonials-logo-trust-blocks)
+31. [Street View: heading to face building front](#31-street-view-heading-to-face-building-front)
 
 ---
 
@@ -758,6 +759,23 @@ This forces dark text on white background regardless of system color scheme.
 
 ---
 
+## 31. Street View: heading to face building front
+
+**Context:** Appeal report subject and comparable property Street View images showed random angles (side, rear) instead of the front of the building.
+
+**Solution:** Use the Street View Metadata API to get the panorama's actual position (camera on the street), then compute the bearing from that position toward the building. Pass the `heading` parameter to the Street View Static API so the camera faces the building.
+
+**Implementation:**
+- `lib/map/streetview.ts`: `computeBearing(fromLat, fromLng, toLat, toLng)` (spherical formula); `getStreetViewMetadata()` fetches metadata; `getHeadingTowardBuilding()` returns heading from pano to building.
+- `GET /api/map/streetview`: Calls `getHeadingTowardBuilding` before fetching the image; adds `heading` and `source=outdoor` to the URL.
+- `GET /api/appeals/[id]/download-summary`: Same logic for subject and up to 6 comp Street View images in the PDF.
+
+**Enabling:** Street View Metadata API uses the same API key as Street View Static. Enable both in Google Cloud Console if not already.
+
+**Lesson:** Without `heading`, Street View picks an arbitrary view. Compute heading from panorama (metadata) to building for consistent front-facing building shots.
+
+---
+
 ## Stripe Webhook Debugging
 
 ### Issue: Subscription doesn't update after checkout
@@ -870,6 +888,6 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 **Last Updated:** February 2026
 
-**Feb 2026:** §30 — Legal website design: hero image (Unsplash), logo, testimonials, How It Works, stats bar, Cook County badge; Logo component; gradient refinements on Pricing/Contact/FAQ. §27 — Requested assessment input: explicit `bg-white text-gray-900` so text visible in dark mode. §28 — Comps: Cook County fallbacks (class, 3-year, township), ASSESSED_VALUES enrichment, manual comp upload, Realie clarification in Add Comps. §29 — 8-step submission instructions on appeal page; PDF filing section expanded to 6 steps.
+**Feb 2026:** §31 — Street View heading to face building front (metadata + bearing); `lib/map/streetview.ts`; applies to appeal page and PDF. §30 — Legal website design: hero image (Unsplash), logo, testimonials, How It Works, stats bar, Cook County badge; Logo component; gradient refinements on Pricing/Contact/FAQ. §27 — Requested assessment input: explicit `bg-white text-gray-900` so text visible in dark mode. §28 — Comps: Cook County fallbacks (class, 3-year, township), ASSESSED_VALUES enrichment, manual comp upload, Realie clarification in Add Comps. §29 — 8-step submission instructions on appeal page; PDF filing section expanded to 6 steps.
 
 **Jan 2026:** §26 — PDF summary: enriched comps in download-summary, Subject vs Comparables table layout (PIN overlap fix), map & Street View embedded in PDF when GOOGLE_MAPS_API_KEY set. §25 — Comparison report value-add (Realie, map, Street View, PDF similarity line).

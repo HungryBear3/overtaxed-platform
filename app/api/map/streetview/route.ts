@@ -1,6 +1,8 @@
 // GET /api/map/streetview?lat=&lng=&size=200x150 - Proxy Google Street View Static API
+// Uses metadata to compute heading so the camera faces the building (front-facing view).
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
+import { getHeadingTowardBuilding } from "@/lib/map/streetview"
 
 export async function GET(request: NextRequest) {
   try {
@@ -30,11 +32,18 @@ export async function GET(request: NextRequest) {
       return new NextResponse(null, { status: 400 })
     }
 
+    // Get heading so camera faces the building (front of property)
+    const heading = await getHeadingTowardBuilding(latNum, lngNum, key)
+
     const params = new URLSearchParams({
       size,
       location: `${latNum},${lngNum}`,
+      source: "outdoor",
       key,
     })
+    if (heading != null) {
+      params.set("heading", String(Math.round(heading)))
+    }
     const url = `https://maps.googleapis.com/maps/api/streetview?${params.toString()}`
     const res = await fetch(url, { next: { revalidate: 0 } })
     // #region agent log

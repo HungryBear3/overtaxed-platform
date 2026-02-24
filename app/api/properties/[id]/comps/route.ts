@@ -74,7 +74,8 @@ export async function GET(
     const subjectLon = subjectEnriched?.longitude ?? null
 
     // Try Realie Premium Comparables first when subject has lat/long (1 API call vs Cook County + 15 Realie)
-    if (subjectLat != null && subjectLon != null && process.env.REALIE_API_KEY) {
+    const realieAttempted = subjectLat != null && subjectLon != null && !!process.env.REALIE_API_KEY
+    if (realieAttempted) {
       const realieResult = await fetchRealieComparables({
         latitude: subjectLat,
         longitude: subjectLon,
@@ -84,6 +85,7 @@ export async function GET(
         subjectPin: propertyPin,
       })
       if (realieResult.success && realieResult.comps.length > 0) {
+        console.log("[comps] Using Realie Premium Comparables", { count: realieResult.comps.length, propertyId: id })
         const comps = realieResult.comps.map((c) => ({
           ...c,
           inBothSources: true,
@@ -111,7 +113,13 @@ export async function GET(
           comps,
           source: "Realie Premium Comparables",
         })
+      } else if (!realieResult.success) {
+        console.log("[comps] Realie Premium skipped", { error: realieResult.error, propertyId: id })
+      } else {
+        console.log("[comps] Realie Premium returned 0 comps, falling back to Cook County", { propertyId: id })
       }
+    } else if (subjectLat == null || subjectLon == null) {
+      console.log("[comps] Realie Premium skipped: no subject lat/long from Parcel Universe", { propertyId: id })
     }
 
     // Fall back to Cook County + Realie enrichment

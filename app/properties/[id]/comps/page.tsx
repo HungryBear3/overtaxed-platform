@@ -31,6 +31,7 @@ export default function PropertyCompsPage() {
   const propertyId = params.id as string
 
   const [comps, setComps] = useState<Comp[]>([])
+  const [compsSource, setCompsSource] = useState<string>("")
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -59,6 +60,7 @@ export default function PropertyCompsPage() {
         propertyClass: (c.buildingClass as string) ?? (c.propertyClass as string) ?? null,
       }))
       setComps(list)
+      setCompsSource(data.source ?? "")
       setSelected(new Set())
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load comps")
@@ -127,6 +129,13 @@ export default function PropertyCompsPage() {
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
             {error}
+          </div>
+        )}
+
+        {/* Comps source indicator */}
+        {compsSource && (
+          <div className="mb-4 rounded-lg bg-gray-100 border border-gray-200 px-4 py-2 text-sm text-gray-600">
+            <strong>Source:</strong> {compsSource}
           </div>
         )}
 

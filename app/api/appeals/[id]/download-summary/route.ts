@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
 import { formatPIN, getAddressByPIN, haversineMiles } from "@/lib/cook-county"
+import { getHeadingTowardBuilding } from "@/lib/map/streetview"
 import { getFullPropertyByPin } from "@/lib/realie"
 import { enrichCompsWithRealie } from "@/lib/comps/enrich-with-realie"
 import { generateAppealSummaryPdf } from "@/lib/document-generation/appeal-summary"
@@ -260,23 +261,48 @@ export async function GET(
       const STREETVIEW_SIZE = "280x186" // subject; comps use 120x90
       const MAX_COMP_STREETVIEW = 6
 
+      // Get headings so Street View faces the building (front-facing)
+      const [subjectHeading, ...compHeadings] = await Promise.all([
+        subjectLat != null && subjectLon != null
+          ? getHeadingTowardBuilding(subjectLat, subjectLon, googleKey)
+          : Promise.resolve(null),
+        ...compCoordsList.slice(0, MAX_COMP_STREETVIEW).map((c) =>
+          c ? getHeadingTowardBuilding(c.lat, c.lng, googleKey) : Promise.resolve(null)
+        ),
+      ])
+
+      const subjectSvUrl =
+        subjectLat != null && subjectLon != null
+          ? (() => {
+              const u = new URL("https://maps.googleapis.com/maps/api/streetview")
+              u.searchParams.set("size", STREETVIEW_SIZE)
+              u.searchParams.set("location", `${subjectLat},${subjectLon}`)
+              u.searchParams.set("source", "outdoor")
+              if (subjectHeading != null) u.searchParams.set("heading", String(Math.round(subjectHeading)))
+              u.searchParams.set("key", googleKey)
+              return u.toString()
+            })()
+          : null
+
+      const compSvUrls = compCoordsList.slice(0, MAX_COMP_STREETVIEW).map((c, i) => {
+        if (!c) return null
+        const u = new URL("https://maps.googleapis.com/maps/api/streetview")
+        u.searchParams.set("size", "120x90")
+        u.searchParams.set("location", `${c.lat},${c.lng}`)
+        u.searchParams.set("source", "outdoor")
+        const h = compHeadings[i]
+        if (h != null) u.searchParams.set("heading", String(Math.round(h)))
+        u.searchParams.set("key", googleKey)
+        return u.toString()
+      })
+
       const [mapRes, subjectSvRes, ...compSvResList] = await Promise.all([
         fetch(`https://maps.googleapis.com/maps/api/staticmap?${mapParams.toString()}`, {
           next: { revalidate: 0 },
         }),
-        subjectLat != null && subjectLon != null
-          ? fetch(
-              `https://maps.googleapis.com/maps/api/streetview?size=${STREETVIEW_SIZE}&location=${subjectLat},${subjectLon}&key=${googleKey}`,
-              { next: { revalidate: 0 } }
-            )
-          : Promise.resolve(null),
-        ...compCoordsList.slice(0, MAX_COMP_STREETVIEW).map((c) =>
-          c
-            ? fetch(
-                `https://maps.googleapis.com/maps/api/streetview?size=120x90&location=${c.lat},${c.lng}&key=${googleKey}`,
-                { next: { revalidate: 0 } }
-              )
-            : Promise.resolve(null)
+        subjectSvUrl ? fetch(subjectSvUrl, { next: { revalidate: 0 } }) : Promise.resolve(null),
+        ...compSvUrls.map((url) =>
+          url ? fetch(url, { next: { revalidate: 0 } }) : Promise.resolve(null)
         ),
       ])
 

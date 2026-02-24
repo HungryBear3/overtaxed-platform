@@ -128,6 +128,7 @@ model Property {
   // Property identification
   pin       String   // Property Identification Number (Cook County)
   address   String
+  unitNumber String? // e.g. "2B" — for condos when Cook County doesn't include it
   city      String
   state     String   @default("IL")
   zipCode   String
