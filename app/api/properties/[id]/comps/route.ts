@@ -131,10 +131,29 @@ export async function GET(
     // #region agent log
     fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f164df'},body:JSON.stringify({sessionId:'f164df',location:'comps/route.ts:GET:before-enrichRealie',message:'About to call enrichCompsWithRealie',data:{propertyId:id,countyCompsCount:countyComps.length,hypothesisId:'D'},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
-    const comps = await enrichCompsWithRealie(countyComps, { maxRealie: 15 })
+    let comps = await enrichCompsWithRealie(countyComps, { maxRealie: 15 })
     // #region agent log
     fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f164df'},body:JSON.stringify({sessionId:'f164df',location:'comps/route.ts:GET:after-enrichRealie',message:'enrichCompsWithRealie succeeded',data:{propertyId:id,compsCount:comps.length,hypothesisId:'D'},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
+
+    // Sort: most supportive comps first (lower sale price supports a lower assessment).
+    // Subject market value = currentMarketValue or assessed × 10.
+    const subjectMarket =
+      property.currentMarketValue != null
+        ? parseFloat(String(property.currentMarketValue))
+        : property.currentAssessmentValue != null
+          ? parseFloat(String(property.currentAssessmentValue)) * 10
+          : null
+    comps = [...comps].sort((a, b) => {
+      const priceA = a.salePrice ?? Infinity
+      const priceB = b.salePrice ?? Infinity
+      if (subjectMarket != null && subjectMarket > 0) {
+        const aSupportive = priceA <= subjectMarket * 1.15
+        const bSupportive = priceB <= subjectMarket * 1.15
+        if (aSupportive !== bSupportive) return aSupportive ? -1 : 1
+      }
+      return priceA - priceB
+    })
 
     return NextResponse.json({
       success: true,
