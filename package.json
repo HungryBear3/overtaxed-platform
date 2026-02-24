@@ -22,6 +22,7 @@
     "db:reset": "prisma migrate reset",
     "db:push": "prisma db push",
     "db:test": "tsx scripts/test-db-connection.ts",
+    "db:baseline": "prisma migrate resolve --applied 0_init",
     "township-deadlines:check": "tsx scripts/check-township-deadlines.ts"
   },
   "dependencies": {

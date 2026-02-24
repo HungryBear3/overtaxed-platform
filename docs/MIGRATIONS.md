@@ -8,10 +8,17 @@ The build runs `prisma migrate deploy` before `next build`, so migrations are ap
 
 If your Supabase database was created before Prisma Migrate (e.g. via `db push` or manual SQL), you must **baseline** it once before `prisma migrate deploy` will succeed. Otherwise you get error P3005: "The database schema is not empty."
 
-**Run this once** with your production `DATABASE_URL` (from Vercel env or Supabase):
+**Run this once** with your production `DATABASE_URL` (from Vercel → Project → Settings → Environment Variables, or Supabase → Settings → Database → Connection string):
 
-```bash
-DATABASE_URL="your-supabase-connection-string" npx prisma migrate resolve --applied 0_init
+```powershell
+# PowerShell (set env, then run)
+$env:DATABASE_URL = "postgresql://postgres.[ref]:[password]@aws-1-us-east-2.pooler.supabase.com:5432/postgres"
+npm run db:baseline
+```
+
+Or in one line:
+```powershell
+$env:DATABASE_URL = "postgresql://..."; npm run db:baseline
 ```
 
 This marks the baseline migration as applied without running it, since your tables already exist. After this, `prisma migrate deploy` on Vercel will succeed and only apply new migrations.
