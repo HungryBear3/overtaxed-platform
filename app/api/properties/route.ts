@@ -13,6 +13,7 @@ const addPropertySchema = z.object({
   address: z.string().optional(),
   city: z.string().optional(),
   zipCode: z.string().optional(),
+  unitNumber: z.string().optional().nullable(),
 })
 
 // GET /api/properties - List user's properties
@@ -128,7 +129,7 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    const { pin } = validation.data
+    const { pin, unitNumber } = validation.data
     
     // Validate PIN format
     if (!isValidPIN(pin)) {
@@ -221,6 +222,7 @@ export async function POST(request: NextRequest) {
         userId: session.user.id,
         pin: normalizedPIN,
         address: validation.data.address || propertyData.address,
+        unitNumber: unitNumber?.trim() || null,
         city: validation.data.city || propertyData.city,
         state: propertyData.state,
         zipCode: validation.data.zipCode || propertyData.zipCode,

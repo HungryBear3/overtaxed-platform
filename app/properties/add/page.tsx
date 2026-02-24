@@ -3,6 +3,7 @@
 import { useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { parseUnitFromAddress } from "@/lib/realie/address-lookup"
 
 interface LimitError {
   error: string
@@ -37,6 +38,7 @@ export default function AddPropertyPage() {
   const [error, setError] = useState("")
   const [limitError, setLimitError] = useState<LimitError | null>(null)
   const [propertyPreview, setPropertyPreview] = useState<PropertyPreview | null>(null)
+  const [unitNumber, setUnitNumber] = useState("")
   const [step, setStep] = useState<"lookup" | "confirm">("lookup")
 
   // Format PIN as user types (XX-XX-XXX-XXX-XXXX)
@@ -71,6 +73,7 @@ export default function AddPropertyPage() {
       }
 
       setPropertyPreview(data.property)
+      setUnitNumber("")
       setStep("confirm")
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to lookup property")
@@ -88,7 +91,10 @@ export default function AddPropertyPage() {
       const response = await fetch("/api/properties", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin }),
+        body: JSON.stringify({
+          pin,
+          unitNumber: unitNumber.trim() || undefined,
+        }),
       })
 
       const data = await response.json()
@@ -336,6 +342,33 @@ export default function AddPropertyPage() {
                     <p className="text-gray-900">{propertyPreview.buildingClass ?? "—"}</p>
                   </div>
                 </div>
+
+                {/* Unit number for condos when Cook County address doesn't include it */}
+                {(() => {
+                  const isCondoClass =
+                    propertyPreview.buildingClass != null &&
+                    (propertyPreview.buildingClass.startsWith("2") || propertyPreview.buildingClass === "299")
+                  const addressHasUnit = parseUnitFromAddress(propertyPreview.address) != null
+                  if (!isCondoClass || addressHasUnit) return null
+                  return (
+                    <div className="mb-6">
+                      <label htmlFor="unitNumber" className="block text-sm font-medium text-gray-700 mb-2">
+                        Is this a condo or apartment?
+                      </label>
+                      <p className="text-sm text-gray-600 mb-2">
+                        If your address doesn&apos;t include a unit (e.g. Apt 2B), enter it here so we can find better comparables.
+                      </p>
+                      <input
+                        type="text"
+                        id="unitNumber"
+                        value={unitNumber}
+                        onChange={(e) => setUnitNumber(e.target.value)}
+                        placeholder="e.g. 2B or 101"
+                        className="w-full max-w-xs px-4 py-2 text-gray-900 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+                  )
+                })()}
 
                 {/* Note about additional data */}
                 <div className="mb-6 bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg text-sm">

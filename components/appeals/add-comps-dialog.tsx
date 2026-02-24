@@ -38,6 +38,8 @@ export function AddCompsDialog({
 }) {
   const [comps, setComps] = useState<CompItem[]>([])
   const [compsSource, setCompsSource] = useState<string>("")
+  const [needsUnitConfirmation, setNeedsUnitConfirmation] = useState(false)
+  const [unitForRetry, setUnitForRetry] = useState("")
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
@@ -58,21 +60,33 @@ export function AddCompsDialog({
     buildingClass: "",
   })
 
-  useEffect(() => {
-    let cancelled = false
+  async function fetchComps(unitNumber?: string | null) {
     setError("")
+    setNeedsUnitConfirmation(false)
     setLoading(true)
-    fetch(`/api/properties/${propertyId}/comps?limit=20`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (cancelled) return
-        if (!d.success) throw new Error(d.error || "Failed to fetch comps")
-        setComps(d.comps)
-        setCompsSource(d.source ?? "")
-      })
-      .catch((e) => !cancelled && setError(e.message))
-      .finally(() => !cancelled && setLoading(false))
-    return () => { cancelled = true }
+    try {
+      const url = `/api/properties/${propertyId}/comps?limit=20${unitNumber ? `&unitNumber=${encodeURIComponent(unitNumber)}` : ""}`
+      const r = await fetch(url)
+      const d = await r.json()
+      if (d.needsUnitConfirmation) {
+        setNeedsUnitConfirmation(true)
+        setComps([])
+        setCompsSource("")
+        setError("")
+        return
+      }
+      if (!d.success) throw new Error(d.error || "Failed to fetch comps")
+      setComps(d.comps)
+      setCompsSource(d.source ?? "")
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to fetch comps")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchComps()
   }, [propertyId])
 
   function toggle(pinRaw: string) {
@@ -231,7 +245,43 @@ export function AddCompsDialog({
               {error}
             </div>
           )}
-          {loading ? (
+          {needsUnitConfirmation ? (
+            <div className="space-y-4 py-4">
+              <div className="rounded-lg bg-amber-50 border border-amber-200 p-4">
+                <p className="text-sm font-medium text-amber-900 mb-2">
+                  Unit number may be required for this address
+                </p>
+                <p className="text-sm text-amber-800 mb-4">
+                  To find comparables for this condo or apartment, enter your unit number (e.g. 2B or 101).
+                </p>
+                <div className="flex gap-3 items-end">
+                  <div className="flex-1">
+                    <Label htmlFor="unit-retry">Unit number</Label>
+                    <Input
+                      id="unit-retry"
+                      value={unitForRetry}
+                      onChange={(e) => setUnitForRetry(e.target.value)}
+                      placeholder="e.g. 2B"
+                      className="mt-1"
+                    />
+                  </div>
+                  <Button
+                    onClick={() => fetchComps(unitForRetry.trim() || null)}
+                    disabled={!unitForRetry.trim()}
+                  >
+                    Search comps
+                  </Button>
+                </div>
+                <p className="text-xs text-amber-700 mt-3">
+                  If this is a single-family home, you can add comps manually below.
+                </p>
+              </div>
+              <Button variant="outline" className="w-full" onClick={() => setShowManualForm(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add comp manually instead
+              </Button>
+            </div>
+          ) : loading ? (
             <div className="flex items-center justify-center py-12">
               <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
             </div>

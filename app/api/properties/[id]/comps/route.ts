@@ -8,7 +8,7 @@ import { prisma } from "@/lib/db"
 import { getComparableSales, getAddressByPIN, formatPIN, haversineMiles } from "@/lib/cook-county"
 import { propertyDataFromDb } from "@/lib/comps/property-data"
 import { enrichCompsWithRealie } from "@/lib/comps/enrich-with-realie"
-import { fetchRealieComparables } from "@/lib/realie"
+import { fetchRealieComparables, fetchRealieAddressLookup, parseUnitFromAddress } from "@/lib/realie"
 
 const ADDRESS_ENRICH_CONCURRENCY = 5
 
@@ -67,15 +67,47 @@ export async function GET(
       Math.max(parseInt(searchParams.get("limit") ?? "20", 10), 1),
       50
     )
+    const unitOverride = searchParams.get("unitNumber")?.trim() || null
 
     const propertyPin = property.pin.replace(/\D/g, "")
     const subjectEnriched = await getAddressByPIN(propertyPin)
-    const subjectLat = subjectEnriched?.latitude ?? null
-    const subjectLon = subjectEnriched?.longitude ?? null
+    let subjectLat = subjectEnriched?.latitude ?? null
+    let subjectLon = subjectEnriched?.longitude ?? null
 
-    // Try Realie Premium Comparables first when subject has lat/long (1 API call vs Cook County + 15 Realie)
+    // Fallback: when Parcel Universe has no coords, try Realie Address Lookup (address + unit)
+    if ((subjectLat == null || subjectLon == null) && !!process.env.REALIE_API_KEY && property.address?.trim()) {
+      const unit = unitOverride ?? (property as { unitNumber?: string | null }).unitNumber ?? parseUnitFromAddress(property.address)
+      const addrResult = await fetchRealieAddressLookup({
+        state: property.state || "IL",
+        address: property.address,
+        unitNumberStripped: unit,
+        city: property.city,
+        county: property.county || "Cook",
+      })
+      if (addrResult.success) {
+        subjectLat = addrResult.latitude
+        subjectLon = addrResult.longitude
+        console.log("[comps] Got coords from Realie Address Lookup", { propertyId: id })
+      } else {
+        const isCondoClass =
+          property.buildingClass != null &&
+          (property.buildingClass.startsWith("2") || property.buildingClass === "299")
+        const hasNoUnit = !unit
+        if (isCondoClass && hasNoUnit) {
+          return NextResponse.json({
+            success: false,
+            needsUnitConfirmation: true,
+            reason: "condo",
+            error: "Unit number may be required for this address. Enter your unit (e.g. 2B) and try again.",
+          }, { status: 200 })
+        }
+        console.log("[comps] Realie Address Lookup failed", { error: addrResult.error, propertyId: id })
+      }
+    }
+
+    // Try Realie Premium Comparables when subject has lat/long (1 API call vs Cook County + 15 Realie)
     const realieAttempted = subjectLat != null && subjectLon != null && !!process.env.REALIE_API_KEY
-    if (realieAttempted) {
+    if (realieAttempted && subjectLat != null && subjectLon != null) {
       const realieResult = await fetchRealieComparables({
         latitude: subjectLat,
         longitude: subjectLon,

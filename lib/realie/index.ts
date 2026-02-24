@@ -10,3 +10,10 @@ export {
   type MappedRealieComp,
   type FetchRealieComparablesResult,
 } from "./premium-comparables"
+export {
+  fetchRealieAddressLookup,
+  parseStreetFromAddress,
+  parseUnitFromAddress,
+  type FetchRealieAddressLookupOptions,
+  type FetchRealieAddressLookupResult,
+} from "./address-lookup"
