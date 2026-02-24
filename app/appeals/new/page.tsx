@@ -413,7 +413,7 @@ export default function NewAppealPage() {
                 <select
                   value={taxYear}
                   onChange={(e) => setTaxYear(parseInt(e.target.value))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white text-gray-900"
                 >
                   {[0, 1, 2].map((offset) => {
                     const year = new Date().getFullYear() - offset
@@ -555,7 +555,7 @@ export default function NewAppealPage() {
                     type="date"
                     value={noticeDate}
                     onChange={(e) => setNoticeDate(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white text-gray-900 [color-scheme:light]"
                   />
                   <p className="text-xs text-gray-500 mt-1">
                     Date printed on your reassessment notice
@@ -571,7 +571,7 @@ export default function NewAppealPage() {
                     value={filingDeadline}
                     onChange={(e) => setFilingDeadline(e.target.value)}
                     required
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white text-gray-900 [color-scheme:light]"
                   />
                   <p className="text-xs text-gray-500 mt-1">
                     {noticeDate 

@@ -31,6 +31,7 @@ export default function PropertyCompsPage() {
   const propertyId = params.id as string
 
   const [comps, setComps] = useState<Comp[]>([])
+  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
 
@@ -58,6 +59,7 @@ export default function PropertyCompsPage() {
         propertyClass: (c.buildingClass as string) ?? (c.propertyClass as string) ?? null,
       }))
       setComps(list)
+      setSelected(new Set())
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load comps")
     } finally {
@@ -81,6 +83,19 @@ export default function PropertyCompsPage() {
       month: "short",
       day: "numeric",
     })
+  }
+
+  function toggleComp(pinRaw: string) {
+    setSelected((s) => {
+      const n = new Set(s)
+      if (n.has(pinRaw)) n.delete(pinRaw)
+      else n.add(pinRaw)
+      return n
+    })
+  }
+
+  function selectTopN(n: number) {
+    setSelected(new Set(comps.slice(0, n).map((c) => c.pinRaw ?? c.pin)))
   }
 
   if (loading) {
@@ -142,15 +157,50 @@ export default function PropertyCompsPage() {
         ) : (
           <>
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-              <div className="flex gap-3">
-                <svg className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <div className="text-sm text-blue-800">
-                  <p className="font-medium mb-1">Found {comps.length} comparable properties</p>
-                  <p className="text-blue-700">
-                    These properties are similar in size, age, location, and class. Use them to support your appeal.
-                  </p>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex gap-3">
+                  <svg className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div className="text-sm text-blue-800">
+                    <p className="font-medium mb-1">Found {comps.length} comparable properties</p>
+                    <p className="text-blue-700 mb-2">
+                      Pick <strong>5–8 comps</strong> that best support your appeal (Rule 15 requires 3+). Lower $/sq ft comps strengthen your case.
+                    </p>
+                    <p className="text-blue-700">
+                      {selected.size} selected — {selected.size >= 3 ? "✓ ready to add" : "select at least 3"}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => selectTopN(5)}
+                    className="text-sm px-3 py-1.5 bg-blue-100 text-blue-800 rounded-lg hover:bg-blue-200 font-medium"
+                  >
+                    Select top 5
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => selectTopN(8)}
+                    className="text-sm px-3 py-1.5 bg-blue-100 text-blue-800 rounded-lg hover:bg-blue-200 font-medium"
+                  >
+                    Select top 8
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(new Set(comps.map((c) => c.pinRaw ?? c.pin)))}
+                    className="text-sm px-3 py-1.5 bg-blue-100 text-blue-800 rounded-lg hover:bg-blue-200 font-medium"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(new Set())}
+                    className="text-sm px-3 py-1.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium"
+                  >
+                    Clear
+                  </button>
                 </div>
               </div>
             </div>
@@ -160,6 +210,9 @@ export default function PropertyCompsPage() {
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10">
+                        Select
+                      </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Address
                       </th>
@@ -190,8 +243,23 @@ export default function PropertyCompsPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {comps.map((comp, idx) => (
-                      <tr key={idx} className="hover:bg-gray-50">
+                    {comps.map((comp, idx) => {
+                      const pinRaw = comp.pinRaw ?? comp.pin
+                      const isSelected = selected.has(pinRaw)
+                      return (
+                      <tr
+                        key={idx}
+                        className={`hover:bg-gray-50 cursor-pointer ${isSelected ? "bg-blue-50" : ""}`}
+                        onClick={() => toggleComp(pinRaw)}
+                      >
+                        <td className="px-4 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleComp(pinRaw)}
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                        </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-gray-900">{comp.address}</div>
                           <div className="text-xs text-gray-500">{comp.city}, {comp.state}</div>
@@ -221,7 +289,7 @@ export default function PropertyCompsPage() {
                           {formatCurrency(comp.currentAssessmentValue)}
                         </td>
                       </tr>
-                    ))}
+                    )})}
                   </tbody>
                 </table>
               </div>
@@ -229,7 +297,9 @@ export default function PropertyCompsPage() {
 
             <div className="mt-6 space-y-3">
               <p className="text-sm text-gray-600">
-                When you start an appeal below, all {comps.length} comps will be added to your appeal automatically. Next steps: create the appeal, set your requested value, then download your summary and forms.
+                {selected.size >= 3
+                  ? `${selected.size} comps selected. When you start an appeal below, only your selected comps will be added. Next: create the appeal, set your requested value, then download your summary and forms.`
+                  : `Select at least 3 comps above (Rule 15 minimum). Then start your appeal with only the comps you choose.`}
               </p>
               <div className="flex gap-3">
                 <Link
@@ -240,9 +310,11 @@ export default function PropertyCompsPage() {
                 </Link>
                 <button
                   type="button"
+                  disabled={selected.size < 3}
                   onClick={() => {
                     try {
-                      const rawComps = comps.map((c) => ({
+                      const compsToAdd = comps.filter((c) => selected.has(c.pinRaw ?? c.pin))
+                      const rawComps = compsToAdd.map((c) => ({
                         pin: c.pinRaw ?? c.pin,
                         address: c.address,
                         city: c.city,
@@ -267,9 +339,9 @@ export default function PropertyCompsPage() {
                       router.push(`/appeals/new?propertyId=${propertyId}`)
                     }
                   }}
-                  className="flex-1 text-center bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700"
+                  className="flex-1 text-center bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Start Appeal with These Comps
+                  Start Appeal with {selected.size} Selected Comps
                 </button>
               </div>
             </div>
