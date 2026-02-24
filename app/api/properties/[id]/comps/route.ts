@@ -1,4 +1,4 @@
-// GET /api/properties/[id]/comps - Fetch comparable sales for a property from Cook County
+// GET /api/properties/[id]/comps - Fetch comparable sales for a property from Cook County or Realie Premium
 import { NextRequest, NextResponse } from "next/server"
 
 /** Allow up to 30s — comps flow calls Cook County + address enrichment + Realie (many external APIs). Vercel Hobby caps at 10s. */
@@ -8,6 +8,7 @@ import { prisma } from "@/lib/db"
 import { getComparableSales, getAddressByPIN, formatPIN, haversineMiles } from "@/lib/cook-county"
 import { propertyDataFromDb } from "@/lib/comps/property-data"
 import { enrichCompsWithRealie } from "@/lib/comps/enrich-with-realie"
+import { fetchRealieComparables } from "@/lib/realie"
 
 const ADDRESS_ENRICH_CONCURRENCY = 5
 
@@ -67,6 +68,53 @@ export async function GET(
       50
     )
 
+    const propertyPin = property.pin.replace(/\D/g, "")
+    const subjectEnriched = await getAddressByPIN(propertyPin)
+    const subjectLat = subjectEnriched?.latitude ?? null
+    const subjectLon = subjectEnriched?.longitude ?? null
+
+    // Try Realie Premium Comparables first when subject has lat/long (1 API call vs Cook County + 15 Realie)
+    if (subjectLat != null && subjectLon != null && process.env.REALIE_API_KEY) {
+      const realieResult = await fetchRealieComparables({
+        latitude: subjectLat,
+        longitude: subjectLon,
+        radius: 1,
+        timeFrame: 18,
+        maxResults: limit,
+        subjectPin: propertyPin,
+      })
+      if (realieResult.success && realieResult.comps.length > 0) {
+        const comps = realieResult.comps.map((c) => ({
+          ...c,
+          inBothSources: true,
+          assessedMarketValue: null as number | null,
+          assessedMarketValuePerSqft: null as number | null,
+        }))
+        const subjectMarket =
+          property.currentMarketValue != null
+            ? parseFloat(String(property.currentMarketValue))
+            : property.currentAssessmentValue != null
+              ? parseFloat(String(property.currentAssessmentValue)) * 10
+              : null
+        comps.sort((a, b) => {
+          const priceA = a.salePrice ?? Infinity
+          const priceB = b.salePrice ?? Infinity
+          if (subjectMarket != null && subjectMarket > 0) {
+            const aSupportive = priceA <= subjectMarket * 1.15
+            const bSupportive = priceB <= subjectMarket * 1.15
+            if (aSupportive !== bSupportive) return aSupportive ? -1 : 1
+          }
+          return priceA - priceB
+        })
+        return NextResponse.json({
+          success: true,
+          comps,
+          source: "Realie Premium Comparables",
+        })
+      }
+    }
+
+    // Fall back to Cook County + Realie enrichment
     const propertyData = propertyDataFromDb(property)
     // #region agent log
     fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f164df'},body:JSON.stringify({sessionId:'f164df',location:'comps/route.ts:GET:before-getComparableSales',message:'About to call Cook County getComparableSales',data:{propertyId:id,pin:propertyData.pin,neighborhood:propertyData.neighborhood,buildingClass:propertyData.buildingClass,limit,hypothesisId:'C'},timestamp:Date.now()})}).catch(()=>{});
@@ -92,11 +140,7 @@ export async function GET(
     // #endregion
 
     const uniquePins = [...new Set(result.data.map((s) => s.pin))]
-    const subjectEnriched = await getAddressByPIN(property.pin.replace(/\D/g, ""))
     const addressByPin = await enrichAddressesForPins(uniquePins)
-
-    const subjectLat = subjectEnriched?.latitude ?? null
-    const subjectLon = subjectEnriched?.longitude ?? null
 
     const countyComps = result.data.map((s) => {
       const enriched = addressByPin.get(s.pin)

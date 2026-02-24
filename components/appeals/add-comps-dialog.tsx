@@ -43,6 +43,7 @@ export function AddCompsDialog({
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [showManualForm, setShowManualForm] = useState(false)
   const [manualComp, setManualComp] = useState({
+    pin: "",
     address: "",
     city: "",
     zipCode: "",
@@ -94,9 +95,11 @@ export function AddCompsDialog({
       const saleDateVal = manualComp.saleDate
         ? (manualComp.saleDate.includes("T") ? manualComp.saleDate : `${manualComp.saleDate}T12:00:00Z`)
         : null
+      const pinVal = manualComp.pin.trim().replace(/\D/g, "")
       const body = {
         comps: [
           {
+            pin: pinVal.length === 14 ? pinVal : undefined,
             address: manualComp.address.trim(),
             city: manualComp.city.trim() || "",
             zipCode: manualComp.zipCode.trim() || "",
@@ -122,6 +125,7 @@ export function AddCompsDialog({
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Failed to add comp")
       setManualComp({
+        pin: "",
         address: "",
         city: "",
         zipCode: "",
@@ -240,7 +244,25 @@ export function AddCompsDialog({
           ) : comps.length === 0 && showManualForm ? (
             <form onSubmit={addManualComp} className="space-y-4">
               <p className="text-sm text-gray-600">Add a comparable sale you know about (e.g. from a neighbor, listing).</p>
+              <details className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <summary className="cursor-pointer text-sm font-medium text-gray-700">How to find comp data</summary>
+                <ul className="mt-2 list-disc list-inside space-y-1 text-sm text-gray-600">
+                  <li>Use <a href="https://www.redfin.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Redfin</a> or <a href="https://www.zillow.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Zillow</a> sold listings for address, sale price, sale date, sq ft, beds, baths.</li>
+                  <li>To get the Cook County PIN: search by address at{" "}
+                    <a href="https://www.cookcountyassessoril.gov/address-search" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">cookcountyassessor.com/address-search</a> — PIN is required for Rule 15.</li>
+                  <li>If Zillow or Redfin show a PIN, confirm it at the Assessor site before entering.</li>
+                </ul>
+              </details>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2">
+                  <Label htmlFor="manual-pin">Cook County PIN (optional, 14 digits)</Label>
+                  <Input
+                    id="manual-pin"
+                    value={manualComp.pin}
+                    onChange={(e) => setManualComp((m) => ({ ...m, pin: e.target.value }))}
+                    placeholder="e.g. 16-01-216-001-0000"
+                  />
+                </div>
                 <div className="sm:col-span-2">
                   <Label htmlFor="manual-address">Address *</Label>
                   <Input
@@ -393,7 +415,25 @@ export function AddCompsDialog({
               {showManualForm ? (
                 <form onSubmit={addManualComp} className="mt-6 pt-6 border-t space-y-4">
                   <p className="text-sm font-medium text-gray-700">Add another comp manually</p>
+                  <details className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <summary className="cursor-pointer text-sm font-medium text-gray-700">How to find comp data</summary>
+                    <ul className="mt-2 list-disc list-inside space-y-1 text-sm text-gray-600">
+                      <li>Use <a href="https://www.redfin.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Redfin</a> or <a href="https://www.zillow.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Zillow</a> sold listings for address, sale price, sale date, sq ft, beds, baths.</li>
+                      <li>To get the Cook County PIN: search by address at{" "}
+                        <a href="https://www.cookcountyassessoril.gov/address-search" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">cookcountyassessor.com/address-search</a> — PIN is required for Rule 15.</li>
+                      <li>If Zillow or Redfin show a PIN, confirm it at the Assessor site before entering.</li>
+                    </ul>
+                  </details>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="sm:col-span-2">
+                      <Label htmlFor="manual-pin-2">Cook County PIN (optional, 14 digits)</Label>
+                      <Input
+                        id="manual-pin-2"
+                        value={manualComp.pin}
+                        onChange={(e) => setManualComp((m) => ({ ...m, pin: e.target.value }))}
+                        placeholder="e.g. 16-01-216-001-0000"
+                      />
+                    </div>
                     <div className="sm:col-span-2">
                       <Label htmlFor="manual-address-2">Address *</Label>
                       <Input

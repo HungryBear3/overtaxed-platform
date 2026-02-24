@@ -86,8 +86,18 @@ export async function enrichCompsWithRealie<T extends CountyCompBase>(
     const bedroomsRealie = realie?.bedrooms ?? null
     const bathroomsRealie = realie?.bathrooms ?? null
 
+    // Merge Realie into primary fields when County has null so UI displays sqft/beds/baths
+    const livingArea = c.livingArea ?? livingAreaRealie ?? null
+    const yearBuilt = c.yearBuilt ?? yearBuiltRealie ?? null
+    const bedrooms = c.bedrooms ?? bedroomsRealie ?? null
+    const bathrooms = c.bathrooms ?? bathroomsRealie ?? null
+
     return {
       ...c,
+      livingArea,
+      yearBuilt,
+      bedrooms,
+      bathrooms,
       inBothSources,
       ...(inBothSources
         ? {
