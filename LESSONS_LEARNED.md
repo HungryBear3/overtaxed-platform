@@ -31,6 +31,9 @@ This document captures bugs, deployment issues, and solutions encountered during
 24. [Pricing dropdown: Add 1 more showing total not additional](#24-pricing-dropdown-add-1-more-showing-total-not-additional)
 25. [Comparison report value-add: Realie, map, similarity line](#25-comparison-report-value-add-realie-map-similarity-line)
 26. [PDF summary: enriched comps, table layout, map & photos in PDF](#26-pdf-summary-enriched-comps-table-layout-map--photos-in-pdf)
+27. [Requested assessment input: white text in dark mode](#27-requested-assessment-input-white-text-in-dark-mode)
+28. [Comps improvements: fallbacks, manual upload, Realie clarification](#28-comps-improvements-fallbacks-manual-upload-realie-clarification)
+29. [Detailed submission instructions for Cook County Assessor](#29-detailed-submission-instructions-for-cook-county-assessor)
 
 ---
 
@@ -690,6 +693,50 @@ const user = { ...session.user, ...freshUser }
 
 ---
 
+## 27. Requested assessment input: white text in dark mode
+
+**Context:** Users reported that the requested assessment value input box and entered text appeared white and were invisible. The input had no explicit text or background color.
+
+**Cause:** `app/globals.css` uses `prefers-color-scheme: dark` to set `--foreground-rgb: 255, 255, 255` (white text) in dark mode. The input inherited body text color, so in dark mode it showed white text. On light backgrounds (or mixed themes), the contrast was poor or invisible.
+
+**Solution:** Add explicit classes to the requested value input in `app/appeals/[id]/page.tsx`:
+```
+className="... bg-white text-gray-900 placeholder:text-gray-400"
+```
+
+This forces dark text on white background regardless of system color scheme.
+
+**Lesson:** For form inputs that must remain readable in all themes, use explicit `bg-white text-gray-900` (or equivalent) so the input is never invisible. Do not rely on inherited body color for critical form fields.
+
+---
+
+## 28. Comps improvements: fallbacks, manual upload, Realie clarification
+
+**Context:** (1) Redfin/Zillow scraping was evaluated and rejected (ToS risk, data authority); plan was to improve Cook County + Realie. (2) Users expected an "Include Realie" option but comps are already enriched automatically. (3) Thin neighborhoods or edge cases returned few/no comps.
+
+**Implementation:**
+- **Cook County fallbacks** (`lib/cook-county/api.ts`): `getComparableSales` now retries with relaxed filters when results < 5: (a) drop building class; (b) 3-year sale window instead of 2; (c) township-level search via NEIGHBORHOODS dataset (`getTownshipForNeighborhood`).
+- **ASSESSED_VALUES enrichment:** Comps include `assessedMarketValue` and `assessedMarketValuePerSqft` from the Assessed Values dataset for validation context.
+- **Manual comp upload:** `POST /api/appeals/[id]/comps` accepts `dataSource: "manual"` with optional PIN; synthetic 14-digit PIN when absent. Add Comps dialog: "Add comp manually" when no comps, or "+ Add comp manually" when comps exist. Manual comps show "Manual comp" in UI and PDF.
+- **Realie clarification:** Add Comps dialog note: "Comps are sourced from Cook County and enriched with Realie when available (marked with * in the PDF). You can also add comps manually if needed."
+
+**Lesson:** Avoid scraping consumer sites; strengthen authoritative sources with fallbacks and enrichment. Make data source (Realie, manual) obvious in UI so users understand what they're seeing.
+
+---
+
+## 29. Detailed submission instructions for Cook County Assessor
+
+**Context:** Users needed step-by-step guidance to submit their appeal packet to the Cook County Assessor. The previous "How filing works" box was brief; the PDF had a one-line filing note.
+
+**Implementation:**
+- **Appeal page sidebar:** New "Submission instructions for Cook County Assessor" section with 8 numbered steps: (1) Download PDF; (2) Check township filing window; (3) Go to portal (cookcountyassessor.com/online-appeals, propertytaxfilings.cookcountyil.gov); (4) Start residential appeal; (5) Upload OverTaxed packet; (6) Complete county form; (7) Submit before deadline; (8) Mark as filed in OverTaxed. Links to assessment calendar, online appeals guide, official rules.
+- **PDF filing section** (`lib/document-generation/appeal-summary.ts`): Expanded from one line to 6 steps matching the sidebar.
+- **Link update:** cookcountyassessoril.gov → cookcountyassessor.com (current domain).
+
+**Lesson:** Users file at the county; we prepare the packet. Provide clear, numbered instructions with direct links. Include the same steps in the PDF so users can follow from either the app or the downloaded document.
+
+---
+
 ## Stripe Webhook Debugging
 
 ### Issue: Subscription doesn't update after checkout
@@ -800,6 +847,8 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 ---
 
-**Last Updated:** January 2026
+**Last Updated:** February 2026
+
+**Feb 2026:** §27 — Requested assessment input: explicit `bg-white text-gray-900` so text visible in dark mode. §28 — Comps: Cook County fallbacks (class, 3-year, township), ASSESSED_VALUES enrichment, manual comp upload, Realie clarification in Add Comps. §29 — 8-step submission instructions on appeal page; PDF filing section expanded to 6 steps.
 
 **Jan 2026:** §26 — PDF summary: enriched comps in download-summary, Subject vs Comparables table layout (PIN overlap fix), map & Street View embedded in PDF when GOOGLE_MAPS_API_KEY set. §25 — Comparison report value-add (Realie, map, Street View, PDF similarity line).

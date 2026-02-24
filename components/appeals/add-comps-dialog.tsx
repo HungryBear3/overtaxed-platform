@@ -1,9 +1,11 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { X } from "lucide-react"
+import { X, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
 interface CompItem {
   pin: string
@@ -39,6 +41,20 @@ export function AddCompsDialog({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [showManualForm, setShowManualForm] = useState(false)
+  const [manualComp, setManualComp] = useState({
+    address: "",
+    city: "",
+    zipCode: "",
+    salePrice: "",
+    saleDate: "",
+    livingArea: "",
+    yearBuilt: "",
+    bedrooms: "",
+    bathrooms: "",
+    neighborhood: "",
+    buildingClass: "",
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -63,6 +79,69 @@ export function AddCompsDialog({
       else n.add(pinRaw)
       return n
     })
+  }
+
+  async function addManualComp(e: React.FormEvent) {
+    e.preventDefault()
+    const price = parseFloat(manualComp.salePrice)
+    if (!manualComp.address.trim() || isNaN(price) || price < 1) {
+      setError("Address and sale price are required")
+      return
+    }
+    setError("")
+    setSubmitting(true)
+    try {
+      const saleDateVal = manualComp.saleDate
+        ? (manualComp.saleDate.includes("T") ? manualComp.saleDate : `${manualComp.saleDate}T12:00:00Z`)
+        : null
+      const body = {
+        comps: [
+          {
+            address: manualComp.address.trim(),
+            city: manualComp.city.trim() || "",
+            zipCode: manualComp.zipCode.trim() || "",
+            neighborhood: manualComp.neighborhood.trim() || null,
+            buildingClass: manualComp.buildingClass.trim() || null,
+            livingArea: manualComp.livingArea ? parseInt(manualComp.livingArea, 10) : null,
+            yearBuilt: manualComp.yearBuilt ? parseInt(manualComp.yearBuilt, 10) : null,
+            bedrooms: manualComp.bedrooms ? parseInt(manualComp.bedrooms, 10) : null,
+            bathrooms: manualComp.bathrooms ? parseFloat(manualComp.bathrooms) : null,
+            salePrice: price,
+            saleDate: saleDateVal,
+            pricePerSqft: manualComp.livingArea ? price / parseInt(manualComp.livingArea, 10) : null,
+            compType: "SALES",
+            dataSource: "manual",
+          },
+        ],
+      }
+      const res = await fetch(`/api/appeals/${appealId}/comps`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Failed to add comp")
+      setManualComp({
+        address: "",
+        city: "",
+        zipCode: "",
+        salePrice: "",
+        saleDate: "",
+        livingArea: "",
+        yearBuilt: "",
+        bedrooms: "",
+        bathrooms: "",
+        neighborhood: "",
+        buildingClass: "",
+      })
+      setShowManualForm(false)
+      onAdded()
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to add comp")
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   async function addSelected() {
@@ -130,8 +209,11 @@ export function AddCompsDialog({
             <p className="text-amber-800 mb-2">
               <strong>5–8 strong comps</strong> is usually best — you don&apos;t need all 20. Rule 15 requires at least 3 for sales analysis.
             </p>
-            <p className="text-amber-800">
+            <p className="text-amber-800 mb-2">
               <strong>Best comps:</strong> Recent sales (within 2 years), similar size (±25% living area), same neighborhood. Pick the ones with <strong>lower price per sqft</strong> than your property — they support a lower assessment.
+            </p>
+            <p className="text-amber-700 text-xs">
+              Comps are sourced from Cook County and enriched with Realie when available (marked with * in the PDF). You can also add comps manually if needed.
             </p>
           </div>
           {error && (
@@ -143,33 +225,241 @@ export function AddCompsDialog({
             <div className="flex items-center justify-center py-12">
               <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
             </div>
-          ) : comps.length === 0 ? (
-            <p className="py-8 text-center text-gray-500">No comparable sales found for this property.</p>
-          ) : (
-            <div className="space-y-2">
-              {comps.map((c) => (
-                <label
-                  key={c.pinRaw}
-                  className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
-                    selected.has(c.pinRaw) ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:bg-gray-50"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected.has(c.pinRaw)}
-                    onChange={() => toggle(c.pinRaw)}
-                    className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium text-gray-900">{c.address}</p>
-                    <p className="text-sm text-gray-500">PIN: {c.pin}</p>
-                    <p className="text-sm text-gray-600">
-                      Sale {formatCurrency(c.salePrice)} • {formatDate(c.saleDate)} • {c.livingArea ?? "—"} sq ft
-                    </p>
-                  </div>
-                </label>
-              ))}
+          ) : comps.length === 0 && !showManualForm ? (
+            <div className="space-y-4">
+              <p className="py-4 text-center text-gray-500">No comparable sales found for this property.</p>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => setShowManualForm(true)}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add comp manually
+              </Button>
             </div>
+          ) : comps.length === 0 && showManualForm ? (
+            <form onSubmit={addManualComp} className="space-y-4">
+              <p className="text-sm text-gray-600">Add a comparable sale you know about (e.g. from a neighbor, listing).</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2">
+                  <Label htmlFor="manual-address">Address *</Label>
+                  <Input
+                    id="manual-address"
+                    value={manualComp.address}
+                    onChange={(e) => setManualComp((m) => ({ ...m, address: e.target.value }))}
+                    placeholder="123 Main St"
+                    required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="manual-city">City</Label>
+                  <Input
+                    id="manual-city"
+                    value={manualComp.city}
+                    onChange={(e) => setManualComp((m) => ({ ...m, city: e.target.value }))}
+                    placeholder="Chicago"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="manual-zip">ZIP</Label>
+                  <Input
+                    id="manual-zip"
+                    value={manualComp.zipCode}
+                    onChange={(e) => setManualComp((m) => ({ ...m, zipCode: e.target.value }))}
+                    placeholder="60601"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="manual-salePrice">Sale price *</Label>
+                  <Input
+                    id="manual-salePrice"
+                    type="number"
+                    min={1}
+                    value={manualComp.salePrice}
+                    onChange={(e) => setManualComp((m) => ({ ...m, salePrice: e.target.value }))}
+                    placeholder="350000"
+                    required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="manual-saleDate">Sale date</Label>
+                  <Input
+                    id="manual-saleDate"
+                    type="date"
+                    value={manualComp.saleDate}
+                    onChange={(e) => setManualComp((m) => ({ ...m, saleDate: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="manual-livingArea">Living area (sq ft)</Label>
+                  <Input
+                    id="manual-livingArea"
+                    type="number"
+                    min={1}
+                    value={manualComp.livingArea}
+                    onChange={(e) => setManualComp((m) => ({ ...m, livingArea: e.target.value }))}
+                    placeholder="1500"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="manual-yearBuilt">Year built</Label>
+                  <Input
+                    id="manual-yearBuilt"
+                    type="number"
+                    min={1800}
+                    max={new Date().getFullYear() + 1}
+                    value={manualComp.yearBuilt}
+                    onChange={(e) => setManualComp((m) => ({ ...m, yearBuilt: e.target.value }))}
+                    placeholder="1995"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="manual-bedrooms">Bedrooms</Label>
+                  <Input
+                    id="manual-bedrooms"
+                    type="number"
+                    min={0}
+                    value={manualComp.bedrooms}
+                    onChange={(e) => setManualComp((m) => ({ ...m, bedrooms: e.target.value }))}
+                    placeholder="3"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="manual-bathrooms">Bathrooms</Label>
+                  <Input
+                    id="manual-bathrooms"
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    value={manualComp.bathrooms}
+                    onChange={(e) => setManualComp((m) => ({ ...m, bathrooms: e.target.value }))}
+                    placeholder="2"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="manual-neighborhood">Neighborhood</Label>
+                  <Input
+                    id="manual-neighborhood"
+                    value={manualComp.neighborhood}
+                    onChange={(e) => setManualComp((m) => ({ ...m, neighborhood: e.target.value }))}
+                    placeholder="Optional"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="manual-buildingClass">Building class</Label>
+                  <Input
+                    id="manual-buildingClass"
+                    value={manualComp.buildingClass}
+                    onChange={(e) => setManualComp((m) => ({ ...m, buildingClass: e.target.value }))}
+                    placeholder="e.g. 2-01"
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={() => setShowManualForm(false)}>
+                  Back
+                </Button>
+                <Button type="submit" disabled={submitting}>
+                  {submitting ? "Adding…" : "Add comp"}
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <>
+              <div className="space-y-2">
+                {comps.map((c) => (
+                  <label
+                    key={c.pinRaw}
+                    className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
+                      selected.has(c.pinRaw) ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:bg-gray-50"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.has(c.pinRaw)}
+                      onChange={() => toggle(c.pinRaw)}
+                      className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-gray-900">{c.address}</p>
+                      <p className="text-sm text-gray-500">PIN: {c.pin}</p>
+                      <p className="text-sm text-gray-600">
+                        Sale {formatCurrency(c.salePrice)} • {formatDate(c.saleDate)} • {c.livingArea ?? "—"} sq ft
+                      </p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              {showManualForm ? (
+                <form onSubmit={addManualComp} className="mt-6 pt-6 border-t space-y-4">
+                  <p className="text-sm font-medium text-gray-700">Add another comp manually</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="sm:col-span-2">
+                      <Label htmlFor="manual-address-2">Address *</Label>
+                      <Input
+                        id="manual-address-2"
+                        value={manualComp.address}
+                        onChange={(e) => setManualComp((m) => ({ ...m, address: e.target.value }))}
+                        placeholder="123 Main St"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="manual-city-2">City</Label>
+                      <Input
+                        id="manual-city-2"
+                        value={manualComp.city}
+                        onChange={(e) => setManualComp((m) => ({ ...m, city: e.target.value }))}
+                        placeholder="Chicago"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="manual-salePrice-2">Sale price *</Label>
+                      <Input
+                        id="manual-salePrice-2"
+                        type="number"
+                        min={1}
+                        value={manualComp.salePrice}
+                        onChange={(e) => setManualComp((m) => ({ ...m, salePrice: e.target.value }))}
+                        placeholder="350000"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="manual-saleDate-2">Sale date</Label>
+                      <Input
+                        id="manual-saleDate-2"
+                        type="date"
+                        value={manualComp.saleDate}
+                        onChange={(e) => setManualComp((m) => ({ ...m, saleDate: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="manual-livingArea-2">Living area (sq ft)</Label>
+                      <Input
+                        id="manual-livingArea-2"
+                        type="number"
+                        min={1}
+                        value={manualComp.livingArea}
+                        onChange={(e) => setManualComp((m) => ({ ...m, livingArea: e.target.value }))}
+                        placeholder="1500"
+                      />
+                    </div>
+                  </div>
+                  <Button type="submit" size="sm" disabled={submitting}>
+                    {submitting ? "Adding…" : "Add manual comp"}
+                  </Button>
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowManualForm(true)}
+                  className="mt-4 text-sm text-blue-600 hover:text-blue-700"
+                >
+                  + Add comp manually
+                </button>
+              )}
+            </>
           )}
         </CardContent>
         <div className="flex justify-end gap-2 border-t p-4">

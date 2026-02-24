@@ -503,7 +503,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                         placeholder="e.g. 250000"
                         value={requestedInput || (appeal.requestedAssessmentValue ?? "")}
                         onChange={(e) => setRequestedInput(e.target.value)}
-                        className="rounded-lg border border-gray-300 px-3 py-2 w-36 text-lg font-semibold"
+                        className="rounded-lg border border-gray-300 px-3 py-2 w-36 text-lg font-semibold bg-white text-gray-900 placeholder:text-gray-400"
                       />
                       <span className="text-gray-500 text-sm">(must be less than original {formatCurrency(appeal.originalAssessmentValue)})</span>
                       <button
@@ -730,7 +730,9 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                             </span>
                             <p className="font-medium text-gray-900">{comp.address}</p>
                           </div>
-                          <p className="text-sm text-gray-500 pl-8">PIN: {comp.pin}</p>
+                          <p className="text-sm text-gray-500 pl-8">
+                            {(comp as { dataSource?: string }).dataSource === "manual" ? "Manual comp" : `PIN: ${comp.pin}`}
+                          </p>
                         </div>
                         {mapAvailable !== false && compCoords && (
                           <img
@@ -814,7 +816,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                   </li>
                   <li>
                     You submit the appeal yourself at the{" "}
-                    <a href="https://www.cookcountyassessoril.gov/file-appeal" target="_blank" rel="noopener noreferrer" className="underline font-medium">
+                    <a href="https://www.cookcountyassessor.com/file-appeal" target="_blank" rel="noopener noreferrer" className="underline font-medium">
                       Cook County Assessor portal
                     </a>{" "}
                     (download your PDF from above first).
@@ -826,6 +828,62 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                     Filing on your behalf (Starter+ plans) is coming soon.
                   </li>
                 </ul>
+              </div>
+            )}
+
+            {/* Detailed submission instructions */}
+            {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING") && (
+              <div className="bg-white rounded-lg shadow p-6">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">Submission instructions for Cook County Assessor</h2>
+                <p className="text-sm text-gray-600 mb-4">
+                  Follow these steps to submit your appeal to the Cook County Assessor&apos;s Office. OverTaxed prepares the evidence packet; you complete the official filing.
+                </p>
+                <ol className="space-y-4 text-sm text-gray-700 list-decimal list-inside">
+                  <li>
+                    <strong>Download your appeal summary PDF</strong> — Click the Download PDF button above. This packet includes your property details, comparable sales (comps), requested value, and Rule 15–compliant evidence. Print or save it.
+                  </li>
+                  <li>
+                    <strong>Check your township&apos;s filing window</strong> — Appeals are only accepted during specific periods by township. Confirm your deadline at{" "}
+                    <a href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                      cookcountyassessor.com/assessment-calendar-and-deadlines
+                    </a>.
+                  </li>
+                  <li>
+                    <strong>Go to the Cook County filing portal</strong> — Visit{" "}
+                    <a href="https://www.cookcountyassessor.com/online-appeals" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                      cookcountyassessor.com/online-appeals
+                    </a>{" "}
+                    or{" "}
+                    <a href="https://propertytaxfilings.cookcountyil.gov" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                      propertytaxfilings.cookcountyil.gov
+                    </a>. Create an account with your email if you haven&apos;t already.
+                  </li>
+                  <li>
+                    <strong>Start a new residential appeal</strong> — Select the correct property type (Residential, Condo, etc.). You&apos;ll need your Property Index Number (PIN), address, and the requested assessment value from your PDF.
+                  </li>
+                  <li>
+                    <strong>Upload your OverTaxed packet</strong> — When the portal asks for supporting documents or evidence, upload your OverTaxed PDF. This is your comps and summary. The portal may also have fields for comp details; our PDF contains all PINs and values you need.
+                  </li>
+                  <li>
+                    <strong>Complete the county form</strong> — Fill in any required fields (signature, checkboxes, etc.). Our packet does not replace the official county form; it provides the evidence to support your appeal.
+                  </li>
+                  <li>
+                    <strong>Submit before the deadline</strong> — File only one application per deadline. You&apos;ll receive a Filing ID and Docket Number by email. Keep them for your records.
+                  </li>
+                  <li>
+                    <strong>Mark as filed in OverTaxed</strong> — After submitting at the county portal, return here and click <strong>Mark as Filed</strong> so we can track your appeal.
+                  </li>
+                </ol>
+                <p className="mt-4 text-xs text-gray-500">
+                  Questions? See{" "}
+                  <a href="https://www.cookcountyassessor.com/form-document/online-appeals-guide" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                    Cook County Online Appeals Guide
+                  </a>{" "}
+                  or{" "}
+                  <a href="https://www.cookcountyassessor.com/official-appeal-rules-cook-county-assessor" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                    Official Appeal Rules
+                  </a>.
+                </p>
               </div>
             )}
 

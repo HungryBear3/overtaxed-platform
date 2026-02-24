@@ -19,10 +19,12 @@ const DATASETS = {
   PARCEL_UNIVERSE: 'tx2p-k2g9',
   // Assessed Values - Land, building, and total assessed values (mailed, certified, board)
   ASSESSED_VALUES: 'uzyt-m557',
-  // Single-Family Improvement Characteristics  
+  // Single-Family Improvement Characteristics
   SINGLE_FAMILY_CHARS: 'bcnq-qi2z',
-  // Multi-Family Improvement Characteristics
+  // Multi-Family Improvement Characteristics (deprecated 2025 - returns dataset.missing)
   MULTI_FAMILY_CHARS: 'n6jx-6jqg',
+  // Combined Single+Multi-Family (preferred when multi-family dataset is missing)
+  IMPROVEMENT_CHARS_COMBINED: 'x54s-btds',
   // Parcel Sales
   PARCEL_SALES: 'wvhk-k5uv',
   // Neighborhoods
@@ -41,6 +43,8 @@ const STATE_EQUALIZER_BY_YEAR: Record<number, number> = {
 const DEFAULT_STATE_EQUALIZER = 3.0355
 
 const BASE_URL = 'https://datacatalog.cookcountyil.gov/resource'
+/** Fallback when primary returns 404 (e.g. some network/routing scenarios) */
+const BASE_URL_FALLBACK = 'https://cookcounty.socrata.com/resource'
 
 // Socrata API limits
 const DEFAULT_LIMIT = 1000
@@ -76,30 +80,51 @@ export function isValidPIN(pin: string): boolean {
 }
 
 /**
- * Fetch data from Socrata API
+ * Fetch data from Socrata API.
+ * Retries with cookcounty.socrata.com if primary (datacatalog.cookcountyil.gov) returns 404.
  */
 async function fetchSocrataData<T>(
   datasetId: string,
   query: string
 ): Promise<T[]> {
-  const url = `${BASE_URL}/${datasetId}.json?${query}`
-  
-  const response = await fetch(url, {
-    headers: {
-      'Accept': 'application/json',
-      // App token is optional but increases rate limits
-      // 'X-App-Token': process.env.SOCRATA_APP_TOKEN || '',
-    },
-    next: { revalidate: 3600 }, // Cache for 1 hour
-  })
-  
-  if (!response.ok) {
+  const urls = [`${BASE_URL}/${datasetId}.json?${query}`, `${BASE_URL_FALLBACK}/${datasetId}.json?${query}`]
+  let lastError: Error | null = null
+
+  for (const url of urls) {
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      next: { revalidate: 3600 },
+    })
+
+    if (response.ok) return response.json()
+
     const errorBody = await response.text()
-    console.error('Socrata API error:', { status: response.status, datasetId, body: errorBody.slice(0, 500) })
+    console.error('Socrata API error:', { status: response.status, datasetId, url, body: errorBody.slice(0, 500) })
+
+    if (response.status === 404 && url.startsWith(BASE_URL)) {
+      lastError = new Error(`Socrata API error: ${response.status} ${response.statusText}`)
+      continue
+    }
+
     throw new Error(`Socrata API error: ${response.status} ${response.statusText}`)
   }
-  
-  return response.json()
+
+  throw lastError ?? new Error('Socrata API error: 404 Not Found')
+}
+
+/**
+ * Get township_code for a neighborhood from NEIGHBORHOODS dataset.
+ * Used for broader geographic fallback when neighborhood returns few comps.
+ */
+async function getTownshipForNeighborhood(nbhd: string): Promise<string | null> {
+  try {
+    const query = `$where=${encodeURIComponent(`nbhd='${nbhd}'`)}&$limit=1`
+    const results = await fetchSocrataData<Record<string, unknown>>(DATASETS.NEIGHBORHOODS, query)
+    const townshipCode = results[0]?.township_code ?? (results[0] as Record<string, unknown>)?.town_code
+    return townshipCode != null ? String(townshipCode) : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -137,20 +162,42 @@ async function getSingleFamilyCharsByPIN(
 }
 
 /**
- * Look up property characteristics (Multi-Family)
+ * Look up property characteristics (Multi-Family).
+ * Dataset n6jx-6jqg was deprecated by Cook County (returns dataset.missing).
+ * @deprecated Use getImprovementCharsFromCombinedByPIN instead.
  */
 async function getMultiFamilyCharsByPIN(
   pin: PIN
 ): Promise<ImprovementCharacteristicsRecord | null> {
-  const normalizedPIN = normalizePIN(pin)
-  const query = `$where=${encodeURIComponent(`pin='${normalizedPIN}'`)}&$limit=1&$order=${encodeURIComponent('tax_year DESC')}`
-  
-  const results = await fetchSocrataData<ImprovementCharacteristicsRecord>(
-    DATASETS.MULTI_FAMILY_CHARS,
-    query
-  )
-  
-  return results[0] || null
+  try {
+    const normalizedPIN = normalizePIN(pin)
+    const query = `$where=${encodeURIComponent(`pin='${normalizedPIN}'`)}&$limit=1&$order=${encodeURIComponent('tax_year DESC')}`
+    const results = await fetchSocrataData<ImprovementCharacteristicsRecord>(
+      DATASETS.MULTI_FAMILY_CHARS,
+      query
+    )
+    return results[0] || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Look up improvement characteristics from combined Single+Multi-Family dataset (x54s-btds).
+ * Use this instead of Single+Multi separately — n6jx-6jqg was deprecated.
+ */
+async function getImprovementCharsFromCombinedByPIN(pin: PIN): Promise<Record<string, unknown> | null> {
+  try {
+    const normalizedPIN = normalizePIN(pin)
+    const query = `$where=${encodeURIComponent(`pin='${normalizedPIN}'`)}&$limit=1&$order=${encodeURIComponent('year DESC')}`
+    const results = await fetchSocrataData<Record<string, unknown>>(
+      DATASETS.IMPROVEMENT_CHARS_COMBINED,
+      query
+    )
+    return results[0] || null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -295,10 +342,10 @@ export async function getPropertyByPIN(
       }
     }
     
-    // Try to fetch improvement characteristics (single-family first, then multi-family)
-    let charData = await getSingleFamilyCharsByPIN(normalizedPIN)
+    // Fetch improvement characteristics (combined dataset first, then single-family fallback)
+    let charData: Record<string, unknown> | null = await getImprovementCharsFromCombinedByPIN(normalizedPIN)
     if (!charData) {
-      charData = await getMultiFamilyCharsByPIN(normalizedPIN)
+      charData = (await getSingleFamilyCharsByPIN(normalizedPIN)) as Record<string, unknown> | null
     }
     
     // Get tax code from parcel (try common field names; Socrata column may vary)
@@ -498,7 +545,7 @@ export function haversineMiles(
 
 /**
  * Fetch improvement characteristics (living area, year built, etc.) by PIN.
- * Tries Single-Family then Multi-Family dataset. Used to enrich sales comps.
+ * Uses combined dataset (x54s-btds) to avoid deprecated Multi-Family dataset (n6jx-6jqg).
  */
 async function getImprovementCharsForPIN(pin: PIN): Promise<{
   livingArea: number | null
@@ -506,10 +553,9 @@ async function getImprovementCharsForPIN(pin: PIN): Promise<{
   bedrooms: number | null
   bathrooms: number | null
 } | null> {
-  let chars = await getSingleFamilyCharsByPIN(pin)
-  if (!chars) chars = await getMultiFamilyCharsByPIN(pin)
-  if (!chars) return null
-  const c = chars as unknown as Record<string, unknown>
+  let c = await getImprovementCharsFromCombinedByPIN(pin)
+  if (!c) c = (await getSingleFamilyCharsByPIN(pin)) as Record<string, unknown> | null
+  if (!c) return null
   const bldgSf = c?.bldg_sf ?? c?.char_bldg_sf ?? c?.total_bldg_sf
   const yrblt = c?.yrblt ?? c?.char_yrblt
   const beds = c?.beds ?? c?.char_beds
@@ -526,56 +572,56 @@ async function getImprovementCharsForPIN(pin: PIN): Promise<{
 }
 
 /**
- * Get comparable sales for a property
- * Rule 15: 3+ sales comps, similar size/class/location
- * Enriches each sale with living area etc. from Improvement Characteristics when Parcel Sales has no chars.
+ * Internal: fetch comparable sales with given filters.
  */
-export async function getComparableSales(
-  property: PropertyData,
-  options: {
-    maxDistanceMiles?: number
-    livingAreaTolerancePercent?: number
-    yearBuiltTolerance?: number
-    limit?: number
-    saleDateAfter?: Date
-  } = {}
-): Promise<CookCountyApiResponse<SalesRecord[]>> {
-  try {
-    const {
-      livingAreaTolerancePercent = 25,  // ±25% living area
-      yearBuiltTolerance = 10,  // ±10 years
-      limit = 20,
-      saleDateAfter = new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000), // 2 years
-    } = options
+async function fetchComparableSalesWithFilters(
+  propertyPin: string,
+  filters: string[],
+  limit: number
+): Promise<SalesRecord[]> {
+  const query = `$where=${encodeURIComponent(filters.join(' AND '))}&$limit=${limit}&$order=sale_date DESC`
+  const results = await fetchSocrataData<Record<string, unknown>>(
+    DATASETS.PARCEL_SALES,
+    query
+  )
+  return buildSalesRecordsFromRaw(results, propertyPin)
+}
 
-    // Parcel Sales (wvhk-k5uv) does not include char_bldg_sf; filters that need it are skipped
-    const filters: string[] = []
-    if (property.neighborhood) filters.push(`nbhd='${property.neighborhood}'`)
-    if (property.buildingClass) filters.push(`class='${property.buildingClass}'`)
-    const saleDateStr = saleDateAfter.toISOString().split('T')[0]
-    filters.push(`sale_date >= '${saleDateStr}'`)
-    filters.push(`pin != '${property.pin}'`)
+/**
+ * Build SalesRecord[] from raw Parcel Sales API results.
+ */
+async function buildSalesRecordsFromRaw(
+  rawRecords: Array<Record<string, unknown>>,
+  excludePin: string
+): Promise<SalesRecord[]> {
+  const uniquePins = [...new Set(rawRecords.map((r) => String(r.pin ?? '')))].filter(Boolean).filter((p) => p !== excludePin).slice(0, 20)
+  const charsByPin = new Map<string, Awaited<ReturnType<typeof getImprovementCharsForPIN>>>()
+  await Promise.all(
+    uniquePins.map(async (pin) => {
+      const chars = await getImprovementCharsForPIN(pin)
+      if (chars) charsByPin.set(pin, chars)
+    })
+  )
 
-    const query = `$where=${encodeURIComponent(filters.join(' AND '))}&$limit=${limit}&$order=sale_date DESC`
-    const results = await fetchSocrataData<Record<string, unknown>>(
-      DATASETS.PARCEL_SALES,
-      query
-    )
+  const assessedByPin = new Map<string, number | null>()
+  const ASSESSED_CONCURRENCY = 3
+  for (let i = 0; i < uniquePins.length; i += ASSESSED_CONCURRENCY) {
+    const batch = uniquePins.slice(i, i + ASSESSED_CONCURRENCY)
+    const assessedResults = await Promise.all(batch.map((pin) => getAssessedValuesByPIN(pin)))
+    batch.forEach((pin, j) => {
+      const av = assessedResults[j] as Record<string, unknown> | null
+      const tot = av?.board_tot ?? av?.certified_tot ?? av?.mailed_tot
+      assessedByPin.set(pin, tot != null ? parseAssessedValue(tot) : null)
+    })
+  }
 
-    const rawRecords = results as Array<Record<string, unknown>>
-    const uniquePins = [...new Set(rawRecords.map((r) => String(r.pin ?? '')))].filter(Boolean).slice(0, 20)
-    const charsByPin = new Map<string, Awaited<ReturnType<typeof getImprovementCharsForPIN>>>()
-    await Promise.all(
-      uniquePins.map(async (pin) => {
-        const chars = await getImprovementCharsForPIN(pin)
-        if (chars) charsByPin.set(pin, chars)
-      })
-    )
-
-    const salesRecords: SalesRecord[] = rawRecords.map((record) => {
+  return rawRecords
+    .filter((r) => String(r.pin ?? '').replace(/[^0-9]/g, '') !== excludePin.replace(/[^0-9]/g, ''))
+    .map((record) => {
       const pin = String(record.pin ?? '')
       const salePrice = parseFloat(String(record.sale_price ?? 0)) || 0
       const chars = charsByPin.get(pin) ?? null
+      const assessedTotal = assessedByPin.get(pin) ?? null
       const livingArea =
         chars?.livingArea ??
         (record.char_bldg_sf != null ? parseIntSafe(record.char_bldg_sf) : null) ??
@@ -588,6 +634,9 @@ export async function getComparableSales(
       const bathrooms = chars?.bathrooms ?? (record.char_fbath != null ? parseIntSafe(record.char_fbath) : null)
       const pricePerSqft =
         livingArea != null && livingArea > 0 && salePrice > 0 ? salePrice / livingArea : null
+      const assessedMarketValue = assessedTotal != null ? assessedTotal * 10 : null
+      const assessedMarketValuePerSqft =
+        livingArea != null && livingArea > 0 && assessedMarketValue != null ? assessedMarketValue / livingArea : null
       return {
         pin,
         address: '',
@@ -603,14 +652,114 @@ export async function getComparableSales(
         bedrooms,
         bathrooms,
         dataSource: 'Cook County Open Data - Parcel Sales',
+        assessedMarketValue,
+        assessedMarketValuePerSqft,
       }
     })
+}
+
+/**
+ * Get comparable sales for a property
+ * Rule 15: 3+ sales comps, similar size/class/location
+ * Enriches each sale with living area etc. from Improvement Characteristics when Parcel Sales has no chars.
+ * Uses ASSESSED_VALUES for validation context. Fallback: if few results, retries with relaxed filters (no building class, then broader date range).
+ */
+export async function getComparableSales(
+  property: PropertyData,
+  options: {
+    maxDistanceMiles?: number
+    livingAreaTolerancePercent?: number
+    yearBuiltTolerance?: number
+    limit?: number
+    saleDateAfter?: Date
+  } = {}
+): Promise<CookCountyApiResponse<SalesRecord[]>> {
+  try {
+    const {
+      limit = 20,
+      saleDateAfter = new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000), // 2 years
+    } = options
+
+    const MIN_COMPS_FOR_FALLBACK = 5
+    const saleDateStr = saleDateAfter.toISOString().split('T')[0]
+    const propertyPin = normalizePIN(property.pin)
+
+    const buildFilters = (opts: { includeNeighborhood: boolean; includeBuildingClass: boolean }) => {
+      const f: string[] = []
+      if (opts.includeNeighborhood && property.neighborhood) f.push(`nbhd='${property.neighborhood}'`)
+      if (opts.includeBuildingClass && property.buildingClass) f.push(`class='${property.buildingClass}'`)
+      f.push(`sale_date >= '${saleDateStr}'`)
+      f.push(`pin != '${propertyPin}'`)
+      return f
+    }
+
+    let results: SalesRecord[] = []
+    let source = 'Cook County Open Data - Parcel Sales'
+
+    const filters1 = buildFilters({ includeNeighborhood: true, includeBuildingClass: true })
+    if (filters1.length >= 2) {
+      results = await fetchComparableSalesWithFilters(propertyPin, filters1, limit)
+    }
+
+    if (results.length < MIN_COMPS_FOR_FALLBACK && property.buildingClass && property.neighborhood) {
+      const filters2 = buildFilters({ includeNeighborhood: true, includeBuildingClass: false })
+      if (filters2.length >= 2) {
+        const fallbackResults = await fetchComparableSalesWithFilters(propertyPin, filters2, limit)
+        if (fallbackResults.length > results.length) {
+          results = fallbackResults
+          source = 'Cook County Open Data - Parcel Sales (relaxed class filter)'
+        }
+      }
+    }
+
+    if (results.length < MIN_COMPS_FOR_FALLBACK && property.neighborhood) {
+      const threeYearsAgo = new Date(Date.now() - 3 * 365 * 24 * 60 * 60 * 1000)
+      const saleDateStr3 = threeYearsAgo.toISOString().split('T')[0]
+      const filters3 = [
+        `nbhd='${property.neighborhood}'`,
+        `sale_date >= '${saleDateStr3}'`,
+        `pin != '${propertyPin}'`,
+      ]
+      const fallbackResults = await buildSalesRecordsFromRaw(
+        await fetchSocrataData<Record<string, unknown>>(
+          DATASETS.PARCEL_SALES,
+          `$where=${encodeURIComponent(filters3.join(' AND '))}&$limit=${limit}&$order=sale_date DESC`
+        ),
+        propertyPin
+      )
+      if (fallbackResults.length > results.length) {
+        results = fallbackResults
+        source = 'Cook County Open Data - Parcel Sales (3-year window)'
+      }
+    }
+
+    if (results.length < MIN_COMPS_FOR_FALLBACK && property.neighborhood) {
+      const townshipCode = await getTownshipForNeighborhood(property.neighborhood)
+      if (townshipCode) {
+        const filters4 = [
+          `township_code='${townshipCode}'`,
+          `sale_date >= '${saleDateStr}'`,
+          `pin != '${propertyPin}'`,
+        ]
+        const fallbackResults = await buildSalesRecordsFromRaw(
+          await fetchSocrataData<Record<string, unknown>>(
+            DATASETS.PARCEL_SALES,
+            `$where=${encodeURIComponent(filters4.join(' AND '))}&$limit=${limit}&$order=sale_date DESC`
+          ),
+          propertyPin
+        )
+        if (fallbackResults.length > results.length) {
+          results = fallbackResults
+          source = 'Cook County Open Data - Parcel Sales (township)'
+        }
+      }
+    }
 
     return {
       success: true,
-      data: salesRecords,
+      data: results,
       error: null,
-      source: 'Cook County Open Data - Parcel Sales',
+      source,
     }
   } catch (error) {
     console.error('Error fetching comparable sales:', error)

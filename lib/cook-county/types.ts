@@ -157,18 +157,22 @@ export interface SalesRecord {
   city: string
   zipCode: string
   neighborhood: string | null
-  
+
   saleDate: Date
   salePrice: number
   pricePerSqft: number | null
-  
+
   // Property characteristics
   buildingClass: string | null
   livingArea: number | null
   yearBuilt: number | null
   bedrooms: number | null
   bathrooms: number | null
-  
+
+  // Assessment validation (from ASSESSED_VALUES)
+  assessedMarketValue?: number | null
+  assessedMarketValuePerSqft?: number | null
+
   dataSource: string
 }
 

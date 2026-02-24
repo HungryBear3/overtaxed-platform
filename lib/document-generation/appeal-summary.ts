@@ -413,9 +413,10 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
         c.bedrooms != null && c.bedroomsRealie != null && (c.bedrooms !== c.bedroomsRealie || c.bathrooms !== c.bathroomsRealie)
           ? `${c.bedrooms ?? "—"}/${baths} / ${c.bedroomsRealie ?? "—"}/${bbRe}`
           : `${c.bedrooms ?? "—"}/${baths}`
+      const pinLabel = (c as { dataSource?: string }).dataSource === "manual" ? "Manual" : c.pin
       drawTableRow(
         [
-          (c as { inBothSources?: boolean }).inBothSources ? `${c.pin} *` : c.pin,
+          (c as { inBothSources?: boolean }).inBothSources ? `${pinLabel} *` : pinLabel,
           sqftCell,
           yrCell,
           bbCell,
@@ -565,9 +566,10 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     y -= 4
     for (let i = 0; i < salesComps.length; i++) {
       const c = salesComps[i]
-      drawText(`${i + 1}. ${c.address || `PIN ${c.pin}`}`, { bold: true })
+      const pinOrManual = (c as { dataSource?: string }).dataSource === "manual" ? "Manual" : c.pin
+      drawText(`${i + 1}. ${c.address || (pinOrManual === "Manual" ? "Manual comp" : `PIN ${c.pin}`)}`, { bold: true })
       drawText(
-        `   PIN: ${c.pin}  |  Sale: ${formatCurrency(c.salePrice)}  |  ${formatDate(c.saleDate)}  |  ` +
+        `   ${pinOrManual === "Manual" ? "Manual comp" : `PIN: ${c.pin}`}  |  Sale: ${formatCurrency(c.salePrice)}  |  ${formatDate(c.saleDate)}  |  ` +
           `$/sq ft: ${formatCurrencySqft(c.pricePerSqft)}  |  Living area: ${c.livingArea ?? "—"} sq ft  |  Year built: ${c.yearBuilt ?? "—"}`
       )
       if (c.neighborhood || c.buildingClass != null || c.bedrooms != null || c.bathrooms != null) {
@@ -604,9 +606,10 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     y -= 4
     for (let i = 0; i < equityComps.length; i++) {
       const c = equityComps[i]
-      drawText(`${i + 1}. ${c.address || `PIN ${c.pin}`}`, { bold: true })
+      const pinOrManualEq = (c as { dataSource?: string }).dataSource === "manual" ? "Manual" : c.pin
+      drawText(`${i + 1}. ${c.address || (pinOrManualEq === "Manual" ? "Manual comp" : `PIN ${c.pin}`)}`, { bold: true })
       drawText(
-        `   PIN: ${c.pin}  |  Assessed market value: ${formatCurrency(c.assessedMarketValue)}  |  ` +
+        `   ${pinOrManualEq === "Manual" ? "Manual comp" : `PIN: ${c.pin}`}  |  Assessed market value: ${formatCurrency(c.assessedMarketValue)}  |  ` +
           `$/sq ft: ${formatCurrencySqft(c.assessedMarketValuePerSqft)}  |  Living area: ${c.livingArea ?? "—"} sq ft  |  Year built: ${c.yearBuilt ?? "—"}`
       )
       if (c.neighborhood || c.buildingClass != null || c.bedrooms != null || c.bathrooms != null) {
@@ -639,9 +642,10 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     drawText("Comparable Properties", { bold: true, fontSize: 13 })
     for (let i = 0; i < data.comps.length; i++) {
       const c = data.comps[i]
-      drawText(`${i + 1}. ${c.address || `PIN ${c.pin}`}`, { bold: true })
+      const pinOrManualM = (c as { dataSource?: string }).dataSource === "manual" ? "Manual" : c.pin
+      drawText(`${i + 1}. ${c.address || (pinOrManualM === "Manual" ? "Manual comp" : `PIN ${c.pin}`)}`, { bold: true })
       drawText(
-        `   PIN: ${c.pin}  |  ${c.compType}  |  Sale: ${formatCurrency(c.salePrice)}  |  ${formatDate(c.saleDate)}  |  ` +
+        `   ${pinOrManualM === "Manual" ? "Manual comp" : `PIN: ${c.pin}`}  |  ${c.compType}  |  Sale: ${formatCurrency(c.salePrice)}  |  ${formatDate(c.saleDate)}  |  ` +
           `Value: ${formatCurrency(c.assessedMarketValue)}  |  $/sq ft: ${formatCurrencySqft(c.pricePerSqft ?? c.assessedMarketValuePerSqft)}`
       )
       if (c.neighborhood || c.buildingClass != null || c.bedrooms != null || c.bathrooms != null) {
@@ -683,7 +687,13 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   drawLine()
 
   // —— Filing instructions (Task 8.8) ——
-  drawText("Filing: File this packet with the Cook County Assessor via SmartFile (online) or attach to your paper appeal form. See cookcountyassessor.com/file-appeal for deadlines and submission.")
+  drawText("How to submit this appeal packet", { bold: true, fontSize: 11 })
+  drawText("1. Go to cookcountyassessor.com/online-appeals or propertytaxfilings.cookcountyil.gov")
+  drawText("2. Create an account if needed. Check your township filing window at cookcountyassessor.com/assessment-calendar-and-deadlines")
+  drawText("3. Start a new residential appeal. Enter your PIN, address, and requested value (see above)")
+  drawText("4. Upload this PDF as supporting evidence when the portal asks for documents")
+  drawText("5. Complete the official county form (signature, checkboxes). Submit before your deadline")
+  drawText("6. After submitting at the county portal, mark this appeal as Filed in OverTaxed to track status")
   drawLine()
 
   // —— Conclusion (compelling closing for assessors) ——

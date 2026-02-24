@@ -6,7 +6,7 @@ import { formatPIN } from "@/lib/cook-county"
 import { z } from "zod"
 
 const compSchema = z.object({
-  pin: z.string().min(1),
+  pin: z.string().optional(),
   address: z.string().default(""),
   city: z.string().default(""),
   zipCode: z.string().default(""),
@@ -17,10 +17,11 @@ const compSchema = z.object({
   bedrooms: z.number().optional().nullable(),
   bathrooms: z.number().optional().nullable(),
   salePrice: z.number().optional().nullable(),
-  saleDate: z.string().datetime().optional().nullable(),
+  saleDate: z.union([z.string().datetime(), z.string().regex(/^\d{4}-\d{2}-\d{2}/), z.string()]).optional().nullable(),
   pricePerSqft: z.number().optional().nullable(),
   distanceFromSubject: z.number().optional().nullable(),
   compType: z.enum(["SALES", "EQUITY"]).default("SALES"),
+  dataSource: z.enum(["Cook County Open Data", "manual"]).optional().default("Cook County Open Data"),
 })
 
 const bodySchema = z.object({
@@ -66,16 +67,25 @@ export async function POST(
       saleDate: string | null
     }> = []
 
+    let manualCompIndex = 0
     for (const c of parsed.data.comps) {
-      const pin = String(c.pin).replace(/[^0-9]/g, "")
-      if (pin.length !== 14) continue
+      let pin = String(c.pin ?? "").replace(/[^0-9]/g, "")
+      const isManual = c.dataSource === "manual" || pin.length !== 14
+
+      if (isManual) {
+        if (!c.address?.trim() || c.salePrice == null || c.salePrice < 1) continue
+        manualCompIndex += 1
+        pin = `0099999999${String(manualCompIndex).padStart(4, "0")}`.slice(-14)
+      } else if (pin.length !== 14) {
+        continue
+      }
 
       const comp = await prisma.comparableProperty.create({
         data: {
           propertyId: appeal.propertyId,
           compType: c.compType,
           pin,
-          address: c.address || `PIN ${formatPIN(pin)}`,
+          address: c.address?.trim() || `PIN ${formatPIN(pin)}`,
           city: c.city || "Cook County",
           state: "IL",
           zipCode: c.zipCode || "",
@@ -90,7 +100,7 @@ export async function POST(
           saleDate: c.saleDate ? new Date(c.saleDate) : null,
           pricePerSqft: c.pricePerSqft ?? null,
           distanceFromSubject: c.distanceFromSubject ?? null,
-          dataSource: "Cook County Open Data",
+          dataSource: isManual ? "manual" : (c.dataSource ?? "Cook County Open Data"),
           appeals: { connect: { id: appealId } },
         },
       })

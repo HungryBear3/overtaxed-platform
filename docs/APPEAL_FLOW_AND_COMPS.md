@@ -30,5 +30,5 @@ So: **primary path is appeal-first, add comps on the appeal; comps page is optio
 
 ## Data sources in Add Comps dialog
 
-- **Cook County:** Default; no extra API calls.
+- **Cook County:** Default; uses Parcel Sales, Improvement Characteristics, ASSESSED_VALUES, and NEIGHBORHOODS datasets. Fallbacks when few results: relaxed building class, 3-year window, township-level search.
 - **Realie (Premium Comparables):** Optional; one extra call when user clicks “Include Realie recently sold comps.” Each comp shows its source (e.g. “Cook County Open Data” or “Realie (Premium Comparables)”).
