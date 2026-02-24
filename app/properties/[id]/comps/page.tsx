@@ -214,8 +214,8 @@ export default function PropertyCompsPage() {
               </div>
             </div>
 
-            <div className="bg-white rounded-lg shadow overflow-hidden">
-              <div className="overflow-x-auto">
+            <div className="bg-white rounded-lg shadow">
+              <div className="overflow-x-auto w-full min-w-0">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
@@ -243,10 +243,10 @@ export default function PropertyCompsPage() {
                       <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Sale Price
                       </th>
-                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap min-w-[5rem]">
                         $/sq ft
                       </th>
-                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap min-w-[5rem]">
                         Assessment
                       </th>
                     </tr>
@@ -291,10 +291,10 @@ export default function PropertyCompsPage() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-right">
                           {formatCurrency(comp.salePrice)}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right min-w-[5rem]">
                           {comp.pricePerSqft != null ? `$${Math.round(comp.pricePerSqft).toLocaleString()}/sq ft` : "—"}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right min-w-[5rem]">
                           {formatCurrency(comp.currentAssessmentValue)}
                         </td>
                       </tr>

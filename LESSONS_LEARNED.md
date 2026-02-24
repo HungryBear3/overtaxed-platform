@@ -36,6 +36,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 29. [Detailed submission instructions for Cook County Assessor](#29-detailed-submission-instructions-for-cook-county-assessor)
 30. [Legal website design: hero, testimonials, logo, trust blocks](#30-legal-website-design-hero-testimonials-logo-trust-blocks)
 31. [Street View: heading to face building front](#31-street-view-heading-to-face-building-front)
+32. [Prisma P3005 baseline for existing production database](#32-prisma-p3005-baseline-for-existing-production-database)
 
 ---
 
@@ -776,6 +777,33 @@ This forces dark text on white background regardless of system color scheme.
 
 ---
 
+## 32. Prisma P3005 baseline for existing production database
+
+**Context:** When adding `prisma migrate deploy` to the build (so migrations run on each Vercel deploy), the build failed with **P3005**: "The database schema is not empty. Read more about how to baseline an existing production database." The DB was created via `db push` or manual SQL—no migration history exists.
+
+**Solution:**
+
+1. **Create baseline migration** — Generate initial migration from current schema:
+   ```powershell
+   npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script -o prisma/migrations/0_init/migration.sql
+   ```
+
+2. **Commit migrations** — Ensure `prisma/migrations` is NOT in `.gitignore` (remove `/prisma/migrations` if present). Sync to deploy repo via robocopy.
+
+3. **Baseline production DB (one-time)** — Mark the baseline as applied without running it:
+   ```powershell
+   $env:DATABASE_URL = "postgresql://..."  # Production URL from Vercel/Supabase
+   npm run db:baseline   # or: npx prisma migrate resolve --applied 0_init
+   ```
+
+4. **Redeploy** — After baseline, `prisma migrate deploy` sees 0_init as applied, skips it, and applies only new migrations. Vercel build succeeds.
+
+**Verify:** In Supabase SQL Editor: `SELECT * FROM _prisma_migrations;` — should show `0_init`.
+
+**Lesson:** Existing production DBs need a one-time baseline before `prisma migrate deploy` will work. See `docs/MIGRATIONS.md` for the workflow. Script `db:baseline` added to `package.json`.
+
+---
+
 ## Stripe Webhook Debugging
 
 ### Issue: Subscription doesn't update after checkout
@@ -888,6 +916,6 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 **Last Updated:** February 2026
 
-**Feb 2026:** §31 — Street View heading to face building front (metadata + bearing); `lib/map/streetview.ts`; applies to appeal page and PDF. §30 — Legal website design: hero image (Unsplash), logo, testimonials, How It Works, stats bar, Cook County badge; Logo component; gradient refinements on Pricing/Contact/FAQ. §27 — Requested assessment input: explicit `bg-white text-gray-900` so text visible in dark mode. §28 — Comps: Cook County fallbacks (class, 3-year, township), ASSESSED_VALUES enrichment, manual comp upload, Realie clarification in Add Comps. §29 — 8-step submission instructions on appeal page; PDF filing section expanded to 6 steps.
+**Feb 2026:** §32 — Prisma P3005 baseline: one-time `prisma migrate resolve --applied 0_init` for existing Supabase DB; `prisma/migrations/0_init`, unignore migrations, `db:baseline` script; see `docs/MIGRATIONS.md`. §31 — Street View heading to face building front (metadata + bearing); `lib/map/streetview.ts`; applies to appeal page and PDF. §30 — Legal website design: hero image (Unsplash), logo, testimonials, How It Works, stats bar, Cook County badge; Logo component; gradient refinements on Pricing/Contact/FAQ. §27 — Requested assessment input: explicit `bg-white text-gray-900` so text visible in dark mode. §28 — Comps: Cook County fallbacks (class, 3-year, township), ASSESSED_VALUES enrichment, manual comp upload, Realie clarification in Add Comps. §29 — 8-step submission instructions on appeal page; PDF filing section expanded to 6 steps.
 
 **Jan 2026:** §26 — PDF summary: enriched comps in download-summary, Subject vs Comparables table layout (PIN overlap fix), map & Street View embedded in PDF when GOOGLE_MAPS_API_KEY set. §25 — Comparison report value-add (Realie, map, Street View, PDF similarity line).
