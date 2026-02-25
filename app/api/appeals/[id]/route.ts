@@ -356,6 +356,23 @@ export async function PATCH(
 
     // Build update object
     const updateData: Record<string, unknown> = {}
+
+    // Auto-calculate taxSavings when outcome is WON/PARTIALLY_WON and reductionAmount is set (Performance Plan)
+    if (data.taxSavings === undefined) {
+      const effectiveOutcome = data.outcome ?? existingAppeal.outcome
+      const effectiveReduction = data.reductionAmount ?? (existingAppeal.reductionAmount ? Number(existingAppeal.reductionAmount) : undefined)
+      if ((effectiveOutcome === "WON" || effectiveOutcome === "PARTIALLY_WON") && effectiveReduction != null && effectiveReduction > 0) {
+        const property = await prisma.property.findUnique({
+          where: { id: data.propertyId ?? existingAppeal.propertyId },
+          select: { taxRate: true, stateEqualizer: true },
+        })
+        const taxRate = Number(existingAppeal.taxRate ?? property?.taxRate ?? 0.0756)
+        const equalizer = Number(existingAppeal.equalizationFactor ?? property?.stateEqualizer ?? 3.0355)
+        updateData.taxSavings = effectiveReduction * taxRate * equalizer
+        if (property?.taxRate != null) updateData.taxRate = property.taxRate
+        if (property?.stateEqualizer != null) updateData.equalizationFactor = property.stateEqualizer
+      }
+    }
     
     if (data.propertyId !== undefined) updateData.propertyId = data.propertyId
     if (data.status !== undefined) updateData.status = data.status

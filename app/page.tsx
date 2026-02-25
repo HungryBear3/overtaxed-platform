@@ -400,14 +400,7 @@ export default function HomePage() {
 
             {/* Performance */}
             <div className="border border-gray-200 rounded-lg p-6 bg-gradient-to-br from-green-50 to-white">
-              <div className="flex items-center gap-2">
-                <h5 className="font-semibold text-gray-900 text-lg">
-                  Performance
-                </h5>
-                <span className="text-xs bg-amber-200 text-amber-900 px-2 py-0.5 rounded font-medium">
-                  Coming soon
-                </span>
-              </div>
+              <h5 className="font-semibold text-gray-900 text-lg">Performance</h5>
               <p className="text-2xl font-bold text-gray-900 mt-2">4%</p>
               <p className="text-gray-500 text-sm">
                 of 3-year savings (deferred)

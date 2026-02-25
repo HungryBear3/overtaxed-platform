@@ -337,7 +337,7 @@ export default function PricingPage() {
           </div>
           <h1 className="text-4xl font-bold text-gray-900 mb-4">Simple, transparent pricing</h1>
           <p className="text-lg text-gray-600">
-            DIY reports only · $149/property/year · Commercial tiers · Or 4% of savings deferred (coming soon).
+            DIY reports only · $149/property/year · Commercial tiers · Or 4% of savings deferred.
           </p>
         </div>
 
@@ -686,17 +686,14 @@ export default function PricingPage() {
         {/* Performance / 4% deferred */}
         <Card className="max-w-xl mx-auto border-green-200 bg-gradient-to-br from-green-50/50 to-white mb-12">
           <CardHeader>
-            <div className="flex items-center gap-2">
-              <CardTitle>Performance</CardTitle>
-              <span className="text-xs bg-amber-200 text-amber-900 px-2 py-1 rounded font-medium">Coming soon</span>
-            </div>
+            <CardTitle>Performance</CardTitle>
             <CardDescription>Pay only when you save. No upfront cost.</CardDescription>
             <div className="mt-4">
               <span className="text-3xl font-bold text-gray-900">4%</span>
               <span className="text-gray-500 ml-1">of 3‑year tax savings (deferred)</span>
             </div>
             <p className="text-sm text-amber-700 mt-2 bg-amber-50 rounded px-3 py-2">
-              Coming soon — we&apos;re building the fee calculation and multi-year tracking. Interested? Contact us to be notified when it&apos;s available.
+              Custom setup required — we track multi-year appeals and savings to calculate your fee. Contact us to get started.
             </p>
           </CardHeader>
           <CardContent>
@@ -706,10 +703,10 @@ export default function PricingPage() {
               <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600 shrink-0" />No payment if no savings</li>
             </ul>
             <a
-              href="mailto:support@overtaxed-il.com?subject=Performance%20plan%20-%20notify%20when%20available"
+              href="mailto:support@overtaxed-il.com?subject=Performance%20plan"
               className="flex h-10 w-full items-center justify-center rounded-lg border border-green-300 bg-green-50 px-4 text-sm font-medium text-green-800 hover:bg-green-100"
             >
-              Notify me when Performance plan is available
+              Contact us to set up Performance plan
             </a>
           </CardContent>
         </Card>

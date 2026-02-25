@@ -76,7 +76,7 @@ export default function TermsPage() {
               <strong>4.1 Payment Obligation.</strong> You agree to pay all fees due under your selected plan within the timeframes specified. Fees are due and payable within 30 days of invoice receipt unless otherwise agreed in writing.
             </p>
             <p className="text-gray-700 mb-3">
-              <strong>4.2 Payment Terms.</strong> Any unpaid balance for more than 30 days after billing shall be deemed delinquent. Delinquent amounts shall be subject to a monthly finance charge of 1.5% per month (or the maximum rate permitted by Illinois law, whichever is less) until payment is received. Interest shall accrue at the highest rate permitted by applicable law if 1.5% per month exceeds that limit.
+              <strong>4.2 Payment Terms.</strong> Any unpaid balance for more than 30 days after billing shall be deemed delinquent. Delinquent amounts shall be subject to a monthly finance charge of 1.5% per month (or the maximum rate permitted by Illinois law, whichever is less) until payment is received. Interest shall accrue at the highest rate permitted by applicable law if 1.5% per month exceeds that limit. OverTaxed may send a first collection notice 7 days after the due date. A final notice before legal action may be sent 45 days after the due date.
             </p>
             <p className="text-gray-700 mb-3">
               <strong>4.3 Late Payment Consequences.</strong> If payment is not received by the due date: OverTaxed may suspend your account and all services until payment is received; the monthly finance charge will apply; OverTaxed may refer the account to a collections agency or attorney for collection.
@@ -85,19 +85,22 @@ export default function TermsPage() {
               <strong>4.4 Acceleration.</strong> If you fail to pay any Performance Plan fee when due (including any installment), OverTaxed may, at its option, accelerate the entire unpaid balance and declare all remaining installments immediately due and payable.
             </p>
             <p className="text-gray-700 mb-3">
-              <strong>4.5 Collections Actions.</strong> If the account becomes delinquent (more than 60 days after due date), OverTaxed may send collection letters (Notice of Intent to Collect, Final Notice Before Filing Suit), engage a collections agency, and pursue legal action including filing suit, obtaining judgment for the balance plus interest, late fees, and reasonable attorney&apos;s fees and costs, and enforcing the judgment through wage garnishment, bank levies, or property liens.
+              <strong>4.5 Collections Actions.</strong> If the account remains unpaid 60 days after the due date, OverTaxed may refer the account to a collections agency or file suit in a court of competent jurisdiction, including the Circuit Court of Cook County, Illinois, or Small Claims/Claims Court, as appropriate. OverTaxed may send collection letters (Notice of Intent to Collect, Final Notice Before Filing Suit), engage a collections agency, and pursue legal action including filing suit, obtaining judgment for the balance plus interest, late fees, court costs, filing fees, and reasonable attorney&apos;s fees, and enforcing the judgment through wage garnishment, bank levies, or property liens. You will be responsible for the full balance owed plus all accrued interest, late fees, court costs, filing fees, and reasonable attorney&apos;s fees as provided in Section 4.6.
             </p>
             <p className="text-gray-700 mb-3">
-              <strong>4.6 Costs of Collection.</strong> If any proceeding is brought to enforce collection, you shall reimburse OverTaxed for all reasonable costs of collection, including court costs and reasonable attorney fees.
+              <strong>4.6 Costs of Collection.</strong> If any proceeding is brought to enforce collection, you shall reimburse OverTaxed for all reasonable costs of collection, including court costs, filing fees, and reasonable attorney fees.
             </p>
             <p className="text-gray-700 mb-3">
-              <strong>4.7 Waiver of Defenses.</strong> You agree that the amount of any Performance Plan fee set forth in an invoice shall be final and binding upon you unless you dispute the calculation in writing within 30 days of the invoice date, specifying the alleged error. After 30 days, the fee amount may not be disputed except for manifest calculation error.
+              <strong>4.7 Waiver of Defenses.</strong> You agree that the amount of any Performance Plan fee set forth in an invoice shall be final and binding upon you unless you dispute the calculation in writing within 30 days of the invoice date, specifying the alleged error. After 30 days, the fee amount may not be disputed except for manifest calculation error. You waive any defense based on statute of limitations, laches, or similar doctrine for amounts due under these Terms, except as required by applicable law.
             </p>
             <p className="text-gray-700 mb-3">
               <strong>4.8 Credit Reporting.</strong> OverTaxed reserves the right to report delinquent accounts to credit bureaus or similar reporting agencies in accordance with applicable law.
             </p>
+            <p className="text-gray-700 mb-3">
+              <strong>4.9 Consent to Jurisdiction.</strong> You consent to the personal jurisdiction of the courts of the State of Illinois for any action to collect amounts due hereunder.
+            </p>
             <p className="text-gray-700">
-              <strong>4.9 No Refund for Performance Plan Fees.</strong> Once a Performance Plan fee is calculated and invoiced based on actual Tax Savings, the fee is non-refundable, except as required by law.
+              <strong>4.10 No Refund for Performance Plan Fees.</strong> Once a Performance Plan fee is calculated and invoiced based on actual Tax Savings, the fee is non-refundable, except as required by law.
             </p>
           </section>
 

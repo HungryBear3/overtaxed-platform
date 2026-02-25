@@ -1,7 +1,7 @@
 import Link from "next/link"
 import { prisma } from "@/lib/db"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Users, Building2, FileText, AlertCircle } from "lucide-react"
+import { Users, Building2, FileText, AlertCircle, Percent } from "lucide-react"
 
 export default async function AdminDashboardPage() {
   const [userCount, propertyCount, appealCount, activeAppeals] = await Promise.all([
@@ -63,6 +63,16 @@ export default async function AdminDashboardPage() {
             <p className="text-2xl font-bold text-blue-600">{activeAppeals}</p>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="mt-8">
+        <Link
+          href="/admin/performance"
+          className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+        >
+          <Percent className="h-4 w-4" />
+          Performance Plan (4% fee)
+        </Link>
       </div>
     </div>
   )

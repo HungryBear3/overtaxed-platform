@@ -114,6 +114,68 @@ export async function runAssessmentChecks(): Promise<AssessmentCheckResult[]> {
         }
       }
 
+      // Reduction detection: auto-update appeals when Cook County shows a lower assessment
+      const valueByYear = new Map<number, number>()
+      for (const rec of sorted) {
+        const val = rec.assessedTotalValue ?? 0
+        if (val > 0) valueByYear.set(rec.year, val)
+      }
+      const now = new Date()
+      const appealsToCheck = await prisma.appeal.findMany({
+        where: {
+          propertyId: prop.id,
+          status: { in: ["FILED", "UNDER_REVIEW", "HEARING_SCHEDULED", "DECISION_PENDING"] },
+          outcome: null,
+          filingDeadline: { lt: now },
+        },
+        select: {
+          id: true,
+          taxYear: true,
+          originalAssessmentValue: true,
+          requestedAssessmentValue: true,
+        },
+      })
+      for (const appeal of appealsToCheck) {
+        const cookCountyVal = valueByYear.get(appeal.taxYear)
+        const originalVal = Number(appeal.originalAssessmentValue)
+        if (
+          cookCountyVal != null &&
+          cookCountyVal > 0 &&
+          cookCountyVal < originalVal
+        ) {
+          const reductionAmount = originalVal - cookCountyVal
+          const property = await prisma.property.findUnique({
+            where: { id: prop.id },
+            select: { taxRate: true, stateEqualizer: true },
+          })
+          const taxRate = Number(property?.taxRate ?? 0.0756)
+          const equalizer = Number(property?.stateEqualizer ?? 3.0355)
+          const taxSavings = reductionAmount * taxRate * equalizer
+          const requestedVal = appeal.requestedAssessmentValue
+            ? Number(appeal.requestedAssessmentValue)
+            : null
+          const outcome =
+            requestedVal != null && cookCountyVal > requestedVal
+              ? ("PARTIALLY_WON" as const)
+              : ("WON" as const)
+          const reductionPercent =
+            originalVal > 0 ? (reductionAmount / originalVal) * 100 : null
+          await prisma.appeal.update({
+            where: { id: appeal.id },
+            data: {
+              outcome,
+              finalAssessmentValue: cookCountyVal,
+              reductionAmount,
+              reductionPercent,
+              taxSavings,
+              taxRate: property?.taxRate ?? undefined,
+              equalizationFactor: property?.stateEqualizer ?? undefined,
+              decisionDate: now,
+            },
+          })
+        }
+      }
+
       const newLatest = sorted[0]
       const latestYear = newLatest.year
       const prevLatestVal = prevStored ? Number(prevStored.assessmentValue) : null

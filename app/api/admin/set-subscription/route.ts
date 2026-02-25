@@ -13,6 +13,10 @@ const schema = z.object({
   subscriptionStatus: z.enum(["INACTIVE", "ACTIVE", "PAST_DUE", "CANCELLED"]).default("ACTIVE"),
   /** Optional: cap slots by quantity paid. When set, effective limit = this value; when null, limit = tier default. */
   subscriptionQuantity: z.number().int().min(0).nullable().optional(),
+  /** Performance Plan: when 3-year period starts (first successful appeal reduction). Required when tier=PERFORMANCE. */
+  performancePlanStartDate: z.string().datetime().optional().nullable(),
+  /** Performance Plan: UPFRONT or INSTALLMENTS */
+  performancePlanPaymentOption: z.enum(["UPFRONT", "INSTALLMENTS"]).optional().nullable(),
 })
 
 export async function POST(request: NextRequest) {
@@ -51,7 +55,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { email, userId, subscriptionTier, subscriptionStatus, subscriptionQuantity } = parsed.data
+    const {
+      email,
+      userId,
+      subscriptionTier,
+      subscriptionStatus,
+      subscriptionQuantity,
+      performancePlanStartDate,
+      performancePlanPaymentOption,
+    } = parsed.data
 
     if (!email && !userId) {
       return NextResponse.json(
@@ -121,6 +133,12 @@ export async function POST(request: NextRequest) {
         subscriptionStatus,
         subscriptionStartDate: subscriptionStatus === "ACTIVE" ? new Date() : user.subscriptionStartDate,
         ...(subscriptionQuantity !== undefined && { subscriptionQuantity }),
+        ...(performancePlanStartDate !== undefined && {
+          performancePlanStartDate: performancePlanStartDate
+            ? new Date(performancePlanStartDate)
+            : null,
+        }),
+        ...(performancePlanPaymentOption !== undefined && { performancePlanPaymentOption }),
       },
       select: {
         id: true,

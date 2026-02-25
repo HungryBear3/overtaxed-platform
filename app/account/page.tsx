@@ -8,6 +8,7 @@ import { ManageSubscriptionButton } from "@/components/account/ManageSubscriptio
 import { RefreshSubscriptionButton } from "@/components/account/RefreshSubscriptionButton"
 import { ProfileForm } from "@/components/account/ProfileForm"
 import { DeleteAccountSection } from "@/components/account/DeleteAccountSection"
+import { PendingInvoicesSection } from "@/components/account/PendingInvoicesSection"
 import { getPropertyLimit } from "@/lib/billing/limits"
 import { formatPIN } from "@/lib/cook-county"
 import { isAppealSubmitted } from "@/lib/appeals/status"
@@ -17,7 +18,7 @@ export default async function AccountPage() {
   if (!session?.user) redirect("/auth/signin")
 
   // Fetch fresh user data and properties from DB
-  const [freshUser, properties] = await Promise.all([
+  const [freshUser, properties, invoices] = await Promise.all([
     prisma.user.findUnique({
       where: { id: session.user.id },
       select: {
@@ -45,6 +46,18 @@ export default async function AccountPage() {
         appeals: { select: { status: true }, orderBy: { taxYear: "desc" }, take: 5 },
       },
       orderBy: { createdAt: "desc" },
+    }),
+    prisma.invoice.findMany({
+      where: { userId: session.user.id },
+      orderBy: { dueDate: "desc" },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        amount: true,
+        invoiceType: true,
+        status: true,
+        dueDate: true,
+      },
     }),
   ])
 
@@ -123,6 +136,18 @@ export default async function AccountPage() {
                 {user.subscriptionStatus === "INACTIVE" ? "Free Tier" : user.subscriptionStatus}
               </p>
             </div>
+          </div>
+          <div className="pt-2 border-t border-gray-100">
+            <PendingInvoicesSection
+              invoices={invoices.map((i) => ({
+                id: i.id,
+                invoiceNumber: i.invoiceNumber,
+                amount: Number(i.amount),
+                invoiceType: i.invoiceType,
+                status: i.status,
+                dueDate: i.dueDate.toISOString(),
+              }))}
+            />
           </div>
           <div className="pt-2 border-t border-gray-100">
             <RefreshSubscriptionButton />

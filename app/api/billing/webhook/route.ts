@@ -40,6 +40,20 @@ export async function POST(request: NextRequest) {
   switch (event.type) {
     case "checkout.session.completed": {
       console.log("[webhook] Processing checkout.session.completed")
+      const invoiceId = metadata.invoiceId
+      if (invoiceId) {
+        try {
+          await prisma.invoice.update({
+            where: { id: invoiceId },
+            data: { status: "PAID", paidAt: new Date(), paymentMethod: "credit_card" },
+          })
+          console.log(`[webhook] Marked invoice ${invoiceId} as PAID (Performance Fee)`)
+        } catch (err) {
+          console.error("[webhook] Error marking invoice PAID:", err)
+        }
+        break
+      }
+
       const userId = metadata.userId
       const plan = metadata.plan
       const propertyCountStr = metadata.propertyCount
@@ -225,6 +239,19 @@ export async function POST(request: NextRequest) {
     case "invoice.paid": {
       const inv = data as { metadata?: Record<string, string>; subscription?: string }
       const meta = inv.metadata ?? {}
+      const ourInvoiceId = meta.ourInvoiceId
+      if (ourInvoiceId) {
+        try {
+          await prisma.invoice.update({
+            where: { id: ourInvoiceId },
+            data: { status: "PAID", paidAt: new Date(), paymentMethod: "credit_card" },
+          })
+          console.log(`[webhook] Marked invoice ${ourInvoiceId} as PAID (Performance Fee Stripe Invoice)`)
+        } catch (err) {
+          console.error("[webhook] Error marking invoice PAID from Stripe Invoice:", err)
+        }
+        break
+      }
       const subscriptionId = meta.subscriptionId
       const newQuantityStr = meta.newQuantity
       if (subscriptionId && newQuantityStr) {
@@ -263,6 +290,22 @@ export async function POST(request: NextRequest) {
           }
         } catch (err) {
           console.error("[webhook] Error processing payment failure:", err)
+        }
+      }
+      break
+    }
+
+    case "payment_intent.succeeded": {
+      const invoiceId = metadata.invoiceId
+      if (invoiceId) {
+        try {
+          await prisma.invoice.update({
+            where: { id: invoiceId },
+            data: { status: "PAID", paidAt: new Date(), paymentMethod: "credit_card" },
+          })
+          console.log(`[webhook] Marked invoice ${invoiceId} as PAID (Performance Fee)`)
+        } catch (err) {
+          console.error("[webhook] Error marking invoice PAID:", err)
         }
       }
       break

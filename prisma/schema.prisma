@@ -496,6 +496,7 @@ model Invoice {
   paidAt        DateTime?
   paymentMethod String? // "credit_card", "ach"
   stripePaymentIntentId String?
+  stripeInvoiceId String? // Stripe Invoice (for performance fee send_invoice flow)
   
   // Collections
   dueDate       DateTime
