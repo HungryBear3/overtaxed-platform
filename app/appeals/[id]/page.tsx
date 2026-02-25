@@ -452,10 +452,10 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                 <div className="mt-4 pt-4 border-t border-gray-200">
                   {/* Assessment history context */}
                   {(appeal.property.assessmentHistory?.length ?? 0) > 0 && (
-                    <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+                    <div className="mb-4 p-3 bg-gray-50 rounded-lg [color-scheme:light]">
                       <p className="text-xs font-medium text-gray-600 uppercase tracking-wide mb-2">Assessment history (this property)</p>
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                        <table className="w-full text-sm text-gray-900">
                           <thead>
                             <tr className="text-left text-gray-500 border-b border-gray-200">
                               <th className="py-1 pr-3">Tax year</th>
@@ -463,14 +463,14 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                               <th className="py-1">Change</th>
                             </tr>
                           </thead>
-                          <tbody>
+                          <tbody className="text-gray-900">
                             {(appeal.property.assessmentHistory ?? []).map((ah) => {
                               const unavailable = ah.assessmentValue == null || ah.assessmentValue === 0
                               return (
                                 <tr key={ah.taxYear} className="border-b border-gray-100">
-                                  <td className="py-1.5 pr-3 font-medium">{ah.taxYear}</td>
-                                  <td className="py-1.5 pr-3">{unavailable ? <span className="text-gray-500">Not available yet</span> : formatCurrency(ah.assessmentValue)}</td>
-                                  <td className="py-1.5">
+                                  <td className="py-1.5 pr-3 font-medium text-gray-900">{ah.taxYear}</td>
+                                  <td className="py-1.5 pr-3 text-gray-900">{unavailable ? <span className="text-gray-500">Not available yet</span> : formatCurrency(ah.assessmentValue)}</td>
+                                  <td className="py-1.5 text-gray-900">
                                     {unavailable ? (
                                       <span className="text-gray-500">—</span>
                                     ) : ah.changePercent != null ? (
