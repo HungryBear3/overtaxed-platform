@@ -733,10 +733,10 @@ This forces dark text on white background regardless of system color scheme.
 
 **Implementation:**
 - **Appeal page sidebar:** New "Submission instructions for Cook County Assessor" section with 8 numbered steps: (1) Download PDF; (2) Check township filing window; (3) Go to portal (cookcountyassessor.com/online-appeals, propertytaxfilings.cookcountyil.gov); (4) Start residential appeal; (5) Upload OverTaxed packet; (6) Complete county form; (7) Submit before deadline; (8) Mark as filed in OverTaxed. Links to assessment calendar, online appeals guide, official rules.
-- **PDF filing section** (`lib/document-generation/appeal-summary.ts`): Expanded from one line to 6 steps matching the sidebar.
+- **PDF:** Submission instructions were removed from the appeal PDF. The county reviewer evaluates evidence (property, comps, requested value), not "how to file" steps. Instructions live on the website only as a walkthrough guide.
 - **Link update:** cookcountyassessoril.gov → cookcountyassessor.com (current domain).
 
-**Lesson:** Users file at the county; we prepare the packet. Provide clear, numbered instructions with direct links. Include the same steps in the PDF so users can follow from either the app or the downloaded document.
+**Lesson:** Users file at the county; we prepare the packet. Provide clear, numbered instructions with direct links on the website. Keep the PDF focused on evidence the county processes.
 
 ---
 
@@ -916,6 +916,6 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 **Last Updated:** February 2026
 
-**Feb 2026:** §32 — Prisma P3005 baseline: one-time `prisma migrate resolve --applied 0_init` for existing Supabase DB; `prisma/migrations/0_init`, unignore migrations, `db:baseline` script; see `docs/MIGRATIONS.md`. §31 — Street View heading to face building front (metadata + bearing); `lib/map/streetview.ts`; applies to appeal page and PDF. §30 — Legal website design: hero image (Unsplash), logo, testimonials, How It Works, stats bar, Cook County badge; Logo component; gradient refinements on Pricing/Contact/FAQ. §27 — Requested assessment input: explicit `bg-white text-gray-900` so text visible in dark mode. §28 — Comps: Cook County fallbacks (class, 3-year, township), ASSESSED_VALUES enrichment, manual comp upload, Realie clarification in Add Comps. §29 — 8-step submission instructions on appeal page; PDF filing section expanded to 6 steps.
+**Feb 2026:** §32 — Prisma P3005 baseline: one-time `prisma migrate resolve --applied 0_init` for existing Supabase DB; `prisma/migrations/0_init`, unignore migrations, `db:baseline` script; see `docs/MIGRATIONS.md`. §31 — Street View heading to face building front (metadata + bearing); `lib/map/streetview.ts`; applies to appeal page and PDF. §30 — Legal website design: hero image (Unsplash), logo, testimonials, How It Works, stats bar, Cook County badge; Logo component; gradient refinements on Pricing/Contact/FAQ. §27 — Requested assessment input: explicit `bg-white text-gray-900` so text visible in dark mode. §28 — Comps: Cook County fallbacks (class, 3-year, township), ASSESSED_VALUES enrichment, manual comp upload, Realie clarification in Add Comps. §29 — 8-step submission instructions on appeal page (website walkthrough); PDF filing section removed (not relevant to county processor).
 
 **Jan 2026:** §26 — PDF summary: enriched comps in download-summary, Subject vs Comparables table layout (PIN overlap fix), map & Street View embedded in PDF when GOOGLE_MAPS_API_KEY set. §25 — Comparison report value-add (Realie, map, Street View, PDF similarity line).

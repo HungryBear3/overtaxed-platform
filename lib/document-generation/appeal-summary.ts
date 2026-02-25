@@ -686,16 +686,6 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   )
   drawLine()
 
-  // —— Filing instructions (Task 8.8) ——
-  drawText("How to submit this appeal packet", { bold: true, fontSize: 11 })
-  drawText("1. Go to cookcountyassessor.com/online-appeals or propertytaxfilings.cookcountyil.gov")
-  drawText("2. Create an account if needed. Check your township filing window at cookcountyassessor.com/assessment-calendar-and-deadlines")
-  drawText("3. Start a new residential appeal. Enter your PIN, address, and requested value (see above)")
-  drawText("4. Upload this PDF as supporting evidence when the portal asks for documents")
-  drawText("5. Complete the official county form (signature, checkboxes). Submit before your deadline")
-  drawText("6. After submitting at the county portal, mark this appeal as Filed in OverTaxed to track status")
-  drawLine()
-
   // —— Conclusion (compelling closing for assessors) ——
   drawText("Conclusion", { bold: true, fontSize: 13 })
   if (requestedValue != null && data.comps.length > 0) {
