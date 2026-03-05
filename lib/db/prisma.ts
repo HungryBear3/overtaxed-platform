@@ -7,7 +7,11 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
-const connectionString = process.env.DATABASE_URL
+let connectionString = process.env.DATABASE_URL
+// Supabase pooler requires pgbouncer=true to avoid "prepared statement already exists"
+if (connectionString && connectionString.includes("pooler.supabase.com") && !connectionString.includes("pgbouncer=true")) {
+  connectionString += (connectionString.includes("?") ? "&" : "?") + "pgbouncer=true"
+}
 
 // Apply TLS relaxation at module load time (before Prisma initialization)
 // Required for Supabase connection pooler: Prisma's engine enforces TLS verification

@@ -8,7 +8,11 @@ config({ path: ".env.local" });
 config();
 
 // Use placeholder so prisma generate succeeds on Vercel when env is not yet loaded (build uses real DATABASE_URL at runtime)
-const databaseUrl = process.env["DATABASE_URL"] || "postgresql://placeholder:placeholder@localhost:5432/placeholder";
+let databaseUrl = process.env["DATABASE_URL"] || "postgresql://placeholder:placeholder@localhost:5432/placeholder";
+// Supabase pooler requires pgbouncer=true to avoid "prepared statement already exists" (Schema engine + Prisma Client)
+if (databaseUrl.includes("pooler.supabase.com") && !databaseUrl.includes("pgbouncer=true")) {
+  databaseUrl += (databaseUrl.includes("?") ? "&" : "?") + "pgbouncer=true";
+}
 const directUrl = process.env["DIRECT_URL"] || databaseUrl;
 
 export default defineConfig({
