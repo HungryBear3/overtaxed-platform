@@ -133,7 +133,7 @@ export function FilingAuthorizationForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4 text-gray-900">
       <p className="text-sm text-gray-600">
         This form captures the information required for the Cook County Assessor Attorney/Representative Authorization.
         OverTaxed will use this to file your appeal on your behalf when staff-assisted filing is available.
@@ -141,17 +141,18 @@ export function FilingAuthorizationForm({
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor="ownerName">Your full name *</Label>
+          <Label htmlFor="ownerName" className="text-gray-900">Your full name *</Label>
           <Input
             id="ownerName"
             value={ownerName}
             onChange={(e) => setOwnerName(e.target.value)}
             placeholder="Property owner name"
             required
+            className="bg-white text-gray-900 placeholder:text-gray-400"
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="ownerEmail">Your email *</Label>
+          <Label htmlFor="ownerEmail" className="text-gray-900">Your email *</Label>
           <Input
             id="ownerEmail"
             type="email"
@@ -159,23 +160,25 @@ export function FilingAuthorizationForm({
             onChange={(e) => setOwnerEmail(e.target.value)}
             placeholder="you@example.com"
             required
+            className="bg-white text-gray-900 placeholder:text-gray-400"
           />
         </div>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="ownerPhone">Daytime phone (optional)</Label>
+        <Label htmlFor="ownerPhone" className="text-gray-900">Daytime phone (optional)</Label>
         <Input
           id="ownerPhone"
           type="tel"
           value={ownerPhone}
           onChange={(e) => setOwnerPhone(e.target.value)}
           placeholder="(312) 555-1234"
+          className="bg-white text-gray-900 placeholder:text-gray-400"
         />
       </div>
 
       <div className="space-y-2">
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex items-center gap-2 text-sm text-gray-900">
           <input
             type="checkbox"
             checked={sameAsProperty}
@@ -189,57 +192,61 @@ export function FilingAuthorizationForm({
       {!sameAsProperty && (
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2 sm:col-span-2">
-            <Label htmlFor="ownerAddress">Mailing address *</Label>
+            <Label htmlFor="ownerAddress" className="text-gray-900">Mailing address *</Label>
             <Input
               id="ownerAddress"
               value={ownerAddress}
               onChange={(e) => setOwnerAddress(e.target.value)}
               placeholder="Street address"
               required
+              className="bg-white text-gray-900 placeholder:text-gray-400"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="ownerCity">City *</Label>
+            <Label htmlFor="ownerCity" className="text-gray-900">City *</Label>
             <Input
               id="ownerCity"
               value={ownerCity}
               onChange={(e) => setOwnerCity(e.target.value)}
               placeholder="Chicago"
               required
+              className="bg-white text-gray-900 placeholder:text-gray-400"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="ownerState">State</Label>
+            <Label htmlFor="ownerState" className="text-gray-900">State</Label>
             <Input
               id="ownerState"
               value={ownerState}
               onChange={(e) => setOwnerState(e.target.value)}
               placeholder="IL"
               maxLength={2}
+              className="bg-white text-gray-900 placeholder:text-gray-400"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="ownerZip">ZIP code *</Label>
+            <Label htmlFor="ownerZip" className="text-gray-900">ZIP code *</Label>
             <Input
               id="ownerZip"
               value={ownerZip}
               onChange={(e) => setOwnerZip(e.target.value)}
               placeholder="60601"
               required
+              className="bg-white text-gray-900 placeholder:text-gray-400"
             />
           </div>
         </div>
       )}
 
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-        <label className="flex items-start gap-3 text-sm">
+        <label className="flex items-start gap-3 text-sm text-gray-900">
           <input
             type="checkbox"
             checked={agreed}
             onChange={(e) => setAgreed(e.target.checked)}
             className="mt-1 rounded border-gray-300"
           />
-          <span className="text-amber-900">
+          <span className="text-gray-900">
             I authorize OverTaxed to act as my representative and file this property tax appeal with the Cook County
             Assessor on my behalf. I certify that I am the property owner or authorized to act for the owner, and that
             the information provided is accurate.

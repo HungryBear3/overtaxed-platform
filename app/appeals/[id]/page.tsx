@@ -897,7 +897,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
 
             {/* Filing authorization (for staff-assisted filing) */}
             {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING") && (
-              <div className="bg-white rounded-lg shadow p-6">
+              <div className="bg-white rounded-lg shadow p-6 [color-scheme:light]">
                 <h2 className="text-lg font-semibold text-gray-900 mb-2">Authorize filing on your behalf</h2>
                 <p className="text-sm text-gray-600 mb-4">
                   Complete this form to authorize OverTaxed to file your appeal with Cook County. Required for staff-assisted filing (coming soon).
