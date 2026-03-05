@@ -56,6 +56,7 @@ export async function GET(
         ...(isAdmin ? {} : { userId: session.user.id }),
       },
       include: {
+        user: { select: { name: true, email: true } },
         property: {
           select: {
             id: true,
@@ -89,6 +90,7 @@ export async function GET(
         documents: {
           orderBy: { createdAt: 'desc' },
         },
+        filingAuthorization: true,
         compsUsed: {
           orderBy: { createdAt: 'asc' },
         },
@@ -174,6 +176,13 @@ export async function GET(
           photoDate: doc.photoDate,
           createdAt: doc.createdAt,
         })),
+        user: appeal.user ? { name: appeal.user.name, email: appeal.user.email } : null,
+        filingAuthorization: appeal.filingAuthorization ? {
+          id: appeal.filingAuthorization.id,
+          signedAt: appeal.filingAuthorization.signedAt,
+          ownerName: appeal.filingAuthorization.ownerName,
+          ownerEmail: appeal.filingAuthorization.ownerEmail,
+        } : null,
         compsUsed: await (async () => {
           const comps = appeal.compsUsed
           // No Realie for comps (1 API call for subject only). Distance from Cook County coords.

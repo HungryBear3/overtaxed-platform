@@ -37,6 +37,8 @@ This document captures bugs, deployment issues, and solutions encountered during
 30. [Legal website design: hero, testimonials, logo, trust blocks](#30-legal-website-design-hero-testimonials-logo-trust-blocks)
 31. [Street View: heading to face building front](#31-street-view-heading-to-face-building-front)
 32. [Prisma P3005 baseline for existing production database](#32-prisma-p3005-baseline-for-existing-production-database)
+33. [Automated Performance Fee billing: reduction detection, Stripe Invoices, collection notices](#33-automated-performance-fee-billing-reduction-detection-stripe-invoices-collection-notices)
+34. [Filing authorization form for staff-assisted filing](#34-filing-authorization-form-for-staff-assisted-filing)
 
 ---
 
@@ -291,6 +293,7 @@ declare module "next-auth/jwt" {
 | Vercel Preview + Stripe test | `docs/VERCEL_PREVIEW_STRIPE_SETUP.md` |
 | Env / Stripe secrets | `docs/OVERTAXED_SECRETS_AND_PRICES.md` |
 | Admin set-subscription (testing tiers) | `POST /api/admin/set-subscription` — see [Admin Set-Subscription](#admin-set-subscription-testing) |
+| Performance Fee billing | `lib/billing/performance-fee.ts`, `lib/billing/stripe-invoice.ts`; crons: assessment-checks, performance-invoices, invoice-collections; webhook `invoice.paid` |
 | Testing subscriptions & limits | `docs/TESTING_SUBSCRIPTION_AND_LIMITS.md` — reduce test account tier, test property limits |
 | Filing on behalf of users | `docs/FILING_ON_BEHALF.md` — options (staff-assisted vs API); why DIY-only today |
 | GitHub sync (monorepo → overtaxed-platform) | **Use robocopy** — [Sync to overtaxed-platform Repo](#sync-to-overtaxed-platform-repo-robocopy). Alternative: `SYNC_OVERTAXED.md` (subtree, slower) |
@@ -804,6 +807,44 @@ This forces dark text on white background regardless of system color scheme.
 
 ---
 
+## 33. Automated Performance Fee billing: reduction detection, Stripe Invoices, collection notices
+
+**Context:** Performance Plan charges 4% of 3-year tax savings. We automated: (1) detecting assessment reductions from Cook County; (2) creating and sending Stripe Invoices; (3) escalating collection notices for overdue invoices; (4) strengthening Terms with strict collections deadlines.
+
+**Implementation:**
+
+- **Reduction detection** (`lib/monitoring/assessment-check.ts`): After fetching Cook County assessment history, for each property load appeals with status FILED/UNDER_REVIEW/HEARING_SCHEDULED/DECISION_PENDING, outcome null, past filingDeadline. For each appeal's taxYear, get Cook County assessed value (board > certified > mailed). If `cookCountyValue < originalAssessmentValue`, update appeal: outcome WON or PARTIALLY_WON, finalAssessmentValue, reductionAmount, taxSavings (reduction × taxRate × equalizer), decisionDate.
+
+- **Stripe Invoice** (`lib/billing/stripe-invoice.ts`): `createAndSendStripeInvoice` — get/create Stripe customer; create invoice with `collection_method: "send_invoice"`, `days_until_due: 30`, metadata.ourInvoiceId; add line item; finalize; send. Stripe emails the customer. Webhook `invoice.paid` reads metadata.ourInvoiceId and marks our Invoice PAID. Schema: Invoice.stripeInvoiceId.
+
+- **Cron order** (`vercel.json`): assessment-checks 07:00 Mon (before performance-invoices); performance-invoices 08:00 Mon; invoice-collections daily 09:00.
+
+- **Collection notices** (`app/api/cron/invoice-collections/route.ts`): Four-step sequence — Notice 1 (7 days): friendly reminder; Notice 2 (14 days): 1.5% finance charge; Notice 3 (30 days): final before collections; Notice 4 (45 days): cites Terms Section 4 (collections, claims court, legal fees). Email templates in `lib/email/templates.ts`. Uses Invoice.collectionLettersSent and lastCollectionLetterSentAt.
+
+- **Terms Section 4** (`app/terms/page.tsx`): First notice at 7 days; final notice before legal at 45 days; collections/suit at 60 days. Explicit Circuit Court of Cook County, Small Claims/Claims Court. User responsible for court costs, filing fees, reasonable attorney fees. Waiver of statute of limitations, laches. Consent to Illinois jurisdiction.
+
+**Lesson:** Automated billing reduces manual admin work. Use Cook County assessment history by year to detect reductions; ensure cron order so reductions are detected before invoicing. Stripe `send_invoice` sends payment link by email. Escalating collection notices with Terms citation strengthen enforcement. Run `npx prisma migrate deploy` (or add stripeInvoiceId via SQL) before deploy. Enable `invoice.paid` webhook event in Stripe.
+
+---
+
+## 34. Filing authorization form for staff-assisted filing
+
+**Context:** Cook County requires an Attorney/Representative Authorization form when filing appeals on behalf of property owners. For staff-assisted filing (future), we need to capture property address, owner name/email/phone, and owner mailing address. Option A: web form that matches county form fields; Option B: user uploads county PDF. We implemented Option A.
+
+**Implementation:**
+
+- **Schema** (`prisma/schema.prisma`): `FilingAuthorization` model (1:1 with Appeal) — propertyAddress, propertyCity, propertyState, propertyZip, propertyPin; ownerName, ownerEmail, ownerPhone; ownerAddress, ownerCity, ownerState, ownerZip; signedAt, ipAddress. Migration `20250305000000_add_filing_authorization`.
+
+- **API** (`POST /api/appeals/[id]/authorization`): Validates ownership; only DRAFT or PENDING_FILING appeals; upserts authorization. Property fields come from appeal.property; owner fields from request body. Appeal GET includes `filingAuthorization` and `user` (name, email) for form prefill.
+
+- **Form** (`components/appeals/filing-authorization-form.tsx`): Prefills owner name/email from user; "Mailing address same as property address" checkbox; optional phone; e-signature checkbox with authorization text; shows "Authorization on file" when already signed.
+
+- **Placement:** Appeal detail page sidebar, when status DRAFT or PENDING_FILING — "Authorize filing on your behalf" section. Staff filing queue and "File for me" button to be built later.
+
+**Lesson:** Capture authorization data upfront so staff-assisted filing can use it. One representative account (e.g. filings@overtaxed-il.com) can file many appeals; enter user's email per appeal as appellant. Run `npx prisma migrate deploy` before deploy.
+
+---
+
 ## Stripe Webhook Debugging
 
 ### Issue: Subscription doesn't update after checkout
@@ -916,6 +957,6 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 **Last Updated:** February 2026
 
-**Feb 2026:** §32 — Prisma P3005 baseline: one-time `prisma migrate resolve --applied 0_init` for existing Supabase DB; `prisma/migrations/0_init`, unignore migrations, `db:baseline` script; see `docs/MIGRATIONS.md`. §31 — Street View heading to face building front (metadata + bearing); `lib/map/streetview.ts`; applies to appeal page and PDF. §30 — Legal website design: hero image (Unsplash), logo, testimonials, How It Works, stats bar, Cook County badge; Logo component; gradient refinements on Pricing/Contact/FAQ. §27 — Requested assessment input: explicit `bg-white text-gray-900` so text visible in dark mode. §28 — Comps: Cook County fallbacks (class, 3-year, township), ASSESSED_VALUES enrichment, manual comp upload, Realie clarification in Add Comps. §29 — 8-step submission instructions on appeal page (website walkthrough); PDF filing section removed (not relevant to county processor).
+**Feb 2026:** §34 — Filing authorization form: FilingAuthorization model, POST /api/appeals/[id]/authorization, FilingAuthorizationForm component on appeal detail (DRAFT/PENDING_FILING); captures property + owner info for Cook County Attorney/Representative form; staff filing queue and "File for me" to follow. §33 — Automated Performance Fee billing: assessment-check detects Cook County reductions and auto-updates appeals (outcome, taxSavings); Stripe Invoice create/finalize/send; webhook invoice.paid; 4-step collection notices (7/14/30/45 days); Terms §4 strengthened (deadlines, claims court, legal fees, waiver, jurisdiction). Cron: assessment-checks 07:00 Mon, performance-invoices 08:00 Mon, invoice-collections daily 09:00. §32 — Prisma P3005 baseline. §31 — Street View heading to face building front. §30 — Legal website design. §27–29 — Requested assessment input, comps improvements, submission instructions.
 
 **Jan 2026:** §26 — PDF summary: enriched comps in download-summary, Subject vs Comparables table layout (PIN overlap fix), map & Street View embedded in PDF when GOOGLE_MAPS_API_KEY set. §25 — Comparison report value-add (Realie, map, Street View, PDF similarity line).

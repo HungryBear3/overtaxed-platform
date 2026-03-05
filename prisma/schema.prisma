@@ -265,6 +265,9 @@ model Appeal {
   // Documents
   documents      AppealDocument[]
   
+  // Filing authorization (for staff-assisted filing; Cook County Attorney/Representative form)
+  filingAuthorization FilingAuthorization?
+  
   // Hearing (if applicable)
   hearingScheduled Boolean @default(false)
   hearingDate      DateTime?
@@ -316,6 +319,43 @@ enum AppealOutcome {
   PARTIALLY_WON    // Partial reduction
   DENIED           // No reduction
   WITHDRAWN        // Appeal withdrawn
+}
+
+// ============================================
+// Filing Authorization (Cook County Attorney/Representative form)
+// ============================================
+// Captures property owner info required for staff-assisted filing.
+// Matches Cook County Assessor Attorney/Representative Authorization form fields.
+
+model FilingAuthorization {
+  id       String  @id @default(cuid())
+  appealId String  @unique
+  appeal   Appeal  @relation(fields: [appealId], references: [id], onDelete: Cascade)
+  
+  // Property being appealed (from Property; stored for filing)
+  propertyAddress String
+  propertyCity    String
+  propertyState  String  @default("IL")
+  propertyZip    String
+  propertyPin    String
+  
+  // Property owner / appellant (as on county form)
+  ownerName       String
+  ownerEmail      String
+  ownerPhone      String?
+  ownerAddress    String  // Mailing address
+  ownerCity       String
+  ownerState      String  @default("IL")
+  ownerZip        String
+  
+  // E-signature
+  signedAt        DateTime @default(now())
+  ipAddress       String?  // Optional audit
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([appealId])
 }
 
 // ============================================

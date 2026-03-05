@@ -5,6 +5,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { AddCompsDialog } from "@/components/appeals/add-comps-dialog"
 import { PdfDownloadButton } from "@/components/appeals/pdf-download-button"
+import { FilingAuthorizationForm } from "@/components/appeals/filing-authorization-form"
 
 interface Appeal {
   id: string
@@ -88,6 +89,13 @@ interface Appeal {
     outcome: string | null
     taxSavings: number | null
   }>
+  user?: { name: string | null; email: string } | null
+  filingAuthorization?: {
+    id: string
+    signedAt: string
+    ownerName: string
+    ownerEmail: string
+  } | null
   createdAt: string
   updatedAt: string
 }
@@ -884,6 +892,28 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                     Official Appeal Rules
                   </a>.
                 </p>
+              </div>
+            )}
+
+            {/* Filing authorization (for staff-assisted filing) */}
+            {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING") && (
+              <div className="bg-white rounded-lg shadow p-6">
+                <h2 className="text-lg font-semibold text-gray-900 mb-2">Authorize filing on your behalf</h2>
+                <p className="text-sm text-gray-600 mb-4">
+                  Complete this form to authorize OverTaxed to file your appeal with Cook County. Required for staff-assisted filing (coming soon).
+                </p>
+                <FilingAuthorizationForm
+                  appealId={appeal.id}
+                  property={{
+                    address: appeal.property.address,
+                    city: appeal.property.city,
+                    state: appeal.property.state,
+                    zipCode: appeal.property.zipCode,
+                  }}
+                  user={appeal.user ?? null}
+                  existingAuth={appeal.filingAuthorization ?? undefined}
+                  onSaved={() => fetchAppeal()}
+                />
               </div>
             )}
 
