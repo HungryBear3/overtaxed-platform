@@ -321,7 +321,7 @@ export default function PropertyCompsPage() {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-right">
                           {comp.compType === "EQUITY"
-                            ? formatCurrency(comp.assessedMarketValue ?? comp.currentAssessmentValue)
+                            ? formatCurrency(comp.assessedMarketValue ?? comp.currentAssessmentValue ?? null)
                             : formatCurrency(comp.salePrice)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right min-w-[5rem]">
@@ -330,7 +330,7 @@ export default function PropertyCompsPage() {
                             : "—"}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right min-w-[5rem]">
-                          {formatCurrency(comp.assessedMarketValue ?? comp.currentAssessmentValue)}
+                          {formatCurrency(comp.assessedMarketValue ?? comp.currentAssessmentValue ?? null)}
                         </td>
                       </tr>
                     )})}
