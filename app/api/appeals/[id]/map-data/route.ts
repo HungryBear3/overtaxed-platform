@@ -60,6 +60,7 @@ export async function GET(
 
     const compPins = appeal.compsUsed.map((c) => c.pin.replace(/\D/g, "") || c.pin)
     const comps: Array<{ pin: string; address: string; lat: number; lng: number } | null> = []
+    const compAddrs: Array<{ address: string; city: string } | null> = []
     for (let i = 0; i < compPins.length; i += ENRICH_CONCURRENCY) {
       const batch = compPins.slice(i, i + ENRICH_CONCURRENCY)
       const results = await Promise.all(batch.map((pin) => getAddressByPIN(pin)))
@@ -73,10 +74,34 @@ export async function GET(
             lat: addr.latitude,
             lng: addr.longitude,
           })
+          compAddrs.push(
+            (addr.address || comp.address)
+              ? { address: addr.address || comp.address || "", city: addr.city || "Chicago" }
+              : null
+          )
         } else {
           comps.push(null)
+          compAddrs.push(null)
         }
       })
+    }
+
+    // Geocode comp addresses for better front-facing Street View (parcel centroid can be in backyard)
+    const compStreetView: Array<{ lat: number; lng: number } | null> = []
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY
+    if (apiKey) {
+      for (let i = 0; i < comps.length; i++) {
+        const c = comps[i]
+        const addr = compAddrs[i]
+        if (c && addr?.address) {
+          const geocoded = await geocodeAddress(addr.address, addr.city, "IL", apiKey)
+          compStreetView.push(geocoded ?? c)
+        } else {
+          compStreetView.push(c)
+        }
+      }
+    } else {
+      comps.forEach((c) => compStreetView.push(c))
     }
 
     return NextResponse.json({
@@ -84,6 +109,7 @@ export async function GET(
       subject,
       subjectStreetView: subjectStreetView ?? subject, // Geocoded when available for better front-facing Street View
       comps,
+      compStreetView: compStreetView.length > 0 ? compStreetView : undefined,
     })
   } catch (error) {
     console.error("Error fetching appeal map data:", error)

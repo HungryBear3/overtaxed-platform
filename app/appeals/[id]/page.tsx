@@ -149,6 +149,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
     subject: { lat: number; lng: number; address: string } | null
     subjectStreetView?: { lat: number; lng: number } | null
     comps: Array<{ pin: string; address: string; lat: number; lng: number } | null>
+    compStreetView?: Array<{ lat: number; lng: number } | null>
   } | null>(null)
   const [mapAvailable, setMapAvailable] = useState<boolean | null>(null)
 
@@ -178,6 +179,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
           subject: data.subject ?? null,
           subjectStreetView: data.subjectStreetView ?? data.subject ?? null,
           comps: data.comps ?? [],
+          compStreetView: data.compStreetView ?? data.comps ?? [],
         })
       })
       .catch(() => {})
@@ -729,6 +731,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                 <div className="space-y-3">
                   {appeal.compsUsed.map((comp, compIndex) => {
                     const compCoords = mapData?.comps?.[compIndex]
+                    const compSvCoords = mapData?.compStreetView?.[compIndex] ?? compCoords
                     return (
                     <div key={comp.id} className="border border-gray-200 rounded-lg p-3">
                       <div className="flex items-start justify-between gap-3">
@@ -743,9 +746,9 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                             {(comp as { dataSource?: string }).dataSource === "manual" ? "Manual comp" : `PIN: ${comp.pin}`}
                           </p>
                         </div>
-                        {mapAvailable !== false && compCoords && (
+                        {mapAvailable !== false && compSvCoords && (
                           <img
-                            src={`/api/map/streetview?lat=${compCoords.lat}&lng=${compCoords.lng}&size=120x90`}
+                            src={`/api/map/streetview?lat=${compSvCoords.lat}&lng=${compSvCoords.lng}&size=120x90`}
                             alt=""
                             className="rounded border border-gray-200 shrink-0 w-[120px] h-[90px] object-cover"
                           />

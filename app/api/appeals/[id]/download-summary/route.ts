@@ -60,13 +60,14 @@ export async function GET(
     const safeFormatPIN = (pin: string | null | undefined) => formatPIN(String(pin ?? ""))
 
     const subjectRealie = await getFullPropertyByPin(appeal.property.pin.replace(/\D/g, "") || appeal.property.pin)
-    const { comps, subjectLat, subjectLon, compCoordsList } = await (async () => {
+    const { comps, subjectLat, subjectLon, compCoordsList, compAddrList } = await (async () => {
       const list = appeal.compsUsed
       const subjectPin = appeal.property.pin.replace(/\D/g, "") || appeal.property.pin
       const subjectAddr = await getAddressByPIN(subjectPin)
       const subjectLat = subjectAddr?.latitude ?? null
       const subjectLon = subjectAddr?.longitude ?? null
       const compCoordsByPin = new Map<string, { lat: number; lng: number }>()
+      const compAddrByPin = new Map<string, { address: string; city: string }>()
       for (let i = 0; i < list.length; i += ADDRESS_CONCURRENCY) {
         const batch = list.slice(i, i + ADDRESS_CONCURRENCY)
         const results = await Promise.all(
@@ -76,10 +77,13 @@ export async function GET(
           const addr = results[j]
           if (addr?.latitude != null && addr?.longitude != null) {
             compCoordsByPin.set(c.pin, { lat: addr.latitude, lng: addr.longitude })
+            const addrStr = addr.address || c.address
+            if (addrStr) compAddrByPin.set(c.pin, { address: addrStr, city: addr.city || "Chicago" })
           }
         })
       }
       const compCoordsList = list.map((c) => compCoordsByPin.get(c.pin) ?? null)
+      const compAddrList = list.map((c) => compAddrByPin.get(c.pin) ?? null)
       const countyList = list.map((c) => {
         const livingArea = c.livingArea ?? null
         const yearBuilt = c.yearBuilt ?? null
@@ -146,7 +150,7 @@ export async function GET(
         bedroomsRealie: e.bedroomsRealie,
         bathroomsRealie: e.bathroomsRealie,
       }))
-      return { comps, subjectLat, subjectLon, compCoordsList }
+      return { comps, subjectLat, subjectLon, compCoordsList, compAddrList }
     })()
 
     const subLivingCo = appeal.property.livingArea ?? null
@@ -277,12 +281,25 @@ export async function GET(
             })()
           : null
 
+      // Geocode comp addresses for better front-facing Street View
+      const compSvCoordsList: Array<{ lat: number; lng: number } | null> = []
+      for (let i = 0; i < Math.min(compCoordsList.length, MAX_COMP_STREETVIEW); i++) {
+        const c = compCoordsList[i]
+        const addr = compAddrList?.[i]
+        if (c && addr?.address) {
+          const geocoded = await geocodeAddress(addr.address, addr.city, "IL", googleKey)
+          compSvCoordsList.push(geocoded ?? c)
+        } else {
+          compSvCoordsList.push(c)
+        }
+      }
+
       // Get headings so Street View faces the building (front-facing)
       const [subjectHeading, ...compHeadings] = await Promise.all([
         subjectSvCoords != null
           ? getHeadingTowardBuilding(subjectSvCoords.lat, subjectSvCoords.lng, googleKey)
           : Promise.resolve(null),
-        ...compCoordsList.slice(0, MAX_COMP_STREETVIEW).map((c) =>
+        ...compSvCoordsList.map((c) =>
           c ? getHeadingTowardBuilding(c.lat, c.lng, googleKey) : Promise.resolve(null)
         ),
       ])
@@ -300,7 +317,7 @@ export async function GET(
             })()
           : null
 
-      const compSvUrls = compCoordsList.slice(0, MAX_COMP_STREETVIEW).map((c, i) => {
+      const compSvUrls = compSvCoordsList.map((c, i) => {
         if (!c) return null
         const u = new URL("https://maps.googleapis.com/maps/api/streetview")
         u.searchParams.set("size", "120x90")
