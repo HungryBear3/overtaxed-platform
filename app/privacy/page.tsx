@@ -2,8 +2,8 @@ import Link from "next/link"
 import { Logo } from "@/components/navigation/Logo"
 
 export const metadata = {
-  title: "Privacy Policy | OverTaxed",
-  description: "Privacy Policy for OverTaxed property tax appeal services.",
+  title: "Privacy Policy | OverTaxed IL",
+  description: "Privacy Policy for OverTaxed IL property tax appeal services.",
 }
 
 export default function PrivacyPage() {
@@ -28,7 +28,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-xl font-semibold text-gray-900 mb-2">1. Introduction</h2>
             <p className="text-gray-700">
-              OverTaxed (&quot;we,&quot; &quot;our,&quot; or &quot;us&quot;) is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our website and services at overtaxed-il.com (the &quot;Service&quot;).
+              OverTaxed IL (&quot;we,&quot; &quot;our,&quot; or &quot;us&quot;) is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our website and services at overtaxed-il.com (the &quot;Service&quot;).
             </p>
           </section>
 

@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
             currency: "usd",
             product_data: {
               name: `Performance Fee – Invoice ${invoice.invoiceNumber}`,
-              description: "4% of 3-year tax savings (OverTaxed)",
+              description: "4% of 3-year tax savings (OverTaxed IL)",
             },
             unit_amount: amountCents,
           },

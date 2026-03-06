@@ -72,7 +72,7 @@ export function propertyDataFromDb(property: {
     taxRate: null,
     stateEqualizer: null,
     assessmentHistory: [],
-    dataSource: "Overtaxed DB",
+    dataSource: "OverTaxed IL DB",
     lastUpdated: new Date(),
   }
 }

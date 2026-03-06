@@ -21,9 +21,9 @@ export async function sendContactEmail(args: {
     html: supportHtml,
   })
 
-  const confirmSubject = "We received your message – OverTaxed"
-  const confirmText = `Hi ${name},\n\nWe received your message and will get back to you within 2-3 business days.\n\n— The OverTaxed Team`
-  const confirmHtml = `<p>Hi ${name},</p><p>We received your message and will get back to you within 2-3 business days.</p><p>— The OverTaxed Team</p>`
+  const confirmSubject = "We received your message – OverTaxed IL"
+  const confirmText = `Hi ${name},\n\nWe received your message and will get back to you within 2-3 business days.\n\n— The OverTaxed IL Team`
+  const confirmHtml = `<p>Hi ${name},</p><p>We received your message and will get back to you within 2-3 business days.</p><p>— The OverTaxed IL Team</p>`
 
   const confirmationEmail = await sendEmail({
     to: email,

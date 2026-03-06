@@ -85,7 +85,7 @@ export async function createAndSendStripeInvoice(args: {
       amount: amountCents,
       currency: "usd",
       description:
-        args.description ?? "Performance Fee – 4% of 3-year tax savings (OverTaxed)",
+        args.description ?? "Performance Fee – 4% of 3-year tax savings (OverTaxed IL)",
     })
 
     const finalized = await stripe.invoices.finalizeInvoice(invoice.id)

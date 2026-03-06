@@ -4,8 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Logo } from "@/components/navigation/Logo"
 
 export const metadata = {
-  title: "FAQ | OverTaxed",
-  description: "Frequently asked questions about property tax appeals, Cook County, DIY comps, and OverTaxed services.",
+  title: "FAQ | OverTaxed IL",
+  description: "Frequently asked questions about property tax appeals, Cook County, DIY comps, and OverTaxed IL services.",
 }
 
 const faqs = [
@@ -19,7 +19,7 @@ const faqs = [
   },
   {
     q: "What is the Cook County appeal deadline?",
-    a: "Cook County uses a township-based calendar. Each township has its own appeal window—typically you have 30 days from when your township's new assessments are published to file. Deadlines vary by township and year. OverTaxed helps you track your township's deadline and reminds you before it closes.",
+    a: "Cook County uses a township-based calendar. Each township has its own appeal window—typically you have 30 days from when your township's new assessments are published to file. Deadlines vary by township and year. OverTaxed IL helps you track your township's deadline and reminds you before it closes.",
   },
   {
     q: "What's the difference between DIY (comps-only) and full automation?",
@@ -35,7 +35,7 @@ const faqs = [
   },
   {
     q: "What if my appeal is denied?",
-    a: "The county assessor or board of review decides appeals. Denials can happen for many reasons. OverTaxed does not guarantee a reduction—county decisions are final. We focus on building strong, evidence-backed appeals to improve your odds. You can always appeal again in a future year if your assessment changes.",
+    a: "The county assessor or board of review decides appeals. Denials can happen for many reasons. OverTaxed IL does not guarantee a reduction—county decisions are final. We focus on building strong, evidence-backed appeals to improve your odds. You can always appeal again in a future year if your assessment changes.",
   },
   {
     q: "How do I get a refund?",
@@ -63,7 +63,7 @@ export default function FAQPage() {
           <h1 className="text-3xl font-bold text-gray-900">Frequently Asked Questions</h1>
         </div>
         <p className="text-gray-500 mb-8">
-          Common questions about property tax appeals, Cook County, and OverTaxed.
+          Common questions about property tax appeals, Cook County, and OverTaxed IL.
         </p>
 
         <div className="space-y-6">

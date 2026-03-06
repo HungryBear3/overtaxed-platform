@@ -296,7 +296,7 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   }
 
   // —— Title & generated date ——
-  drawText("OverTaxed — Property Tax Appeal Summary", { bold: true, fontSize: 16 })
+  drawText("OverTaxed IL — Property Tax Appeal Summary", { bold: true, fontSize: 16 })
   y -= 4
   drawText(`Generated ${new Date().toLocaleDateString("en-US")}`)
   drawLine()

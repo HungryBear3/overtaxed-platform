@@ -2,7 +2,7 @@ export function TestimonialsSection() {
   const testimonials = [
     {
       quote:
-        "We saved $800 this year. OverTaxed handled everything—I just added my PIN and followed their instructions. So easy.",
+        "We saved $800 this year. OverTaxed IL handled everything—I just added my PIN and followed their instructions. So easy.",
       name: "Homeowner",
       location: "Evanston",
       savings: "$800",
@@ -28,7 +28,7 @@ export function TestimonialsSection() {
         What Homeowners Say
       </h3>
       <p className="text-center text-gray-600 mb-12 max-w-2xl mx-auto">
-        Cook County residents are saving on property taxes with OverTaxed.
+        Cook County residents are saving on property taxes with OverTaxed IL.
       </p>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
         {testimonials.map((t, i) => (

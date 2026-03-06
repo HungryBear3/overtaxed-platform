@@ -2,8 +2,8 @@ import Link from "next/link"
 import { Logo } from "@/components/navigation/Logo"
 
 export const metadata = {
-  title: "Disclaimer | OverTaxed",
-  description: "Legal disclaimer for OverTaxed property tax appeal services.",
+  title: "Disclaimer | OverTaxed IL",
+  description: "Legal disclaimer for OverTaxed IL property tax appeal services.",
 }
 
 export default function DisclaimerPage() {
@@ -28,21 +28,21 @@ export default function DisclaimerPage() {
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 mb-6">
             <p className="font-semibold text-amber-900 mb-1">Important: Not Legal or Tax Advice</p>
             <p className="text-amber-800 text-sm">
-              OverTaxed is a technology platform, not a law firm or tax advisor. We do not provide legal or tax advice. Consult a licensed attorney or tax professional for advice specific to your situation.
+              OverTaxed IL is a technology platform, not a law firm or tax advisor. We do not provide legal or tax advice. Consult a licensed attorney or tax professional for advice specific to your situation.
             </p>
           </div>
 
           <section>
             <h2 className="text-xl font-semibold text-gray-900 mb-2">1. Technology Platform Only</h2>
             <p className="text-gray-700">
-              OverTaxed automates property tax appeal preparation and assists with comp packets and filing. We are not a law firm, tax advisor, or licensed appraiser. Use of our Service does not create an attorney-client or advisor-client relationship.
+              OverTaxed IL automates property tax appeal preparation and assists with comp packets and filing. We are not a law firm, tax advisor, or licensed appraiser. Use of our Service does not create an attorney-client or advisor-client relationship.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold text-gray-900 mb-2">2. No Guarantee of Results</h2>
             <p className="text-gray-700">
-              We do not guarantee that any appeal will result in a reduction. Decisions are made solely by the county assessor or board of review. OverTaxed has no control over those decisions. County outcomes are final and binding.
+              We do not guarantee that any appeal will result in a reduction. Decisions are made solely by the county assessor or board of review. OverTaxed IL has no control over those decisions. County outcomes are final and binding.
             </p>
           </section>
 

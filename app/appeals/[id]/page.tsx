@@ -844,7 +844,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
               <div className="bg-white rounded-lg shadow p-6">
                 <h2 className="text-lg font-semibold text-gray-900 mb-4">Submission instructions for Cook County Assessor</h2>
                 <p className="text-sm text-gray-600 mb-4">
-                  Follow these steps to submit your appeal to the Cook County Assessor&apos;s Office. OverTaxed prepares the evidence packet; you complete the official filing.
+                  Follow these steps to submit your appeal to the Cook County Assessor&apos;s Office. OverTaxed IL prepares the evidence packet; you complete the official filing.
                 </p>
                 <ol className="space-y-4 text-sm text-gray-700 list-decimal list-inside">
                   <li>
@@ -870,7 +870,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                     <strong>Start a new residential appeal</strong> — Select the correct property type (Residential, Condo, etc.). You&apos;ll need your Property Index Number (PIN), address, and the requested assessment value from your PDF.
                   </li>
                   <li>
-                    <strong>Upload your OverTaxed packet</strong> — When the portal asks for supporting documents or evidence, upload your OverTaxed PDF. This is your comps and summary. The portal may also have fields for comp details; our PDF contains all PINs and values you need.
+                    <strong>Upload your OverTaxed IL packet</strong> — When the portal asks for supporting documents or evidence, upload your OverTaxed IL PDF. This is your comps and summary. The portal may also have fields for comp details; our PDF contains all PINs and values you need.
                   </li>
                   <li>
                     <strong>Complete the county form</strong> — Fill in any required fields (signature, checkboxes, etc.). Our packet does not replace the official county form; it provides the evidence to support your appeal.
@@ -879,7 +879,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                     <strong>Submit before the deadline</strong> — File only one application per deadline. You&apos;ll receive a Filing ID and Docket Number by email. Keep them for your records.
                   </li>
                   <li>
-                    <strong>Mark as filed in OverTaxed</strong> — After submitting at the county portal, return here and click <strong>Mark as Filed</strong> so we can track your appeal.
+                    <strong>Mark as filed in OverTaxed IL</strong> — After submitting at the county portal, return here and click <strong>Mark as Filed</strong> so we can track your appeal.
                   </li>
                 </ol>
                 <p className="mt-4 text-xs text-gray-500">
@@ -900,7 +900,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
               <div className="bg-white rounded-lg shadow p-6 [color-scheme:light]">
                 <h2 className="text-lg font-semibold text-gray-900 mb-2">Authorize filing on your behalf</h2>
                 <p className="text-sm text-gray-600 mb-4">
-                  Complete this form to authorize OverTaxed to file your appeal with Cook County. Required for staff-assisted filing (coming soon).
+                  Complete this form to authorize OverTaxed IL to file your appeal with Cook County. Required for staff-assisted filing (coming soon).
                 </p>
                 <FilingAuthorizationForm
                   appealId={appeal.id}

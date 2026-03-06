@@ -17,7 +17,7 @@ export function Logo({ href = "/", className = "h-8 w-auto", size = "md" }: Logo
   const img = (
     <Image
       src="/logo.svg"
-      alt="OverTaxed"
+      alt="OverTaxed IL"
       width={width}
       height={height}
       className={className}

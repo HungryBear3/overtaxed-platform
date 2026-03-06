@@ -147,7 +147,7 @@ export function FilingAuthorizationForm({
     <form onSubmit={handleSubmit} className="space-y-4 text-gray-900">
       <p className="text-sm text-gray-600">
         This form captures the information required for the Cook County Assessor Attorney/Representative Authorization.
-        OverTaxed will use this to file your appeal on your behalf when staff-assisted filing is available.
+        OverTaxed IL will use this to file your appeal on your behalf when staff-assisted filing is available.
       </p>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -258,7 +258,7 @@ export function FilingAuthorizationForm({
             className="mt-1 rounded border-gray-300"
           />
           <span className="text-gray-900">
-            I authorize OverTaxed to act as my representative and file this property tax appeal with the Cook County
+            I authorize OverTaxed IL to act as my representative and file this property tax appeal with the Cook County
             Assessor on my behalf. I certify that I am the property owner or authorized to act for the owner, and that
             the information provided is accurate.
           </span>

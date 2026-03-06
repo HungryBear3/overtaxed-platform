@@ -6,8 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 
 export const metadata = {
-  title: "Contact Us | OverTaxed",
-  description: "Contact OverTaxed for support, questions about property tax appeals, or billing.",
+  title: "Contact Us | OverTaxed IL",
+  description: "Contact OverTaxed IL for support, questions about property tax appeals, or billing.",
 }
 
 export default function ContactPage() {

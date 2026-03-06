@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
 
     const sent = await sendEmail({
       to: user.email,
-      subject: "Reset your Overtaxed password",
+      subject: "Reset your OverTaxed IL password",
       text: `You requested a password reset. Open this link to set a new password (valid for 1 hour):\n\n${resetUrl}\n\nIf you didn't request this, you can ignore this email.`,
       html: `<p>You requested a password reset. <a href="${resetUrl}">Click here to set a new password</a> (link valid for 1 hour).</p><p>If you didn't request this, you can ignore this email.</p>`,
     })

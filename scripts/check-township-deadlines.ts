@@ -11,7 +11,7 @@ const CALENDAR_URL = "https://www.cookcountyassessoril.gov/assessment-calendar-a
 async function main() {
   console.log("Fetching Assessment Calendar...")
   const res = await fetch(CALENDAR_URL, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; Overtaxed/1.0)" },
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; OverTaxed-IL/1.0)" },
   })
   if (!res.ok) {
     console.error("Failed to fetch:", res.status)

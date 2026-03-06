@@ -55,7 +55,7 @@ export default function HomePage() {
               <span className="text-blue-600">Automatically</span>
             </h2>
             <p className="text-xl text-gray-600 mb-6">
-              OverTaxed monitors your Cook County property assessments and files
+              OverTaxed IL monitors your Cook County property assessments and files
               appeals automatically when you&apos;re being overtaxed. Save money
               without the hassle.
             </p>
@@ -80,7 +80,7 @@ export default function HomePage() {
           <div className="relative aspect-[4/3] lg:aspect-square rounded-2xl overflow-hidden shadow-xl">
             <Image
               src="https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=1200&q=85"
-              alt="Residential home in suburban neighborhood - OverTaxed helps Cook County homeowners lower property taxes"
+              alt="Residential home in suburban neighborhood - OverTaxed IL helps Cook County homeowners lower property taxes"
               fill
               className="object-cover"
               sizes="(max-width: 1024px) 100vw, 50vw"
@@ -466,7 +466,7 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <div className="flex justify-between items-center">
             <p className="text-gray-500 text-sm">
-              &copy; {new Date().getFullYear()} OverTaxed. All rights reserved.
+              &copy; {new Date().getFullYear()} OverTaxed IL. All rights reserved.
             </p>
             <div className="flex gap-6">
               <Link href="/terms" className="text-gray-500 hover:text-gray-700 text-sm">
