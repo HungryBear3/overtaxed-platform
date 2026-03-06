@@ -147,6 +147,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
   const [savingRequested, setSavingRequested] = useState(false)
   const [mapData, setMapData] = useState<{
     subject: { lat: number; lng: number; address: string } | null
+    subjectStreetView?: { lat: number; lng: number } | null
     comps: Array<{ pin: string; address: string; lat: number; lng: number } | null>
   } | null>(null)
   const [mapAvailable, setMapAvailable] = useState<boolean | null>(null)
@@ -173,7 +174,11 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
       .then((r) => r.json())
       .then((data) => {
         if (cancelled || !data.success) return
-        setMapData({ subject: data.subject ?? null, comps: data.comps ?? [] })
+        setMapData({
+          subject: data.subject ?? null,
+          subjectStreetView: data.subjectStreetView ?? data.subject ?? null,
+          comps: data.comps ?? [],
+        })
       })
       .catch(() => {})
     return () => {
