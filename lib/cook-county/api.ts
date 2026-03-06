@@ -784,17 +784,29 @@ export async function getComparableSales(
  * Returns properties in same neighborhood with similar living area, sorted by assessed $/sqft (lower = more supportive).
  * Fallbacks: (1) when property has no neighborhood, fetch from Parcel Universe by PIN; (2) when neighborhood returns 0, try township_code.
  */
+export type EquityDebugInfo = {
+  nbhd: string | null
+  nbhdFromParcel: boolean
+  parcelsCount: number
+  uniquePinsCount: number
+  resultsBeforeLimit: number
+  subjectLivingArea: number
+  townshipFallbackUsed: boolean
+}
+
 export async function getComparableEquity(
   property: PropertyData,
   options: {
     livingAreaTolerancePercent?: number
     limit?: number
+    debug?: boolean
   } = {}
-): Promise<CookCountyApiResponse<EquityRecord[]>> {
+): Promise<CookCountyApiResponse<EquityRecord[]> & { _debug?: EquityDebugInfo }> {
   try {
-    const { limit = 10, livingAreaTolerancePercent = 25 } = options
+    const { limit = 10, livingAreaTolerancePercent = 25, debug: wantDebug = false } = options
     const propertyPin = normalizePIN(property.pin)
     let nbhd = property.neighborhood?.trim()
+    let nbhdFromParcel = false
 
     // Fallback: when property has no neighborhood in DB, fetch from Parcel Universe by subject PIN
     let subjectParcel: ParcelUniverseRecord | null = null
@@ -803,18 +815,21 @@ export async function getComparableEquity(
       if (subjectParcel) {
         const p = subjectParcel as unknown as Record<string, unknown>
         nbhd = (p.nbhd ?? p.nbhd_code) != null ? String(p.nbhd ?? p.nbhd_code).trim() : ''
+        nbhdFromParcel = !!nbhd
       }
     }
 
     // Use current Parcel Universe (pabr-t5kh) - has nbhd_code, township_code
     const parcelDataset = DATASETS.PARCEL_UNIVERSE_CURRENT
     let parcels: Array<Record<string, unknown>> = []
+    let townshipFallbackUsed = false
     if (nbhd) {
       const filters = [`(nbhd_code='${nbhd}' OR nbhd='${nbhd}')`, `pin != '${propertyPin}'`]
       const query = `$where=${encodeURIComponent(filters.join(' AND '))}&$limit=150`
       try {
         parcels = await fetchSocrataData<Record<string, unknown>>(parcelDataset, query)
-      } catch {
+      } catch (err) {
+        console.error('[comps-equity] nbhd query failed', { nbhd, err })
         parcels = []
       }
     }
@@ -824,11 +839,13 @@ export async function getComparableEquity(
       const parcel = subjectParcel ?? (await getParcelUniverseByPIN(propertyPin))
       const townshipCode = parcel ? String((parcel as unknown as Record<string, unknown>).township_code ?? '').trim() : ''
       if (townshipCode) {
+        townshipFallbackUsed = true
         const filters = [`township_code='${townshipCode}'`, `pin != '${propertyPin}'`]
         const query = `$where=${encodeURIComponent(filters.join(' AND '))}&$limit=150`
         try {
           parcels = await fetchSocrataData<Record<string, unknown>>(parcelDataset, query)
-        } catch {
+        } catch (err) {
+          console.error('[comps-equity] township query failed', { townshipCode, err })
           parcels = []
         }
       }
@@ -836,12 +853,24 @@ export async function getComparableEquity(
 
     if (parcels.length === 0) {
       console.log('[comps-equity] No parcels found', { propertyPin, nbhd: nbhd || '(none)', source: 'neighborhood+township' })
-      return {
+      const emptyResp: CookCountyApiResponse<EquityRecord[]> & { _debug?: EquityDebugInfo } = {
         success: true,
         data: [],
         error: null,
         source: 'Cook County Open Data - Equity (no neighborhood/township)',
       }
+      if (wantDebug) {
+        emptyResp._debug = {
+          nbhd: nbhd || null,
+          nbhdFromParcel,
+          parcelsCount: 0,
+          uniquePinsCount: 0,
+          resultsBeforeLimit: 0,
+          subjectLivingArea: property.livingArea ?? 0,
+          townshipFallbackUsed,
+        }
+      }
+      return emptyResp
     }
 
     const nbhdForRecords = nbhd || 'same township'
@@ -908,12 +937,24 @@ export async function getComparableEquity(
     const limited = results.slice(0, limit)
     console.log('[comps-equity] Equity results', { total: results.length, returned: limited.length, uniquePins: uniquePins.length })
 
-    return {
+    const resp: CookCountyApiResponse<EquityRecord[]> & { _debug?: EquityDebugInfo } = {
       success: true,
       data: limited,
       error: null,
       source: 'Cook County Open Data - Equity (Assessed Values)',
     }
+    if (wantDebug) {
+      resp._debug = {
+        nbhd: nbhd || null,
+        nbhdFromParcel,
+        parcelsCount: parcels.length,
+        uniquePinsCount: uniquePins.length,
+        resultsBeforeLimit: results.length,
+        subjectLivingArea: property.livingArea ?? 0,
+        townshipFallbackUsed,
+      }
+    }
+    return resp
   } catch (error) {
     console.error('Error fetching comparable equity:', error)
     return {

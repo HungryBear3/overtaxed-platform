@@ -35,6 +35,7 @@ export default function PropertyCompsPage() {
 
   const [comps, setComps] = useState<Comp[]>([])
   const [compsSource, setCompsSource] = useState<string>("")
+  const [equityDebug, setEquityDebug] = useState<Record<string, unknown> | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -45,7 +46,8 @@ export default function PropertyCompsPage() {
 
   async function fetchComps() {
     try {
-      const res = await fetch(`/api/properties/${propertyId}/comps?limit=20`)
+      const debugParam = typeof window !== "undefined" && window.location.search.includes("debug=1") ? "&debug=1" : ""
+      const res = await fetch(`/api/properties/${propertyId}/comps?limit=20${debugParam}`)
       const data = await res.json()
 
       if (!res.ok) {
@@ -65,6 +67,7 @@ export default function PropertyCompsPage() {
       }))
       setComps(list)
       setCompsSource(data.source ?? "")
+      setEquityDebug((data as { _debug?: unknown })._debug ?? null)
       setSelected(new Set())
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load comps")
@@ -150,6 +153,12 @@ export default function PropertyCompsPage() {
         )}
 
         {/* Comps guidance */}
+        {equityDebug && (
+          <div className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-xs font-mono text-amber-900">
+            <p className="font-semibold mb-1">Equity debug (why no equity?):</p>
+            <pre className="whitespace-pre-wrap break-all">{JSON.stringify(equityDebug, null, 2)}</pre>
+          </div>
+        )}
         <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 p-4">
           <p className="font-medium text-blue-900 mb-1">How many comps do I need?</p>
           <p className="text-sm text-blue-800">
