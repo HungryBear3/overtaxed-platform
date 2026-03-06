@@ -13,14 +13,15 @@ let databaseUrl = process.env["DATABASE_URL"] || "postgresql://placeholder:place
 if (databaseUrl.includes("pooler.supabase.com") && !databaseUrl.includes("pgbouncer=true")) {
   databaseUrl += (databaseUrl.includes("?") ? "&" : "?") + "pgbouncer=true";
 }
-// Migrations: use Session mode pooler (port 5432 on pooler host) - supports prepared statements, IPv4-compatible.
-// Avoids "prepared statement already exists" (Transaction mode) and IPv4 add-on cost (direct connection).
-// We use pooler for migrations; ignore DIRECT_URL since direct is IPv6-only.
+// Migrations: prefer DIRECT_URL (direct Postgres) when set; else Session mode pooler (port 5432).
+// Direct connection avoids advisory lock timeouts; set DIRECT_URL in Vercel for reliable migrations.
 let directUrl: string;
-if (databaseUrl.includes("pooler.supabase.com")) {
+if (process.env["DIRECT_URL"]) {
+  directUrl = process.env["DIRECT_URL"];
+} else if (databaseUrl.includes("pooler.supabase.com")) {
   directUrl = databaseUrl.replace(/:6543\//, ":5432/").replace(/\?pgbouncer=true&?|\&?pgbouncer=true/g, "");
 } else {
-  directUrl = process.env["DIRECT_URL"] || databaseUrl;
+  directUrl = databaseUrl;
 }
 
 export default defineConfig({

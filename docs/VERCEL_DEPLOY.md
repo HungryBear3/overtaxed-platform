@@ -69,8 +69,9 @@ No Root Directory override needed.
 1. **Check the build log**  
    Vercel → Project → Deployments → click the failed deployment → **Building** tab. The last error line (e.g. `Error: ...` or `Command failed`) is what to fix.
 
-2. **DATABASE_URL / Prisma**  
+2. **DATABASE_URL / Prisma**
    - Ensure `DATABASE_URL` (and `DIRECT_URL` if used) are set in Vercel → Settings → Environment Variables, and apply to **Build** (not only Production).
+   - **DIRECT_URL:** Set to Supabase direct connection (`postgresql://postgres:[PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres`) to avoid P1002 advisory lock timeouts during migrations. Get from Supabase Dashboard → Settings → Database → Connection string → URI (Direct).
    - The app uses a placeholder URL in `prisma.config.ts` when `DATABASE_URL` is missing so `prisma generate` can succeed; runtime still needs the real URL.
 
 3. **Install / Build command**  
