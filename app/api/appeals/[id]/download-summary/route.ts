@@ -21,8 +21,9 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
+    const isAdmin = (session.user as { role?: string }).role === "ADMIN"
     const appeal = await prisma.appeal.findFirst({
-      where: { id, userId: session.user.id },
+      where: { id, ...(isAdmin ? {} : { userId: session.user.id }) },
       include: {
         property: true,
         compsUsed: { orderBy: { createdAt: "asc" } },

@@ -122,12 +122,23 @@ export function FilingAuthorizationForm({
 
   if (existingAuth) {
     return (
-      <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+      <div className="rounded-lg border border-green-200 bg-green-50 p-4 [color-scheme:light]">
         <p className="font-medium text-green-800">Authorization on file</p>
         <p className="text-sm text-green-700 mt-1">
           Signed {new Date(existingAuth.signedAt).toLocaleDateString()} by {existingAuth.ownerName}
         </p>
         <p className="text-xs text-green-600 mt-1">{existingAuth.ownerEmail}</p>
+        <a
+          href={`/api/appeals/${appealId}/authorization/download`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-3 inline-flex items-center gap-2 rounded-lg border border-green-300 bg-white px-3 py-2 text-sm font-medium text-green-800 hover:bg-green-50"
+        >
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          Download authorization record
+        </a>
       </div>
     )
   }
