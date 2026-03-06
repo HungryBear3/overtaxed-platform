@@ -40,6 +40,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 33. [Automated Performance Fee billing: reduction detection, Stripe Invoices, collection notices](#33-automated-performance-fee-billing-reduction-detection-stripe-invoices-collection-notices)
 34. [Filing authorization form for staff-assisted filing](#34-filing-authorization-form-for-staff-assisted-filing)
 35. [Supabase pooler: prepared statement already exists](#35-supabase-pooler-prepared-statement-already-exists)
+36. [Admin filing queue, authorization PDF, user download](#36-admin-filing-queue-authorization-pdf-user-download)
 
 ---
 
@@ -858,6 +859,26 @@ This forces dark text on white background regardless of system color scheme.
 
 ---
 
+## 36. Admin filing queue, authorization PDF, user download
+
+**Context:** After implementing the filing authorization form (§34), we needed: (1) staff access to all authorization data for filing; (2) a PDF for staff to attach when filing at the county portal; (3) user copy for their records.
+
+**Implementation:**
+
+- **Admin filing queue** (`/admin/filing-queue`): Lists appeals with `filingAuthorization` (DRAFT or PENDING_FILING). For each: property, user, deadline, full authorization data (property, owner, mailing address, PIN, signed date). Links: View appeal, Appeal packet (download-summary), Auth PDF (authorization/download). Admin nav: Filing Queue.
+
+- **Authorization PDF** (`lib/document-generation/filing-authorization.ts`): `generateFilingAuthorizationPdf()` — property section, owner section, authorization statement, signed date. PDF matches Cook County form fields for staff use.
+
+- **Download API** (`GET /api/appeals/[id]/authorization/download`): Returns PDF. Owner or admin. Filename: `filing-authorization-{PIN}-{taxYear}.pdf`.
+
+- **User download** (`components/appeals/filing-authorization-form.tsx`): When signed, shows "Download authorization record" button linking to the download API.
+
+- **Admin access:** `download-summary` allows admin to download any appeal's packet (for filing queue).
+
+**Lesson:** Staff need both the appeal packet and the authorization PDF when filing. Admin filing queue centralizes both; user download gives them a copy for records.
+
+---
+
 ## Stripe Webhook Debugging
 
 ### Issue: Subscription doesn't update after checkout
@@ -970,6 +991,6 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 **Last Updated:** February 2026
 
-**Feb 2026:** §35 — Supabase pooler: auto-append `pgbouncer=true` in prisma.config.ts and lib/db/prisma.ts to fix "prepared statement already exists". §34 — Filing authorization form: FilingAuthorization model, POST /api/appeals/[id]/authorization, FilingAuthorizationForm component on appeal detail (DRAFT/PENDING_FILING); captures property + owner info for Cook County Attorney/Representative form; staff filing queue and "File for me" to follow. §33 — Automated Performance Fee billing: assessment-check detects Cook County reductions and auto-updates appeals (outcome, taxSavings); Stripe Invoice create/finalize/send; webhook invoice.paid; 4-step collection notices (7/14/30/45 days); Terms §4 strengthened (deadlines, claims court, legal fees, waiver, jurisdiction). Cron: assessment-checks 07:00 Mon, performance-invoices 08:00 Mon, invoice-collections daily 09:00. §32 — Prisma P3005 baseline. §31 — Street View heading to face building front. §30 — Legal website design. §27–29 — Requested assessment input, comps improvements, submission instructions.
+**Feb 2026:** §36 — Admin filing queue, authorization PDF, user download; admin can access any appeal packet + auth PDF. §35 — Supabase pooler: auto-append `pgbouncer=true` in prisma.config.ts and lib/db/prisma.ts to fix "prepared statement already exists". §34 — Filing authorization form: FilingAuthorization model, POST /api/appeals/[id]/authorization, FilingAuthorizationForm component on appeal detail (DRAFT/PENDING_FILING); captures property + owner info for Cook County Attorney/Representative form; staff filing queue and "File for me" to follow. §33 — Automated Performance Fee billing: assessment-check detects Cook County reductions and auto-updates appeals (outcome, taxSavings); Stripe Invoice create/finalize/send; webhook invoice.paid; 4-step collection notices (7/14/30/45 days); Terms §4 strengthened (deadlines, claims court, legal fees, waiver, jurisdiction). Cron: assessment-checks 07:00 Mon, performance-invoices 08:00 Mon, invoice-collections daily 09:00. §32 — Prisma P3005 baseline. §31 — Street View heading to face building front. §30 — Legal website design. §27–29 — Requested assessment input, comps improvements, submission instructions.
 
 **Jan 2026:** §26 — PDF summary: enriched comps in download-summary, Subject vs Comparables table layout (PIN overlap fix), map & Street View embedded in PDF when GOOGLE_MAPS_API_KEY set. §25 — Comparison report value-add (Realie, map, Street View, PDF similarity line).

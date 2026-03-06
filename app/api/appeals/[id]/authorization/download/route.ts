@@ -63,7 +63,8 @@ export async function GET(
 
     const filename = `filing-authorization-${appeal.property.pin.replace(/\D/g, "")}-${appeal.taxYear}.pdf`
 
-    return new NextResponse(pdfBytes, {
+    const buffer = Buffer.from(pdfBytes)
+    return new NextResponse(buffer, {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
