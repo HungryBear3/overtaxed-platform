@@ -172,11 +172,12 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
 
   const drawText = (
     text: string,
-    opts?: { bold?: boolean; fontSize?: number; x?: number }
+    opts?: { bold?: boolean; fontSize?: number; x?: number; color?: ReturnType<typeof rgb> }
   ) => {
     const f = opts?.bold ? fontBold : font
     const fs = opts?.fontSize ?? size
     const x = opts?.x ?? margin
+    const textColor = opts?.color ?? rgb(0.1, 0.1, 0.1)
     const lineHeight = lineHeightFor(fs)
     const lines = wrapLines(text, f, fs)
     const yBeforeDraw = y
@@ -191,7 +192,7 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
         y,
         size: fs,
         font: f,
-        color: rgb(0.1, 0.1, 0.1),
+        color: textColor,
       })
       y -= lineHeight
     }
@@ -422,7 +423,12 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
         }
         const currentPage = doc.getPage(doc.getPageCount() - 1)
         currentPage.drawImage(img, { x: margin, y: y - h, width: w, height: h })
-        y -= h + 12
+        y -= h + 6
+        drawText(
+          "Note: Cook County Assessor may require a front-facing photo. If the image above shows the rear of the building, attach a front photo when filing.",
+          { fontSize: 9, color: rgb(0.4, 0.4, 0.4) }
+        )
+        y -= 12
       } catch {
         // ignore embed failure
       }

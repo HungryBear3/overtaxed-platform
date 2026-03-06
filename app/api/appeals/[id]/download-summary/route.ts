@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
 import { formatPIN, getAddressByPIN, haversineMiles } from "@/lib/cook-county"
-import { getHeadingTowardBuilding } from "@/lib/map/streetview"
+import { getHeadingTowardBuilding, geocodeAddress } from "@/lib/map/streetview"
 import { getFullPropertyByPin } from "@/lib/realie"
 import { enrichCompsWithRealie } from "@/lib/comps/enrich-with-realie"
 import { generateAppealSummaryPdf } from "@/lib/document-generation/appeal-summary"
@@ -262,10 +262,25 @@ export async function GET(
       const STREETVIEW_SIZE = "280x186" // subject; comps use 120x90
       const MAX_COMP_STREETVIEW = 6
 
+      // For subject: prefer geocoded address (often front-facing) over parcel centroid (which can be in backyard)
+      const subjectSvCoords =
+        subjectLat != null && subjectLon != null
+          ? await (async () => {
+              const addr = appeal.property?.address
+              const city = appeal.property?.city ?? "Chicago"
+              const state = appeal.property?.state ?? "IL"
+              if (addr) {
+                const geocoded = await geocodeAddress(addr, city, state, googleKey)
+                if (geocoded) return geocoded
+              }
+              return { lat: subjectLat, lng: subjectLon }
+            })()
+          : null
+
       // Get headings so Street View faces the building (front-facing)
       const [subjectHeading, ...compHeadings] = await Promise.all([
-        subjectLat != null && subjectLon != null
-          ? getHeadingTowardBuilding(subjectLat, subjectLon, googleKey)
+        subjectSvCoords != null
+          ? getHeadingTowardBuilding(subjectSvCoords.lat, subjectSvCoords.lng, googleKey)
           : Promise.resolve(null),
         ...compCoordsList.slice(0, MAX_COMP_STREETVIEW).map((c) =>
           c ? getHeadingTowardBuilding(c.lat, c.lng, googleKey) : Promise.resolve(null)
@@ -273,11 +288,11 @@ export async function GET(
       ])
 
       const subjectSvUrl =
-        subjectLat != null && subjectLon != null
+        subjectSvCoords != null
           ? (() => {
               const u = new URL("https://maps.googleapis.com/maps/api/streetview")
               u.searchParams.set("size", STREETVIEW_SIZE)
-              u.searchParams.set("location", `${subjectLat},${subjectLon}`)
+              u.searchParams.set("location", `${subjectSvCoords.lat},${subjectSvCoords.lng}`)
               u.searchParams.set("source", "outdoor")
               if (subjectHeading != null) u.searchParams.set("heading", String(Math.round(subjectHeading)))
               u.searchParams.set("key", googleKey)

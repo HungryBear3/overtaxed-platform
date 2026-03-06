@@ -669,11 +669,11 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                           <strong>S</strong> = your property. <strong>1, 2, 3…</strong> = comps in the same order as the list below.
                         </p>
                       </div>
-                      {mapData?.subject && (
+                      {(mapData?.subjectStreetView ?? mapData?.subject) && (
                         <div>
                           <p className="text-sm font-medium text-gray-700 mb-1">Subject property</p>
                           <img
-                            src={`/api/map/streetview?lat=${mapData.subject.lat}&lng=${mapData.subject.lng}&size=300x200`}
+                            src={`/api/map/streetview?lat=${(mapData.subjectStreetView ?? mapData.subject).lat}&lng=${(mapData.subjectStreetView ?? mapData.subject).lng}&size=300x200`}
                             alt="Subject building"
                             className="rounded-lg border border-gray-200 w-full max-w-sm h-auto"
                           />

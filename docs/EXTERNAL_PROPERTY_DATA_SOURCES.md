@@ -45,8 +45,8 @@ See [Realie API docs](https://docs.realie.ai/) and [Pricing](https://docs.realie
 We use **Google Maps Platform** for the appeal comps map and building photos (Street View).
 
 - **When we use it:** On the appeal detail page we show (1) a **static map** with subject (red “S”) and comp markers (blue “1”, “2”, …), and (2) **Street View** thumbnails for the subject and each comp when coordinates are available.
-- **APIs:** Static Maps API (one image with markers), Street View Static API (per-location image). Both are called from the server (API key not exposed to the client).
-- **Config:** Set `GOOGLE_MAPS_API_KEY` in the environment to enable. Without it, the map and Street View sections are not shown (or return 503). Enable “Maps Static API” and “Street View Static API” in Google Cloud Console; billing may be required (pay-as-you-go with free tier).
+- **APIs:** Static Maps API (one image with markers), Street View Static API (per-location image), Geocoding API (to get street-facing coordinates for better front-facing Street View). All are called from the server (API key not exposed to the client).
+- **Config:** Set `GOOGLE_MAPS_API_KEY` in the environment to enable. Without it, the map and Street View sections are not shown (or return 503). Enable “Maps Static API”, “Street View Static API”, and “Geocoding API” in Google Cloud Console; billing may be required (pay-as-you-go with free tier).
 - **Attribution:** We show “Map data © Google” in the UI per Google’s terms.
 
 ---

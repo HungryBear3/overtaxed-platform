@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
 import { getAddressByPIN } from "@/lib/cook-county"
+import { geocodeAddress } from "@/lib/map/streetview"
 
 const ENRICH_CONCURRENCY = 5
 
@@ -31,14 +32,31 @@ export async function GET(
 
     const subjectPin = appeal.property.pin.replace(/\D/g, "") || appeal.property.pin
     const subjectAddr = await getAddressByPIN(subjectPin)
+    const subjectLat = subjectAddr?.latitude ?? null
+    const subjectLng = subjectAddr?.longitude ?? null
     const subject =
-      subjectAddr?.latitude != null && subjectAddr?.longitude != null
+      subjectLat != null && subjectLng != null
         ? {
-            lat: subjectAddr.latitude,
-            lng: subjectAddr.longitude,
-            address: subjectAddr.address || appeal.property.address,
+            lat: subjectLat,
+            lng: subjectLng,
+            address: subjectAddr?.address || appeal.property.address,
           }
         : null
+
+    // Prefer geocoded address for Street View (often front-facing) over parcel centroid (can be in backyard)
+    let subjectStreetView: { lat: number; lng: number } | null = subject
+    if (subject && appeal.property.address) {
+      const apiKey = process.env.GOOGLE_MAPS_API_KEY
+      if (apiKey) {
+        const geocoded = await geocodeAddress(
+          appeal.property.address,
+          appeal.property.city ?? "Chicago",
+          appeal.property.state ?? "IL",
+          apiKey
+        )
+        if (geocoded) subjectStreetView = geocoded
+      }
+    }
 
     const compPins = appeal.compsUsed.map((c) => c.pin.replace(/\D/g, "") || c.pin)
     const comps: Array<{ pin: string; address: string; lat: number; lng: number } | null> = []
@@ -64,6 +82,7 @@ export async function GET(
     return NextResponse.json({
       success: true,
       subject,
+      subjectStreetView: subjectStreetView ?? subject, // Geocoded when available for better front-facing Street View
       comps,
     })
   } catch (error) {
