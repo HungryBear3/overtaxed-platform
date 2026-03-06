@@ -83,7 +83,7 @@ export function AddCompsDialog({
       if (!d.success) throw new Error(d.error || "Failed to fetch comps")
       setComps(d.comps)
       setCompsSource(d.source ?? "")
-      setEquityDebug((d as { _debug?: unknown })._debug ?? null)
+      setEquityDebug(((d as { _debug?: unknown })._debug ?? null) as Record<string, unknown> | null)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to fetch comps")
     } finally {

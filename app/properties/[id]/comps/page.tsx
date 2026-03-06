@@ -67,7 +67,7 @@ export default function PropertyCompsPage() {
       }))
       setComps(list)
       setCompsSource(data.source ?? "")
-      setEquityDebug((data as { _debug?: unknown })._debug ?? null)
+      setEquityDebug(((data as { _debug?: unknown })._debug ?? null) as Record<string, unknown> | null)
       setSelected(new Set())
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load comps")
