@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db"
 import { getPropertyByPIN, formatPIN } from "@/lib/cook-county"
 import { sendEmail } from "@/lib/email"
 import { isEmailConfigured } from "@/lib/email/config"
-import { assessmentIncreaseTemplate } from "@/lib/email/templates"
+import { assessmentIncreaseTemplate, appealDecisionTemplate } from "@/lib/email/templates"
 import type { AssessmentHistoryRecord } from "@/lib/cook-county/types"
 
 const ASSESSMENT_CHECK_SOURCE = "Cook County Open Data (automated check)"
@@ -43,6 +43,14 @@ export async function runAssessmentChecks(): Promise<AssessmentCheckResult[]> {
         r.error = api.error ?? "Property not found in Cook County"
         results.push(r)
         continue
+      }
+
+      // Backfill township if missing (for township-open notifications)
+      if (!prop.township && api.data.township) {
+        await prisma.property.update({
+          where: { id: prop.id },
+          data: { township: api.data.township },
+        })
       }
 
       const history = (api.data.assessmentHistory ?? []) as AssessmentHistoryRecord[]
@@ -173,6 +181,23 @@ export async function runAssessmentChecks(): Promise<AssessmentCheckResult[]> {
               decisionDate: now,
             },
           })
+
+          if (isEmailConfigured() && prop.user?.email) {
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+            const appealLink = `${appUrl}/appeals/${appeal.id}`
+            const t = appealDecisionTemplate({
+              userName: prop.user.name,
+              propertyAddress: prop.address,
+              taxYear: appeal.taxYear,
+              outcome,
+              reductionAmount,
+              taxSavings,
+              appealLink,
+            })
+            sendEmail({ to: prop.user.email, subject: t.subject, text: t.text, html: t.html }).catch((e) =>
+              console.error("[assessment-check] Failed to send decision email:", e)
+            )
+          }
         }
       }
 

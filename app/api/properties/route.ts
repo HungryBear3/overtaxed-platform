@@ -27,12 +27,21 @@ export async function GET(request: NextRequest) {
         { status: 401 }
       )
     }
-    
-    const properties = await prisma.property.findMany({
-      where: {
-        userId: session.user.id,
-      },
-      include: {
+
+    const searchParams = request.nextUrl.searchParams
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10))
+    const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') || '20', 10)))
+    const skip = (page - 1) * limit
+
+    const [total, properties] = await Promise.all([
+      prisma.property.count({ where: { userId: session.user.id } }),
+      prisma.property.findMany({
+        where: {
+          userId: session.user.id,
+        },
+        skip,
+        take: limit,
+        include: {
         assessmentHistory: {
           orderBy: { taxYear: 'desc' },
           take: 15,
@@ -45,7 +54,8 @@ export async function GET(request: NextRequest) {
       orderBy: {
         createdAt: 'desc',
       },
-    })
+    }),
+    ])
     
     return NextResponse.json({
       success: true,
@@ -97,6 +107,10 @@ export async function GET(request: NextRequest) {
         } : null,
       }
       }),
+      total,
+      page,
+      limit,
+      hasMore: skip + properties.length < total,
     })
   } catch (error) {
     console.error('Error fetching properties:', error)
@@ -227,6 +241,7 @@ export async function POST(request: NextRequest) {
         state: propertyData.state,
         zipCode: validation.data.zipCode || propertyData.zipCode,
         county: propertyData.county,
+        township: propertyData.township ?? null,
         neighborhood: propertyData.neighborhood,
         buildingClass: propertyData.buildingClass,
         cdu: propertyData.cdu,

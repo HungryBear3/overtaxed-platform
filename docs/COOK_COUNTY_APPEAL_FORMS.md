@@ -24,6 +24,10 @@
 - **Form generation engine:** `lib/document-generation/appeal-summary.ts` – already generates the packet PDF. Enhance with Rule 15 compliance sentence, “no cherry-picking” line, and PIN/verification note (see `docs/APPEAL_RULE15_AND_ARGUMENT_IMPROVEMENTS.md`).
 - **Validation:** Before download, ensure appeal has requested value, and comps meet minimum (3 sales, 5 equity recommended). Optional: warn if below minimum.
 
+## Attorney/Representative Authorization (Staff-Assisted Filing)
+
+When filing **on behalf of** a property owner, CCAO requires an Attorney/Representative Authorization form. Cook County provides their **own official form**; our custom PDF may not suffice. CCAO may also require a wet signature or original. See **`docs/AUTHORIZATION_FORM_RESEARCH.md`** for full research and recommendations. Verify with CCAO (312.443.7550) before relying on our current e-sign flow for staff-assisted filing.
+
 ## References
 
 - [Residential Appeal Form](https://www.cookcountyassessor.com/form-document/residential-appeal-form)

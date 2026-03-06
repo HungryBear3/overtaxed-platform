@@ -113,6 +113,52 @@ ${taxSavings != null ? `<tr><td style="color:#6b7280">Annual tax savings:</td><t
   return { subject, text, html }
 }
 
+export function townshipOpenNotificationTemplate(args: {
+  userName?: string | null
+  propertyAddress: string
+  pin: string
+  township: string
+  taxYear: number
+  noticeDate: string
+  lastFileDate: string
+  startAppealLink: string
+  calendarUrl: string
+}): { subject: string; text: string; html: string } {
+  const { userName, propertyAddress, pin, township, taxYear, noticeDate, lastFileDate, startAppealLink, calendarUrl } = args
+
+  const subject = `${township} township is now open for ${taxYear} appeals — file by ${lastFileDate}`
+
+  const text = `Hi${userName ? ` ${userName}` : ""},
+
+Good news! The appeal window for ${township} township is now open for ${taxYear}.
+
+Your property: ${propertyAddress} (PIN ${pin})
+Notice date: ${noticeDate}
+Filing deadline: ${lastFileDate}
+
+You don't have an appeal started yet for this property. Start one now to meet the deadline:
+${startAppealLink}
+
+View the full calendar: ${calendarUrl}
+
+– The OverTaxed IL Team
+`
+
+  const html = `<p>Hi${userName ? ` ${userName}` : ""},</p>
+<p>Good news! The appeal window for <strong>${township}</strong> township is now open for <strong>${taxYear}</strong>.</p>
+<table cellpadding="4" style="margin:16px 0">
+<tr><td style="color:#6b7280">Your property:</td><td><strong>${propertyAddress}</strong> (PIN ${pin})</td></tr>
+<tr><td style="color:#6b7280">Notice date:</td><td>${noticeDate}</td></tr>
+<tr><td style="color:#6b7280">Filing deadline:</td><td><strong>${lastFileDate}</strong></td></tr>
+</table>
+<p>You don't have an appeal started yet for this property. Start one now to meet the deadline.</p>
+<p><a href="${startAppealLink}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">Start Appeal</a></p>
+<p><a href="${calendarUrl}">View full calendar</a></p>
+<p>— The OverTaxed IL Team</p>`
+
+  return { subject, text, html }
+}
+
 export function assessmentIncreaseTemplate(args: {
   userEmail: string
   userName?: string | null

@@ -18,7 +18,7 @@ New properties get `township` stored on add. Existing properties get it when fir
 
 ### 1. Appeal window opened (for PINs in our system)
 
-**Not automated.** We do **not** run a scheduled job that checks whether the appeal window has opened for townships that match user properties.
+**Automated.** The `township-open-notifications` cron runs daily at 10:00 UTC. When a township's notice date is today, users with properties in that township (and monitoring enabled) who have no appeal yet for that year receive a proactive email.
 
 - Township and filing deadline are looked up **on demand** when:
   - The user selects a property on the **new appeal** page (`/api/properties/lookup-deadline?pin=...`), or

@@ -89,7 +89,7 @@ interface Appeal {
     outcome: string | null
     taxSavings: number | null
   }>
-  user?: { name: string | null; email: string } | null
+  user?: { name: string | null; email: string; subscriptionTier?: string } | null
   filingAuthorization?: {
     id: string
     signedAt: string
@@ -103,6 +103,7 @@ interface Appeal {
 const STATUS_COLORS: Record<string, string> = {
   DRAFT: "bg-gray-100 text-gray-700",
   PENDING_FILING: "bg-yellow-100 text-yellow-700",
+  PENDING_STAFF_FILING: "bg-amber-100 text-amber-700",
   FILED: "bg-blue-100 text-blue-700",
   UNDER_REVIEW: "bg-blue-100 text-blue-700",
   HEARING_SCHEDULED: "bg-purple-100 text-purple-700",
@@ -116,6 +117,7 @@ const STATUS_COLORS: Record<string, string> = {
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "Draft",
   PENDING_FILING: "Pending Filing",
+  PENDING_STAFF_FILING: "In Filing Queue",
   FILED: "Filed",
   UNDER_REVIEW: "Under Review",
   HEARING_SCHEDULED: "Hearing Scheduled",
@@ -168,18 +170,9 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
         if (!cancelled) setMapAvailable(false)
       })
     fetch(`/api/appeals/${id}/map-data`, { credentials: 'include' })
-      .then((r) => {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'appeals/[id]/page.tsx:map-data',message:'map-data fetch response',data:{status:r.status,ok:r.ok},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
-        return r.json()
-      })
+      .then((r) => r.json())
       .then((data) => {
         if (cancelled || !data.success) return
-        // #region agent log
-        const compsWithCoords = (data.comps ?? []).filter((c: unknown) => c != null).length
-        fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'appeals/[id]/page.tsx:mapData set',message:'mapData state set',data:{subjectPresent:!!data.subject,compsLength:(data.comps??[]).length,compsWithCoords},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
         setMapData({ subject: data.subject ?? null, comps: data.comps ?? [] })
       })
       .catch(() => {})
@@ -896,12 +889,18 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
             )}
 
             {/* Filing authorization (for staff-assisted filing) */}
-            {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING") && (
+            {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING" || appeal.status === "PENDING_STAFF_FILING") && (
               <div className="bg-white rounded-lg shadow p-6 [color-scheme:light]">
                 <h2 className="text-lg font-semibold text-gray-900 mb-2">Authorize filing on your behalf</h2>
-                <p className="text-sm text-gray-600 mb-4">
-                  Complete this form to authorize OverTaxed IL to file your appeal with Cook County. Required for staff-assisted filing (coming soon).
-                </p>
+                {appeal.status === "PENDING_STAFF_FILING" ? (
+                  <p className="text-sm text-gray-600 mb-4">
+                    Your appeal is in our filing queue. Our staff will file it with Cook County and notify you when it&apos;s submitted.
+                  </p>
+                ) : (
+                  <p className="text-sm text-gray-600 mb-4">
+                    Complete this form to authorize OverTaxed IL to file your appeal with Cook County. Required for staff-assisted filing.
+                  </p>
+                )}
                 <FilingAuthorizationForm
                   appealId={appeal.id}
                   property={{
@@ -931,6 +930,16 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                     >
                       Ready to File
                     </button>
+                    {appeal.filingAuthorization &&
+                      ["STARTER", "GROWTH", "PORTFOLIO", "PERFORMANCE"].includes(appeal.user?.subscriptionTier ?? "") && (
+                        <button
+                          onClick={() => updateStatus("PENDING_STAFF_FILING")}
+                          disabled={updating}
+                          className="w-full bg-amber-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-amber-700 disabled:opacity-50"
+                        >
+                          File for me
+                        </button>
+                      )}
                     <button
                       onClick={deleteAppeal}
                       className="w-full border border-red-300 text-red-600 py-2 px-4 rounded-lg font-medium hover:bg-red-50"
@@ -940,13 +949,25 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                   </>
                 )}
                 {appeal.status === "PENDING_FILING" && (
-                  <button
-                    onClick={() => updateStatus("FILED")}
-                    disabled={updating}
-                    className="w-full bg-green-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-green-700 disabled:opacity-50"
-                  >
-                    Mark as Filed
-                  </button>
+                  <>
+                    <button
+                      onClick={() => updateStatus("FILED")}
+                      disabled={updating}
+                      className="w-full bg-green-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-green-700 disabled:opacity-50"
+                    >
+                      Mark as Filed
+                    </button>
+                    {appeal.filingAuthorization &&
+                      ["STARTER", "GROWTH", "PORTFOLIO", "PERFORMANCE"].includes(appeal.user?.subscriptionTier ?? "") && (
+                        <button
+                          onClick={() => updateStatus("PENDING_STAFF_FILING")}
+                          disabled={updating}
+                          className="w-full bg-amber-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-amber-700 disabled:opacity-50"
+                        >
+                          File for me
+                        </button>
+                      )}
+                  </>
                 )}
                 {["FILED", "UNDER_REVIEW"].includes(appeal.status) && (
                   <button

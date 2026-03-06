@@ -8,7 +8,7 @@ export default async function AdminFilingQueuePage() {
   const appealsWithAuth = await prisma.appeal.findMany({
     where: {
       filingAuthorization: { isNot: null },
-      status: { in: ["DRAFT", "PENDING_FILING"] },
+      status: { in: ["DRAFT", "PENDING_FILING", "PENDING_STAFF_FILING"] },
     },
     orderBy: [{ filingDeadline: "asc" }, { createdAt: "desc" }],
     include: {

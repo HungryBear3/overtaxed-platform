@@ -52,6 +52,9 @@ export async function GET(request: NextRequest) {
     const propertyId = searchParams.get('propertyId')
     const status = searchParams.get('status')
     const taxYear = searchParams.get('taxYear')
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10))
+    const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') || '20', 10)))
+    const skip = (page - 1) * limit
 
     // Build filter
     const where: Record<string, unknown> = {
@@ -68,8 +71,12 @@ export async function GET(request: NextRequest) {
       where.taxYear = parseInt(taxYear, 10)
     }
 
-    const appeals = await prisma.appeal.findMany({
-      where,
+    const [total, appeals] = await Promise.all([
+      prisma.appeal.count({ where }),
+      prisma.appeal.findMany({
+        where,
+        skip,
+        take: limit,
       include: {
         property: {
           select: {
@@ -97,7 +104,8 @@ export async function GET(request: NextRequest) {
         { taxYear: 'desc' },
         { createdAt: 'desc' },
       ],
-    })
+    }),
+    ])
 
     return NextResponse.json({
       success: true,
@@ -133,6 +141,10 @@ export async function GET(request: NextRequest) {
         createdAt: appeal.createdAt,
         updatedAt: appeal.updatedAt,
       })),
+      total,
+      page,
+      limit,
+      hasMore: skip + appeals.length < total,
     })
   } catch (error) {
     console.error('Error fetching appeals:', error)

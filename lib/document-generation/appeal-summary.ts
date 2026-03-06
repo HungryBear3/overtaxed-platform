@@ -116,20 +116,7 @@ function median(values: number[]): number | null {
   return sorted.length % 2 !== 0 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2
 }
 
-const DEBUG_LOG = (payload: { location: string; message: string; data?: Record<string, unknown>; hypothesisId?: string }) => {
-  // #region agent log
-  fetch("http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...payload, timestamp: Date.now(), sessionId: "debug-session" }),
-  }).catch(() => {})
-  // #endregion
-}
-
 export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise<Uint8Array> {
-  // #region agent log
-  DEBUG_LOG({ location: "appeal-summary.ts:entry", message: "generateAppealSummaryPdf called", hypothesisId: "A" })
-  // #endregion
   const doc = await PDFDocument.create()
   doc.addPage() // pdf-lib starts with 0 pages; getPage(0) requires at least one page
   const font = await doc.embedFont(StandardFonts.Helvetica)
@@ -172,33 +159,12 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
       if (w > maxWidth && current) {
         lines.push(current)
         current = word
-        // #region agent log
-        const singleWordW = f.widthOfTextAtSize(word, fs)
-        if (singleWordW > maxWidth) {
-          DEBUG_LOG({
-            location: "appeal-summary.ts:wrapLines",
-            message: "single word exceeds maxWidth",
-            data: { wordLen: word.length, singleWordW, maxWidth, hypothesisId: "B" },
-            hypothesisId: "B",
-          })
-        }
-        // #endregion
       } else {
         current = candidate
       }
     }
     if (current) {
       const singleWordW = f.widthOfTextAtSize(current, fs)
-      if (singleWordW > maxWidth) {
-        // #region agent log
-        DEBUG_LOG({
-          location: "appeal-summary.ts:wrapLines",
-          message: "final line (word) exceeds maxWidth",
-          data: { len: current.length, singleWordW, maxWidth, hypothesisId: "B" },
-          hypothesisId: "B",
-        })
-        // #endregion
-      }
       lines.push(current)
     }
     return lines
@@ -213,16 +179,6 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     const x = opts?.x ?? margin
     const lineHeight = lineHeightFor(fs)
     const lines = wrapLines(text, f, fs)
-    // #region agent log
-    if (lines.length > 1) {
-      DEBUG_LOG({
-        location: "appeal-summary.ts:drawText",
-        message: "multi-line draw",
-        data: { lineCount: lines.length, yBefore: y, fontSize: fs, lineHeight, hypothesisId: "C,D,E" },
-        hypothesisId: "C",
-      })
-    }
-    // #endregion
     const yBeforeDraw = y
     for (const line of lines) {
       if (y < 50) {
@@ -239,16 +195,6 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
       })
       y -= lineHeight
     }
-    // #region agent log
-    if (lines.length > 1) {
-      DEBUG_LOG({
-        location: "appeal-summary.ts:drawText",
-        message: "multi-line draw done",
-        data: { lineCount: lines.length, yAfter: y, yDelta: yBeforeDraw - y, expectedDelta: lines.length * lineHeight, hypothesisId: "D" },
-        hypothesisId: "D",
-      })
-    }
-    // #endregion
   }
 
   const drawLine = () => {
@@ -600,9 +546,16 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   // —— Lack of uniformity (equity comps) ——
   if (equityComps.length > 0) {
     drawText("Lack of Uniformity — Comparable Assessments", { bold: true, fontSize: 13 })
-    drawText(
+    const equitySqftVals = equityComps
+      .map((c) => c.assessedMarketValuePerSqft)
+      .filter((v): v is number => v != null && v > 0)
+    const medianEquitySqftVal = equitySqftVals.length > 0 ? median(equitySqftVals) : null
+    let introText =
       "These comparable properties in the same neighborhood and class show similar assessed values per square foot. The subject is over-assessed relative to these peers."
-    )
+    if (medianEquitySqftVal != null) {
+      introText += ` Median assessed $/sq ft of equity comps: ${formatCurrencySqft(medianEquitySqftVal)}.`
+    }
+    drawText(introText)
     y -= 4
     for (let i = 0; i < equityComps.length; i++) {
       const c = equityComps[i]
@@ -666,18 +619,37 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     drawLine()
   }
 
-  // —— Subject vs comp $/sq ft (when we have both) ——
-  const compSqftValues = [
-    ...salesComps.map((c) => c.pricePerSqft).filter((v): v is number => v != null),
-    ...equityComps.map((c) => c.assessedMarketValuePerSqft).filter((v): v is number => v != null),
-  ]
-  const compMedianSqftAll = compSqftValues.length > 0 ? median(compSqftValues) : null
-  if (subjectSqft != null && compMedianSqftAll != null && compMedianSqftAll > 0) {
-    const pctAbove = ((subjectSqft - compMedianSqftAll) / compMedianSqftAll) * 100
-    drawText(
-      `Subject assessed $/sq ft (${formatCurrencySqft(subjectSqft)}) is ${pctAbove >= 0 ? formatPct(pctAbove) + " above" : formatPct(-pctAbove) + " below"} the median comparable $/sq ft (${formatCurrencySqft(compMedianSqftAll)}), supporting a reduction.`
-    )
-    drawLine()
+  // —— Subject vs comp $/sq ft (Rule 15 narrative) ——
+  // For sales: compare subject assessed $/sqft to comp market $/sqft (at 10% ratio, subject market = assessed * 10)
+  const salesPricePerSqft = salesComps
+    .map((c) => c.pricePerSqft)
+    .filter((v): v is number => v != null && v > 0)
+  const medianSalesSqft = salesPricePerSqft.length > 0 ? median(salesPricePerSqft) : null
+  // For equity: compare subject assessed $/sqft to comp assessed $/sqft directly
+  const equitySqft = equityComps
+    .map((c) => c.assessedMarketValuePerSqft)
+    .filter((v): v is number => v != null && v > 0)
+  const medianEquitySqft = equitySqft.length > 0 ? median(equitySqft) : null
+
+  if (subjectSqft != null && subjectSqft > 0) {
+    const parts: string[] = []
+    if (medianSalesSqft != null && medianSalesSqft > 0) {
+      const subjectMarketSqft = subjectSqft * 10
+      const pctAbove = ((subjectMarketSqft - medianSalesSqft) / medianSalesSqft) * 100
+      parts.push(
+        `Subject assessed $/sq ft: ${formatCurrencySqft(subjectSqft)}; comparable sales median $/sq ft (market): ${formatCurrencySqft(medianSalesSqft)}; at 10% assessment ratio the subject is ${pctAbove >= 0 ? formatPct(pctAbove) + " above" : formatPct(-pctAbove) + " below"} the comparable norm.`
+      )
+    }
+    if (medianEquitySqft != null && medianEquitySqft > 0) {
+      const pctAbove = ((subjectSqft - medianEquitySqft) / medianEquitySqft) * 100
+      parts.push(
+        `Subject assessed $/sq ft (${formatCurrencySqft(subjectSqft)}) is ${pctAbove >= 0 ? formatPct(pctAbove) + " above" : formatPct(-pctAbove) + " below"} the median equity comp $/sq ft (${formatCurrencySqft(medianEquitySqft)}).`
+      )
+    }
+    if (parts.length > 0) {
+      drawText(parts.join(" "))
+      drawLine()
+    }
   }
 
   // —— Photo / Rule 15 note ——

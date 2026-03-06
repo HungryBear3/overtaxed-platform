@@ -10,10 +10,19 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const invoices = await prisma.invoice.findMany({
-      where: { userId: session.user.id },
-      orderBy: { dueDate: "desc" },
-      select: {
+    const searchParams = request.nextUrl.searchParams
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10))
+    const limit = Math.min(50, Math.max(1, parseInt(searchParams.get("limit") || "20", 10)))
+    const skip = (page - 1) * limit
+
+    const [total, invoices] = await Promise.all([
+      prisma.invoice.count({ where: { userId: session.user.id } }),
+      prisma.invoice.findMany({
+        where: { userId: session.user.id },
+        skip,
+        take: limit,
+        orderBy: { dueDate: "desc" },
+        select: {
         id: true,
         invoiceNumber: true,
         amount: true,
@@ -24,7 +33,8 @@ export async function GET(request: NextRequest) {
         installmentNumber: true,
         taxSavingsTotal: true,
       },
-    })
+    }),
+    ])
 
     return NextResponse.json({
       invoices: invoices.map((i) => ({
@@ -38,6 +48,10 @@ export async function GET(request: NextRequest) {
         installmentNumber: i.installmentNumber,
         taxSavingsTotal: i.taxSavingsTotal ? Number(i.taxSavingsTotal) : null,
       })),
+      total,
+      page,
+      limit,
+      hasMore: skip + invoices.length < total,
     })
   } catch (error) {
     console.error("[invoices] Error:", error)

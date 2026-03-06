@@ -51,11 +51,16 @@ export const authOptions: NextAuthConfig = {
               subscriptionTier: true,
               subscriptionStatus: true,
               deletedAt: true,
+              emailVerified: true,
             }
           })
 
           if (!user || !user.passwordHash || user.deletedAt) {
             throw new Error("No user found with this email")
+          }
+
+          if (!user.emailVerified) {
+            throw new Error("Please verify your email before signing in. Check your inbox for the verification link.")
           }
 
           const isPasswordValid = await bcrypt.compare(password, user.passwordHash)

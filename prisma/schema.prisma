@@ -133,6 +133,7 @@ model Property {
   state     String   @default("IL")
   zipCode   String
   county    String   @default("Cook") // MVP: Cook County only
+  township  String?  // For schedule-based monitoring (appeal window by township)
   
   // Property details (from Cook County Open Data)
   neighborhood    String?
@@ -292,6 +293,7 @@ model Appeal {
 enum AppealStatus {
   DRAFT
   PENDING_FILING
+  PENDING_STAFF_FILING
   FILED
   UNDER_REVIEW
   HEARING_SCHEDULED

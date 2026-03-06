@@ -38,14 +38,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f164df'},body:JSON.stringify({sessionId:'f164df',location:'comps/route.ts:GET:entry',message:'comps GET entry',data:{hypothesisId:'A'},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     const session = await getSession(request)
     if (!session?.user) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f164df'},body:JSON.stringify({sessionId:'f164df',location:'comps/route.ts:GET:no-session',message:'Unauthorized',data:{hypothesisId:'A'},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
@@ -56,9 +50,6 @@ export async function GET(
     })
 
     if (!property) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f164df'},body:JSON.stringify({sessionId:'f164df',location:'comps/route.ts:GET:property-not-found',message:'Property not found',data:{propertyId:id,hypothesisId:'B'},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       return NextResponse.json({ error: "Property not found" }, { status: 404 })
     }
 
@@ -156,9 +147,6 @@ export async function GET(
 
     // Fall back to Cook County + Realie enrichment
     const propertyData = propertyDataFromDb(property)
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f164df'},body:JSON.stringify({sessionId:'f164df',location:'comps/route.ts:GET:before-getComparableSales',message:'About to call Cook County getComparableSales',data:{propertyId:id,pin:propertyData.pin,neighborhood:propertyData.neighborhood,buildingClass:propertyData.buildingClass,limit,hypothesisId:'C'},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     const result = await getComparableSales(propertyData, {
       limit,
       livingAreaTolerancePercent: 25,
@@ -166,18 +154,11 @@ export async function GET(
     })
 
     if (!result.success || !result.data) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f164df'},body:JSON.stringify({sessionId:'f164df',location:'comps/route.ts:GET:getComparableSales-failed',message:'getComparableSales failed',data:{propertyId:id,error:result.error,source:result.source,hypothesisId:'C'},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       return NextResponse.json(
         { error: result.error ?? "Failed to fetch comps" },
         { status: 500 }
       )
     }
-
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f164df'},body:JSON.stringify({sessionId:'f164df',location:'comps/route.ts:GET:getComparableSales-ok',message:'getComparableSales succeeded',data:{propertyId:id,compsCount:result.data.length,hypothesisId:'C'},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
 
     const uniquePins = [...new Set(result.data.map((s) => s.pin))]
     const addressByPin = await enrichAddressesForPins(uniquePins)
@@ -212,13 +193,7 @@ export async function GET(
       }
     })
 
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f164df'},body:JSON.stringify({sessionId:'f164df',location:'comps/route.ts:GET:before-enrichRealie',message:'About to call enrichCompsWithRealie',data:{propertyId:id,countyCompsCount:countyComps.length,hypothesisId:'D'},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     let comps = await enrichCompsWithRealie(countyComps, { maxRealie: 15 })
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f164df'},body:JSON.stringify({sessionId:'f164df',location:'comps/route.ts:GET:after-enrichRealie',message:'enrichCompsWithRealie succeeded',data:{propertyId:id,compsCount:comps.length,hypothesisId:'D'},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
 
     // Sort: most supportive comps first (lower sale price supports a lower assessment).
     // Subject market value = currentMarketValue or assessed × 10.
@@ -245,9 +220,6 @@ export async function GET(
       source: result.source,
     })
   } catch (error) {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/fe1757a5-7593-4a4a-986a-25d9bd588e32',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'f164df'},body:JSON.stringify({sessionId:'f164df',location:'comps/route.ts:GET:catch',message:'Caught exception',data:{errorMsg:error instanceof Error?error.message:String(error),stack:error instanceof Error?error.stack:undefined,hypothesisId:'E'},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     const msg = error instanceof Error ? error.message : String(error)
     console.error("Error fetching comps:", error)
     return NextResponse.json(

@@ -76,6 +76,7 @@ Cron emails contain links like `https://yoursite.com/appeals/...`. Those come fr
 1. Deploy to Vercel (e.g. push to `main` if auto-deploy is on).
 
 2. Confirm crons exist: **Vercel** → Project → Settings → Crons. You should see:
+   - `/api/cron/township-open-notifications` — daily at 10:00 UTC (proactive "township opened" emails)
    - `/api/cron/deadline-reminders` — daily at 9:00 UTC
    - `/api/cron/assessment-checks` — Mondays at 10:00 UTC
 
@@ -103,6 +104,7 @@ Expected: `200` with JSON like `{"success": true, "emailsSent": 0}` or `{"succes
 
 | Cron | When | What it does |
 |------|------|--------------|
+| **Township open notifications** | Daily 10:00 UTC | Proactive emails when a township's appeal window opens; users with properties in that township but no appeal yet |
 | **Deadline reminders** | Daily 9:00 UTC | Emails users with DRAFT/PENDING_FILING appeals whose deadline is in 7, 3, or 1 days |
 | **Assessment checks** | Mondays 10:00 UTC | Jan–Aug only; checks monitored properties in townships with active appeal windows; emails on assessment increase |
 

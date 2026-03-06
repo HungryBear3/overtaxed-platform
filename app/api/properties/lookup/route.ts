@@ -1,8 +1,18 @@
 // Property Lookup API - Fetch property data from Cook County by PIN
 import { NextRequest, NextResponse } from 'next/server'
 import { getPropertyByPIN, isValidPIN, formatPIN } from '@/lib/cook-county'
+import { rateLimit, getClientIdentifier } from '@/lib/rate-limit'
 
 export async function GET(request: NextRequest) {
+  const clientId = getClientIdentifier(request)
+  const { allowed } = rateLimit(clientId, 20, 60 * 1000)
+  if (!allowed) {
+    return NextResponse.json(
+      { error: 'Too many requests. Please try again later.' },
+      { status: 429 }
+    )
+  }
+
   try {
     const searchParams = request.nextUrl.searchParams
     const pin = searchParams.get('pin')

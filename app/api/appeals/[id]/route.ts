@@ -5,13 +5,15 @@ import { prisma } from '@/lib/db'
 import { formatPIN, getAddressByPIN, haversineMiles } from '@/lib/cook-county'
 import { enrichCompsWithRealie } from '@/lib/comps/enrich-with-realie'
 import { canChangePropertyOnAppeal } from '@/lib/appeals/status'
+import { sendEmail } from '@/lib/email'
+import { appealFiledTemplate, appealDecisionTemplate } from '@/lib/email/templates'
 import { z } from 'zod'
 
 // Validation schema for updating an appeal
 const updateAppealSchema = z.object({
   propertyId: z.string().min(1).optional(),
   status: z.enum([
-    'DRAFT', 'PENDING_FILING', 'FILED', 'UNDER_REVIEW',
+    'DRAFT', 'PENDING_FILING', 'PENDING_STAFF_FILING', 'FILED', 'UNDER_REVIEW',
     'HEARING_SCHEDULED', 'DECISION_PENDING', 'APPROVED',
     'PARTIALLY_APPROVED', 'DENIED', 'WITHDRAWN'
   ]).optional(),
@@ -56,7 +58,7 @@ export async function GET(
         ...(isAdmin ? {} : { userId: session.user.id }),
       },
       include: {
-        user: { select: { name: true, email: true } },
+        user: { select: { name: true, email: true, subscriptionTier: true } },
         property: {
           select: {
             id: true,
@@ -176,7 +178,7 @@ export async function GET(
           photoDate: doc.photoDate,
           createdAt: doc.createdAt,
         })),
-        user: appeal.user ? { name: appeal.user.name, email: appeal.user.email } : null,
+        user: appeal.user ? { name: appeal.user.name, email: appeal.user.email, subscriptionTier: appeal.user.subscriptionTier } : null,
         filingAuthorization: appeal.filingAuthorization ? {
           id: appeal.filingAuthorization.id,
           signedAt: appeal.filingAuthorization.signedAt,
@@ -324,6 +326,10 @@ export async function PATCH(
         id,
         ...(isAdmin ? {} : { userId: session.user.id }),
       },
+      include: {
+        filingAuthorization: true,
+        user: { select: { subscriptionTier: true } },
+      },
     })
 
     if (!existingAppeal) {
@@ -334,6 +340,30 @@ export async function PATCH(
     }
 
     const data = validation.data
+
+    // PENDING_STAFF_FILING: requires Starter+ tier and signed authorization
+    if (data.status === 'PENDING_STAFF_FILING') {
+      const starterPlus = ['STARTER', 'GROWTH', 'PORTFOLIO', 'PERFORMANCE']
+      const tier = existingAppeal.user?.subscriptionTier
+      if (!tier || !starterPlus.includes(tier)) {
+        return NextResponse.json(
+          { error: 'Staff-assisted filing is available for Starter, Growth, Portfolio, or Performance plans. Upgrade your plan to use this feature.' },
+          { status: 403 }
+        )
+      }
+      if (!existingAppeal.filingAuthorization) {
+        return NextResponse.json(
+          { error: 'Please complete and save the filing authorization form before requesting staff-assisted filing.' },
+          { status: 400 }
+        )
+      }
+      if (!['DRAFT', 'PENDING_FILING'].includes(existingAppeal.status)) {
+        return NextResponse.json(
+          { error: 'Only draft or pending-filing appeals can be submitted for staff-assisted filing.' },
+          { status: 400 }
+        )
+      }
+    }
 
     // propertyId change: only allowed for non-submitted appeals
     if (data.propertyId !== undefined) {
@@ -411,8 +441,50 @@ export async function PATCH(
             address: true,
           },
         },
+        user: {
+          select: {
+            email: true,
+            name: true,
+          },
+        },
       },
     })
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const appealLink = `${appUrl}/appeals/${appeal.id}`
+    const propertyAddress = appeal.property?.address || `PIN ${formatPIN(appeal.property?.pin || '')}`
+
+    if (data.status === 'FILED' && existingAppeal.status !== 'FILED' && appeal.user?.email) {
+      const t = appealFiledTemplate({
+        userName: appeal.user.name,
+        propertyAddress,
+        taxYear: appeal.taxYear,
+        appealLink,
+      })
+      sendEmail({ to: appeal.user.email, subject: t.subject, text: t.text, html: t.html }).catch((e) =>
+        console.error('[appeals] Failed to send filed email:', e)
+      )
+    }
+
+    if (
+      data.outcome &&
+      ['WON', 'PARTIALLY_WON', 'DENIED'].includes(data.outcome) &&
+      existingAppeal.outcome !== data.outcome &&
+      appeal.user?.email
+    ) {
+      const t = appealDecisionTemplate({
+        userName: appeal.user.name,
+        propertyAddress,
+        taxYear: appeal.taxYear,
+        outcome: data.outcome,
+        reductionAmount: appeal.reductionAmount != null ? Number(appeal.reductionAmount) : null,
+        taxSavings: appeal.taxSavings != null ? Number(appeal.taxSavings) : null,
+        appealLink,
+      })
+      sendEmail({ to: appeal.user.email, subject: t.subject, text: t.text, html: t.html }).catch((e) =>
+        console.error('[appeals] Failed to send decision email:', e)
+      )
+    }
 
     return NextResponse.json({
       success: true,
