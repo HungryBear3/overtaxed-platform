@@ -10,12 +10,13 @@ import { Label } from "@/components/ui/label"
 interface CompItem {
   pin: string
   pinRaw: string
+  compType?: "SALES" | "EQUITY"
   address: string
   city: string
   zipCode: string
   neighborhood: string | null
   saleDate: string | null
-  salePrice: number
+  salePrice: number | null
   pricePerSqft: number | null
   livingArea: number | null
   yearBuilt: number | null
@@ -23,6 +24,8 @@ interface CompItem {
   bathrooms: number | null
   buildingClass: string | null
   distanceFromSubject?: number | null
+  assessedMarketValue?: number | null
+  assessedMarketValuePerSqft?: number | null
 }
 
 export function AddCompsDialog({
@@ -184,9 +187,11 @@ export function AddCompsDialog({
           bathrooms: c.bathrooms ?? null,
           salePrice: c.salePrice,
           saleDate: c.saleDate,
-          pricePerSqft: c.pricePerSqft,
+          pricePerSqft: c.pricePerSqft ?? c.assessedMarketValuePerSqft ?? null,
           distanceFromSubject: c.distanceFromSubject ?? null,
-          compType: "SALES" as const,
+          assessedMarketValue: c.assessedMarketValue ?? null,
+          assessedMarketValuePerSqft: c.assessedMarketValuePerSqft ?? null,
+          compType: (c.compType ?? "SALES") as "SALES" | "EQUITY",
         })),
       }
       const res = await fetch(`/api/appeals/${appealId}/comps`, {
@@ -227,7 +232,7 @@ export function AddCompsDialog({
           <div className="mb-4 rounded-lg bg-amber-50 border-2 border-amber-300 px-4 py-4 text-sm text-amber-900 shrink-0">
             <p className="font-semibold mb-2">How many comps to add?</p>
             <p className="text-amber-800 mb-2">
-              <strong>5–8 strong comps</strong> is usually best — you don&apos;t need all 20. Rule 15 requires at least 3 for sales analysis.
+              Rule 15 recommends <strong>at least 3 sales comps</strong> and <strong>5 equity comps</strong>. Sales = recent sales; Equity = assessed values (no sale). Pick comps with lower $/sq ft to support a lower assessment.
             </p>
             <p className="text-amber-800 mb-2">
               <strong>Best comps:</strong> Recent sales (within 2 years), similar size (±25% living area), same neighborhood. Pick the ones with <strong>lower price per sqft</strong> than your property — they support a lower assessment.
@@ -444,6 +449,33 @@ export function AddCompsDialog({
             </form>
           ) : (
             <>
+              <div className="flex flex-wrap gap-2 mb-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const sales = comps.filter((c) => (c.compType ?? "SALES") === "SALES").slice(0, 3)
+                    const equity = comps.filter((c) => c.compType === "EQUITY").slice(0, 5)
+                    setSelected(new Set([...sales, ...equity].map((c) => c.pinRaw)))
+                  }}
+                  className="text-sm px-3 py-1.5 bg-emerald-100 text-emerald-800 rounded-lg hover:bg-emerald-200 font-medium"
+                >
+                  Rule 15 mix (3 sales + 5 equity)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Set(comps.slice(0, 8).map((c) => c.pinRaw)))}
+                  className="text-sm px-3 py-1.5 bg-blue-100 text-blue-800 rounded-lg hover:bg-blue-200 font-medium"
+                >
+                  Select top 8
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Set())}
+                  className="text-sm px-3 py-1.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium"
+                >
+                  Clear
+                </button>
+              </div>
               <div className="space-y-2">
                 {comps.map((c) => (
                   <label
@@ -459,10 +491,23 @@ export function AddCompsDialog({
                       className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600"
                     />
                     <div className="min-w-0 flex-1">
-                      <p className="font-medium text-gray-900">{c.address}</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-medium text-gray-900">{c.address}</p>
+                        <span
+                          className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${
+                            c.compType === "EQUITY"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-blue-100 text-blue-800"
+                          }`}
+                        >
+                          {c.compType === "EQUITY" ? "Equity" : "Sales"}
+                        </span>
+                      </div>
                       <p className="text-sm text-gray-500">PIN: {c.pin}</p>
                       <p className="text-sm text-gray-600">
-                        Sale {formatCurrency(c.salePrice)} • {formatDate(c.saleDate)} • {c.livingArea ?? "—"} sq ft
+                        {c.compType === "EQUITY"
+                          ? `Assessed ${formatCurrency(c.assessedMarketValue)} • $/sq ft ${c.assessedMarketValuePerSqft != null ? `$${Math.round(c.assessedMarketValuePerSqft).toLocaleString()}` : "—"} • ${c.livingArea ?? "—"} sq ft`
+                          : `Sale ${formatCurrency(c.salePrice)} • ${formatDate(c.saleDate)} • ${c.livingArea ?? "—"} sq ft`}
                       </p>
                     </div>
                   </label>

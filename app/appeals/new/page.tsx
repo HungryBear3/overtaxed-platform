@@ -209,9 +209,11 @@ export default function NewAppealPage() {
           bathrooms: (c as { bathrooms?: number | null }).bathrooms ?? undefined,
           salePrice: c.salePrice ?? undefined,
           saleDate: c.saleDate ?? undefined,
-          pricePerSqft: c.pricePerSqft ?? undefined,
+          pricePerSqft: c.pricePerSqft ?? (c as { assessedMarketValuePerSqft?: number | null }).assessedMarketValuePerSqft ?? undefined,
+          assessedMarketValue: (c as { assessedMarketValue?: number | null }).assessedMarketValue ?? undefined,
+          assessedMarketValuePerSqft: (c as { assessedMarketValuePerSqft?: number | null }).assessedMarketValuePerSqft ?? undefined,
           distanceFromSubject: (c as { distanceFromSubject?: number | null }).distanceFromSubject ?? undefined,
-          compType: "SALES" as const,
+          compType: ((c as { compType?: string }).compType ?? "SALES") as "SALES" | "EQUITY",
         }))
       }
       const response = await fetch("/api/appeals", {

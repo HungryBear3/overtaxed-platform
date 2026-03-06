@@ -176,6 +176,28 @@ export interface SalesRecord {
   dataSource: string
 }
 
+// Equity comp record (assessed value, no sale) - Rule 15 recommends 5+ equity comps
+export interface EquityRecord {
+  pin: string
+  address: string
+  city: string
+  zipCode: string
+  neighborhood: string | null
+
+  // Equity comps use assessed market value (assessed × 10), not sale price
+  assessedMarketValue: number | null
+  assessedMarketValuePerSqft: number | null
+
+  // Property characteristics
+  buildingClass: string | null
+  livingArea: number | null
+  yearBuilt: number | null
+  bedrooms: number | null
+  bathrooms: number | null
+
+  dataSource: string
+}
+
 // API response wrapper
 export interface CookCountyApiResponse<T> {
   success: boolean

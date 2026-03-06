@@ -5,6 +5,7 @@ export {
   getPropertyByPIN,
   searchPropertiesByAddress,
   getComparableSales,
+  getComparableEquity,
   getAddressByPIN,
   haversineMiles,
   normalizePIN,
@@ -15,6 +16,7 @@ export {
 export type {
   PropertyData,
   SalesRecord,
+  EquityRecord,
   CookCountyApiResponse,
   PIN,
   ParcelUniverseRecord,

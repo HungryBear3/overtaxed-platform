@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server"
 export const maxDuration = 30
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
-import { getComparableSales, getAddressByPIN, formatPIN, haversineMiles } from "@/lib/cook-county"
+import { getComparableSales, getComparableEquity, getAddressByPIN, formatPIN, haversineMiles } from "@/lib/cook-county"
 import { propertyDataFromDb } from "@/lib/comps/property-data"
 import { enrichCompsWithRealie } from "@/lib/comps/enrich-with-realie"
 import { fetchRealieComparables, fetchRealieAddressLookup, parseUnitFromAddress } from "@/lib/realie"
@@ -111,6 +111,7 @@ export async function GET(
         console.log("[comps] Using Realie Premium Comparables", { count: realieResult.comps.length, propertyId: id })
         const comps = realieResult.comps.map((c) => ({
           ...c,
+          compType: "SALES" as const,
           inBothSources: true,
           assessedMarketValue: null as number | null,
           assessedMarketValuePerSqft: null as number | null,
@@ -145,25 +146,38 @@ export async function GET(
       console.log("[comps] Realie Premium skipped: no subject lat/long from Parcel Universe", { propertyId: id })
     }
 
-    // Fall back to Cook County + Realie enrichment
+    // Fall back to Cook County: fetch both sales and equity comps (Rule 15: 3 sales, 5 equity)
     const propertyData = propertyDataFromDb(property)
-    const result = await getComparableSales(propertyData, {
-      limit,
-      livingAreaTolerancePercent: 25,
-      yearBuiltTolerance: 10,
-    })
+    const [salesResult, equityResult] = await Promise.all([
+      getComparableSales(propertyData, {
+        limit: Math.min(limit, 15),
+        livingAreaTolerancePercent: 25,
+        yearBuiltTolerance: 10,
+      }),
+      getComparableEquity(propertyData, {
+        limit: 10,
+        livingAreaTolerancePercent: 25,
+      }),
+    ])
 
-    if (!result.success || !result.data) {
+    if (!salesResult.success || !salesResult.data) {
       return NextResponse.json(
-        { error: result.error ?? "Failed to fetch comps" },
+        { error: salesResult.error ?? "Failed to fetch comps" },
         { status: 500 }
       )
     }
 
-    const uniquePins = [...new Set(result.data.map((s) => s.pin))]
+    const salesPins = new Set(salesResult.data.map((s) => s.pin))
+    const equityData =
+      equityResult.success && equityResult.data
+        ? equityResult.data.filter((e) => !salesPins.has(e.pin))
+        : []
+
+    const allPins = [...salesResult.data.map((s) => s.pin), ...equityData.map((e) => e.pin)]
+    const uniquePins = [...new Set(allPins)]
     const addressByPin = await enrichAddressesForPins(uniquePins)
 
-    const countyComps = result.data.map((s) => {
+    const salesComps = salesResult.data.map((s) => {
       const enriched = addressByPin.get(s.pin)
       const compLat = enriched?.latitude ?? null
       const compLon = enriched?.longitude ?? null
@@ -174,6 +188,7 @@ export async function GET(
       return {
         pin: formatPIN(s.pin),
         pinRaw: s.pin,
+        compType: "SALES" as const,
         address: enriched?.address ?? (s.address || `PIN ${formatPIN(s.pin)}`),
         city: enriched?.city ?? s.city ?? "",
         zipCode: enriched?.zipCode ?? s.zipCode ?? "",
@@ -193,10 +208,41 @@ export async function GET(
       }
     })
 
+    const equityComps = equityData.map((e) => {
+      const enriched = addressByPin.get(e.pin)
+      const compLat = enriched?.latitude ?? null
+      const compLon = enriched?.longitude ?? null
+      const distanceFromSubject =
+        subjectLat != null && subjectLon != null && compLat != null && compLon != null
+          ? haversineMiles(subjectLat, subjectLon, compLat, compLon)
+          : null
+      return {
+        pin: formatPIN(e.pin),
+        pinRaw: e.pin,
+        compType: "EQUITY" as const,
+        address: enriched?.address ?? (e.address || `PIN ${formatPIN(e.pin)}`),
+        city: enriched?.city ?? e.city ?? "",
+        zipCode: enriched?.zipCode ?? e.zipCode ?? "",
+        neighborhood: e.neighborhood,
+        saleDate: null as string | null,
+        salePrice: null as number | null,
+        pricePerSqft: e.assessedMarketValuePerSqft,
+        buildingClass: e.buildingClass,
+        livingArea: e.livingArea,
+        yearBuilt: e.yearBuilt,
+        bedrooms: e.bedrooms,
+        bathrooms: e.bathrooms,
+        dataSource: e.dataSource,
+        distanceFromSubject,
+        assessedMarketValue: e.assessedMarketValue,
+        assessedMarketValuePerSqft: e.assessedMarketValuePerSqft,
+      }
+    })
+
+    const countyComps = [...salesComps, ...equityComps]
     let comps = await enrichCompsWithRealie(countyComps, { maxRealie: 15 })
 
-    // Sort: most supportive comps first (lower sale price supports a lower assessment).
-    // Subject market value = currentMarketValue or assessed × 10.
+    // Sort: sales first (by sale price), then equity (by assessed $/sqft). Most supportive first.
     const subjectMarket =
       property.currentMarketValue != null
         ? parseFloat(String(property.currentMarketValue))
@@ -204,20 +250,33 @@ export async function GET(
           ? parseFloat(String(property.currentAssessmentValue)) * 10
           : null
     comps = [...comps].sort((a, b) => {
-      const priceA = a.salePrice ?? Infinity
-      const priceB = b.salePrice ?? Infinity
-      if (subjectMarket != null && subjectMarket > 0) {
-        const aSupportive = priceA <= subjectMarket * 1.15
-        const bSupportive = priceB <= subjectMarket * 1.15
-        if (aSupportive !== bSupportive) return aSupportive ? -1 : 1
+      const aSales = a.compType === "SALES"
+      const bSales = b.compType === "SALES"
+      if (aSales && !bSales) return -1
+      if (!aSales && bSales) return 1
+      if (aSales && bSales) {
+        const priceA = a.salePrice ?? Infinity
+        const priceB = b.salePrice ?? Infinity
+        if (subjectMarket != null && subjectMarket > 0) {
+          const aSupportive = priceA <= subjectMarket * 1.15
+          const bSupportive = priceB <= subjectMarket * 1.15
+          if (aSupportive !== bSupportive) return aSupportive ? -1 : 1
+        }
+        return priceA - priceB
       }
-      return priceA - priceB
+      const valA = a.assessedMarketValuePerSqft ?? Infinity
+      const valB = b.assessedMarketValuePerSqft ?? Infinity
+      return valA - valB
     })
+
+    const source = equityData.length > 0
+      ? `${salesResult.source}; ${equityResult.source}`
+      : salesResult.source
 
     return NextResponse.json({
       success: true,
       comps,
-      source: result.source,
+      source,
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)

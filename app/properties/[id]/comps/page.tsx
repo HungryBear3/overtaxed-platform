@@ -7,6 +7,7 @@ import Link from "next/link"
 interface Comp {
   pin: string
   pinRaw?: string
+  compType?: "SALES" | "EQUITY"
   address: string
   city: string
   state?: string
@@ -20,7 +21,9 @@ interface Comp {
   saleDate: string | null
   salePrice: number | null
   pricePerSqft?: number | null
-  currentAssessmentValue: number | null
+  assessedMarketValue?: number | null
+  assessedMarketValuePerSqft?: number | null
+  currentAssessmentValue?: number | null
   neighborhood: string | null
   distanceFromSubject?: number | null
 }
@@ -53,11 +56,12 @@ export default function PropertyCompsPage() {
         throw new Error(data.error || "Failed to fetch comps")
       }
 
-      // API returns buildingClass, zipCode; map for display (state, propertyClass)
+      // API returns buildingClass, zipCode, compType; map for display (state, propertyClass, currentAssessmentValue)
       const list = (data.comps || []).map((c: Record<string, unknown>) => ({
         ...c,
         state: (c.state as string) ?? "IL",
         propertyClass: (c.buildingClass as string) ?? (c.propertyClass as string) ?? null,
+        currentAssessmentValue: (c.assessedMarketValue as number) ?? (c.currentAssessmentValue as number) ?? null,
       }))
       setComps(list)
       setCompsSource(data.source ?? "")
@@ -98,6 +102,12 @@ export default function PropertyCompsPage() {
 
   function selectTopN(n: number) {
     setSelected(new Set(comps.slice(0, n).map((c) => c.pinRaw ?? c.pin)))
+  }
+
+  function selectRule15Mix() {
+    const sales = comps.filter((c) => (c.compType ?? "SALES") === "SALES").slice(0, 3)
+    const equity = comps.filter((c) => c.compType === "EQUITY").slice(0, 5)
+    setSelected(new Set([...sales, ...equity].map((c) => c.pinRaw ?? c.pin)))
   }
 
   if (loading) {
@@ -143,7 +153,7 @@ export default function PropertyCompsPage() {
         <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 p-4">
           <p className="font-medium text-blue-900 mb-1">How many comps do I need?</p>
           <p className="text-sm text-blue-800">
-            Cook County typically expects <strong>at least 3–5 comparable sales</strong> for a strong appeal. We show up to 20 matches ranked by similarity (location, size, age, class). Use the <strong>best 5–10</strong> that are most similar to your property — quality matters more than quantity. Lower $/sq ft comps support a lower requested value.
+            Rule 15 recommends <strong>at least 3 sales comps</strong> and <strong>5 equity comps</strong>. Sales = recent sales; Equity = assessed values (no sale). Lower $/sq ft comps support a lower requested value.
           </p>
         </div>
 
@@ -174,14 +184,21 @@ export default function PropertyCompsPage() {
                   <div className="text-sm text-blue-800">
                     <p className="font-medium mb-1">Found {comps.length} comparable properties</p>
                     <p className="text-blue-700 mb-2">
-                      Pick <strong>5–8 comps</strong> that best support your appeal (Rule 15 requires 3+). Lower $/sq ft comps strengthen your case.
+                      Pick <strong>3 sales + 5 equity</strong> for Rule 15. Lower $/sq ft comps strengthen your case.
                     </p>
                     <p className="text-blue-700">
                       {selected.size} selected — {selected.size >= 3 ? "✓ ready to add" : "select at least 3"}
                     </p>
                   </div>
                 </div>
-                <div className="flex gap-2 flex-shrink-0">
+                <div className="flex gap-2 flex-shrink-0 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={selectRule15Mix}
+                    className="text-sm px-3 py-1.5 bg-emerald-100 text-emerald-800 rounded-lg hover:bg-emerald-200 font-medium"
+                  >
+                    Rule 15 mix (3 sales + 5 equity)
+                  </button>
                   <button
                     type="button"
                     onClick={() => selectTopN(5)}
@@ -221,6 +238,9 @@ export default function PropertyCompsPage() {
                     <tr>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10">
                         Select
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Type
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Address
@@ -270,6 +290,17 @@ export default function PropertyCompsPage() {
                           />
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${
+                              comp.compType === "EQUITY"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-blue-100 text-blue-800"
+                            }`}
+                          >
+                            {comp.compType === "EQUITY" ? "Equity" : "Sales"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-gray-900">{comp.address}</div>
                           <div className="text-xs text-gray-500">{comp.city}, {comp.state}</div>
                         </td>
@@ -286,16 +317,20 @@ export default function PropertyCompsPage() {
                           {comp.yearBuilt || "—"}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">
-                          {formatDate(comp.saleDate)}
+                          {comp.compType === "EQUITY" ? "—" : formatDate(comp.saleDate)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-right">
-                          {formatCurrency(comp.salePrice)}
+                          {comp.compType === "EQUITY"
+                            ? formatCurrency(comp.assessedMarketValue ?? comp.currentAssessmentValue)
+                            : formatCurrency(comp.salePrice)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right min-w-[5rem]">
-                          {comp.pricePerSqft != null ? `$${Math.round(comp.pricePerSqft).toLocaleString()}/sq ft` : "—"}
+                          {(comp.pricePerSqft ?? comp.assessedMarketValuePerSqft) != null
+                            ? `$${Math.round((comp.pricePerSqft ?? comp.assessedMarketValuePerSqft)!).toLocaleString()}/sq ft`
+                            : "—"}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right min-w-[5rem]">
-                          {formatCurrency(comp.currentAssessmentValue)}
+                          {formatCurrency(comp.assessedMarketValue ?? comp.currentAssessmentValue)}
                         </td>
                       </tr>
                     )})}
@@ -336,8 +371,11 @@ export default function PropertyCompsPage() {
                         bathrooms: c.bathrooms ?? undefined,
                         saleDate: c.saleDate ?? undefined,
                         salePrice: c.salePrice ?? undefined,
-                        pricePerSqft: c.pricePerSqft ?? undefined,
+                        pricePerSqft: c.pricePerSqft ?? c.assessedMarketValuePerSqft ?? undefined,
+                        assessedMarketValue: c.assessedMarketValue ?? undefined,
+                        assessedMarketValuePerSqft: c.assessedMarketValuePerSqft ?? undefined,
                         distanceFromSubject: c.distanceFromSubject ?? undefined,
+                        compType: (c.compType ?? "SALES") as "SALES" | "EQUITY",
                       }))
                       sessionStorage.setItem(
                         "overtaxed_appeal_comps",

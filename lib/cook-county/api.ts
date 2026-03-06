@@ -8,6 +8,7 @@ import type {
   ImprovementCharacteristicsRecord,
   ParcelSalesRecord,
   SalesRecord,
+  EquityRecord,
   CookCountyApiResponse,
   PIN,
   AssessmentHistoryRecord,
@@ -768,6 +769,113 @@ export async function getComparableSales(
       data: null,
       error: error instanceof Error ? error.message : 'Failed to fetch comparable sales',
       source: 'Cook County Open Data - Parcel Sales',
+    }
+  }
+}
+
+/**
+ * Get comparable equity comps for a property (assessed values, no sale).
+ * Rule 15 recommends 5+ equity comps. Uses Parcel Universe + ASSESSED_VALUES + Improvement Chars.
+ * Returns properties in same neighborhood with similar living area, sorted by assessed $/sqft (lower = more supportive).
+ */
+export async function getComparableEquity(
+  property: PropertyData,
+  options: {
+    livingAreaTolerancePercent?: number
+    limit?: number
+  } = {}
+): Promise<CookCountyApiResponse<EquityRecord[]>> {
+  try {
+    const { limit = 10, livingAreaTolerancePercent = 25 } = options
+    const propertyPin = normalizePIN(property.pin)
+    const nbhd = property.neighborhood?.trim()
+    if (!nbhd) {
+      return {
+        success: true,
+        data: [],
+        error: null,
+        source: 'Cook County Open Data - Equity (no neighborhood)',
+      }
+    }
+
+    // Parcel Universe uses nbhd or nbhd_code
+    const filters = [`(nbhd='${nbhd}' OR nbhd_code='${nbhd}')`, `pin != '${propertyPin}'`]
+    const query = `$where=${encodeURIComponent(filters.join(' AND '))}&$limit=150`
+    const parcels = await fetchSocrataData<Record<string, unknown>>(
+      DATASETS.PARCEL_UNIVERSE,
+      query
+    )
+
+    const subjectLivingArea = property.livingArea ?? 0
+    const lo = subjectLivingArea > 0 ? subjectLivingArea * (1 - livingAreaTolerancePercent / 100) : 0
+    const hi = subjectLivingArea > 0 ? subjectLivingArea * (1 + livingAreaTolerancePercent / 100) : Infinity
+
+    const uniquePins = [...new Set(parcels.map((p) => String(p.pin ?? '')))].filter(Boolean).filter((p) => p !== propertyPin)
+
+    const results: EquityRecord[] = []
+    const BATCH_SIZE = 5
+
+    for (let i = 0; i < uniquePins.length; i += BATCH_SIZE) {
+      const batch = uniquePins.slice(i, i + BATCH_SIZE)
+      const [assessedResults, charsResults] = await Promise.all([
+        Promise.all(batch.map((pin) => getAssessedValuesByPIN(pin))),
+        Promise.all(batch.map((pin) => getImprovementCharsForPIN(pin))),
+      ])
+
+      batch.forEach((pin, j) => {
+        const av = assessedResults[j] as Record<string, unknown> | null
+        const tot = av?.board_tot ?? av?.certified_tot ?? av?.mailed_tot
+        const assessedTotal = tot != null ? parseAssessedValue(tot) : null
+        const chars = charsResults[j]
+        const livingArea = chars?.livingArea ?? null
+
+        if (assessedTotal == null || assessedTotal <= 0) return
+        if (livingArea == null || livingArea <= 0) return
+        if (subjectLivingArea > 0 && (livingArea < lo || livingArea > hi)) return
+
+        const assessedMarketValue = assessedTotal * 10
+        const assessedMarketValuePerSqft = livingArea > 0 ? assessedMarketValue / livingArea : null
+
+        results.push({
+          pin,
+          address: '',
+          city: '',
+          zipCode: '',
+          neighborhood: nbhd,
+          assessedMarketValue,
+          assessedMarketValuePerSqft,
+          buildingClass: null,
+          livingArea,
+          yearBuilt: chars?.yearBuilt ?? null,
+          bedrooms: chars?.bedrooms ?? null,
+          bathrooms: chars?.bathrooms ?? null,
+          dataSource: 'Cook County Open Data - Equity (Assessed Values)',
+        })
+      })
+    }
+
+    // Sort by assessed $/sqft ascending (lower = more supportive for lack of uniformity)
+    results.sort((a, b) => {
+      const aVal = a.assessedMarketValuePerSqft ?? Infinity
+      const bVal = b.assessedMarketValuePerSqft ?? Infinity
+      return aVal - bVal
+    })
+
+    const limited = results.slice(0, limit)
+
+    return {
+      success: true,
+      data: limited,
+      error: null,
+      source: 'Cook County Open Data - Equity (Assessed Values)',
+    }
+  } catch (error) {
+    console.error('Error fetching comparable equity:', error)
+    return {
+      success: false,
+      data: null,
+      error: error instanceof Error ? error.message : 'Failed to fetch comparable equity',
+      source: 'Cook County Open Data - Equity',
     }
   }
 }
