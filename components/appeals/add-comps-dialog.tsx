@@ -506,8 +506,8 @@ export function AddCompsDialog({
                       <p className="text-sm text-gray-500">PIN: {c.pin}</p>
                       <p className="text-sm text-gray-600">
                         {c.compType === "EQUITY"
-                          ? `Assessed ${formatCurrency(c.assessedMarketValue)} • $/sq ft ${c.assessedMarketValuePerSqft != null ? `$${Math.round(c.assessedMarketValuePerSqft).toLocaleString()}` : "—"} • ${c.livingArea ?? "—"} sq ft`
-                          : `Sale ${formatCurrency(c.salePrice)} • ${formatDate(c.saleDate)} • ${c.livingArea ?? "—"} sq ft`}
+                          ? `Assessed ${formatCurrency(c.assessedMarketValue ?? null)} • $/sq ft ${c.assessedMarketValuePerSqft != null ? `$${Math.round(c.assessedMarketValuePerSqft).toLocaleString()}` : "—"} • ${c.livingArea ?? "—"} sq ft`
+                          : `Sale ${formatCurrency(c.salePrice ?? null)} • ${formatDate(c.saleDate)} • ${c.livingArea ?? "—"} sq ft`}
                       </p>
                     </div>
                   </label>
