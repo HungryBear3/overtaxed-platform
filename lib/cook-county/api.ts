@@ -16,8 +16,10 @@ import type {
 
 // Dataset IDs from Cook County Open Data Portal
 const DATASETS = {
-  // Parcel Universe - Property locations, PINs, addresses
+  // Parcel Universe - Property locations, PINs, addresses (archived; some endpoints may use current)
   PARCEL_UNIVERSE: 'tx2p-k2g9',
+  // Parcel Universe Current Year - use for equity comps (has nbhd_code, township_code)
+  PARCEL_UNIVERSE_CURRENT: 'pabr-t5kh',
   // Assessed Values - Land, building, and total assessed values (mailed, certified, board)
   ASSESSED_VALUES: 'uzyt-m557',
   // Single-Family Improvement Characteristics
@@ -129,20 +131,23 @@ async function getTownshipForNeighborhood(nbhd: string): Promise<string | null> 
 }
 
 /**
- * Look up property by PIN in Parcel Universe
+ * Look up property by PIN in Parcel Universe.
+ * Tries current dataset first (pabr-t5kh), then archived (tx2p-k2g9).
  */
 async function getParcelUniverseByPIN(
   pin: PIN
 ): Promise<ParcelUniverseRecord | null> {
   const normalizedPIN = normalizePIN(pin)
   const query = `$where=${encodeURIComponent(`pin='${normalizedPIN}'`)}&$limit=1`
-  
-  const results = await fetchSocrataData<ParcelUniverseRecord>(
-    DATASETS.PARCEL_UNIVERSE,
-    query
-  )
-  
-  return results[0] || null
+  for (const datasetId of [DATASETS.PARCEL_UNIVERSE_CURRENT, DATASETS.PARCEL_UNIVERSE]) {
+    try {
+      const results = await fetchSocrataData<ParcelUniverseRecord>(datasetId, query)
+      if (results[0]) return results[0]
+    } catch {
+      continue
+    }
+  }
+  return null
 }
 
 /**
@@ -792,34 +797,45 @@ export async function getComparableEquity(
     let nbhd = property.neighborhood?.trim()
 
     // Fallback: when property has no neighborhood in DB, fetch from Parcel Universe by subject PIN
+    let subjectParcel: ParcelUniverseRecord | null = null
     if (!nbhd) {
-      const parcel = await getParcelUniverseByPIN(propertyPin)
-      if (parcel) {
-        const p = parcel as unknown as Record<string, unknown>
+      subjectParcel = await getParcelUniverseByPIN(propertyPin)
+      if (subjectParcel) {
+        const p = subjectParcel as unknown as Record<string, unknown>
         nbhd = (p.nbhd ?? p.nbhd_code) != null ? String(p.nbhd ?? p.nbhd_code).trim() : ''
       }
     }
 
-    // Try neighborhood first
+    // Use current Parcel Universe (pabr-t5kh) - has nbhd_code, township_code
+    const parcelDataset = DATASETS.PARCEL_UNIVERSE_CURRENT
     let parcels: Array<Record<string, unknown>> = []
     if (nbhd) {
-      const filters = [`(nbhd='${nbhd}' OR nbhd_code='${nbhd}')`, `pin != '${propertyPin}'`]
+      const filters = [`(nbhd_code='${nbhd}' OR nbhd='${nbhd}')`, `pin != '${propertyPin}'`]
       const query = `$where=${encodeURIComponent(filters.join(' AND '))}&$limit=150`
-      parcels = await fetchSocrataData<Record<string, unknown>>(DATASETS.PARCEL_UNIVERSE, query)
+      try {
+        parcels = await fetchSocrataData<Record<string, unknown>>(parcelDataset, query)
+      } catch {
+        parcels = []
+      }
     }
 
     // Fallback: when neighborhood returns 0, try township_code from subject parcel
     if (parcels.length === 0) {
-      const subjectParcel = await getParcelUniverseByPIN(propertyPin)
-      const townshipCode = subjectParcel ? String((subjectParcel as unknown as Record<string, unknown>).township_code ?? '').trim() : ''
+      const parcel = subjectParcel ?? (await getParcelUniverseByPIN(propertyPin))
+      const townshipCode = parcel ? String((parcel as unknown as Record<string, unknown>).township_code ?? '').trim() : ''
       if (townshipCode) {
         const filters = [`township_code='${townshipCode}'`, `pin != '${propertyPin}'`]
         const query = `$where=${encodeURIComponent(filters.join(' AND '))}&$limit=150`
-        parcels = await fetchSocrataData<Record<string, unknown>>(DATASETS.PARCEL_UNIVERSE, query)
+        try {
+          parcels = await fetchSocrataData<Record<string, unknown>>(parcelDataset, query)
+        } catch {
+          parcels = []
+        }
       }
     }
 
     if (parcels.length === 0) {
+      console.log('[comps-equity] No parcels found', { propertyPin, nbhd: nbhd || '(none)', source: 'neighborhood+township' })
       return {
         success: true,
         data: [],
@@ -829,6 +845,7 @@ export async function getComparableEquity(
     }
 
     const nbhdForRecords = nbhd || 'same township'
+    console.log('[comps-equity] Parcels found', { count: parcels.length, nbhd: nbhdForRecords, propertyPin })
 
     const subjectLivingArea = property.livingArea ?? 0
     const lo = subjectLivingArea > 0 ? subjectLivingArea * (1 - livingAreaTolerancePercent / 100) : 0
@@ -854,11 +871,14 @@ export async function getComparableEquity(
         const livingArea = chars?.livingArea ?? null
 
         if (assessedTotal == null || assessedTotal <= 0) return
-        if (livingArea == null || livingArea <= 0) return
-        if (subjectLivingArea > 0 && (livingArea < lo || livingArea > hi)) return
+        // When subject has living area, require comp living area for $/sqft; when subject has none, accept comps with or without
+        if (subjectLivingArea > 0) {
+          if (livingArea == null || livingArea <= 0) return
+          if (livingArea < lo || livingArea > hi) return
+        }
 
         const assessedMarketValue = assessedTotal * 10
-        const assessedMarketValuePerSqft = livingArea > 0 ? assessedMarketValue / livingArea : null
+        const assessedMarketValuePerSqft = livingArea != null && livingArea > 0 ? assessedMarketValue / livingArea : null
 
         results.push({
           pin,
@@ -886,6 +906,7 @@ export async function getComparableEquity(
     })
 
     const limited = results.slice(0, limit)
+    console.log('[comps-equity] Equity results', { total: results.length, returned: limited.length, uniquePins: uniquePins.length })
 
     return {
       success: true,
