@@ -21,7 +21,7 @@ export async function GET(
     const appeal = await prisma.appeal.findFirst({
       where: { id, userId: session.user.id },
       select: {
-        property: { select: { pin: true, address: true } },
+        property: { select: { pin: true, address: true, city: true, state: true } },
         compsUsed: { orderBy: { createdAt: "asc" }, select: { pin: true, address: true } },
       },
     })
