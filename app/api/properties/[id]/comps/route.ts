@@ -109,7 +109,7 @@ export async function GET(
       })
       if (realieResult.success && realieResult.comps.length > 0) {
         console.log("[comps] Using Realie Premium Comparables", { count: realieResult.comps.length, propertyId: id })
-        const comps = realieResult.comps.map((c) => ({
+        const realieSales = realieResult.comps.map((c) => ({
           ...c,
           compType: "SALES" as const,
           inBothSources: true,
@@ -122,7 +122,7 @@ export async function GET(
             : property.currentAssessmentValue != null
               ? parseFloat(String(property.currentAssessmentValue)) * 10
               : null
-        comps.sort((a, b) => {
+        realieSales.sort((a, b) => {
           const priceA = a.salePrice ?? Infinity
           const priceB = b.salePrice ?? Infinity
           if (subjectMarket != null && subjectMarket > 0) {
@@ -132,10 +132,62 @@ export async function GET(
           }
           return priceA - priceB
         })
+
+        // Also fetch equity comps from Cook County (Realie only has sales)
+        const propertyData = propertyDataFromDb(property)
+        const equityResult = await getComparableEquity(propertyData, { limit: 10, livingAreaTolerancePercent: 25 })
+        const salesPins = new Set(realieSales.map((c) => (c.pinRaw ?? c.pin).replace(/\D/g, "")))
+        const equityData =
+          equityResult.success && equityResult.data
+            ? equityResult.data.filter((e) => !salesPins.has(e.pin))
+            : []
+
+        const equityPins = equityData.map((e) => e.pin)
+        const allPins = [...realieSales.map((c) => (c.pinRaw ?? c.pin).replace(/\D/g, "")), ...equityPins]
+        const addressByPin = await enrichAddressesForPins([...new Set(allPins)])
+
+        const equityComps = equityData.map((e) => {
+          const enriched = addressByPin.get(e.pin)
+          const compLat = enriched?.latitude ?? null
+          const compLon = enriched?.longitude ?? null
+          const distanceFromSubject =
+            subjectLat != null && subjectLon != null && compLat != null && compLon != null
+              ? haversineMiles(subjectLat, subjectLon, compLat, compLon)
+              : null
+          return {
+            pin: formatPIN(e.pin),
+            pinRaw: e.pin,
+            compType: "EQUITY" as const,
+            inBothSources: false,
+            address: enriched?.address ?? (e.address || `PIN ${formatPIN(e.pin)}`),
+            city: enriched?.city ?? e.city ?? "",
+            zipCode: enriched?.zipCode ?? e.zipCode ?? "",
+            neighborhood: e.neighborhood,
+            saleDate: null as string | null,
+            salePrice: null as number | null,
+            pricePerSqft: e.assessedMarketValuePerSqft,
+            buildingClass: e.buildingClass,
+            livingArea: e.livingArea,
+            yearBuilt: e.yearBuilt,
+            bedrooms: e.bedrooms,
+            bathrooms: e.bathrooms,
+            dataSource: e.dataSource,
+            distanceFromSubject,
+            assessedMarketValue: e.assessedMarketValue,
+            assessedMarketValuePerSqft: e.assessedMarketValuePerSqft,
+          }
+        })
+
+        const comps = [...realieSales, ...equityComps]
+        const source =
+          equityComps.length > 0
+            ? `Realie Premium Comparables; ${equityResult.source}`
+            : "Realie Premium Comparables"
+
         return NextResponse.json({
           success: true,
           comps,
-          source: "Realie Premium Comparables",
+          source,
         })
       } else if (!realieResult.success) {
         console.log("[comps] Realie Premium skipped", { error: realieResult.error, propertyId: id })

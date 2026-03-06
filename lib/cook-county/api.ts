@@ -777,6 +777,7 @@ export async function getComparableSales(
  * Get comparable equity comps for a property (assessed values, no sale).
  * Rule 15 recommends 5+ equity comps. Uses Parcel Universe + ASSESSED_VALUES + Improvement Chars.
  * Returns properties in same neighborhood with similar living area, sorted by assessed $/sqft (lower = more supportive).
+ * Fallbacks: (1) when property has no neighborhood, fetch from Parcel Universe by PIN; (2) when neighborhood returns 0, try township_code.
  */
 export async function getComparableEquity(
   property: PropertyData,
@@ -788,23 +789,46 @@ export async function getComparableEquity(
   try {
     const { limit = 10, livingAreaTolerancePercent = 25 } = options
     const propertyPin = normalizePIN(property.pin)
-    const nbhd = property.neighborhood?.trim()
+    let nbhd = property.neighborhood?.trim()
+
+    // Fallback: when property has no neighborhood in DB, fetch from Parcel Universe by subject PIN
     if (!nbhd) {
+      const parcel = await getParcelUniverseByPIN(propertyPin)
+      if (parcel) {
+        const p = parcel as unknown as Record<string, unknown>
+        nbhd = (p.nbhd ?? p.nbhd_code) != null ? String(p.nbhd ?? p.nbhd_code).trim() : ''
+      }
+    }
+
+    // Try neighborhood first
+    let parcels: Array<Record<string, unknown>> = []
+    if (nbhd) {
+      const filters = [`(nbhd='${nbhd}' OR nbhd_code='${nbhd}')`, `pin != '${propertyPin}'`]
+      const query = `$where=${encodeURIComponent(filters.join(' AND '))}&$limit=150`
+      parcels = await fetchSocrataData<Record<string, unknown>>(DATASETS.PARCEL_UNIVERSE, query)
+    }
+
+    // Fallback: when neighborhood returns 0, try township_code from subject parcel
+    if (parcels.length === 0) {
+      const subjectParcel = await getParcelUniverseByPIN(propertyPin)
+      const townshipCode = subjectParcel ? String((subjectParcel as unknown as Record<string, unknown>).township_code ?? '').trim() : ''
+      if (townshipCode) {
+        const filters = [`township_code='${townshipCode}'`, `pin != '${propertyPin}'`]
+        const query = `$where=${encodeURIComponent(filters.join(' AND '))}&$limit=150`
+        parcels = await fetchSocrataData<Record<string, unknown>>(DATASETS.PARCEL_UNIVERSE, query)
+      }
+    }
+
+    if (parcels.length === 0) {
       return {
         success: true,
         data: [],
         error: null,
-        source: 'Cook County Open Data - Equity (no neighborhood)',
+        source: 'Cook County Open Data - Equity (no neighborhood/township)',
       }
     }
 
-    // Parcel Universe uses nbhd or nbhd_code
-    const filters = [`(nbhd='${nbhd}' OR nbhd_code='${nbhd}')`, `pin != '${propertyPin}'`]
-    const query = `$where=${encodeURIComponent(filters.join(' AND '))}&$limit=150`
-    const parcels = await fetchSocrataData<Record<string, unknown>>(
-      DATASETS.PARCEL_UNIVERSE,
-      query
-    )
+    const nbhdForRecords = nbhd || 'same township'
 
     const subjectLivingArea = property.livingArea ?? 0
     const lo = subjectLivingArea > 0 ? subjectLivingArea * (1 - livingAreaTolerancePercent / 100) : 0
@@ -841,7 +865,7 @@ export async function getComparableEquity(
           address: '',
           city: '',
           zipCode: '',
-          neighborhood: nbhd,
+          neighborhood: nbhdForRecords,
           assessedMarketValue,
           assessedMarketValuePerSqft,
           buildingClass: null,
