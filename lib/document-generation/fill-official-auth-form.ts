@@ -2,7 +2,7 @@
  * Fill the official Cook County Attorney/Representative Authorization form
  * with our captured data. Produces a single document for our records and Cook County.
  *
- * Form source: https://prodassets.cookcountyassessoril.gov/s3fs-public/form_documents/attorneyrepresentativeauthorizationform.pdf
+ * Form source: https://prodassets.cookcountyassessoril.gov/s3fs-public/form_documents/attorneyrepresentativeauthorizationform.pdf?VersionId=Lf5aaF.oc6aPygRAoAqn2JS5B56_MAxa
  * Field names from pdf-lib getForm().getFields()
  * Bundled copy at public/forms/cook-county-auth-form.pdf used when fetch fails (e.g. Vercel serverless)
  */
@@ -10,8 +10,9 @@ import { PDFDocument } from "pdf-lib"
 import { readFileSync } from "fs"
 import { join } from "path"
 
+// Official Cook County Attorney/Representative Authorization form (specific version)
 const OFFICIAL_FORM_URL =
-  "https://prodassets.cookcountyassessoril.gov/s3fs-public/form_documents/attorneyrepresentativeauthorizationform.pdf"
+  "https://prodassets.cookcountyassessoril.gov/s3fs-public/form_documents/attorneyrepresentativeauthorizationform.pdf?VersionId=Lf5aaF.oc6aPygRAoAqn2JS5B56_MAxa"
 
 export interface FillOfficialAuthFormData {
   propertyAddress: string

@@ -74,7 +74,8 @@ interface UserInfo {
   email: string
 }
 
-const OFFICIAL_FORM_URL = "https://www.cookcountyassessor.com/form-document/attorney-representative-authorizationresidential"
+// Direct PDF link to official Cook County Attorney/Representative Authorization form
+const OFFICIAL_FORM_URL = "https://prodassets.cookcountyassessoril.gov/s3fs-public/form_documents/attorneyrepresentativeauthorizationform.pdf?VersionId=Lf5aaF.oc6aPygRAoAqn2JS5B56_MAxa"
 
 interface FilingAuthorizationFormProps {
   appealId: string

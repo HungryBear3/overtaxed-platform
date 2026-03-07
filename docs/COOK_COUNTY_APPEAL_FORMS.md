@@ -27,7 +27,7 @@
 
 ## Attorney/Representative Authorization (Staff-Assisted Filing)
 
-When filing **on behalf of** a property owner, CCAO requires an Attorney/Representative Authorization form. Cook County provides their **own official form** at [cookcountyassessor.com/form-document/attorney-representative-authorizationresidential](https://www.cookcountyassessor.com/form-document/attorney-representative-authorizationresidential). We encourage users to download, sign, and upload the official form. Electronic signatures are accepted; notarization is not required. See **`docs/AUTHORIZATION_FORM_RESEARCH.md`** for full research.
+When filing **on behalf of** a property owner, CCAO requires an Attorney/Representative Authorization form. Cook County provides their **own official form**. We use the direct PDF: [attorneyrepresentativeauthorizationform.pdf (VersionId)](https://prodassets.cookcountyassessoril.gov/s3fs-public/form_documents/attorneyrepresentativeauthorizationform.pdf?VersionId=Lf5aaF.oc6aPygRAoAqn2JS5B56_MAxa). We pre-fill it with user data and they e-sign; or they can download, sign, and upload. Electronic signatures are accepted; notarization is not required. See **`docs/AUTHORIZATION_FORM_RESEARCH.md`** for full research.
 
 ## References
 
