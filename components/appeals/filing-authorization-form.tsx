@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { safeResJson } from "@/lib/utils"
 
 function UploadOfficialForm({
   appealId,
@@ -29,7 +30,7 @@ function UploadOfficialForm({
         method: "POST",
         body: formData,
       })
-      const data = await res.json()
+      const data = await safeResJson<{ error?: string }>(res)
       if (!res.ok) throw new Error(data.error || "Upload failed")
       onUploaded?.()
       if (inputRef.current) inputRef.current.value = ""
@@ -170,7 +171,7 @@ export function FilingAuthorizationForm({
           ownerZip: ownerZip.trim(),
         }),
       })
-      const data = await res.json()
+      const data = await safeResJson<{ error?: string }>(res)
       if (!res.ok) throw new Error(data.error || "Failed to save")
       onSaved?.()
     } catch (err) {

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { safeResJson } from "@/lib/utils"
 
 interface CompItem {
   pin: string
@@ -71,7 +72,7 @@ export function AddCompsDialog({
     try {
       const url = `/api/properties/${propertyId}/comps?limit=20&debug=1${unitNumber ? `&unitNumber=${encodeURIComponent(unitNumber)}` : ""}`
       const r = await fetch(url)
-      const d = await r.json()
+      const d = await safeResJson<{ needsUnitConfirmation?: boolean; success?: boolean; error?: string; comps?: CompItem[]; source?: string; _debug?: unknown }>(r)
       if (d.needsUnitConfirmation) {
         setNeedsUnitConfirmation(true)
         setComps([])
@@ -144,7 +145,7 @@ export function AddCompsDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       })
-      const data = await res.json()
+      const data = await safeResJson<{ error?: string }>(res)
       if (!res.ok) throw new Error(data.error || "Failed to add comp")
       setManualComp({
         pin: "",
@@ -202,7 +203,7 @@ export function AddCompsDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       })
-      const data = await res.json()
+      const data = await safeResJson<{ error?: string }>(res)
       if (!res.ok) throw new Error(data.error || "Failed to add comps")
       onAdded()
       onClose()
