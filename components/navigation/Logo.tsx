@@ -8,8 +8,8 @@ type LogoProps = {
 }
 
 const sizes = {
-  sm: { width: 100, height: 25 },
-  md: { width: 140, height: 35 },
+  sm: { width: 120, height: 24 },
+  md: { width: 170, height: 34 },
 }
 
 export function Logo({ href = "/", className = "h-8 w-auto", size = "md" }: LogoProps) {

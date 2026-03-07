@@ -50,11 +50,10 @@ export async function GET(
       )
     }
 
-    const salesCount = appeal.compsUsed.filter((c) => c.compType === "SALES").length
-    const equityCount = appeal.compsUsed.filter((c) => c.compType === "EQUITY").length
+    const compCount = appeal.compsUsed.length
     const warnComps =
-      salesCount < 3 || equityCount < 5
-        ? `Rule 15 recommends at least 3 sales comps and 5 equity comps (you have ${salesCount} sales, ${equityCount} equity).`
+      compCount < 3
+        ? `We recommend at least 3 comparable sales (you have ${compCount}).`
         : null
 
     const safeFormatPIN = (pin: string | null | undefined) => formatPIN(String(pin ?? ""))

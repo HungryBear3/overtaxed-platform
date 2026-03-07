@@ -23,7 +23,7 @@ const faqs = [
   },
   {
     q: "What's the difference between DIY (comps-only) and full automation?",
-    a: "DIY ($69/property): We generate a comp packet (Rule 15–compliant comparables and evidence) so you can file the appeal yourself at the Cook County Assessor portal for free. Full automation (Starter, Growth, Portfolio): We monitor your assessments, alert you to increases, prepare appeals and comps, and guide you through filing. PIN monitoring and deadline notifications are included in full automation; they are not included in DIY.",
+    a: "DIY ($69/property): We generate a comp packet (comparable sales and evidence) so you can file the appeal yourself at the Cook County Assessor portal for free. Full automation (Starter, Growth, Portfolio): We monitor your assessments, alert you to increases, prepare appeals and comps, and guide you through filing. PIN monitoring and deadline notifications are included in full automation; they are not included in DIY.",
   },
   {
     q: "Do you file the appeal for me?",
@@ -31,7 +31,7 @@ const faqs = [
   },
   {
     q: "How many comparable properties (comps) do I need?",
-    a: "For a strong appeal, Cook County typically expects at least 3 sales comps (recent sales of similar properties) and 5 equity comps (similar properties with lower assessments). Our comp packet meets Rule 15 requirements. We pull data from Cook County Open Data and optionally enrich with Realie (when you have a paid plan) for better coverage.",
+    a: "For a strong appeal, Cook County typically expects at least 3 comparable sales (recent sales of similar properties). Our comp packet includes comparable sales from Cook County Open Data and optionally enriches with Realie (when you have a paid plan) for better coverage.",
   },
   {
     q: "What if my appeal is denied?",

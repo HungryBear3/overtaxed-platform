@@ -612,7 +612,7 @@ export default function NewAppealPage() {
                     </li>
                     <li className="flex gap-2">
                       <span className="bg-blue-200 text-blue-800 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">2</span>
-                      <span><strong>Forms:</strong> We generate Rule 15-compliant appeal forms with evidence packet</span>
+                      <span><strong>Forms:</strong> We generate appeal forms with evidence packet</span>
                     </li>
                     <li className="flex gap-2">
                       <span className="bg-blue-200 text-blue-800 rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>

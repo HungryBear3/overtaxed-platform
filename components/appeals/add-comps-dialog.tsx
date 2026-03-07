@@ -244,7 +244,7 @@ export function AddCompsDialog({
             )}
             <p className="font-semibold mb-2">How many comps to add?</p>
             <p className="text-amber-800 mb-2">
-              Rule 15 recommends <strong>at least 3 sales comps</strong> and <strong>5 equity comps</strong>. Sales = recent sales; Equity = assessed values (no sale). Pick comps with lower $/sq ft to support a lower assessment.
+              Select <strong>at least 3 comparable sales</strong>. Pick comps with lower $/sq ft to support a lower assessment.
             </p>
             <p className="text-amber-800 mb-2">
               <strong>Best comps:</strong> Recent sales (within 2 years), similar size (±25% living area), same neighborhood. Pick the ones with <strong>lower price per sqft</strong> than your property — they support a lower assessment.
@@ -322,7 +322,7 @@ export function AddCompsDialog({
                 <ul className="mt-2 list-disc list-inside space-y-1 text-sm text-gray-600">
                   <li>Use <a href="https://www.redfin.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Redfin</a> or <a href="https://www.zillow.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Zillow</a> sold listings for address, sale price, sale date, sq ft, beds, baths.</li>
                   <li>To get the Cook County PIN: search by address at{" "}
-                    <a href="https://www.cookcountyassessoril.gov/address-search" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">cookcountyassessor.com/address-search</a> — PIN is required for Rule 15.</li>
+                    <a href="https://www.cookcountyassessoril.gov/address-search" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">cookcountyassessor.com/address-search</a> — PIN is required for the county form.</li>
                   <li>If Zillow or Redfin show a PIN, confirm it at the Assessor site before entering.</li>
                 </ul>
               </details>
@@ -464,14 +464,10 @@ export function AddCompsDialog({
               <div className="flex flex-wrap gap-2 mb-3">
                 <button
                   type="button"
-                  onClick={() => {
-                    const sales = comps.filter((c) => (c.compType ?? "SALES") === "SALES").slice(0, 3)
-                    const equity = comps.filter((c) => c.compType === "EQUITY").slice(0, 5)
-                    setSelected(new Set([...sales, ...equity].map((c) => c.pinRaw)))
-                  }}
+                  onClick={() => setSelected(new Set(comps.slice(0, 5).map((c) => c.pinRaw)))}
                   className="text-sm px-3 py-1.5 bg-emerald-100 text-emerald-800 rounded-lg hover:bg-emerald-200 font-medium"
                 >
-                  Rule 15 mix (3 sales + 5 equity)
+                  Select best 3+ comps
                 </button>
                 <button
                   type="button"
@@ -533,7 +529,7 @@ export function AddCompsDialog({
                     <ul className="mt-2 list-disc list-inside space-y-1 text-sm text-gray-600">
                       <li>Use <a href="https://www.redfin.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Redfin</a> or <a href="https://www.zillow.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Zillow</a> sold listings for address, sale price, sale date, sq ft, beds, baths.</li>
                       <li>To get the Cook County PIN: search by address at{" "}
-                        <a href="https://www.cookcountyassessoril.gov/address-search" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">cookcountyassessor.com/address-search</a> — PIN is required for Rule 15.</li>
+                        <a href="https://www.cookcountyassessoril.gov/address-search" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">cookcountyassessor.com/address-search</a> — PIN is required for the county form.</li>
                       <li>If Zillow or Redfin show a PIN, confirm it at the Assessor site before entering.</li>
                     </ul>
                   </details>

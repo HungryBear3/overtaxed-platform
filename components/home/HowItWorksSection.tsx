@@ -28,7 +28,7 @@ export function HowItWorksSection() {
     {
       title: "We Build Your Case",
       description:
-        "Generate Rule 15–compliant comparables and create a professional evidence packet.",
+        "Generate comparable sales and create a professional evidence packet.",
       icon: (
         <svg
           className="w-8 h-8 text-blue-600"

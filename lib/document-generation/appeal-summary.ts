@@ -266,12 +266,10 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
       "The following comparable sales and uniformity analysis support a fair market value consistent with similar properties in the same neighborhood and building class."
     )
   }
-  // Rule 15 compliance and no cherry-picking
   if (data.comps.length > 0) {
-    const salesN = salesComps.length
-    const equityN = equityComps.length
+    const n = data.comps.length
     drawText(
-      `This submission includes ${salesN > 0 ? salesN + " sales comp(s)" : ""}${salesN > 0 && equityN > 0 ? " and " : ""}${equityN > 0 ? equityN + " equity comp(s)" : ""} from the same neighborhood and building class, consistent with Rule 15. All comparables are identified by Cook County PIN for verification. Comparables were selected by proximity, same neighborhood and class, and similar living area; no cherry-picking.`
+      `This submission includes ${n} comparable sale(s) from the same neighborhood and building class. All comparables are identified by Cook County PIN for verification. Comparables were selected by proximity, same neighborhood and class, and similar living area; no cherry-picking.`
     )
   }
   drawLine()
@@ -638,11 +636,11 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     drawLine()
   } else if (data.comps.length === 0) {
     drawText("Comparable Properties", { bold: true, fontSize: 13 })
-    drawText("No comparable properties added yet. Add sales and equity comps to strengthen your appeal.")
+    drawText("No comparable properties added yet. Add comparable sales to strengthen your appeal.")
     drawLine()
   }
 
-  // —— Subject vs comp $/sq ft (Rule 15 narrative) ——
+  // —— Subject vs comp $/sq ft ——
   // For sales: compare subject assessed $/sqft to comp market $/sqft (at 10% ratio, subject market = assessed * 10)
   const salesPricePerSqft = salesComps
     .map((c) => c.pricePerSqft)
@@ -675,9 +673,8 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     }
   }
 
-  // —— Photo / Rule 15 note ——
   drawText(
-    "Photo attachments for the subject property and comparables may be submitted separately to the Assessor per Rule 15 where applicable."
+    "Photo attachments for the subject property and comparables may be submitted separately to the Assessor where applicable."
   )
   drawLine()
 

@@ -378,7 +378,7 @@ export default function PricingPage() {
                 <CardTitle>DIY reports only</CardTitle>
                 <span className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded">Comps only</span>
               </div>
-              <CardDescription>Rule 15–compliant comps + evidence packet. You file the appeal yourself.</CardDescription>
+              <CardDescription>Comparable sales + evidence packet. You file the appeal yourself.</CardDescription>
               <div className="mt-4">
                 <span className="text-3xl font-bold text-gray-900">$69</span>
                 <span className="text-gray-500 ml-1">one-time, per property</span>

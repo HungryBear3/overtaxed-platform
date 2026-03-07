@@ -107,10 +107,8 @@ export default function PropertyCompsPage() {
     setSelected(new Set(comps.slice(0, n).map((c) => c.pinRaw ?? c.pin)))
   }
 
-  function selectRule15Mix() {
-    const sales = comps.filter((c) => (c.compType ?? "SALES") === "SALES").slice(0, 3)
-    const equity = comps.filter((c) => c.compType === "EQUITY").slice(0, 5)
-    setSelected(new Set([...sales, ...equity].map((c) => c.pinRaw ?? c.pin)))
+  function selectBestComps() {
+    setSelected(new Set(comps.slice(0, 5).map((c) => c.pinRaw ?? c.pin)))
   }
 
   if (loading) {
@@ -162,7 +160,7 @@ export default function PropertyCompsPage() {
         <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 p-4">
           <p className="font-medium text-blue-900 mb-1">How many comps do I need?</p>
           <p className="text-sm text-blue-800">
-            Rule 15 recommends <strong>at least 3 sales comps</strong> and <strong>5 equity comps</strong>. Sales = recent sales; Equity = assessed values (no sale). Lower $/sq ft comps support a lower requested value.
+            Select <strong>at least 3 comparable sales</strong>. Lower $/sq ft comps support a lower requested value.
           </p>
         </div>
 
@@ -193,7 +191,7 @@ export default function PropertyCompsPage() {
                   <div className="text-sm text-blue-800">
                     <p className="font-medium mb-1">Found {comps.length} comparable properties</p>
                     <p className="text-blue-700 mb-2">
-                      Pick <strong>3 sales + 5 equity</strong> for Rule 15. Lower $/sq ft comps strengthen your case.
+                      Pick <strong>at least 3 comps</strong>. Lower $/sq ft comps strengthen your case.
                     </p>
                     <p className="text-blue-700">
                       {selected.size} selected — {selected.size >= 3 ? "✓ ready to add" : "select at least 3"}
@@ -203,10 +201,10 @@ export default function PropertyCompsPage() {
                 <div className="flex gap-2 flex-shrink-0 flex-wrap">
                   <button
                     type="button"
-                    onClick={selectRule15Mix}
+                    onClick={selectBestComps}
                     className="text-sm px-3 py-1.5 bg-emerald-100 text-emerald-800 rounded-lg hover:bg-emerald-200 font-medium"
                   >
-                    Rule 15 mix (3 sales + 5 equity)
+                    Select best 3+ comps
                   </button>
                   <button
                     type="button"
@@ -241,6 +239,9 @@ export default function PropertyCompsPage() {
             </div>
 
             <div className="bg-white rounded-lg shadow">
+              {(() => {
+                const hasEquity = comps.some((c) => c.compType === "EQUITY")
+                return (
               <div className="overflow-x-auto w-full min-w-0">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
@@ -248,9 +249,11 @@ export default function PropertyCompsPage() {
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10">
                         Select
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Type
-                      </th>
+                      {hasEquity && (
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Type
+                        </th>
+                      )}
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Address
                       </th>
@@ -275,9 +278,6 @@ export default function PropertyCompsPage() {
                       <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap min-w-[5rem]">
                         $/sq ft
                       </th>
-                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap min-w-[5rem]">
-                        Assessment
-                      </th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
@@ -298,17 +298,19 @@ export default function PropertyCompsPage() {
                             className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                           />
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span
-                            className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${
-                              comp.compType === "EQUITY"
-                                ? "bg-emerald-100 text-emerald-800"
-                                : "bg-blue-100 text-blue-800"
-                            }`}
-                          >
-                            {comp.compType === "EQUITY" ? "Equity" : "Sales"}
-                          </span>
-                        </td>
+                        {hasEquity && (
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span
+                              className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${
+                                comp.compType === "EQUITY"
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : "bg-blue-100 text-blue-800"
+                              }`}
+                            >
+                              {comp.compType === "EQUITY" ? "Equity" : "Sales"}
+                            </span>
+                          </td>
+                        )}
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-gray-900">{comp.address}</div>
                           <div className="text-xs text-gray-500">{comp.city}, {comp.state}</div>
@@ -338,21 +340,20 @@ export default function PropertyCompsPage() {
                             ? `$${Math.round((comp.pricePerSqft ?? comp.assessedMarketValuePerSqft)!).toLocaleString()}/sq ft`
                             : "—"}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right min-w-[5rem]">
-                          {formatCurrency(comp.assessedMarketValue ?? comp.currentAssessmentValue ?? null)}
-                        </td>
                       </tr>
                     )})}
                   </tbody>
                 </table>
               </div>
+                )
+              })()}
             </div>
 
             <div className="mt-6 space-y-3">
               <p className="text-sm text-gray-600">
                 {selected.size >= 3
                   ? `${selected.size} comps selected. When you start an appeal below, only your selected comps will be added. Next: create the appeal, set your requested value, then download your summary and forms.`
-                  : `Select at least 3 comps above (Rule 15 minimum). Then start your appeal with only the comps you choose.`}
+                  : `Select at least 3 comps above. Then start your appeal with only the comps you choose.`}
               </p>
               <div className="flex gap-3">
                 <Link

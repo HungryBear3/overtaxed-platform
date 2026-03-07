@@ -60,7 +60,7 @@ export default function HomePage() {
               without the hassle.
             </p>
             <p className="text-sm text-gray-500 mb-8">
-              Rule 15–compliant. No lawyer required.
+              No lawyer required.
             </p>
             <div className="flex flex-wrap gap-4">
               <Link
@@ -216,7 +216,7 @@ export default function HomePage() {
                       clipRule="evenodd"
                     />
                   </svg>
-                  Rule 15-compliant comparable analysis
+                  Comparable sales analysis
                 </li>
                 <li className="flex items-center text-gray-600 text-sm">
                   <svg

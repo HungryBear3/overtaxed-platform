@@ -738,7 +738,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
               <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900">
                 <p className="font-medium mb-1">How to choose comps</p>
                 <p>
-                  Add <strong>5–8 comparable sales</strong> that support a lower valuation. Rule 15 requires 3+ for sales analysis. Best comps: <strong>similar size</strong> (±25% living area), <strong>recent sale</strong> (within 2 years), same neighborhood, and <strong>lower price per sqft</strong> than your property — these strengthen your case.
+                  Add <strong>at least 3 comparable sales</strong> that support a lower valuation. Best comps: <strong>similar size</strong> (±25% living area), <strong>recent sale</strong> (within 2 years), same neighborhood, and <strong>lower price per sqft</strong> than your property — these strengthen your case.
                 </p>
               </div>
               {showAddComps && (
@@ -902,7 +902,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                 </p>
                 <ol className="space-y-4 text-sm text-gray-700 list-decimal list-inside">
                   <li>
-                    <strong>Download your appeal summary PDF</strong> — Click the Download PDF button above. This packet includes your property details, comparable sales (comps), requested value, and Rule 15–compliant evidence. Print or save it.
+                    <strong>Download your appeal summary PDF</strong> — Click the Download PDF button above. This packet includes your property details, comparable sales (comps), and requested value. Print or save it.
                   </li>
                   <li>
                     <strong>Check your township&apos;s filing window</strong> — Appeals are only accepted during specific periods by township. Confirm your deadline at{" "}

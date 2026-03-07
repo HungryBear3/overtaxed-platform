@@ -6,8 +6,7 @@ export function StatsBar() {
           Save $500–$1,500 Per Year
         </p>
         <p className="text-blue-100 text-lg">
-          Cook County homeowners. Data-driven appeals. Rule 15–compliant. No lawyer
-          required.
+          Cook County homeowners. Data-driven appeals. No lawyer required.
         </p>
       </div>
     </section>
