@@ -306,9 +306,9 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   if (data.comps.length > 0) {
     drawText("Subject vs Comparables", { bold: true, fontSize: 13 })
     // Column X positions: Property/PIN needs room for formatted PIN (e.g. 14-08-211-050-1001)
-    const colXs = [margin, 158, 193, 228, 303, 383, 458]
+    const colXs = [margin, 140, 165, 193, 228, 303, 383, 458]
     drawTableRow(
-      ["Property", "Sq ft", "Yr", "B/B", "Sale/Val", "$/sqft", "Dist"],
+      ["Property", "Class", "Sq ft", "Yr", "B/B", "Sale/Val", "$/sqft", "Dist"],
       colXs,
       true
     )
@@ -323,9 +323,11 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
         ? `${data.property.yearBuiltCounty} / ${data.property.yearBuiltRealie}`
         : (data.property.yearBuilt != null ? String(data.property.yearBuilt) : "—")
     const subjectBbStr = [data.property.bedrooms ?? "—", subjectBath != null ? subjectBath.toFixed(1) : "—"].join("/")
+    const subjectClassCell = data.property.buildingClass ?? "—"
     drawTableRow(
       [
         "Subject",
+        subjectClassCell,
         subjectSqftCell,
         subjectYrCell,
         subjectBbStr,
@@ -361,9 +363,11 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
           ? `${c.bedrooms ?? "—"}/${baths} / ${c.bedroomsRealie ?? "—"}/${bbRe}`
           : `${c.bedrooms ?? "—"}/${baths}`
       const pinLabel = (c as { dataSource?: string }).dataSource === "manual" ? "Manual" : c.pin
+      const classCell = c.buildingClass ?? "—"
       drawTableRow(
         [
           (c as { inBothSources?: boolean }).inBothSources ? `${pinLabel} *` : pinLabel,
+          classCell,
           sqftCell,
           yrCell,
           bbCell,

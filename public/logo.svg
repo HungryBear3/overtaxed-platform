@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 40" width="200" height="40">
   <text x="0" y="28" font-family="system-ui, -apple-system, sans-serif" font-size="24" font-weight="700">
-    <tspan fill="#1e3a8a">Over</tspan><tspan fill="#2563eb">Taxed</tspan><tspan fill="#1e3a8a">IL</tspan>
+    <tspan fill="#1e3a8a">Over</tspan><tspan fill="#2563eb">Taxed</tspan><tspan fill="#1e3a8a"> IL</tspan>
   </text>
 </svg>
