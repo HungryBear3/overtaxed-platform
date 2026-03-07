@@ -4,8 +4,11 @@
  *
  * Form source: https://prodassets.cookcountyassessoril.gov/s3fs-public/form_documents/attorneyrepresentativeauthorizationform.pdf
  * Field names from pdf-lib getForm().getFields()
+ * Bundled copy at public/forms/cook-county-auth-form.pdf used when fetch fails (e.g. Vercel serverless)
  */
 import { PDFDocument } from "pdf-lib"
+import { readFileSync } from "fs"
+import { join } from "path"
 
 const OFFICIAL_FORM_URL =
   "https://prodassets.cookcountyassessoril.gov/s3fs-public/form_documents/attorneyrepresentativeauthorizationform.pdf"
@@ -44,19 +47,36 @@ function fmtDate(d: Date): string {
  * Fetch the official Cook County PDF and fill it with our data.
  * Returns the filled PDF bytes, or null if fetch/fill fails.
  */
+async function loadOfficialFormPdf(): Promise<Uint8Array | null> {
+  // Try fetch first (may fail in serverless due to network/403)
+  try {
+    const res = await fetch(OFFICIAL_FORM_URL, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; OverTaxed-IL/1.0)" },
+      cache: "no-store",
+    })
+    if (res.ok) {
+      return new Uint8Array(await res.arrayBuffer())
+    }
+  } catch (err) {
+    console.warn("[fill-official-auth-form] Fetch failed, using bundled copy", err)
+  }
+  // Fallback: bundled copy (reliable in Vercel/serverless)
+  try {
+    const path = join(process.cwd(), "public", "forms", "cook-county-auth-form.pdf")
+    const buf = readFileSync(path)
+    return new Uint8Array(buf)
+  } catch (err) {
+    console.error("[fill-official-auth-form] Bundled PDF not found", err)
+    return null
+  }
+}
+
 export async function fillOfficialCookCountyAuthForm(
   data: FillOfficialAuthFormData
 ): Promise<Uint8Array | null> {
   try {
-    const res = await fetch(OFFICIAL_FORM_URL, {
-      headers: { "User-Agent": "OverTaxed-IL/1.0 (Property Tax Appeals)" },
-      next: { revalidate: 86400 }, // Cache 24h
-    })
-    if (!res.ok) {
-      console.error("[fill-official-auth-form] Fetch failed", res.status)
-      return null
-    }
-    const pdfBytes = new Uint8Array(await res.arrayBuffer())
+    const pdfBytes = await loadOfficialFormPdf()
+    if (!pdfBytes || pdfBytes.length === 0) return null
     const doc = await PDFDocument.load(pdfBytes)
     const form = doc.getForm()
 

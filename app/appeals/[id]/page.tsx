@@ -981,7 +981,10 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Actions</h2>
               <div className="space-y-3">
-                <PdfDownloadButton appealId={appeal.id} />
+                <PdfDownloadButton
+                  appealId={appeal.id}
+                  hasRequestedValue={appeal.requestedAssessmentValue != null && Number(appeal.requestedAssessmentValue) > 0}
+                />
                 {appeal.status === "DRAFT" && (
                   <>
                     <button

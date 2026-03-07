@@ -126,7 +126,7 @@ export async function POST(
           data: { uploadedPdfUrl: blob.url },
         })
       } catch (err) {
-        console.error("[authorization] Failed to upload filled official form", err)
+        console.error("[authorization] Failed to upload filled official form (ensure BLOB_READ_WRITE_TOKEN is set)", err)
         // Continue - user can still upload manually; download will return our generated PDF
       }
     }

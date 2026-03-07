@@ -2,10 +2,18 @@
 
 import { useState } from "react"
 
-export function PdfDownloadButton({ appealId }: { appealId: string }) {
+export function PdfDownloadButton({
+  appealId,
+  hasRequestedValue = true,
+}: {
+  appealId: string
+  hasRequestedValue?: boolean
+}) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [warning, setWarning] = useState("")
+
+  const disabled = !hasRequestedValue
 
   // Open PDF in new tab via direct URL (inline disposition) — bypasses AV that blocks blob/download
   const viewInNewTabUrl = `/api/appeals/${appealId}/download-summary?view=1`
@@ -47,26 +55,44 @@ export function PdfDownloadButton({ appealId }: { appealId: string }) {
 
   return (
     <div className="space-y-2">
-      <p className="text-xs text-gray-500">
-        If your browser or antivirus blocks the download, use &quot;Open in new tab&quot; to view the PDF, then print or save from there.
-      </p>
+      {disabled ? (
+        <p className="text-sm text-amber-700 font-medium">
+          Enter your requested assessment value above before downloading the report.
+        </p>
+      ) : (
+        <p className="text-xs text-gray-500">
+          If your browser or antivirus blocks the download, use &quot;Open in new tab&quot; to view the PDF, then print or save from there.
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
-        <a
-          href={viewInNewTabUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex flex-1 min-w-[140px] items-center justify-center gap-2 rounded-lg border border-blue-600 bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
-        >
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2V8a2 2 0 00-2-2h-4M14 4h6m0 0v6m0-6L10 14" />
-          </svg>
-          Open in new tab
-        </a>
+        {disabled ? (
+          <span
+            className="inline-flex flex-1 min-w-[140px] items-center justify-center gap-2 rounded-lg border border-gray-300 bg-gray-100 px-4 py-2 font-medium text-gray-400 cursor-not-allowed"
+            title="Enter requested assessment value first"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2V8a2 2 0 00-2-2h-4M14 4h6m0 0v6m0-6L10 14" />
+            </svg>
+            Open in new tab
+          </span>
+        ) : (
+          <a
+            href={viewInNewTabUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex flex-1 min-w-[140px] items-center justify-center gap-2 rounded-lg border border-blue-600 bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2V8a2 2 0 00-2-2h-4M14 4h6m0 0v6m0-6L10 14" />
+            </svg>
+            Open in new tab
+          </a>
+        )}
         <button
           type="button"
           onClick={() => fetchPdf("view")}
-          disabled={loading}
-          className="inline-flex flex-1 min-w-[140px] items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          disabled={loading || disabled}
+          className="inline-flex flex-1 min-w-[140px] items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {loading ? (
             <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
@@ -81,8 +107,8 @@ export function PdfDownloadButton({ appealId }: { appealId: string }) {
         <button
           type="button"
           onClick={() => fetchPdf("download")}
-          disabled={loading}
-          className="inline-flex flex-1 min-w-[140px] items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          disabled={loading || disabled}
+          className="inline-flex flex-1 min-w-[140px] items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
