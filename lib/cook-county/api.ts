@@ -196,9 +196,17 @@ async function getImprovementCharsFromCombinedByPIN(pin: PIN): Promise<Record<st
   const normalizedPIN = normalizePIN(pin)
   if (normalizedPIN.length !== 14) return null
   const dashedPIN = formatPIN(normalizedPIN)
-  for (const pinVal of [normalizedPIN, dashedPIN]) {
+  const pin10 = normalizedPIN.slice(4)
+  const pin10Dashed = pin10.length >= 10 ? `${pin10.slice(0, 2)}-${pin10.slice(2, 5)}-${pin10.slice(5, 8)}-${pin10.slice(8)}` : ''
+  for (const { col, val } of [
+    { col: 'pin', val: normalizedPIN },
+    { col: 'pin', val: dashedPIN },
+    { col: 'pin10', val: pin10 },
+    { col: 'pin10', val: pin10Dashed },
+  ]) {
+    if (!val) continue
     try {
-      const query = `$where=${encodeURIComponent(`pin='${pinVal}'`)}&$limit=1&$order=${encodeURIComponent('year DESC')}`
+      const query = `$where=${encodeURIComponent(`${col}='${val}'`)}&$limit=1&$order=${encodeURIComponent('year DESC')}`
       const results = await fetchSocrataData<Record<string, unknown>>(
         DATASETS.IMPROVEMENT_CHARS_COMBINED,
         query
@@ -214,7 +222,7 @@ async function getImprovementCharsFromCombinedByPIN(pin: PIN): Promise<Record<st
 /**
  * Look up assessed values by PIN
  * Returns mailed, certified, and board values for land, building, and total
- * Tries both 14-digit and dashed PIN formats (Cook County datasets may use either)
+ * Tries pin (14-digit, dashed) and pin10 columns (Cook County datasets may use either)
  */
 async function getAssessedValuesByPIN(
   pin: PIN
@@ -222,9 +230,17 @@ async function getAssessedValuesByPIN(
   const normalizedPIN = normalizePIN(pin)
   if (normalizedPIN.length !== 14) return null
   const dashedPIN = formatPIN(normalizedPIN)
-  for (const pinVal of [normalizedPIN, dashedPIN]) {
+  const pin10 = normalizedPIN.slice(4) // last 10 digits
+  const pin10Dashed = pin10.length >= 10 ? `${pin10.slice(0, 2)}-${pin10.slice(2, 5)}-${pin10.slice(5, 8)}-${pin10.slice(8)}` : ''
+  for (const { col, val } of [
+    { col: 'pin', val: normalizedPIN },
+    { col: 'pin', val: dashedPIN },
+    { col: 'pin10', val: pin10 },
+    { col: 'pin10', val: pin10Dashed },
+  ]) {
+    if (!val) continue
     try {
-      const query = `$where=${encodeURIComponent(`pin='${pinVal}'`)}&$limit=1&$order=${encodeURIComponent('year DESC')}`
+      const query = `$where=${encodeURIComponent(`${col}='${val}'`)}&$limit=1&$order=${encodeURIComponent('year DESC')}`
       const results = await fetchSocrataData<Record<string, unknown>>(
         DATASETS.ASSESSED_VALUES,
         query
@@ -804,6 +820,8 @@ export type EquityDebugInfo = {
   resultsBeforeLimit: number
   subjectLivingArea: number
   townshipFallbackUsed: boolean
+  /** First 3 sample PINs: raw from parcel, normalized, assessed found, chars found */
+  sampleLookups?: Array<{ pinRaw: unknown; pinNorm: string; assessed: boolean; chars: boolean; assessedTotal: number | null }>
 }
 
 export async function getComparableEquity(
@@ -926,6 +944,28 @@ export async function getComparableEquity(
     const uniquePins = [...new Set(parcels.map((p) => toPin(p.pin)))].filter(Boolean).filter((p) => p !== propertyPin)
     const parcelByPin = new Map(parcels.map((p) => [toPin(p.pin), p]))
 
+    const sampleLookups: EquityDebugInfo['sampleLookups'] = wantDebug
+      ? await Promise.all(
+          uniquePins.slice(0, 3).map(async (pinNorm) => {
+            const parcel = parcelByPin.get(pinNorm)
+            const pinRaw = parcel ? (parcel as Record<string, unknown>).pin : null
+            const [av, chars] = await Promise.all([
+              getAssessedValuesByPIN(pinNorm),
+              getImprovementCharsForPIN(pinNorm),
+            ])
+            const tot = av?.board_tot ?? av?.certified_tot ?? av?.mailed_tot
+            const assessedTotal = tot != null ? parseAssessedValue(tot) : null
+            return {
+              pinRaw,
+              pinNorm,
+              assessed: av != null,
+              chars: chars != null,
+              assessedTotal,
+            }
+          })
+        )
+      : undefined
+
     const results: EquityRecord[] = []
     const BATCH_SIZE = 5
 
@@ -938,7 +978,8 @@ export async function getComparableEquity(
 
       batch.forEach((pin, j) => {
         const av = assessedResults[j] as Record<string, unknown> | null
-        const tot = av?.board_tot ?? av?.certified_tot ?? av?.mailed_tot
+        const tot =
+          av?.board_tot ?? av?.board_total ?? av?.certified_tot ?? av?.certified_total ?? av?.mailed_tot ?? av?.mailed_total
         const assessedTotal = tot != null ? parseAssessedValue(tot) : null
         const chars = charsResults[j]
         const parcel = parcelByPin.get(pin) as Record<string, unknown> | undefined
@@ -1000,6 +1041,7 @@ export async function getComparableEquity(
         resultsBeforeLimit: results.length,
         subjectLivingArea: property.livingArea ?? 0,
         townshipFallbackUsed,
+        sampleLookups,
       }
     }
     return resp
