@@ -981,7 +981,7 @@ export async function getComparableEquity(
         )
       : undefined
 
-    const results: EquityRecord[] = []
+    let results: EquityRecord[] = []
     const BATCH_SIZE = 5
 
     for (let i = 0; i < uniquePins.length; i += BATCH_SIZE) {

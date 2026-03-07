@@ -43,6 +43,24 @@ export async function GET(
     }
 
     const auth = appeal.filingAuthorization
+
+    // Prefer uploaded official Cook County form when available
+    if (auth.uploadedPdfUrl) {
+      const res = await fetch(auth.uploadedPdfUrl)
+      if (res.ok) {
+        const buffer = Buffer.from(await res.arrayBuffer())
+        const filename = `filing-authorization-official-${appeal.property.pin.replace(/\D/g, "")}-${appeal.taxYear}.pdf`
+        return new NextResponse(buffer, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="${filename}"`,
+            "Content-Length": String(buffer.length),
+          },
+        })
+      }
+    }
+
     const pdfBytes = await generateFilingAuthorizationPdf({
       propertyAddress: auth.propertyAddress,
       propertyCity: auth.propertyCity,

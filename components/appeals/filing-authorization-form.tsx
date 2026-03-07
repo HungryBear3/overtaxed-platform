@@ -1,8 +1,65 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+
+function UploadOfficialForm({
+  appealId,
+  onUploaded,
+  hasUpload,
+}: {
+  appealId: string
+  onUploaded?: () => void
+  hasUpload: boolean
+}) {
+  const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState("")
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setError("")
+    setUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append("file", file)
+      const res = await fetch(`/api/appeals/${appealId}/authorization/upload`, {
+        method: "POST",
+        body: formData,
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Upload failed")
+      onUploaded?.()
+      if (inputRef.current) inputRef.current.value = ""
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed")
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+      <p className="text-sm font-medium text-gray-900 mb-1">
+        {hasUpload ? "Replace" : "Upload"} signed official Cook County form
+      </p>
+      <p className="text-xs text-gray-600 mb-2">
+        Download the form from the link above, sign it, and upload the PDF here. Staff will use this when filing.
+      </p>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="application/pdf"
+        onChange={handleFileChange}
+        disabled={uploading}
+        className="block w-full text-sm text-gray-600 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-600 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-blue-700"
+      />
+      {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
+    </div>
+  )
+}
 
 interface PropertyInfo {
   address: string
@@ -16,6 +73,8 @@ interface UserInfo {
   email: string
 }
 
+const OFFICIAL_FORM_URL = "https://www.cookcountyassessor.com/form-document/attorney-representative-authorizationresidential"
+
 interface FilingAuthorizationFormProps {
   appealId: string
   property: PropertyInfo
@@ -25,6 +84,7 @@ interface FilingAuthorizationFormProps {
     signedAt: string
     ownerName: string
     ownerEmail: string
+    uploadedPdfUrl?: string | null
   } | null
   onSaved?: () => void
 }
@@ -122,29 +182,49 @@ export function FilingAuthorizationForm({
 
   if (existingAuth) {
     return (
-      <div className="rounded-lg border border-green-200 bg-green-50 p-4 [color-scheme:light]">
-        <p className="font-medium text-green-800">Authorization on file</p>
-        <p className="text-sm text-green-700 mt-1">
-          Signed {new Date(existingAuth.signedAt).toLocaleDateString()} by {existingAuth.ownerName}
-        </p>
-        <p className="text-xs text-green-600 mt-1">{existingAuth.ownerEmail}</p>
-        <a
-          href={`/api/appeals/${appealId}/authorization/download`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-3 inline-flex items-center gap-2 rounded-lg border border-green-300 bg-white px-3 py-2 text-sm font-medium text-green-800 hover:bg-green-50"
-        >
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          Download authorization record
-        </a>
+      <div className="space-y-4">
+        <div className="rounded-lg border border-green-200 bg-green-50 p-4 [color-scheme:light]">
+          <p className="font-medium text-green-800">Authorization on file</p>
+          <p className="text-sm text-green-700 mt-1">
+            Signed {new Date(existingAuth.signedAt).toLocaleDateString()} by {existingAuth.ownerName}
+          </p>
+          <p className="text-xs text-green-600 mt-1">{existingAuth.ownerEmail}</p>
+          {existingAuth.uploadedPdfUrl && (
+            <p className="text-xs text-green-600 mt-1">Official Cook County form uploaded</p>
+          )}
+          <a
+            href={`/api/appeals/${appealId}/authorization/download`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-3 inline-flex items-center gap-2 rounded-lg border border-green-300 bg-white px-3 py-2 text-sm font-medium text-green-800 hover:bg-green-50"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Download {existingAuth.uploadedPdfUrl ? "authorization (official form)" : "authorization record"}
+          </a>
+        </div>
+        <UploadOfficialForm appealId={appealId} onUploaded={onSaved} hasUpload={!!existingAuth.uploadedPdfUrl} />
       </div>
     )
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4 text-gray-900">
+      <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+        <p className="text-sm font-medium text-blue-900 mb-1">Use Cook County&apos;s official form</p>
+        <p className="text-sm text-blue-800 mb-2">
+          Cook County requires their official Attorney/Representative Authorization form. Download it, sign it (electronic signature is accepted; notarization is not required), and upload it below—or use our e-sign option.
+        </p>
+        <a
+          href={OFFICIAL_FORM_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sm font-medium text-blue-600 hover:text-blue-700 underline"
+        >
+          Download official Cook County form →
+        </a>
+      </div>
       <p className="text-sm text-gray-600">
         This form captures the information required for the Cook County Assessor Attorney/Representative Authorization.
         OverTaxed IL will use this to file your appeal on your behalf when staff-assisted filing is available.
@@ -270,13 +350,20 @@ export function FilingAuthorizationForm({
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
-      <button
-        type="submit"
-        disabled={saving}
-        className="w-full rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-      >
-        {saving ? "Saving…" : "Save authorization"}
-      </button>
+      <div className="flex flex-col sm:flex-row gap-3">
+        <button
+          type="submit"
+          disabled={saving}
+          className="flex-1 rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          {saving ? "Saving…" : "Save authorization (e-sign)"}
+        </button>
+      </div>
+
+      <div className="pt-4 border-t border-gray-200">
+        <p className="text-sm text-gray-600 mb-2">Or upload the signed official Cook County form instead:</p>
+        <UploadOfficialForm appealId={appealId} onUploaded={onSaved} hasUpload={false} />
+      </div>
     </form>
   )
 }

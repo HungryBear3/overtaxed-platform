@@ -184,6 +184,7 @@ export async function GET(
           signedAt: appeal.filingAuthorization.signedAt,
           ownerName: appeal.filingAuthorization.ownerName,
           ownerEmail: appeal.filingAuthorization.ownerEmail,
+          uploadedPdfUrl: appeal.filingAuthorization.uploadedPdfUrl,
         } : null,
         compsUsed: await (async () => {
           const comps = appeal.compsUsed

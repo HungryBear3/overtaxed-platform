@@ -22,10 +22,9 @@ The official form includes:
 
 **Risk:** CCAO may reject a custom PDF that does not match their official form layout and required declarations. The 2025 Appeal Rules state that "all CCAO forms must be fully completed with authorized signatures."
 
-**Recommendation:** Use the **county's official form** rather than our custom PDF. Options:
-- **A)** Provide a link to download the county form; user prints, signs (wet or per their preference), scans, and uploads it back to us (or staff attaches it when filing).
-- **B)** If the county form is fillable (AcroForm), programmatically fill the fields and generate a PDF for the user to sign. We would need to obtain the form, inspect its fields, and map our data.
-- **C)** Contact CCAO (312.443.7550) to confirm whether our custom authorization PDF is acceptable for representative filings.
+**Recommendation:** Use the **county's official form** rather than our custom PDF. Implemented (March 2025):
+- **Option B implemented:** We provide a prominent link to the [official Cook County form](https://www.cookcountyassessor.com/form-document/attorney-representative-authorizationresidential). Users can download it, sign it (electronic signature accepted; notarization not required), and upload it via our filing authorization flow. When an uploaded official form exists, staff uses it when filing instead of our generated PDF.
+- **Fallback:** Our custom PDF remains available when no official form is uploaded; users can e-sign our form. CCAO prefers the official form—we encourage users to upload it when possible.
 
 ---
 
