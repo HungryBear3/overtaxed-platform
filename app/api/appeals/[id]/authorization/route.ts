@@ -1,8 +1,11 @@
 // POST /api/appeals/[id]/authorization - Create or update filing authorization
 // Captures property owner info for Cook County Attorney/Representative form (staff-assisted filing)
+// On save: fills official Cook County PDF and uploads to Blob so download returns single document for us + county
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
+import { put, del } from "@vercel/blob"
+import { fillOfficialCookCountyAuthForm } from "@/lib/document-generation/fill-official-auth-form"
 import { z } from "zod"
 
 const authorizationSchema = z.object({
@@ -82,6 +85,51 @@ export async function POST(
       create: { appealId, ...payload },
       update: payload,
     })
+
+    // Fill official Cook County form and upload when no user-uploaded form exists
+    // (avoids overwriting if user manually uploaded their signed form)
+    const filledPdf =
+      !auth.uploadedPdfUrl &&
+      (await fillOfficialCookCountyAuthForm({
+      propertyAddress: auth.propertyAddress,
+      propertyCity: auth.propertyCity,
+      propertyState: auth.propertyState,
+      propertyZip: auth.propertyZip,
+      propertyPin: auth.propertyPin,
+      ownerName: auth.ownerName,
+      ownerEmail: auth.ownerEmail,
+      ownerPhone: auth.ownerPhone,
+      ownerAddress: auth.ownerAddress,
+      ownerCity: auth.ownerCity,
+      ownerState: auth.ownerState,
+      ownerZip: auth.ownerZip,
+      signedAt: auth.signedAt,
+      taxYear: appeal.taxYear,
+    }))
+
+    if (filledPdf) {
+      try {
+        if (auth.uploadedPdfUrl) {
+          try {
+            await del(auth.uploadedPdfUrl)
+          } catch {
+            // Ignore delete errors
+          }
+        }
+        const blob = await put(
+          `filing-auth/${appealId}-${Date.now()}.pdf`,
+          Buffer.from(filledPdf),
+          { access: "public", contentType: "application/pdf" }
+        )
+        await prisma.filingAuthorization.update({
+          where: { appealId },
+          data: { uploadedPdfUrl: blob.url },
+        })
+      } catch (err) {
+        console.error("[authorization] Failed to upload filled official form", err)
+        // Continue - user can still upload manually; download will return our generated PDF
+      }
+    }
 
     return NextResponse.json({
       success: true,

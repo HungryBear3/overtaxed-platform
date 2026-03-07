@@ -191,7 +191,7 @@ export function FilingAuthorizationForm({
           </p>
           <p className="text-xs text-green-600 mt-1">{existingAuth.ownerEmail}</p>
           {existingAuth.uploadedPdfUrl && (
-            <p className="text-xs text-green-600 mt-1">Official Cook County form uploaded</p>
+            <p className="text-xs text-green-600 mt-1">Official Cook County form on file (single document for your records & Cook County)</p>
           )}
           <a
             href={`/api/appeals/${appealId}/authorization/download`}
@@ -202,7 +202,7 @@ export function FilingAuthorizationForm({
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
-            Download {existingAuth.uploadedPdfUrl ? "authorization (official form)" : "authorization record"}
+            Download {existingAuth.uploadedPdfUrl ? "official form (for your records & Cook County)" : "authorization record"}
           </a>
         </div>
         <UploadOfficialForm appealId={appealId} onUploaded={onSaved} hasUpload={!!existingAuth.uploadedPdfUrl} />
@@ -213,9 +213,9 @@ export function FilingAuthorizationForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-4 text-gray-900">
       <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
-        <p className="text-sm font-medium text-blue-900 mb-1">Use Cook County&apos;s official form</p>
+        <p className="text-sm font-medium text-blue-900 mb-1">Single document for your records & Cook County</p>
         <p className="text-sm text-blue-800 mb-2">
-          Cook County requires their official Attorney/Representative Authorization form. Download it, sign it (electronic signature is accepted; notarization is not required), and upload it below—or use our e-sign option.
+          When you save (e-sign), we fill Cook County&apos;s official form with your data and keep it on file. Or download the blank form, sign it, and upload it below. Either way, you get one document for us and Cook County.
         </p>
         <a
           href={OFFICIAL_FORM_URL}

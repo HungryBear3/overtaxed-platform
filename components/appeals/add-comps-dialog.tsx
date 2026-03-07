@@ -42,7 +42,6 @@ export function AddCompsDialog({
 }) {
   const [comps, setComps] = useState<CompItem[]>([])
   const [compsSource, setCompsSource] = useState<string>("")
-  const [equityDebug, setEquityDebug] = useState<Record<string, unknown> | null>(null)
   const [needsUnitConfirmation, setNeedsUnitConfirmation] = useState(false)
   const [unitForRetry, setUnitForRetry] = useState("")
   const [loading, setLoading] = useState(true)
@@ -70,21 +69,19 @@ export function AddCompsDialog({
     setNeedsUnitConfirmation(false)
     setLoading(true)
     try {
-      const url = `/api/properties/${propertyId}/comps?limit=20&debug=1${unitNumber ? `&unitNumber=${encodeURIComponent(unitNumber)}` : ""}`
+      const url = `/api/properties/${propertyId}/comps?limit=20${unitNumber ? `&unitNumber=${encodeURIComponent(unitNumber)}` : ""}`
       const r = await fetch(url)
       const d = await safeResJson<{ needsUnitConfirmation?: boolean; success?: boolean; error?: string; comps?: CompItem[]; source?: string; _debug?: unknown }>(r)
       if (d.needsUnitConfirmation) {
         setNeedsUnitConfirmation(true)
         setComps([])
         setCompsSource("")
-        setEquityDebug(null)
         setError("")
         return
       }
       if (!d.success) throw new Error(d.error || "Failed to fetch comps")
       setComps(d.comps ?? [])
       setCompsSource(d.source ?? "")
-      setEquityDebug(((d as { _debug?: unknown })._debug ?? null) as Record<string, unknown> | null)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to fetch comps")
     } finally {
@@ -234,14 +231,6 @@ export function AddCompsDialog({
         </CardHeader>
         <CardContent className="flex-1 overflow-y-auto p-4">
           <div className="mb-4 rounded-lg bg-amber-50 border-2 border-amber-300 px-4 py-4 text-sm text-amber-900 shrink-0">
-            {equityDebug && (
-              <div className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-xs font-mono text-amber-900">
-                <p className="font-semibold mb-1">Equity debug (why no equity?):</p>
-                <pre className="whitespace-pre-wrap break-all">
-                  {JSON.stringify(equityDebug, null, 2)}
-                </pre>
-              </div>
-            )}
             <p className="font-semibold mb-2">How many comps to add?</p>
             <p className="text-amber-800 mb-2">
               Select <strong>at least 3 comparable sales</strong>. Pick comps with lower $/sq ft to support a lower assessment.

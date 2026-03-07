@@ -44,21 +44,30 @@ export async function GET(
 
     const auth = appeal.filingAuthorization
 
-    // Prefer uploaded official Cook County form when available
+    // Prefer uploaded/filled official Cook County form when available (single document for us + county)
     if (auth.uploadedPdfUrl) {
-      const res = await fetch(auth.uploadedPdfUrl)
-      if (res.ok) {
-        const buffer = Buffer.from(await res.arrayBuffer())
-        const filename = `filing-authorization-official-${appeal.property.pin.replace(/\D/g, "")}-${appeal.taxYear}.pdf`
-        return new NextResponse(buffer, {
-          status: 200,
-          headers: {
-            "Content-Type": "application/pdf",
-            "Content-Disposition": `attachment; filename="${filename}"`,
-            "Content-Length": String(buffer.length),
-          },
-        })
+      try {
+        const res = await fetch(auth.uploadedPdfUrl)
+        if (res.ok) {
+          const buffer = Buffer.from(await res.arrayBuffer())
+          const filename = `filing-authorization-official-${appeal.property.pin.replace(/\D/g, "")}-${appeal.taxYear}.pdf`
+          return new NextResponse(buffer, {
+            status: 200,
+            headers: {
+              "Content-Type": "application/pdf",
+              "Content-Disposition": `attachment; filename="${filename}"`,
+              "Content-Length": String(buffer.length),
+            },
+          })
+        }
+        console.error("[authorization/download] Blob fetch failed", res.status, auth.uploadedPdfUrl)
+      } catch (err) {
+        console.error("[authorization/download] Blob fetch error", err)
       }
+      return NextResponse.json(
+        { error: "Authorization form temporarily unavailable. Please try again or re-upload." },
+        { status: 503 }
+      )
     }
 
     const pdfBytes = await generateFilingAuthorizationPdf({
