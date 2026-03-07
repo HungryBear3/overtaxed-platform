@@ -193,36 +193,48 @@ async function getMultiFamilyCharsByPIN(
  * Use this instead of Single+Multi separately — n6jx-6jqg was deprecated.
  */
 async function getImprovementCharsFromCombinedByPIN(pin: PIN): Promise<Record<string, unknown> | null> {
-  try {
-    const normalizedPIN = normalizePIN(pin)
-    const query = `$where=${encodeURIComponent(`pin='${normalizedPIN}'`)}&$limit=1&$order=${encodeURIComponent('year DESC')}`
-    const results = await fetchSocrataData<Record<string, unknown>>(
-      DATASETS.IMPROVEMENT_CHARS_COMBINED,
-      query
-    )
-    return results[0] || null
-  } catch {
-    return null
+  const normalizedPIN = normalizePIN(pin)
+  if (normalizedPIN.length !== 14) return null
+  const dashedPIN = formatPIN(normalizedPIN)
+  for (const pinVal of [normalizedPIN, dashedPIN]) {
+    try {
+      const query = `$where=${encodeURIComponent(`pin='${pinVal}'`)}&$limit=1&$order=${encodeURIComponent('year DESC')}`
+      const results = await fetchSocrataData<Record<string, unknown>>(
+        DATASETS.IMPROVEMENT_CHARS_COMBINED,
+        query
+      )
+      if (results[0]) return results[0]
+    } catch {
+      continue
+    }
   }
+  return null
 }
 
 /**
  * Look up assessed values by PIN
  * Returns mailed, certified, and board values for land, building, and total
+ * Tries both 14-digit and dashed PIN formats (Cook County datasets may use either)
  */
 async function getAssessedValuesByPIN(
   pin: PIN
 ): Promise<Record<string, unknown> | null> {
   const normalizedPIN = normalizePIN(pin)
-  // Get the most recent assessment year
-  const query = `$where=${encodeURIComponent(`pin='${normalizedPIN}'`)}&$limit=1&$order=${encodeURIComponent('year DESC')}`
-  
-  const results = await fetchSocrataData<Record<string, unknown>>(
-    DATASETS.ASSESSED_VALUES,
-    query
-  )
-  
-  return results[0] || null
+  if (normalizedPIN.length !== 14) return null
+  const dashedPIN = formatPIN(normalizedPIN)
+  for (const pinVal of [normalizedPIN, dashedPIN]) {
+    try {
+      const query = `$where=${encodeURIComponent(`pin='${pinVal}'`)}&$limit=1&$order=${encodeURIComponent('year DESC')}`
+      const results = await fetchSocrataData<Record<string, unknown>>(
+        DATASETS.ASSESSED_VALUES,
+        query
+      )
+      if (results[0]) return results[0]
+    } catch {
+      continue
+    }
+  }
+  return null
 }
 
 /**
@@ -851,6 +863,31 @@ export async function getComparableEquity(
       }
     }
 
+    // Fallback: when township returns 0, try zip_code (property or subject parcel)
+    if (parcels.length === 0) {
+      const parcel = subjectParcel ?? (await getParcelUniverseByPIN(propertyPin))
+      const p = parcel as unknown as Record<string, unknown>
+      const zipFromParcel = [p?.prop_address_zipcode_1, p?.property_zip, p?.zip_code]
+        .find((v) => v != null && String(v).trim().length >= 5)
+      const zip = (zipFromParcel ? String(zipFromParcel).trim() : (property.zipCode ?? '').replace(/\D/g, '')).slice(0, 5)
+      if (zip.length >= 5) {
+        townshipFallbackUsed = true
+        for (const zipCol of ['prop_address_zipcode_1', 'property_zip', 'zip_code']) {
+          try {
+            const filters = [`${zipCol} like '${zip}%'`, `pin != '${propertyPin}'`]
+            const query = `$where=${encodeURIComponent(filters.join(' AND '))}&$limit=150`
+            parcels = await fetchSocrataData<Record<string, unknown>>(parcelDataset, query)
+            if (parcels.length > 0) {
+              console.log('[comps-equity] Zip fallback succeeded', { zip, column: zipCol, count: parcels.length })
+              break
+            }
+          } catch {
+            continue
+          }
+        }
+      }
+    }
+
     if (parcels.length === 0) {
       console.log('[comps-equity] No parcels found', { propertyPin, nbhd: nbhd || '(none)', source: 'neighborhood+township' })
       const emptyResp: CookCountyApiResponse<EquityRecord[]> & { _debug?: EquityDebugInfo } = {
@@ -880,7 +917,14 @@ export async function getComparableEquity(
     const lo = subjectLivingArea > 0 ? subjectLivingArea * (1 - livingAreaTolerancePercent / 100) : 0
     const hi = subjectLivingArea > 0 ? subjectLivingArea * (1 + livingAreaTolerancePercent / 100) : Infinity
 
-    const uniquePins = [...new Set(parcels.map((p) => String(p.pin ?? '')))].filter(Boolean).filter((p) => p !== propertyPin)
+    const toPin = (v: unknown) => {
+      const raw = String(v ?? '').replace(/\D/g, '')
+      if (raw.length >= 14) return raw.slice(0, 14)
+      if (raw.length > 0) return raw.padStart(14, '0')
+      return ''
+    }
+    const uniquePins = [...new Set(parcels.map((p) => toPin(p.pin)))].filter(Boolean).filter((p) => p !== propertyPin)
+    const parcelByPin = new Map(parcels.map((p) => [toPin(p.pin), p]))
 
     const results: EquityRecord[] = []
     const BATCH_SIZE = 5
@@ -897,7 +941,11 @@ export async function getComparableEquity(
         const tot = av?.board_tot ?? av?.certified_tot ?? av?.mailed_tot
         const assessedTotal = tot != null ? parseAssessedValue(tot) : null
         const chars = charsResults[j]
-        const livingArea = chars?.livingArea ?? null
+        const parcel = parcelByPin.get(pin) as Record<string, unknown> | undefined
+        const livingAreaFromParcel = parcel
+          ? parseIntSafe(parcel.bldg_sf ?? parcel.char_bldg_sf ?? parcel.prop_bldg_sf)
+          : null
+        const livingArea = chars?.livingArea ?? livingAreaFromParcel ?? null
 
         if (assessedTotal == null || assessedTotal <= 0) return
         // When subject has living area, require comp living area for $/sqft; when subject has none, accept comps with or without

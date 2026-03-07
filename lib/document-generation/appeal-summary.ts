@@ -40,6 +40,8 @@ export interface AppealSummaryData {
     requestedAssessmentValue: number | null
     filingDeadline: string
     noticeDate: string | null
+    /** Prior attorneys' market analysis, comps, or other evidence to include */
+    evidenceSummary?: string | null
   }
   comps: Array<{
     pin: string
@@ -376,6 +378,21 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
     }
     if (data.comps.some((c) => (c as { inBothSources?: boolean }).inBothSources))
       drawText(" * = in both County & Realie (prioritized)", { fontSize: 9 })
+    drawLine()
+  }
+
+  // —— Additional evidence / prior market analysis (when provided) ——
+  const evidenceSummary = data.appeal.evidenceSummary?.trim()
+  if (evidenceSummary) {
+    drawText("Additional Evidence / Prior Market Analysis", { bold: true, fontSize: 13 })
+    drawText(
+      "The following market analysis and comparable data from prior appeals or professional appraisals is submitted in support of this appeal."
+    )
+    y -= 4
+    const lines = evidenceSummary.split(/\r?\n/)
+    for (const line of lines) {
+      drawText(line || " ")
+    }
     drawLine()
   }
 

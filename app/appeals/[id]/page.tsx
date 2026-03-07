@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation"
 import { AddCompsDialog } from "@/components/appeals/add-comps-dialog"
 import { PdfDownloadButton } from "@/components/appeals/pdf-download-button"
 import { FilingAuthorizationForm } from "@/components/appeals/filing-authorization-form"
+import { Textarea } from "@/components/ui/textarea"
 
 interface Appeal {
   id: string
@@ -145,6 +146,8 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
   const [editingRequested, setEditingRequested] = useState(false)
   const [requestedInput, setRequestedInput] = useState("")
   const [savingRequested, setSavingRequested] = useState(false)
+  const [savingEvidence, setSavingEvidence] = useState(false)
+  const [evidenceInput, setEvidenceInput] = useState("")
   const [mapData, setMapData] = useState<{
     subject: { lat: number; lng: number; address: string } | null
     subjectStreetView?: { lat: number; lng: number } | null
@@ -156,6 +159,10 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
   useEffect(() => {
     fetchAppeal()
   }, [id])
+
+  useEffect(() => {
+    if (appeal?.evidenceSummary != null) setEvidenceInput(appeal.evidenceSummary)
+  }, [appeal?.evidenceSummary])
 
   useEffect(() => {
     if (!appeal?.id) {
@@ -237,6 +244,26 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
       setError(err instanceof Error ? err.message : "Failed to save requested value")
     } finally {
       setSavingRequested(false)
+    }
+  }
+
+  async function saveEvidenceSummary() {
+    if (!appeal) return
+    setSavingEvidence(true)
+    setError("")
+    try {
+      const response = await fetch(`/api/appeals/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ evidenceSummary: evidenceInput.trim() || null }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || "Failed to save")
+      setAppeal({ ...appeal, evidenceSummary: evidenceInput.trim() || null })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save evidence")
+    } finally {
+      setSavingEvidence(false)
     }
   }
 
@@ -805,6 +832,29 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                   ); })}
                 </div>
               )}
+            </div>
+
+            {/* Additional Evidence / Prior Market Analysis */}
+            <div className="bg-white rounded-lg shadow p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-2">Additional Evidence / Prior Market Analysis</h2>
+              <p className="text-sm text-gray-600 mb-3">
+                Paste market analysis, comps, or evidence from prior attorneys or appraisals. This will be included in your PDF to strengthen your appeal.
+              </p>
+              <Textarea
+                value={evidenceInput}
+                onChange={(e) => setEvidenceInput(e.target.value)}
+                placeholder="e.g., Prior appeal comps, appraiser analysis, market trends, or supporting data from previous filings..."
+                rows={6}
+                className="mb-3"
+              />
+              <button
+                type="button"
+                onClick={saveEvidenceSummary}
+                disabled={savingEvidence}
+                className="text-sm font-medium text-blue-600 hover:text-blue-700 disabled:opacity-50"
+              >
+                {savingEvidence ? "Saving…" : "Save to PDF"}
+              </button>
             </div>
 
             {/* Notes */}

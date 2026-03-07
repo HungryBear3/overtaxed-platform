@@ -210,6 +210,7 @@ export async function GET(
           : null,
         filingDeadline: appeal.filingDeadline.toISOString(),
         noticeDate: appeal.noticeDate?.toISOString() ?? null,
+        evidenceSummary: appeal.evidenceSummary ?? null,
       },
       comps,
     }
