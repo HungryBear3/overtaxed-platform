@@ -196,13 +196,10 @@ async function getImprovementCharsFromCombinedByPIN(pin: PIN): Promise<Record<st
   const normalizedPIN = normalizePIN(pin)
   if (normalizedPIN.length !== 14) return null
   const dashedPIN = formatPIN(normalizedPIN)
-  const pin10 = normalizedPIN.slice(4)
-  const pin10Dashed = pin10.length >= 10 ? `${pin10.slice(0, 2)}-${pin10.slice(2, 5)}-${pin10.slice(5, 8)}-${pin10.slice(8)}` : ''
+  // x54s-btds has only pin (14-digit), not pin10
   for (const { col, val } of [
     { col: 'pin', val: normalizedPIN },
     { col: 'pin', val: dashedPIN },
-    { col: 'pin10', val: pin10 },
-    { col: 'pin10', val: pin10Dashed },
   ]) {
     if (!val) continue
     try {
@@ -868,7 +865,7 @@ export async function getComparableEquity(
     let parcels: Array<Record<string, unknown>> = []
     let townshipFallbackUsed = false
     if (nbhd) {
-      const filters = [`(nbhd_code='${nbhd}' OR nbhd='${nbhd}')`, `pin != '${propertyPin}'`]
+      const filters = [`nbhd_code='${nbhd}'`, `pin != '${propertyPin}'`]
       const query = `$where=${encodeURIComponent(filters.join(' AND '))}&$limit=150`
       try {
         parcels = await fetchSocrataData<Record<string, unknown>>(parcelDataset, query)
