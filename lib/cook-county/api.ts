@@ -834,7 +834,7 @@ export type EquityDebugInfo = {
   subjectLivingArea: number
   townshipFallbackUsed: boolean
   /** First 3 sample PINs: raw from parcel, normalized, assessed found, chars found */
-  sampleLookups?: Array<{ pinRaw: unknown; pinNorm: string; assessed: boolean; chars: boolean; assessedTotal: number | null }>
+  sampleLookups?: Array<{ pinRaw: unknown; pinNorm: string; assessed: boolean; chars: boolean; assessedTotal: number | null; avKeys?: string[] }>
 }
 
 export async function getComparableEquity(
@@ -968,14 +968,14 @@ export async function getComparableEquity(
               getAssessedValuesByPIN(pinNorm),
               getImprovementCharsForPIN(pinNorm),
             ])
-            const tot = av?.board_tot ?? av?.certified_tot ?? av?.mailed_tot
-            const assessedTotal = tot != null ? parseAssessedValue(tot) : null
+            const assessedTotal = getAssessedTotalFromRecord(av)
             return {
               pinRaw,
               pinNorm,
               assessed: av != null,
               chars: chars != null,
               assessedTotal,
+              avKeys: av ? Object.keys(av) : undefined,
             }
           })
         )
@@ -993,9 +993,7 @@ export async function getComparableEquity(
 
       batch.forEach((pin, j) => {
         const av = assessedResults[j] as Record<string, unknown> | null
-        const tot =
-          av?.board_tot ?? av?.board_total ?? av?.certified_tot ?? av?.certified_total ?? av?.mailed_tot ?? av?.mailed_total
-        const assessedTotal = tot != null ? parseAssessedValue(tot) : null
+        const assessedTotal = getAssessedTotalFromRecord(av)
         const chars = charsResults[j]
         const parcel = parcelByPin.get(pin) as Record<string, unknown> | undefined
         const livingAreaFromParcel = parcel
@@ -1080,8 +1078,7 @@ export async function getComparableEquity(
               const charsResults = await Promise.all(batch.map((pin) => getImprovementCharsForPIN(pin)))
               batch.forEach((pin, j) => {
                 const av = avByPin.get(pin)!
-                const tot = av?.board_tot ?? av?.certified_tot ?? av?.mailed_tot
-                const assessedTotal = tot != null ? parseAssessedValue(tot) : null
+                const assessedTotal = getAssessedTotalFromRecord(av)
                 if (assessedTotal == null || assessedTotal <= 0) return
                 const chars = charsResults[j]
                 const livingArea = chars?.livingArea ?? null
@@ -1167,9 +1164,32 @@ export async function getComparableEquity(
  * Parse assessed value from string to number
  */
 function parseAssessedValue(value: unknown): number | null {
-  if (!value) return null
-  const parsed = parseFloat(String(value))
+  if (value == null || value === '') return null
+  const parsed = parseFloat(String(value).replace(/,/g, ''))
   return isNaN(parsed) ? null : parsed
+}
+
+/**
+ * Extract total assessed value from ASSESSED_VALUES record.
+ * Tries board > certified > mailed; falls back to land+bldg sum when tot columns missing.
+ */
+function getAssessedTotalFromRecord(av: Record<string, unknown> | null): number | null {
+  if (!av) return null
+  const tot =
+    av.board_tot ?? av.board_total ?? av.certified_tot ?? av.certified_total ?? av.mailed_tot ?? av.mailed_total
+  let val = tot != null ? parseAssessedValue(tot) : null
+  if (val != null && val > 0) return val
+  const land = parseAssessedValue(av.board_land ?? av.certified_land ?? av.mailed_land)
+  const bldg = parseAssessedValue(av.board_bldg ?? av.certified_bldg ?? av.mailed_bldg)
+  if (land != null && bldg != null && (land > 0 || bldg > 0)) return land + bldg
+  // Fallback: scan for any *_tot or *_total key with numeric value
+  for (const k of Object.keys(av)) {
+    if ((k.endsWith('_tot') || k.endsWith('_total')) && !k.includes('_land') && !k.includes('_bldg')) {
+      const v = parseAssessedValue(av[k])
+      if (v != null && v > 0) return v
+    }
+  }
+  return val
 }
 
 /**
