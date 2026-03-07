@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { Shield, LayoutDashboard, Users, FileText, ClipboardCheck } from "lucide-react"
+import { Shield, LayoutDashboard, Users, FileText, ClipboardCheck, Settings } from "lucide-react"
 
 export default function AdminLayout({
   children,
@@ -43,6 +43,13 @@ export default function AdminLayout({
               >
                 <ClipboardCheck className="h-4 w-4" />
                 Filing Queue
+              </Link>
+              <Link
+                href="/admin/settings"
+                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+              >
+                <Settings className="h-4 w-4" />
+                Settings
               </Link>
             </nav>
           </div>

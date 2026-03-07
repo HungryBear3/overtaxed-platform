@@ -629,6 +629,21 @@ model VisitorCount {
 }
 
 // ============================================
+// System Config (key-value for app-wide settings)
+// ============================================
+// Used for rep code, business email, etc. when filing on behalf of property owners.
+
+model SystemConfig {
+  id        String   @id @default(cuid())
+  key       String   @unique // e.g., "COOK_COUNTY_REP_CODE", "FILING_BUSINESS_EMAIL"
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([key])
+}
+
+// ============================================
 // County Configuration (for future expansion)
 // ============================================
 

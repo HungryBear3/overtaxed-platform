@@ -13,14 +13,24 @@ let databaseUrl = process.env["DATABASE_URL"] || "postgresql://placeholder:place
 if (databaseUrl.includes("pooler.supabase.com") && !databaseUrl.includes("pgbouncer=true")) {
   databaseUrl += (databaseUrl.includes("?") ? "&" : "?") + "pgbouncer=true";
 }
-// Migrations: prefer DIRECT_URL (direct Postgres) when set; else Session mode pooler (port 5432).
-// Direct connection avoids advisory lock timeouts; set DIRECT_URL in Vercel for reliable migrations.
+
+// Prisma 7 uses `url` for migrate deploy (not directUrl). Use Session mode pooler (port 5432) for migrations
+// to avoid "prepared statement already exists" and firewall blocks on direct connection.
+// Runtime (lib/db/prisma.ts) uses DATABASE_URL from env directly, so app keeps Transaction mode (6543).
+let migrateUrl: string;
 let directUrl: string;
-if (process.env["DIRECT_URL"]) {
-  directUrl = process.env["DIRECT_URL"];
-} else if (databaseUrl.includes("pooler.supabase.com")) {
-  directUrl = databaseUrl.replace(/:6543\//, ":5432/").replace(/\?pgbouncer=true&?|\&?pgbouncer=true/g, "");
+if (databaseUrl.includes("pooler.supabase.com")) {
+  // Session mode pooler: port 5432, pgbouncer=true for migrate deploy
+  migrateUrl = databaseUrl.replace(/:6543\//, ":5432/");
+  if (!migrateUrl.includes("pgbouncer=true")) {
+    migrateUrl += (migrateUrl.includes("?") ? "&" : "?") + "pgbouncer=true";
+  }
+  directUrl = migrateUrl;
+} else if (process.env["DIRECT_URL"]) {
+  migrateUrl = process.env["DIRECT_URL"];
+  directUrl = migrateUrl;
 } else {
+  migrateUrl = databaseUrl;
   directUrl = databaseUrl;
 }
 
@@ -30,7 +40,7 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: databaseUrl,
+    url: migrateUrl,
     directUrl,
   } as { url?: string; directUrl?: string },
 });

@@ -18,6 +18,7 @@ type EnrichedAddress = {
   zipCode: string
   latitude: number | null
   longitude: number | null
+  buildingClass: string | null
 }
 
 async function enrichAddressesForPins(pins: string[]): Promise<Map<string, EnrichedAddress>> {
@@ -148,6 +149,16 @@ export async function GET(
         const allPins = [...realieSales.map((c) => (c.pinRaw ?? c.pin).replace(/\D/g, "")), ...equityPins]
         const addressByPin = await enrichAddressesForPins([...new Set(allPins)])
 
+        // Enrich Realie sales with buildingClass from Cook County Parcel Universe (Realie API doesn't provide it)
+        const realieSalesEnriched = realieSales.map((c) => {
+          const pinRaw = (c.pinRaw ?? c.pin).replace(/\D/g, "")
+          const enriched = addressByPin.get(pinRaw)
+          return {
+            ...c,
+            buildingClass: enriched?.buildingClass ?? c.buildingClass ?? null,
+          }
+        })
+
         const equityComps = equityData.map((e) => {
           const enriched = addressByPin.get(e.pin)
           const compLat = enriched?.latitude ?? null
@@ -180,7 +191,7 @@ export async function GET(
           }
         })
 
-        const comps = [...realieSales, ...equityComps]
+        const comps = [...realieSalesEnriched, ...equityComps]
         const source =
           equityComps.length > 0
             ? `Realie Premium Comparables; ${equityResult.source}`

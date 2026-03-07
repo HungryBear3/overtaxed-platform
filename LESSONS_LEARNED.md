@@ -41,6 +41,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 34. [Filing authorization form for staff-assisted filing](#34-filing-authorization-form-for-staff-assisted-filing)
 35. [Supabase pooler: prepared statement already exists](#35-supabase-pooler-prepared-statement-already-exists)
 36. [Admin filing queue, authorization PDF, user download](#36-admin-filing-queue-authorization-pdf-user-download)
+37. [Mar 2026: Socrata columns, safe JSON parse, Rule 15 removal, logo, comps UX](#37-mar-2026-socrata-columns-safe-json-parse-rule-15-removal-logo-comps-ux)
 
 ---
 
@@ -182,9 +183,9 @@ DIRECT_URL="postgresql://postgres:[PASSWORD]@db.[PROJECT-REF].supabase.co:5432/p
 ```
 
 **Lesson:** 
-- Use `DATABASE_URL` (pooler) for the app in serverless environments
-- Use `DIRECT_URL` (direct) for migrations
-- Direct connection may be blocked by firewall; pooler usually works
+- Use `DATABASE_URL` (pooler, port 6543) for the app in serverless environments
+- Use **Session mode pooler** (port 5432 on pooler host) for migrations—derived from `DATABASE_URL` in `prisma.config.ts`
+- Direct connection (db.xxx:5432) may be blocked by firewall; session pooler usually works
 - If migrations timeout, use Supabase SQL Editor with manual SQL
 
 ### Issue: Migrations Timeout or Fail
@@ -853,7 +854,7 @@ This forces dark text on white background regardless of system color scheme.
 
 **Solution:** Add `?pgbouncer=true` to the pooler connection string. Prisma then disables prepared statements. Appended automatically in `prisma.config.ts` (for CLI: migrate, status) and `lib/db/prisma.ts` (for runtime) when URL contains `pooler.supabase.com` and `pgbouncer=true` is missing.
 
-**For migrations:** Use `DIRECT_URL` (direct connection, port 5432) so migrations bypass the pooler. The pooler URL is for `DATABASE_URL` (app runtime).
+**For migrations:** Use **Session mode pooler** (port 5432 on pooler host) for `prisma migrate deploy`. The direct connection (db.xxx:5432) may be blocked by firewall or timeout; the session pooler (pooler.supabase.com:5432) supports migrations and usually works. `prisma.config.ts` derives the session pooler URL from `DATABASE_URL` when using Supabase pooler.
 
 **Lesson:** Supabase pooler URLs must include `?pgbouncer=true` for Prisma. See [Supabase troubleshooting](https://supabase.com/docs/guides/troubleshooting/error-prepared-statement-xxx-already-exists).
 
@@ -876,6 +877,20 @@ This forces dark text on white background regardless of system color scheme.
 - **Admin access:** `download-summary` allows admin to download any appeal's packet (for filing queue).
 
 **Lesson:** Staff need both the appeal packet and the authorization PDF when filing. Admin filing queue centralizes both; user download gives them a copy for records.
+
+---
+
+## 37. Mar 2026: Socrata columns, safe JSON parse, Rule 15 removal, logo, comps UX
+
+**Socrata API column names.** Parcel Universe (`pabr-t5kh`) uses `nbhd_code` only — `nbhd` does not exist. Improvement Chars (`x54s-btds`) uses `pin` only — `pin10` does not exist. Use the correct column names in filters and queries to avoid "No such column" errors.
+
+**Safe JSON parse for API responses.** When parsing `fetch` responses with `res.json()`, plain-text error bodies (e.g. "An error occurred") cause `SyntaxError: Unexpected token`. Use `safeResJson(res)` (or equivalent) that reads `res.text()`, tries `JSON.parse`, and throws with the raw text on failure. See `lib/utils.ts`.
+
+**Rule 15 removal.** Assessor office confirmed sales-only comps are acceptable. Removed Rule 15 and equity-comp requirements from marketing, comps UI, appeal flow, and PDF. Guidance simplified to "at least 3 comparable sales."
+
+**Logo OverTaxed IL.** SVG layout and sizing updated for wider logo text; viewBox and Logo component adjusted accordingly.
+
+**Comps table UX.** Assessment column hidden; Type column shown only when comps include equity type (hasEquity).
 
 ---
 
@@ -989,7 +1004,9 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 ---
 
-**Last Updated:** February 2026
+**Last Updated:** March 2026
+
+**Mar 2026:** §37 — Socrata columns (pabr-t5kh: nbhd_code only; x54s-btds: pin only); safeResJson for API responses; Rule 15 removal (sales-only comps); logo OverTaxed IL; comps table: hide Assessment, conditional Type column.
 
 **Feb 2026:** §36 — Admin filing queue, authorization PDF, user download; admin can access any appeal packet + auth PDF. §35 — Supabase pooler: auto-append `pgbouncer=true` in prisma.config.ts and lib/db/prisma.ts to fix "prepared statement already exists". §34 — Filing authorization form: FilingAuthorization model, POST /api/appeals/[id]/authorization, FilingAuthorizationForm component on appeal detail (DRAFT/PENDING_FILING); captures property + owner info for Cook County Attorney/Representative form; staff filing queue and "File for me" to follow. §33 — Automated Performance Fee billing: assessment-check detects Cook County reductions and auto-updates appeals (outcome, taxSavings); Stripe Invoice create/finalize/send; webhook invoice.paid; 4-step collection notices (7/14/30/45 days); Terms §4 strengthened (deadlines, claims court, legal fees, waiver, jurisdiction). Cron: assessment-checks 07:00 Mon, performance-invoices 08:00 Mon, invoice-collections daily 09:00. §32 — Prisma P3005 baseline. §31 — Street View heading to face building front. §30 — Legal website design. §27–29 — Requested assessment input, comps improvements, submission instructions.
 

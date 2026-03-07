@@ -528,7 +528,7 @@ export async function searchPropertiesByAddress(
 }
 
 /**
- * Fetch address (and city, zip, lat/lon) by PIN from Parcel Universe. Used to enrich comps list and compute distance.
+ * Fetch address (and city, zip, lat/lon, buildingClass) by PIN from Parcel Universe. Used to enrich comps list and compute distance.
  */
 export async function getAddressByPIN(pin: PIN): Promise<{
   address: string
@@ -536,6 +536,7 @@ export async function getAddressByPIN(pin: PIN): Promise<{
   zipCode: string
   latitude: number | null
   longitude: number | null
+  buildingClass: string | null
 } | null> {
   const parcel = await getParcelUniverseByPIN(pin)
   if (!parcel) return null
@@ -548,8 +549,10 @@ export async function getAddressByPIN(pin: PIN): Promise<{
   const lon = p.lon != null ? parseFloat(String(p.lon)) : (p.longitude != null ? parseFloat(String(p.longitude)) : null)
   const latitude = lat != null && !Number.isNaN(lat) ? lat : null
   const longitude = lon != null && !Number.isNaN(lon) ? lon : null
+  const buildingClass =
+    (p.class ?? p.char_class) != null ? (String(p.class ?? p.char_class ?? '').trim() || null) : null
   if (!address && !city) return null
-  return { address: address || `PIN ${formatPIN(String(p.pin ?? pin))}`, city, zipCode, latitude, longitude }
+  return { address: address || `PIN ${formatPIN(String(p.pin ?? pin))}`, city, zipCode, latitude, longitude, buildingClass }
 }
 
 /**
