@@ -41,6 +41,10 @@ const faqs = [
     q: "How do I get a refund?",
     a: "We offer a 30-day satisfaction guarantee for subscription plans. Contact us at support@overtaxed-il.com within 30 days of your initial signup to request a refund. See our Terms of Service for full details.",
   },
+  {
+    q: "How can I get notified about reassessment notices?",
+    a: "Cook County has a notification system for reassessment notices. You can sign up for alerts when your township is reassessed by visiting the Cook County Assessment & Appeal Calendar at cookcountyassessor.com/assessment-calendar-and-deadlines. OverTaxed IL also monitors your properties and sends township-open and deadline reminders when you have an active subscription.",
+  },
 ]
 
 export default function FAQPage() {

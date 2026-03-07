@@ -353,10 +353,13 @@ model FilingAuthorization {
   // E-signature
   signedAt        DateTime @default(now())
   ipAddress       String?  // Optional audit
-  
+
+  // Official Cook County form: when user uploads signed official form instead of our custom PDF
+  uploadedPdfUrl  String?  // Vercel Blob or S3 URL of uploaded signed official form
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   @@index([appealId])
 }
 

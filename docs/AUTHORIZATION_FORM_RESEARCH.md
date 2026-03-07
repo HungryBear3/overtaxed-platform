@@ -33,20 +33,14 @@ The official form includes:
 
 **Current state:** We capture an e-signature via checkbox ("I authorize…") and store `signedAt` + `ipAddress`. Our PDF shows "Signed electronically: {date/time}."
 
-**County rules (from research):**
-- E-signatures conforming with the **Illinois Electronic Commerce Security Act** may be accepted in lieu of notarization.
-- **However:** "Photocopies and scans of signed documents are accepted, but the CCAO reserves the right to require or request an original copy with a 'wet' signature as it deems necessary."
-- Some sources mention an "Owner/Lessee Verification Form" that must be **notarized** for certain filings—this may apply to different property types or appeal types.
+**County rules (confirmed with CCAO, March 2025):**
+- **Electronic signatures are accepted** for the Attorney/Representative Authorization form.
+- **Notarization is not required** for residential representative filings.
+- E-signatures conforming with the **Illinois Electronic Commerce Security Act** are acceptable in lieu of notarization.
 
-**Risk:** For staff-assisted filing, CCAO could:
-- Accept our e-signed PDF initially
-- Later request an original with wet signature
-- Reject appeals if they enforce wet/original requirements
+**Historical note:** Earlier research noted that CCAO reserves the right to request an original with wet signature. CCAO has since confirmed that electronic signatures are acceptable for representative filings. An "Owner/Lessee Verification Form" that must be notarized may apply to different property types or appeal types—not to the standard residential Attorney/Representative Authorization.
 
-**Recommendation:**
-- **Short term:** Add clear disclosure in the UI: *"The Cook County Assessor may require an original signed form. If requested, we will send you the official form to sign and return."*
-- **Preferred:** Offer a flow where the user downloads the **official county form** (pre-filled if possible), signs it (wet signature), and uploads a scan. We store that as the authorization document for staff to attach when filing.
-- **Verify:** Call CCAO (312.443.7550) or email to confirm: (1) Is our custom authorization PDF acceptable? (2) Do they require wet signature or original for representative filings?
+**Recommendation:** Our current e-sign flow is acceptable. UI includes disclosure: *"Cook County accepts electronic signatures; notarization is not required."*
 
 ---
 

@@ -712,6 +712,7 @@ export async function getComparableSales(
     const {
       limit = 20,
       saleDateAfter = new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000), // 2 years
+      yearBuiltTolerance = 10,
     } = options
 
     const MIN_COMPS_FOR_FALLBACK = 5
@@ -789,6 +790,18 @@ export async function getComparableSales(
       }
     }
 
+    // Filter by year built when subject has it (Assessor: classification/age matching is key)
+    const subjectYear = property.yearBuilt
+    if (subjectYear != null && yearBuiltTolerance >= 0 && results.length > 0) {
+      const filtered = results.filter((r) => {
+        if (r.yearBuilt == null) return true
+        return Math.abs(r.yearBuilt - subjectYear) <= yearBuiltTolerance
+      })
+      if (filtered.length > 0) {
+        results = filtered
+      }
+    }
+
     return {
       success: true,
       data: results,
@@ -828,12 +841,13 @@ export async function getComparableEquity(
   property: PropertyData,
   options: {
     livingAreaTolerancePercent?: number
+    yearBuiltTolerance?: number
     limit?: number
     debug?: boolean
   } = {}
 ): Promise<CookCountyApiResponse<EquityRecord[]> & { _debug?: EquityDebugInfo }> {
   try {
-    const { limit = 10, livingAreaTolerancePercent = 25, debug: wantDebug = false } = options
+    const { limit = 10, livingAreaTolerancePercent = 25, yearBuiltTolerance = 10, debug: wantDebug = false } = options
     const propertyPin = normalizePIN(property.pin)
     let nbhd = property.neighborhood?.trim()
     let nbhdFromParcel = false
@@ -929,7 +943,8 @@ export async function getComparableEquity(
     }
 
     const nbhdForRecords = nbhd || 'same township'
-    console.log('[comps-equity] Parcels found', { count: parcels.length, nbhd: nbhdForRecords, propertyPin })
+    const subjectParcelRec = (subjectParcel ?? (await getParcelUniverseByPIN(propertyPin))) as Record<string, unknown> | null
+    const township = subjectParcelRec ? String(subjectParcelRec.township_code ?? subjectParcelRec.township ?? '').trim() : ''
 
     const subjectLivingArea = property.livingArea ?? 0
     const lo = subjectLivingArea > 0 ? subjectLivingArea * (1 - livingAreaTolerancePercent / 100) : 0
@@ -995,6 +1010,14 @@ export async function getComparableEquity(
           if (livingArea < lo || livingArea > hi) return
         }
 
+        // Filter by building class when subject has it (Assessor: identical classification is key)
+        const compBuildingClass = parcel
+          ? (String(parcel.class ?? parcel.char_class ?? '').trim() || null)
+          : null
+        if (property.buildingClass?.trim() && compBuildingClass && compBuildingClass !== property.buildingClass.trim()) {
+          return
+        }
+
         const assessedMarketValue = assessedTotal * 10
         const assessedMarketValuePerSqft = livingArea != null && livingArea > 0 ? assessedMarketValue / livingArea : null
 
@@ -1006,7 +1029,7 @@ export async function getComparableEquity(
           neighborhood: nbhdForRecords,
           assessedMarketValue,
           assessedMarketValuePerSqft,
-          buildingClass: null,
+          buildingClass: compBuildingClass,
           livingArea,
           yearBuilt: chars?.yearBuilt ?? null,
           bedrooms: chars?.bedrooms ?? null,
@@ -1016,6 +1039,16 @@ export async function getComparableEquity(
       })
     }
 
+    // Filter by year built when subject has it (Assessor: classification/age matching is key)
+    const subjectYear = property.yearBuilt
+    if (subjectYear != null && yearBuiltTolerance >= 0 && results.length > 0) {
+      const filtered = results.filter((r) => {
+        if (r.yearBuilt == null) return true
+        return Math.abs(r.yearBuilt - subjectYear) <= yearBuiltTolerance
+      })
+      if (filtered.length > 0) results = filtered
+    }
+
     // Sort by assessed $/sqft ascending (lower = more supportive for lack of uniformity)
     results.sort((a, b) => {
       const aVal = a.assessedMarketValuePerSqft ?? Infinity
@@ -1023,8 +1056,82 @@ export async function getComparableEquity(
       return aVal - bVal
     })
 
-    const limited = results.slice(0, limit)
-    console.log('[comps-equity] Equity results', { total: results.length, returned: limited.length, uniquePins: uniquePins.length })
+    // Fallback: when Parcel Universe + per-PIN lookup yields 0, query ASSESSED_VALUES directly by township
+    let finalResults = results
+    if (results.length === 0 && township && townshipFallbackUsed) {
+      const currentYear = new Date().getFullYear()
+      for (const year of [currentYear, currentYear - 1]) {
+        for (const tcCol of ['township_code', 'township']) {
+          try {
+            const query = `$where=${encodeURIComponent(`${tcCol}='${township}' AND year='${year}'`)}&$limit=150`
+            const avRecords = await fetchSocrataData<Record<string, unknown>>(DATASETS.ASSESSED_VALUES, query)
+            if (avRecords.length === 0) continue
+            const avByPin = new Map<string, Record<string, unknown>>()
+            for (const r of avRecords) {
+              const p = String(r.pin ?? '').replace(/\D/g, '')
+              if (p.length >= 14 && p !== propertyPin) {
+                const pin = p.length > 14 ? p.slice(0, 14) : p.padStart(14, '0')
+                if (!avByPin.has(pin)) avByPin.set(pin, r)
+              }
+            }
+            const avPins = [...avByPin.keys()].slice(0, 50)
+            for (let i = 0; i < avPins.length; i += 5) {
+              const batch = avPins.slice(i, i + 5)
+              const charsResults = await Promise.all(batch.map((pin) => getImprovementCharsForPIN(pin)))
+              batch.forEach((pin, j) => {
+                const av = avByPin.get(pin)!
+                const tot = av?.board_tot ?? av?.certified_tot ?? av?.mailed_tot
+                const assessedTotal = tot != null ? parseAssessedValue(tot) : null
+                if (assessedTotal == null || assessedTotal <= 0) return
+                const chars = charsResults[j]
+                const livingArea = chars?.livingArea ?? null
+                if (subjectLivingArea > 0 && (livingArea == null || livingArea <= 0)) return
+                const lo = subjectLivingArea > 0 ? subjectLivingArea * 0.75 : 0
+                const hi = subjectLivingArea > 0 ? subjectLivingArea * 1.25 : Infinity
+                if (subjectLivingArea > 0 && livingArea != null && (livingArea < lo || livingArea > hi)) return
+                finalResults.push({
+                  pin,
+                  address: '',
+                  city: '',
+                  zipCode: '',
+                  neighborhood: nbhdForRecords,
+                  assessedMarketValue: assessedTotal * 10,
+                  assessedMarketValuePerSqft: livingArea != null && livingArea > 0 ? (assessedTotal * 10) / livingArea : null,
+                  buildingClass: null,
+                  livingArea,
+                  yearBuilt: chars?.yearBuilt ?? null,
+                  bedrooms: chars?.bedrooms ?? null,
+                  bathrooms: chars?.bathrooms ?? null,
+                  dataSource: 'Cook County Open Data - Equity (Assessed Values)',
+                })
+              })
+            }
+            if (finalResults.length > 0) {
+              if (subjectYear != null && yearBuiltTolerance >= 0) {
+                const filtered = finalResults.filter((r) => {
+                  if (r.yearBuilt == null) return true
+                  return Math.abs(r.yearBuilt - subjectYear) <= yearBuiltTolerance
+                })
+                if (filtered.length > 0) finalResults = filtered
+              }
+              console.log('[comps-equity] ASSESSED_VALUES direct fallback succeeded', { township, year, count: finalResults.length })
+              break
+            }
+          } catch (err) {
+            console.error('[comps-equity] ASSESSED_VALUES direct fallback failed', { township, tcCol, year, err })
+          }
+        }
+        if (finalResults.length > 0) break
+      }
+    }
+
+    finalResults.sort((a, b) => {
+      const aVal = a.assessedMarketValuePerSqft ?? Infinity
+      const bVal = b.assessedMarketValuePerSqft ?? Infinity
+      return aVal - bVal
+    })
+    const limited = finalResults.slice(0, limit)
+    console.log('[comps-equity] Equity results', { total: finalResults.length, returned: limited.length, uniquePins: uniquePins.length })
 
     const resp: CookCountyApiResponse<EquityRecord[]> & { _debug?: EquityDebugInfo } = {
       success: true,
@@ -1038,7 +1145,7 @@ export async function getComparableEquity(
         nbhdFromParcel,
         parcelsCount: parcels.length,
         uniquePinsCount: uniquePins.length,
-        resultsBeforeLimit: results.length,
+        resultsBeforeLimit: finalResults.length,
         subjectLivingArea: property.livingArea ?? 0,
         townshipFallbackUsed,
         sampleLookups,

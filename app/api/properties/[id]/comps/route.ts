@@ -136,7 +136,7 @@ export async function GET(
 
         // Also fetch equity comps from Cook County (Realie only has sales)
         const propertyData = propertyDataFromDb(property)
-        const equityResult = await getComparableEquity(propertyData, { limit: 10, livingAreaTolerancePercent: 25, debug })
+        const equityResult = await getComparableEquity(propertyData, { limit: 10, livingAreaTolerancePercent: 25, yearBuiltTolerance: 10, debug })
         console.log('[comps] Realie path + equity', { equityCount: equityResult.data?.length ?? 0, equitySuccess: equityResult.success, propertyNeighborhood: propertyData.neighborhood })
         const salesPins = new Set(realieSales.map((c) => (c.pinRaw ?? c.pin).replace(/\D/g, "")))
         const equityData =
@@ -211,6 +211,7 @@ export async function GET(
       getComparableEquity(propertyData, {
         limit: 10,
         livingAreaTolerancePercent: 25,
+        yearBuiltTolerance: 10,
         debug,
       }),
     ])

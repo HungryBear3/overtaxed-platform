@@ -149,6 +149,9 @@ export function FilingAuthorizationForm({
         This form captures the information required for the Cook County Assessor Attorney/Representative Authorization.
         OverTaxed IL will use this to file your appeal on your behalf when staff-assisted filing is available.
       </p>
+      <p className="text-sm text-gray-600">
+        Cook County accepts electronic signatures; notarization is not required.
+      </p>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">

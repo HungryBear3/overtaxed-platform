@@ -5,6 +5,7 @@
 - **Residential appeal form:** Fillable PDF and/or online (SmartFile). [Cook County Assessor – Form documents](https://www.cookcountyassessor.com/form-document/residential-appeal-form).
 - **Filing:** Online filing (SmartFile) is encouraged; paper/PDF may be accepted for self-filers. Anyone filing **on behalf of** another must use the online system; paper will not be accepted for representative filings.
 - **Official rules:** [Official Appeal Rules of the Cook County Assessor](https://www.cookcountyassessor.com/official-appeal-rules-cook-county-assessor). Rule 15 governs comparables (3+ sales, 5+ equity, same neighborhood/class, similar size).
+- **Assessor guidance (March 2025):** Sales OR equity comps are acceptable; both are not required. Most important: **identical classification** (age, stories, # units) and **$/sqft**.
 - **2025 rules:** Updated rules effective Feb 25, 2025; all CCAO forms must be fully completed with authorized signatures; supporting documentation must be legible and complete.
 
 ## What We Provide vs County Forms

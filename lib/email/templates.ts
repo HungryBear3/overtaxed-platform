@@ -25,6 +25,8 @@ Deadline: ${formattedDeadline} (${daysRemaining} days remaining)
 Log in to complete and file your appeal:
 ${appealLink}
 
+You can also sign up for Cook County's reassessment notifications: https://www.cookcountyassessor.com/assessment-calendar-and-deadlines
+
 – The OverTaxed IL Team
 `
 
@@ -35,6 +37,7 @@ ${appealLink}
 <tr><td style="color:#6b7280">Deadline:</td><td><strong>${formattedDeadline}</strong> (${daysRemaining} days remaining)</td></tr>
 </table>
 <p><a href="${appealLink}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">View Your Appeal</a></p>
+<p><a href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines">Sign up for Cook County&apos;s reassessment notifications</a></p>
 <p>— The OverTaxed IL Team</p>`
 
   return { subject, text, html }
@@ -141,6 +144,8 @@ ${startAppealLink}
 
 View the full calendar: ${calendarUrl}
 
+Sign up for Cook County's reassessment notifications: https://www.cookcountyassessor.com/assessment-calendar-and-deadlines
+
 – The OverTaxed IL Team
 `
 
@@ -154,6 +159,7 @@ View the full calendar: ${calendarUrl}
 <p>You don't have an appeal started yet for this property. Start one now to meet the deadline.</p>
 <p><a href="${startAppealLink}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">Start Appeal</a></p>
 <p><a href="${calendarUrl}">View full calendar</a></p>
+<p><a href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines">Sign up for Cook County&apos;s reassessment notifications</a></p>
 <p>— The OverTaxed IL Team</p>`
 
   return { subject, text, html }

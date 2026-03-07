@@ -12,6 +12,21 @@ No photos or listing data from Cook County.
 
 ---
 
+## Classification Fields: Age, Stories, Units (Assessor Guidance, March 2025)
+
+Per Cook County Assessor guidance, the most important factors for comp selection are **identical classification** (age, stories, # units) and **$/sqft**.
+
+| Factor | Cook County data | Our implementation |
+|--------|-------------------|---------------------|
+| **Age** | `char_yrblt` (year built) in Improvement Characteristics | Filter comps to ±10 years of subject (`yearBuiltTolerance`) |
+| **Stories** | Not found in Cook County Improvement Characteristics (bcnq-qi2z, x54s-btds). Schema does not expose a stories column. | N/A — cannot filter |
+| **Units** | `class` (building class) encodes property type: 2 = single-family, 2-99 = condo, etc. `char_type_resd` (residence type), `char_use` (use) also available. | Equity comps filter by matching `buildingClass`; sales comps use `class` in query |
+| **$/sqft** | Computed from sale price or assessed value / living area | Computed, displayed, and used for sorting (equity: ascending) |
+
+**Conclusion:** We implement age (yearBuilt) and building class matching. Stories are not available in Cook County Open Data. Units are proxied by building class.
+
+---
+
 ## Ensuring Similar Property for Comps
 
 1. **Same neighborhood & building class** — We filter comps by `nbhd` and `class` when available.

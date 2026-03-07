@@ -489,6 +489,22 @@ export default async function DashboardPage() {
           </div>
         )}
 
+        {/* Cook County notifications */}
+        <div className="bg-blue-50 rounded-lg border border-blue-200 p-4 mb-8">
+          <h3 className="text-sm font-semibold text-blue-900 mb-1">Cook County notifications</h3>
+          <p className="text-sm text-blue-800 mb-2">
+            Sign up for Cook County&apos;s reassessment notice notifications to receive alerts when your township is reassessed.
+          </p>
+          <a
+            href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm font-medium text-blue-600 hover:text-blue-700 underline"
+          >
+            Cook County Assessment &amp; Appeal Calendar →
+          </a>
+        </div>
+
         {/* Quick actions */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <Link
