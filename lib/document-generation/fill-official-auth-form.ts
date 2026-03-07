@@ -2,17 +2,12 @@
  * Fill the official Cook County Attorney/Representative Authorization form
  * with our captured data. Produces a single document for our records and Cook County.
  *
- * Form source: https://prodassets.cookcountyassessoril.gov/s3fs-public/form_documents/attorneyrepresentativeauthorizationform.pdf?VersionId=Lf5aaF.oc6aPygRAoAqn2JS5B56_MAxa
+ * Uses bundled copy at public/forms/cook-county-auth-form.pdf (official form from Cook County Assessor).
  * Field names from pdf-lib getForm().getFields()
- * Bundled copy at public/forms/cook-county-auth-form.pdf used when fetch fails (e.g. Vercel serverless)
  */
 import { PDFDocument } from "pdf-lib"
 import { readFileSync } from "fs"
 import { join } from "path"
-
-// Official Cook County Attorney/Representative Authorization form (specific version)
-const OFFICIAL_FORM_URL =
-  "https://prodassets.cookcountyassessoril.gov/s3fs-public/form_documents/attorneyrepresentativeauthorizationform.pdf?VersionId=Lf5aaF.oc6aPygRAoAqn2JS5B56_MAxa"
 
 export interface FillOfficialAuthFormData {
   propertyAddress: string
@@ -44,27 +39,11 @@ function fmtDate(d: Date): string {
   })
 }
 
-/**
- * Fetch the official Cook County PDF and fill it with our data.
- * Returns the filled PDF bytes, or null if fetch/fill fails.
- */
-async function loadOfficialFormPdf(): Promise<Uint8Array | null> {
-  // Try fetch first (may fail in serverless due to network/403)
+/** Load the bundled official Cook County Attorney/Representative Authorization form. */
+function loadOfficialFormPdf(): Uint8Array | null {
   try {
-    const res = await fetch(OFFICIAL_FORM_URL, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; OverTaxed-IL/1.0)" },
-      cache: "no-store",
-    })
-    if (res.ok) {
-      return new Uint8Array(await res.arrayBuffer())
-    }
-  } catch (err) {
-    console.warn("[fill-official-auth-form] Fetch failed, using bundled copy", err)
-  }
-  // Fallback: bundled copy (reliable in Vercel/serverless)
-  try {
-    const path = join(process.cwd(), "public", "forms", "cook-county-auth-form.pdf")
-    const buf = readFileSync(path)
+    const filePath = join(process.cwd(), "public", "forms", "cook-county-auth-form.pdf")
+    const buf = readFileSync(filePath)
     return new Uint8Array(buf)
   } catch (err) {
     console.error("[fill-official-auth-form] Bundled PDF not found", err)
@@ -76,7 +55,7 @@ export async function fillOfficialCookCountyAuthForm(
   data: FillOfficialAuthFormData
 ): Promise<Uint8Array | null> {
   try {
-    const pdfBytes = await loadOfficialFormPdf()
+    const pdfBytes = loadOfficialFormPdf()
     if (!pdfBytes || pdfBytes.length === 0) return null
     const doc = await PDFDocument.load(pdfBytes)
     const form = doc.getForm()
