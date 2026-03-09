@@ -354,8 +354,22 @@ model FilingAuthorization {
   signedAt        DateTime @default(now())
   ipAddress       String?  // Optional audit
 
+  // Cook County form: relationship (owner/lessee/tax buyer/duly authorized) — only one checkbox
+  relationshipType String @default("OWNER") // OWNER | LESSEE | TAX_BUYER | DULY_AUTHORIZED
+
+  // Cook County form Q3: purchased or refinanced in past 3 years
+  purchasedInPast3Years Boolean?
+  purchasedOrRefinanced String?   // PURCHASED | REFINANCED — maps to Check Box 12/13
+  purchasePrice         String?
+  dateOfPurchase         DateTime?
+  rateType               String?   // e.g. Fixed, Adjustable
+  interestRate           String?
+
   // Official Cook County form: when user uploads signed official form instead of our custom PDF
   uploadedPdfUrl  String?  // Vercel Blob or S3 URL of uploaded signed official form
+
+  // Drawn signature: base64 PNG data URL (data:image/png;base64,...) for embedding in PDF
+  signatureImageData String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

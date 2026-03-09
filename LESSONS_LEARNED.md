@@ -42,6 +42,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 35. [Supabase pooler: prepared statement already exists](#35-supabase-pooler-prepared-statement-already-exists)
 36. [Admin filing queue, authorization PDF, user download](#36-admin-filing-queue-authorization-pdf-user-download)
 37. [Mar 2026: Socrata columns, safe JSON parse, Rule 15 removal, logo, comps UX](#37-mar-2026-socrata-columns-safe-json-parse-rule-15-removal-logo-comps-ux)
+38. [Filing authorization: official Cook County form, signature, interest rate, purchased/refinanced](#38-filing-authorization-official-cook-county-form-signature-interest-rate-purchasedrefinanced)
 
 ---
 
@@ -894,6 +895,30 @@ This forces dark text on white background regardless of system color scheme.
 
 ---
 
+## 38. Filing authorization: official Cook County form, signature, interest rate, purchased/refinanced
+
+**Context:** The filing authorization flow fills the official Cook County Attorney/Representative form (`public/forms/cook-county-auth-form.pdf`) with user data. Several form-field and layout issues required iteration.
+
+**Implementation:**
+
+- **Official form:** `lib/document-generation/fill-official-auth-form.ts` loads the bundled PDF, fills fields via pdf-lib, draws signature image on page 2, flattens, and adds page 3 (electronic authorization record). Do NOT fill Text2–Text7 with interest rate — they map to State, tax buyer, and page 2 fields.
+
+- **Signature position:** Drawn at `SIG_LINE_X=80`, `SIG_LINE_Y=400` on page 2. Adjust Y for vertical placement (higher Y = higher on page).
+
+- **Interest rate:** Draw the number only (no "Fixed"/"Variable" word) at `x=365`, `y=72` on page 1 — to the right of "Interest Rate:" and before the % sign. Use `page1.drawText(fmt(data.interestRate), {...})`.
+
+- **Purchased vs. refinanced:** Add `purchasedOrRefinanced` (PURCHASED | REFINANCED). Check Box 12 = Purchased, Check Box 13 = Refinanced. UI: "Was the property purchased or refinanced?" when user selects Yes for purchase/refinance in past 3 years.
+
+- **Fixed vs. variable rate:** Check Box 14 = Variable, Check Box 15 = Fixed (per Cook County form layout). UI: "Fixed" and "Variable" radio buttons.
+
+- **OverTaxed IL address (page 2):** REP_STREET = "1028 W Leland Ave", REP_CITY = "Chicago", REP_STATE = "IL", REP_ZIP = "60640".
+
+- **Schema:** `FilingAuthorization.purchasedOrRefinanced` (String?). Migration `20250309000000_add_purchased_or_refinanced`.
+
+**Lesson:** Cook County form field names (Text2–7, Check Box 12–15) do not always match their visual labels. Avoid filling generic Text fields with interest rate; draw the value at the correct coordinates instead. Run `npx prisma generate` and `npx prisma migrate deploy` after schema changes.
+
+---
+
 ## Stripe Webhook Debugging
 
 ### Issue: Subscription doesn't update after checkout
@@ -1006,7 +1031,7 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 **Last Updated:** March 2026
 
-**Mar 2026:** §37 — Socrata columns (pabr-t5kh: nbhd_code only; x54s-btds: pin only); safeResJson for API responses; Rule 15 removal (sales-only comps); logo OverTaxed IL; comps table: hide Assessment, conditional Type column.
+**Mar 2026:** §38 — Filing authorization: official Cook County form fill; signature position; interest rate drawn at correct coords (x=365, y=72); purchased/refinanced question and checkboxes; fixed/variable rate (14=Variable, 15=Fixed); OverTaxed IL address 1028 W Leland Ave 60640; do not fill Text2–7 with interest rate. §37 — Socrata columns (pabr-t5kh: nbhd_code only; x54s-btds: pin only); safeResJson for API responses; Rule 15 removal (sales-only comps); logo OverTaxed IL; comps table: hide Assessment, conditional Type column.
 
 **Feb 2026:** §36 — Admin filing queue, authorization PDF, user download; admin can access any appeal packet + auth PDF. §35 — Supabase pooler: auto-append `pgbouncer=true` in prisma.config.ts and lib/db/prisma.ts to fix "prepared statement already exists". §34 — Filing authorization form: FilingAuthorization model, POST /api/appeals/[id]/authorization, FilingAuthorizationForm component on appeal detail (DRAFT/PENDING_FILING); captures property + owner info for Cook County Attorney/Representative form; staff filing queue and "File for me" to follow. §33 — Automated Performance Fee billing: assessment-check detects Cook County reductions and auto-updates appeals (outcome, taxSavings); Stripe Invoice create/finalize/send; webhook invoice.paid; 4-step collection notices (7/14/30/45 days); Terms §4 strengthened (deadlines, claims court, legal fees, waiver, jurisdiction). Cron: assessment-checks 07:00 Mon, performance-invoices 08:00 Mon, invoice-collections daily 09:00. §32 — Prisma P3005 baseline. §31 — Street View heading to face building front. §30 — Legal website design. §27–29 — Requested assessment input, comps improvements, submission instructions.
 

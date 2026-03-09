@@ -1,9 +1,15 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import dynamic from "next/dynamic"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { safeResJson } from "@/lib/utils"
+
+const SignatureCanvas = dynamic(() => import("react-signature-canvas").then((mod) => mod.default), {
+  ssr: false,
+  loading: () => <div className="h-[120px] w-full rounded border border-gray-300 bg-gray-50 animate-pulse" />,
+})
 
 function UploadOfficialForm({
   appealId,
@@ -105,10 +111,18 @@ export function FilingAuthorizationForm({
   const [ownerCity, setOwnerCity] = useState("")
   const [ownerState, setOwnerState] = useState("IL")
   const [ownerZip, setOwnerZip] = useState("")
+  const [relationshipType, setRelationshipType] = useState<"OWNER" | "LESSEE" | "TAX_BUYER" | "DULY_AUTHORIZED">("OWNER")
+  const [purchasedInPast3Years, setPurchasedInPast3Years] = useState<boolean | null>(null)
+  const [purchasedOrRefinanced, setPurchasedOrRefinanced] = useState<"PURCHASED" | "REFINANCED" | "">("")
+  const [purchasePrice, setPurchasePrice] = useState("")
+  const [dateOfPurchase, setDateOfPurchase] = useState("")
+  const [rateType, setRateType] = useState<"FIXED" | "VARIABLE" | "">("")
+  const [interestRate, setInterestRate] = useState("")
   const [sameAsProperty, setSameAsProperty] = useState(true)
   const [agreed, setAgreed] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+  const signatureRef = useRef<{ clear: () => void; isEmpty: () => boolean; toDataURL: (type?: string) => string } | null>(null)
 
   useEffect(() => {
     if (existingAuth) {
@@ -156,6 +170,15 @@ export function FilingAuthorizationForm({
       setError("ZIP code is required.")
       return
     }
+    if (purchasedInPast3Years === true && !purchasedOrRefinanced) {
+      setError("Please indicate whether the property was purchased or refinanced.")
+      return
+    }
+    const signatureData = signatureRef.current?.toDataURL("image/png")
+    if (!signatureData || signatureRef.current?.isEmpty()) {
+      setError("Please draw your signature in the box above.")
+      return
+    }
 
     setSaving(true)
     try {
@@ -170,6 +193,14 @@ export function FilingAuthorizationForm({
           ownerCity: ownerCity.trim(),
           ownerState: ownerState.trim().toUpperCase().slice(0, 2) || "IL",
           ownerZip: ownerZip.trim(),
+          relationshipType,
+          purchasedInPast3Years: purchasedInPast3Years ?? null,
+          purchasedOrRefinanced: purchasedInPast3Years && purchasedOrRefinanced ? purchasedOrRefinanced : null,
+          purchasePrice: purchasedInPast3Years ? purchasePrice.trim() || null : null,
+          dateOfPurchase: purchasedInPast3Years && dateOfPurchase ? dateOfPurchase : null,
+          rateType: purchasedInPast3Years && rateType ? rateType : null,
+          interestRate: purchasedInPast3Years ? interestRate.trim() || null : null,
+          signatureImageData: signatureData,
         }),
       })
       const data = await safeResJson<{ error?: string }>(res)
@@ -274,6 +305,138 @@ export function FilingAuthorizationForm({
       </div>
 
       <div className="space-y-2">
+        <Label className="text-gray-900">I am the (check one)</Label>
+        <div className="flex flex-wrap gap-4">
+          {(["OWNER", "LESSEE", "TAX_BUYER", "DULY_AUTHORIZED"] as const).map((r) => (
+            <label key={r} className="flex items-center gap-2 text-sm text-gray-900">
+              <input
+                type="radio"
+                name="relationshipType"
+                checked={relationshipType === r}
+                onChange={() => setRelationshipType(r)}
+                className="rounded border-gray-300"
+              />
+              {r === "OWNER" && "Owner"}
+              {r === "LESSEE" && "Lessee"}
+              {r === "TAX_BUYER" && "Tax buyer"}
+              {r === "DULY_AUTHORIZED" && "Duly authorized officer/agent"}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label className="text-gray-900">Has the property been purchased or refinanced in the past 3 years?</Label>
+        <div className="flex gap-4">
+          <label className="flex items-center gap-2 text-sm text-gray-900">
+            <input
+              type="radio"
+              name="purchasedInPast3Years"
+              checked={purchasedInPast3Years === true}
+              onChange={() => setPurchasedInPast3Years(true)}
+              className="rounded border-gray-300"
+            />
+            Yes
+          </label>
+          <label className="flex items-center gap-2 text-sm text-gray-900">
+            <input
+              type="radio"
+              name="purchasedInPast3Years"
+              checked={purchasedInPast3Years === false}
+              onChange={() => setPurchasedInPast3Years(false)}
+              className="rounded border-gray-300"
+            />
+            No
+          </label>
+        </div>
+      </div>
+
+      {purchasedInPast3Years === true && (
+        <div className="grid gap-4 sm:grid-cols-2 rounded-lg border border-gray-200 bg-gray-50 p-4">
+          <div className="space-y-2 sm:col-span-2">
+            <Label className="text-gray-900">Was the property purchased or refinanced?</Label>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2 text-sm text-gray-900">
+                <input
+                  type="radio"
+                  name="purchasedOrRefinanced"
+                  checked={purchasedOrRefinanced === "PURCHASED"}
+                  onChange={() => setPurchasedOrRefinanced("PURCHASED")}
+                  className="rounded border-gray-300"
+                />
+                Purchased
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-900">
+                <input
+                  type="radio"
+                  name="purchasedOrRefinanced"
+                  checked={purchasedOrRefinanced === "REFINANCED"}
+                  onChange={() => setPurchasedOrRefinanced("REFINANCED")}
+                  className="rounded border-gray-300"
+                />
+                Refinanced
+              </label>
+            </div>
+          </div>
+          <div className="space-y-2 sm:col-span-2">
+            <Label htmlFor="purchasePrice" className="text-gray-900">Purchase or refinance price</Label>
+            <Input
+              id="purchasePrice"
+              value={purchasePrice}
+              onChange={(e) => setPurchasePrice(e.target.value)}
+              placeholder="e.g. 450000"
+              className="bg-white text-gray-900"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="dateOfPurchase" className="text-gray-900">Date of purchase or refinance</Label>
+            <Input
+              id="dateOfPurchase"
+              type="date"
+              value={dateOfPurchase}
+              onChange={(e) => setDateOfPurchase(e.target.value)}
+              className="bg-white text-gray-900"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-gray-900">Type of rate</Label>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2 text-sm text-gray-900">
+                <input
+                  type="radio"
+                  name="rateType"
+                  checked={rateType === "FIXED"}
+                  onChange={() => setRateType("FIXED")}
+                  className="rounded border-gray-300"
+                />
+                Fixed
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-900">
+                <input
+                  type="radio"
+                  name="rateType"
+                  checked={rateType === "VARIABLE"}
+                  onChange={() => setRateType("VARIABLE")}
+                  className="rounded border-gray-300"
+                />
+                Variable
+              </label>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="interestRate" className="text-gray-900">Interest rate</Label>
+            <Input
+              id="interestRate"
+              value={interestRate}
+              onChange={(e) => setInterestRate(e.target.value)}
+              placeholder="e.g. 6.5%"
+              className="bg-white text-gray-900"
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-2">
         <label className="flex items-center gap-2 text-sm text-gray-900">
           <input
             type="checkbox"
@@ -333,6 +496,30 @@ export function FilingAuthorizationForm({
           </div>
         </div>
       )}
+
+      <div className="space-y-2">
+        <Label className="text-gray-900">Draw your signature</Label>
+        <div className="rounded-lg border-2 border-gray-300 bg-white overflow-hidden">
+          <SignatureCanvas
+            ref={signatureRef}
+            canvasProps={{
+              width: 500,
+              height: 120,
+              className: "w-full h-[120px] touch-none",
+            }}
+            penColor="black"
+            backgroundColor="rgb(255, 255, 255)"
+            clearOnResize={false}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => signatureRef.current?.clear()}
+          className="text-sm text-blue-600 hover:text-blue-700"
+        >
+          Clear signature
+        </button>
+      </div>
 
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
         <label className="flex items-start gap-3 text-sm text-gray-900">

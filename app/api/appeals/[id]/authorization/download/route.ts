@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
+import { fillOfficialCookCountyAuthForm } from "@/lib/document-generation/fill-official-auth-form"
 import { generateFilingAuthorizationPdf } from "@/lib/document-generation/filing-authorization"
 
 export async function GET(
@@ -20,7 +21,7 @@ export async function GET(
       where: { id: appealId },
       include: {
         filingAuthorization: true,
-        property: { select: { pin: true } },
+        property: { select: { pin: true, township: true } },
       },
     })
 
@@ -68,6 +69,46 @@ export async function GET(
         { error: "Authorization form temporarily unavailable. Please try again or re-upload." },
         { status: 503 }
       )
+    }
+
+    // When no blob: try filling official Cook County form on-the-fly (e.g. BLOB not configured locally)
+    const filledOfficial = await fillOfficialCookCountyAuthForm({
+      propertyAddress: auth.propertyAddress,
+      propertyCity: auth.propertyCity,
+      propertyState: auth.propertyState,
+      propertyZip: auth.propertyZip,
+      propertyTownship: appeal.property?.township ?? null,
+      propertyPin: auth.propertyPin,
+      ownerName: auth.ownerName,
+      ownerEmail: auth.ownerEmail,
+      ownerPhone: auth.ownerPhone,
+      ownerAddress: auth.ownerAddress,
+      ownerCity: auth.ownerCity,
+      ownerState: auth.ownerState,
+      ownerZip: auth.ownerZip,
+      signedAt: auth.signedAt,
+      taxYear: appeal.taxYear,
+      affiantName: auth.ownerName,
+      relationshipType: (auth as { relationshipType?: string }).relationshipType as "OWNER" | "LESSEE" | "TAX_BUYER" | "DULY_AUTHORIZED" | undefined,
+      purchasedInPast3Years: (auth as { purchasedInPast3Years?: boolean }).purchasedInPast3Years,
+      purchasedOrRefinanced: (auth as { purchasedOrRefinanced?: string | null }).purchasedOrRefinanced ?? undefined,
+      purchasePrice: (auth as { purchasePrice?: string | null }).purchasePrice,
+      dateOfPurchase: (auth as { dateOfPurchase?: Date | null }).dateOfPurchase,
+      rateType: (auth as { rateType?: string | null }).rateType,
+      interestRate: (auth as { interestRate?: string | null }).interestRate,
+      ipAddress: auth.ipAddress ?? undefined,
+      signatureImagePngBase64: (auth as { signatureImageData?: string | null }).signatureImageData ?? undefined,
+    })
+    if (filledOfficial && filledOfficial.length > 0) {
+      const filename = `filing-authorization-official-${appeal.property.pin.replace(/\D/g, "")}-${appeal.taxYear}.pdf`
+      return new NextResponse(Buffer.from(filledOfficial), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+          "Content-Length": String(filledOfficial.length),
+        },
+      })
     }
 
     const pdfBytes = await generateFilingAuthorizationPdf({
