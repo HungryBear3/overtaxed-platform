@@ -7,22 +7,6 @@ import { prisma } from "@/lib/db"
 import { put, del } from "@vercel/blob"
 import { fillOfficialCookCountyAuthForm } from "@/lib/document-generation/fill-official-auth-form"
 import { z } from "zod"
-import { appendFileSync } from "fs"
-import { join } from "path"
-
-// #region agent log
-function _dbg(id: string, msg: string, data: Record<string, unknown>) {
-  const payload = { sessionId: "355d64", hypothesisId: id, location: "authorization/route.ts", message: msg, data, timestamp: Date.now() }
-  fetch("http://127.0.0.1:7242/ingest/48622b90-a5ef-4d61-bef0-d727777ab56e", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "355d64" },
-    body: JSON.stringify(payload),
-  }).catch(() => {})
-  try {
-    appendFileSync(join(process.cwd(), "..", "debug-355d64.log"), JSON.stringify(payload) + "\n")
-  } catch (_) {}
-}
-// #endregion
 
 const authorizationSchema = z.object({
   ownerName: z.string().min(1, "Name is required").max(200),
@@ -75,10 +59,6 @@ export async function POST(
       )
     }
 
-    // #region agent log
-    _dbg("H5", "appeal loaded", { appealId, hasProperty: !!appeal.property, propertyId: appeal.propertyId })
-    // #endregion
-
     const body = await request.json()
     const parsed = authorizationSchema.safeParse(body)
     if (!parsed.success) {
@@ -124,9 +104,6 @@ export async function POST(
 
     // Fill official Cook County form and upload when no user-uploaded form exists
     // (avoids overwriting if user manually uploaded their signed form)
-    // #region agent log
-    _dbg("H3", "before fill", { appealId, uploadedPdfUrl: auth.uploadedPdfUrl ?? null, hasProperty: !!appeal.property })
-    // #endregion
     const filledPdf =
       !auth.uploadedPdfUrl &&
       (await fillOfficialCookCountyAuthForm({
@@ -148,7 +125,7 @@ export async function POST(
       affiantName: auth.ownerName,
       relationshipType: (auth as { relationshipType?: string }).relationshipType as "OWNER" | "LESSEE" | "TAX_BUYER" | "DULY_AUTHORIZED" | undefined,
       purchasedInPast3Years: (auth as { purchasedInPast3Years?: boolean }).purchasedInPast3Years ?? undefined,
-      purchasedOrRefinanced: (auth as { purchasedOrRefinanced?: string | null }).purchasedOrRefinanced ?? undefined,
+      purchasedOrRefinanced: ((auth as { purchasedOrRefinanced?: string | null }).purchasedOrRefinanced ?? undefined) as "PURCHASED" | "REFINANCED" | undefined,
       purchasePrice: (auth as { purchasePrice?: string | null }).purchasePrice ?? undefined,
       dateOfPurchase: (auth as { dateOfPurchase?: Date | null }).dateOfPurchase ?? undefined,
       rateType: (auth as { rateType?: string | null }).rateType ?? undefined,
@@ -157,15 +134,8 @@ export async function POST(
       signatureImagePngBase64: (auth as { signatureImageData?: string | null }).signatureImageData ?? undefined,
     }))
 
-    // #region agent log
-    _dbg("H3", "after fill", { hasFilledPdf: !!filledPdf, filledPdfLen: filledPdf?.length ?? 0 })
-    // #endregion
-
     if (filledPdf) {
       try {
-        // #region agent log
-        _dbg("H4", "before blob put", {})
-        // #endregion
         if (auth.uploadedPdfUrl) {
           try {
             await del(auth.uploadedPdfUrl)
@@ -182,13 +152,7 @@ export async function POST(
           where: { appealId },
           data: { uploadedPdfUrl: blob.url },
         })
-        // #region agent log
-        _dbg("H4", "blob upload success", { blobUrl: blob.url?.slice(0, 50) })
-        // #endregion
       } catch (err) {
-        // #region agent log
-        _dbg("H4", "blob upload failed", { error: String(err) })
-        // #endregion
         console.error("[authorization] Failed to upload filled official form (ensure BLOB_READ_WRITE_TOKEN is set)", err)
         // Continue - user can still upload manually; download will return our generated PDF
       }

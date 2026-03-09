@@ -91,7 +91,7 @@ export async function GET(
       affiantName: auth.ownerName,
       relationshipType: (auth as { relationshipType?: string }).relationshipType as "OWNER" | "LESSEE" | "TAX_BUYER" | "DULY_AUTHORIZED" | undefined,
       purchasedInPast3Years: (auth as { purchasedInPast3Years?: boolean }).purchasedInPast3Years,
-      purchasedOrRefinanced: (auth as { purchasedOrRefinanced?: string | null }).purchasedOrRefinanced ?? undefined,
+      purchasedOrRefinanced: ((auth as { purchasedOrRefinanced?: string | null }).purchasedOrRefinanced ?? undefined) as "PURCHASED" | "REFINANCED" | undefined,
       purchasePrice: (auth as { purchasePrice?: string | null }).purchasePrice,
       dateOfPurchase: (auth as { dateOfPurchase?: Date | null }).dateOfPurchase,
       rateType: (auth as { rateType?: string | null }).rateType,
