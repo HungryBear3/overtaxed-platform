@@ -6,23 +6,8 @@
  * Field names from pdf-lib getForm().getFields()
  */
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib"
-import { readFileSync, existsSync, appendFileSync } from "fs"
+import { readFileSync } from "fs"
 import { join } from "path"
-
-// #region agent log
-function _dbg(id: string, msg: string, data: Record<string, unknown>) {
-  const payload = { sessionId: "355d64", hypothesisId: id, location: "fill-official-auth-form.ts", message: msg, data, timestamp: Date.now() }
-  fetch("http://127.0.0.1:7242/ingest/48622b90-a5ef-4d61-bef0-d727777ab56e", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "355d64" },
-    body: JSON.stringify(payload),
-  }).catch(() => {})
-  try {
-    const logPath = join(process.cwd(), "..", "debug-355d64.log")
-    appendFileSync(logPath, JSON.stringify(payload) + "\n")
-  } catch (_) {}
-}
-// #endregion
 
 /** Owner signature line position on page 2 (PDF coords: origin bottom-left, points). Higher y = higher on page. */
 const SIG_LINE_X = 80
@@ -96,20 +81,10 @@ function fmtDate(d: Date): string {
 /** Load the bundled official Cook County Attorney/Representative Authorization form. */
 function loadOfficialFormPdf(): Uint8Array | null {
   const filePath = join(process.cwd(), "public", "forms", "cook-county-auth-form.pdf")
-  // #region agent log
-  _dbg("H1", "loadOfficialFormPdf entry", { filePath, cwd: process.cwd(), exists: existsSync(filePath) })
-  // #endregion
   try {
     const buf = readFileSync(filePath)
-    const result = new Uint8Array(buf)
-    // #region agent log
-    _dbg("H1", "loadOfficialFormPdf success", { byteLength: result.length })
-    // #endregion
-    return result
+    return new Uint8Array(buf)
   } catch (err) {
-    // #region agent log
-    _dbg("H1", "loadOfficialFormPdf failed", { error: String(err) })
-    // #endregion
     console.error("[fill-official-auth-form] Bundled PDF not found", err)
     return null
   }
@@ -118,15 +93,9 @@ function loadOfficialFormPdf(): Uint8Array | null {
 export async function fillOfficialCookCountyAuthForm(
   data: FillOfficialAuthFormData
 ): Promise<Uint8Array | null> {
-  // #region agent log
-  _dbg("H2", "fillOfficialCookCountyAuthForm entry", { ownerName: data.ownerName?.slice(0, 5), taxYear: data.taxYear })
-  // #endregion
   try {
     const pdfBytes = loadOfficialFormPdf()
     if (!pdfBytes || pdfBytes.length === 0) {
-      // #region agent log
-      _dbg("H2", "fillOfficialCookCountyAuthForm load null", { hadBytes: !!pdfBytes, len: pdfBytes?.length ?? 0 })
-      // #endregion
       return null
     }
     const doc = await PDFDocument.load(pdfBytes)
@@ -206,6 +175,24 @@ export async function fillOfficialCookCountyAuthForm(
       } catch (err) {
         console.error("[fill-official-auth-form] Failed to draw signature image", err)
       }
+    }
+
+    // Draw tax year on page 2 at (200, 600)
+    try {
+      const pages = doc.getPages()
+      const page2 = pages[1]
+      if (page2) {
+        const font = await doc.embedFont(StandardFonts.Helvetica)
+        page2.drawText(String(data.taxYear), {
+          x: 200,
+          y: 600,
+          size: 10,
+          font,
+          color: rgb(0, 0, 0),
+        })
+      }
+    } catch (err) {
+      console.error("[fill-official-auth-form] Failed to draw tax year on page 2", err)
     }
 
     // Relationship checkboxes: only ONE of owner/lessee/tax buyer/duly authorized
@@ -376,14 +363,8 @@ export async function fillOfficialCookCountyAuthForm(
     })
 
     const saved = await doc.save()
-    // #region agent log
-    _dbg("H2", "fillOfficialCookCountyAuthForm success", { savedLength: saved.length })
-    // #endregion
     return saved
   } catch (err) {
-    // #region agent log
-    _dbg("H2", "fillOfficialCookCountyAuthForm throw", { error: String(err) })
-    // #endregion
     console.error("[fill-official-auth-form]", err)
     return null
   }

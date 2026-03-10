@@ -31,7 +31,11 @@ const faqs = [
   },
   {
     q: "How many comparable properties (comps) do I need?",
-    a: "For a strong appeal, Cook County typically expects at least 3 comparable sales (recent sales of similar properties). Our comp packet includes comparable sales from Cook County Open Data and optionally enriches with Realie (when you have a paid plan) for better coverage.",
+    a: "For a strong appeal, Cook County typically expects at least 3 comparable sales (recent sales of similar properties). Our comp packet includes comparable sales from Cook County Open Data and optionally enriches with Realie (when you have a paid plan) for better coverage. Note: Board of Review Rule 15 refers to document submission requirements, not comp counts—the comparable-sales guidance above comes from Cook County Assessor requirements.",
+  },
+  {
+    q: "What is Board of Review Rule 15?",
+    a: "Board of Review (BOR) Rule 15 governs what documents to file with your appeal (e.g., copies of Assessor submissions, brief, other evidence). It does not specify how many comps you need. The 'at least 3 comparable sales' guidance comes from Cook County Assessor requirements. For class 2 residential (typical single-family homes), BOR Rule 15 exempts you from the brief and Historical Summary Form.",
   },
   {
     q: "What if my appeal is denied?",

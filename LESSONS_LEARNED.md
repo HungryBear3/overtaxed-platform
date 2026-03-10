@@ -913,9 +913,11 @@ This forces dark text on white background regardless of system color scheme.
 
 - **OverTaxed IL address (page 2):** REP_STREET = "1028 W Leland Ave", REP_CITY = "Chicago", REP_STATE = "IL", REP_ZIP = "60640".
 
+- **Tax year on page 2:** Draw year only (e.g. `2026`) at `x=200`, `y=600` — in the blank before "as appointed attorney or rep" section. Page 2 size: 584.4 × 747.36 pt; origin bottom-left. Do not use "Assessment Year: 2026" (too long); year alone fits the blank.
+
 - **Schema:** `FilingAuthorization.purchasedOrRefinanced` (String?). Migration `20250309000000_add_purchased_or_refinanced`.
 
-**Lesson:** Cook County form field names (Text2–7, Check Box 12–15) do not always match their visual labels. Avoid filling generic Text fields with interest rate; draw the value at the correct coordinates instead. Run `npx prisma generate` and `npx prisma migrate deploy` after schema changes.
+**Lesson:** Cook County form field names (Text2–7, Check Box 12–15) do not always match their visual labels. Avoid filling generic Text fields with interest rate; draw the value at the correct coordinates instead. Page 2 height is ~747 pt (not 792); y=760 clips. Run `npx prisma generate` and `npx prisma migrate deploy` after schema changes.
 
 ---
 

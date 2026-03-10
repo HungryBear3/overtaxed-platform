@@ -63,7 +63,7 @@ export default function DisclaimerPage() {
           <section>
             <h2 className="text-xl font-semibold text-gray-900 mb-2">5. Illinois / Cook County Only</h2>
             <p className="text-gray-700">
-              Our MVP supports Cook County, Illinois only. Procedures, deadlines, and requirements may differ in other counties or states. Do not rely on our Service for properties outside our supported jurisdictions.
+              Our MVP supports Cook County, Illinois only. Procedures, deadlines, and requirements may differ in other counties or states. Do not rely on our Service for properties outside our supported jurisdictions. Appeal requirements (comparable properties, document deadlines) are set by the Cook County Assessor and Board of Review. Board of Review Rule 15 governs document submission; comparable-sales guidance comes from Assessor requirements.
             </p>
           </section>
 

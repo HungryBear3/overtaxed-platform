@@ -211,7 +211,7 @@ export async function GET(
       console.log("[comps] Realie Premium skipped: no subject lat/long from Parcel Universe", { propertyId: id })
     }
 
-    // Fall back to Cook County: fetch both sales and equity comps (Rule 15: 3 sales, 5 equity)
+    // Fall back to Cook County: fetch both sales and equity comps (Assessor guidance: 3 sales, 5 equity)
     const propertyData = propertyDataFromDb(property)
     const [salesResult, equityResult] = await Promise.all([
       getComparableSales(propertyData, {
