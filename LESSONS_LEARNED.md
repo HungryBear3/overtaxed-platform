@@ -45,6 +45,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 38. [Filing authorization: official Cook County form, signature, interest rate, purchased/refinanced](#38-filing-authorization-official-cook-county-form-signature-interest-rate-purchasedrefinanced)
 39. [Quick wins: How to file link, township deadline CTA, post-filing FAQ](#39-quick-wins-how-to-file-link-township-deadline-cta-post-filing-faq)
 40. [Product improvements: filing status, outcome tracking, township display, multi-year](#40-product-improvements-filing-status-outcome-tracking-township-display-multi-year)
+41. [UX + Tech: Ready to File clarity, collapsible instructions, post-filing guidance, Vercel Analytics, performance fee doc, admin Mark as filed](#41-ux--tech-ready-to-file-clarity-collapsible-instructions-post-filing-guidance-vercel-analytics-performance-fee-doc-admin-mark-as-filed)
 
 ---
 
@@ -954,6 +955,28 @@ This forces dark text on white background regardless of system color scheme.
 - **Multi-year appeal support** — (1) New appeal page: accept `taxYear` from URL (`?propertyId=X&taxYear=2025`) and pre-fill tax year. (2) Property detail: when assessment history has years with valid assessment but no appeal, show "Reassessed? Start an appeal for another year" with "Start [year] appeal" buttons linking to /appeals/new?propertyId=X&taxYear=Y.
 
 **Lesson:** Product improvements surface existing data (reductions, township) and reduce friction for multi-year appeals. See `tasks/tasks-overtaxed-platform.md` — Product (done).
+
+---
+
+## 41. UX + Tech: Ready to File clarity, collapsible instructions, post-filing guidance, Vercel Analytics, performance fee doc, admin Mark as filed
+
+**Context:** Roadmap UX and Technical & Operations improvements.
+
+**Implementation:**
+
+- **Ready to File clarity** — "How filing works" box: "Ready to File = your packet is prepared. We do not submit for you — you must file at the Cook County portal." Helper text under button: "Packet prepared — you still submit at Cook County portal."
+
+- **Submission instructions collapsible** — Use native `<details>` and `<summary>`; chevron rotates on open. Content in collapsible div.
+
+- **Post-filing guidance** — For status FILED, UNDER_REVIEW, HEARING_SCHEDULED, DECISION_PENDING: "What to expect" section with timeline, hearing notice, OverTaxed monitoring, county portal check, decision delivery.
+
+- **Vercel Analytics** — Add `@vercel/analytics` and `<Analytics />` in root layout. Automatic page view tracking; no config needed on Vercel.
+
+- **Performance fee flow doc** — `docs/PERFORMANCE_FEE_FLOW.md`: flow overview (assessment-check → performance-invoices → webhook → invoice-collections), cron schedule, verification checklist, key files.
+
+- **Admin filing queue Mark as filed** — `FilingQueueRow` client component with "Mark as filed" button for PENDING_STAFF_FILING. Calls PATCH /api/appeals/[id] with status FILED and filedAt; existing appeal API sends appealFiledTemplate email to user.
+
+**Lesson:** UX improvements reduce confusion; Tech docs enable verification; admin workflow completes staff-assisted filing loop. See `tasks/tasks-overtaxed-platform.md` — UX (done), Technical & Operations (done).
 
 ---
 

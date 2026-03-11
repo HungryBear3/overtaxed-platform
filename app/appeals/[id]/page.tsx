@@ -875,17 +875,16 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                 <p className="font-medium text-amber-900 mb-2">How filing works</p>
                 <ul className="text-sm text-amber-800 space-y-2">
                   <li>
-                    <strong>Ready to File</strong> means your appeal packet (summary + comps) is prepared. It does not submit the appeal for you.
+                    <strong>Ready to File</strong> = your packet is prepared. We do <strong>not</strong> submit for you — you must file at the Cook County portal.
                   </li>
                   <li>
-                    You submit the appeal yourself at the{" "}
+                    Download your PDF above, then submit it yourself at the{" "}
                     <a href="https://www.cookcountyassessor.com/file-appeal" target="_blank" rel="noopener noreferrer" className="underline font-medium">
                       Cook County Assessor portal
-                    </a>{" "}
-                    (download your PDF from above first).
+                    </a>.
                   </li>
                   <li>
-                    After you have submitted there, click <strong>Mark as Filed</strong> here so we can track your appeal status.
+                    After submitting there, click <strong>Mark as Filed</strong> here so we can track your appeal.
                   </li>
                   <li className="text-amber-700">
                     Filing on your behalf (Starter+ plans) is coming soon.
@@ -894,10 +893,20 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
               </div>
             )}
 
-            {/* Detailed submission instructions */}
+            {/* Detailed submission instructions — collapsible */}
             {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING") && (
-              <div id="submission-instructions" className="bg-white rounded-lg shadow p-6 scroll-mt-4">
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">Submission instructions for Cook County Assessor</h2>
+              <details id="submission-instructions" className="bg-white rounded-lg shadow scroll-mt-4 group">
+                <summary className="list-none cursor-pointer p-6 pb-4 [&::-webkit-details-marker]:hidden">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-lg font-semibold text-gray-900">Submission instructions for Cook County Assessor</h2>
+                    <span className="text-gray-400 group-open:rotate-180 transition-transform">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </span>
+                  </div>
+                </summary>
+                <div className="px-6 pb-6 pt-0">
                 <p className="text-sm text-gray-600 mb-4">
                   Follow these steps to submit your appeal to the Cook County Assessor&apos;s Office. OverTaxed IL prepares the evidence packet; you complete the official filing.
                 </p>
@@ -947,7 +956,8 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                     Official Appeal Rules
                   </a>.
                 </p>
-              </div>
+                </div>
+              </details>
             )}
 
             {/* Filing authorization (for staff-assisted filing) */}
@@ -1003,6 +1013,9 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                     >
                       Ready to File
                     </button>
+                    <p className="text-xs text-gray-500 -mt-1">
+                      Packet prepared — you still submit at Cook County portal
+                    </p>
                     {appeal.filingAuthorization &&
                       ["STARTER", "GROWTH", "PORTFOLIO", "PERFORMANCE"].includes(appeal.user?.subscriptionTier ?? "") && (
                         <button
@@ -1081,6 +1094,20 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                 )}
               </div>
             </div>
+
+            {/* Post-filing guidance — what to expect, when to check back */}
+            {["FILED", "UNDER_REVIEW", "HEARING_SCHEDULED", "DECISION_PENDING"].includes(appeal.status) && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="font-medium text-blue-900 mb-2">What to expect</p>
+                <ul className="text-sm text-blue-800 space-y-1">
+                  <li>• Cook County typically reviews within a few months</li>
+                  <li>• You may receive a hearing notice — update status here if so</li>
+                  <li>• OverTaxed IL monitors for reductions and will notify you when we detect one</li>
+                  <li>• Check the county portal above for the latest status</li>
+                  <li>• Decisions usually arrive by mail or email; your next tax bill will reflect any reduction</li>
+                </ul>
+              </div>
+            )}
 
             {/* Appeal Info */}
             <div className="bg-white rounded-lg shadow p-6">
