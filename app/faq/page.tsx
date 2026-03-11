@@ -38,6 +38,10 @@ const faqs = [
     a: "Board of Review (BOR) Rule 15 governs what documents to file with your appeal (e.g., copies of Assessor submissions, brief, other evidence). It does not specify how many comps you need. The 'at least 3 comparable sales' guidance comes from Cook County Assessor requirements. For class 2 residential (typical single-family homes), BOR Rule 15 exempts you from the brief and Historical Summary Form.",
   },
   {
+    q: "What happens after I file?",
+    a: "After you submit at the Cook County Assessor portal, you'll receive a Filing ID and Docket Number by email—keep them for your records. The Assessor reviews your appeal (typically within a few months). If approved, your assessment is reduced and your next tax bill reflects the lower value. OverTaxed IL monitors assessment changes and will notify you when we detect a reduction. You can also check status at the Cook County portal. If denied, you can appeal again in a future year or to the Board of Review.",
+  },
+  {
     q: "What if my appeal is denied?",
     a: "The county assessor or board of review decides appeals. Denials can happen for many reasons. OverTaxed IL does not guarantee a reduction—county decisions are final. We focus on building strong, evidence-backed appeals to improve your odds. You can always appeal again in a future year if your assessment changes.",
   },

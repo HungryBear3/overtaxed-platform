@@ -75,6 +75,14 @@ export default function HomePage() {
               >
                 How It Works
               </Link>
+              <Link
+                href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:text-blue-700 font-medium text-lg underline"
+              >
+                Check your township deadline →
+              </Link>
             </div>
           </div>
           <div className="relative aspect-[4/3] lg:aspect-square rounded-2xl overflow-hidden shadow-xl">

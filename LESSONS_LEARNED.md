@@ -43,6 +43,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 36. [Admin filing queue, authorization PDF, user download](#36-admin-filing-queue-authorization-pdf-user-download)
 37. [Mar 2026: Socrata columns, safe JSON parse, Rule 15 removal, logo, comps UX](#37-mar-2026-socrata-columns-safe-json-parse-rule-15-removal-logo-comps-ux)
 38. [Filing authorization: official Cook County form, signature, interest rate, purchased/refinanced](#38-filing-authorization-official-cook-county-form-signature-interest-rate-purchasedrefinanced)
+39. [Quick wins: How to file link, township deadline CTA, post-filing FAQ](#39-quick-wins-how-to-file-link-township-deadline-cta-post-filing-faq)
 
 ---
 
@@ -918,6 +919,22 @@ This forces dark text on white background regardless of system color scheme.
 - **Schema:** `FilingAuthorization.purchasedOrRefinanced` (String?). Migration `20250309000000_add_purchased_or_refinanced`.
 
 **Lesson:** Cook County form field names (Text2–7, Check Box 12–15) do not always match their visual labels. Avoid filling generic Text fields with interest rate; draw the value at the correct coordinates instead. Page 2 height is ~747 pt (not 792); y=760 clips. Run `npx prisma generate` and `npx prisma migrate deploy` after schema changes.
+
+---
+
+## 39. Quick wins: How to file link, township deadline CTA, post-filing FAQ
+
+**Context:** Improve discoverability of filing instructions and post-filing expectations.
+
+**Implementation:**
+
+- **"How to file" link** — On appeal detail (DRAFT/PENDING_FILING), add link below Download PDF: "How to file? Step-by-step instructions →" that scrolls to `#submission-instructions`. Add `id="submission-instructions"` and `scroll-mt-4` to the submission instructions div.
+
+- **"Check township deadline" CTA** — On homepage hero, add third CTA link: "Check your township deadline →" to cookcountyassessor.com/assessment-calendar-and-deadlines.
+
+- **"What happens after I file?" FAQ** — New FAQ entry explaining: Filing ID/Docket Number by email; Assessor review timeline; OverTaxed monitors for reductions; check status at county portal; denied = can appeal again.
+
+**Lesson:** Quick wins improve conversion and reduce support questions. See `tasks/tasks-overtaxed-platform.md` — Improvement Roadmap for Product, UX, and Technical next steps.
 
 ---
 

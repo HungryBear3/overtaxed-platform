@@ -895,7 +895,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
 
             {/* Detailed submission instructions */}
             {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING") && (
-              <div className="bg-white rounded-lg shadow p-6">
+              <div id="submission-instructions" className="bg-white rounded-lg shadow p-6 scroll-mt-4">
                 <h2 className="text-lg font-semibold text-gray-900 mb-4">Submission instructions for Cook County Assessor</h2>
                 <p className="text-sm text-gray-600 mb-4">
                   Follow these steps to submit your appeal to the Cook County Assessor&apos;s Office. OverTaxed IL prepares the evidence packet; you complete the official filing.
@@ -985,6 +985,14 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                   appealId={appeal.id}
                   hasRequestedValue={appeal.requestedAssessmentValue != null && Number(appeal.requestedAssessmentValue) > 0}
                 />
+                {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING") && (
+                  <a
+                    href="#submission-instructions"
+                    className="block text-sm text-blue-600 hover:text-blue-700 hover:underline"
+                  >
+                    How to file? Step-by-step instructions →
+                  </a>
+                )}
                 {appeal.status === "DRAFT" && (
                   <>
                     <button
