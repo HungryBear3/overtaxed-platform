@@ -462,6 +462,36 @@ export default function PropertyDetailPage({ params }: { params: Promise<{ id: s
               Start Appeal
             </button>
           </div>
+          {(() => {
+            const yearsWithAppeal = new Set(property.appeals.map((a) => a.taxYear))
+            const yearsToSuggest = (property.assessmentHistory ?? [])
+              .filter((h) => h.assessmentValue != null && h.assessmentValue > 0 && !yearsWithAppeal.has(h.taxYear))
+              .map((h) => h.taxYear)
+              .sort((a, b) => b - a)
+            if (yearsToSuggest.length > 0) {
+              return (
+                <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                  <p className="font-medium text-amber-900 mb-2">Reassessed? Start an appeal for another year</p>
+                  <p className="text-sm text-amber-800 mb-3">
+                    You have assessment data for these years but no appeal yet. Click to start an appeal for that year.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {yearsToSuggest.map((year) => (
+                      <button
+                        key={year}
+                        type="button"
+                        onClick={() => router.push(`/appeals/new?propertyId=${property.id}&taxYear=${year}`)}
+                        className="inline-flex items-center gap-1 text-sm font-medium text-amber-800 bg-amber-100 hover:bg-amber-200 px-3 py-1.5 rounded-md"
+                      >
+                        Start {year} appeal
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            }
+            return null
+          })()}
           {property.appeals.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-gray-500 mb-4">No appeals filed yet for this property.</p>

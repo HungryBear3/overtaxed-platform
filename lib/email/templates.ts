@@ -5,22 +5,25 @@ export function deadlineReminderTemplate(args: {
   userName?: string | null
   propertyAddress: string
   pin: string
+  township?: string | null
   taxYear: number
   deadline: Date
   daysRemaining: number
   appealLink: string
 }): { subject: string; text: string; html: string } {
-  const { userName, propertyAddress, pin, taxYear, deadline, daysRemaining, appealLink } = args
+  const { userName, propertyAddress, pin, township, taxYear, deadline, daysRemaining, appealLink } = args
   const formattedDeadline = deadline.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
 
   const subject = `[Action Required] ${daysRemaining} day${daysRemaining !== 1 ? "s" : ""} left to file your ${taxYear} appeal`
+
+  const townshipLine = township ? `Township: ${township}\n` : ""
 
   const text = `Hi${userName ? ` ${userName}` : ""},
 
 Your ${taxYear} property tax appeal deadline is approaching.
 
 Property: ${propertyAddress} (PIN ${pin})
-Deadline: ${formattedDeadline} (${daysRemaining} days remaining)
+${townshipLine}Deadline: ${formattedDeadline} (${daysRemaining} days remaining)
 
 Log in to complete and file your appeal:
 ${appealLink}
@@ -34,6 +37,7 @@ You can also sign up for Cook County's reassessment notifications: https://www.c
 <p>Your <strong>${taxYear} property tax appeal</strong> deadline is approaching.</p>
 <table cellpadding="4" style="margin:16px 0">
 <tr><td style="color:#6b7280">Property:</td><td><strong>${propertyAddress}</strong> (PIN ${pin})</td></tr>
+${township ? `<tr><td style="color:#6b7280">Township:</td><td><strong>${township}</strong></td></tr>` : ""}
 <tr><td style="color:#6b7280">Deadline:</td><td><strong>${formattedDeadline}</strong> (${daysRemaining} days remaining)</td></tr>
 </table>
 <p><a href="${appealLink}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">View Your Appeal</a></p>

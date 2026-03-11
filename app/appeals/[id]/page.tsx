@@ -15,6 +15,7 @@ interface Appeal {
     id: string
     pin: string
     address: string
+    township?: string | null
     city: string
     state: string
     zipCode: string
@@ -1041,6 +1042,16 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                       )}
                   </>
                 )}
+                {["FILED", "UNDER_REVIEW", "HEARING_SCHEDULED", "DECISION_PENDING"].includes(appeal.status) && (
+                  <a
+                    href="https://propertytaxfilings.cookcountyil.gov"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block w-full text-center bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700"
+                  >
+                    Check status at Cook County portal →
+                  </a>
+                )}
                 {["FILED", "UNDER_REVIEW"].includes(appeal.status) && (
                   <button
                     onClick={() => updateStatus("HEARING_SCHEDULED")}
@@ -1075,6 +1086,12 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Appeal Info</h2>
               <dl className="space-y-3 text-sm">
+                {appeal.property.township && (
+                  <div className="flex justify-between">
+                    <dt className="text-gray-500">Township</dt>
+                    <dd className="font-medium text-gray-900">{appeal.property.township}</dd>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <dt className="text-gray-500">Tax Year</dt>
                   <dd className="font-medium text-gray-900">{appeal.taxYear}</dd>

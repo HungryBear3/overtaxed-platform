@@ -66,7 +66,7 @@ export default async function DashboardPage() {
     (sum, p) => sum + (p.currentMarketValue ? Number(p.currentMarketValue) : 0),
     0
   )
-  const [activeAppeals, appealStatusCounts, totalSavingsResult, upcomingDeadlines, recentProperties, recentAppeals] = await Promise.all([
+  const [activeAppeals, appealStatusCounts, totalSavingsResult, recentWins, upcomingDeadlines, recentProperties, recentAppeals] = await Promise.all([
     prisma.appeal.count({
       where: {
         userId: user.id,
@@ -88,12 +88,24 @@ export default async function DashboardPage() {
     prisma.appeal.findMany({
       where: {
         userId: user.id,
+        outcome: { in: ["WON", "PARTIALLY_WON"] },
+        taxSavings: { not: null },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 5,
+      include: {
+        property: { select: { address: true, pin: true } },
+      },
+    }),
+    prisma.appeal.findMany({
+      where: {
+        userId: user.id,
         filingDeadline: { gte: new Date() },
       },
       orderBy: { filingDeadline: "asc" },
       take: 5,
       include: {
-        property: { select: { address: true, pin: true } },
+        property: { select: { address: true, pin: true, township: true } },
       },
     }),
     prisma.property.findMany({
@@ -267,6 +279,40 @@ export default async function DashboardPage() {
           </div>
         </div>
 
+        {/* Recent wins / Reductions detected */}
+        {recentWins.length > 0 && (
+          <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg shadow p-6 mb-8 border border-green-200">
+            <h3 className="text-lg font-medium text-green-900 mb-1">Reductions detected</h3>
+            <p className="text-sm text-green-700 mb-4">
+              We detected assessment reductions on these appeals. Your tax savings are reflected below.
+            </p>
+            <ul className="space-y-2">
+              {recentWins.map((appeal) => (
+                <li key={appeal.id} className="flex justify-between items-center py-2 border-b border-green-100 last:border-0">
+                  <div>
+                    <p className="font-medium text-green-900">{appeal.property.address}</p>
+                    <p className="text-xs text-green-600">Tax year {appeal.taxYear} · {appeal.outcome === "WON" ? "Full reduction" : "Partial reduction"}</p>
+                  </div>
+                  <div className="text-right flex items-center gap-3">
+                    <span className="font-semibold text-green-700">
+                      {formatCurrency(Number(appeal.taxSavings))}/yr
+                    </span>
+                    <Link
+                      href={`/appeals/${appeal.id}`}
+                      className="text-sm text-green-600 hover:text-green-700 font-medium"
+                    >
+                      View appeal
+                    </Link>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <Link href="/appeals" className="text-sm text-green-600 hover:text-green-700 font-medium mt-3 inline-block">
+              View all appeals →
+            </Link>
+          </div>
+        )}
+
         {/* Appeal status summary */}
         {appealStatusCounts.length > 0 && (
           <div className="bg-white rounded-lg shadow p-6 mb-8">
@@ -296,7 +342,10 @@ export default async function DashboardPage() {
                 <li key={appeal.id} className="flex justify-between items-center py-2 border-b border-gray-100 last:border-0">
                   <div>
                     <p className="font-medium text-gray-900">{appeal.property.address}</p>
-                    <p className="text-xs text-gray-500">Tax year {appeal.taxYear} · PIN {appeal.property.pin}</p>
+                    <p className="text-xs text-gray-500">
+                      Tax year {appeal.taxYear} · PIN {appeal.property.pin}
+                      {appeal.property.township ? ` · Township: ${appeal.property.township}` : ""}
+                    </p>
                   </div>
                   <div className="text-right">
                     <p className="font-medium text-amber-700">

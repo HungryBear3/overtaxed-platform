@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
     },
     include: {
       user: { select: { email: true, name: true } },
-      property: { select: { pin: true, address: true, city: true, state: true } },
+      property: { select: { pin: true, address: true, city: true, state: true, township: true } },
     },
   })
 
@@ -46,6 +46,7 @@ export async function GET(request: NextRequest) {
       userName: appeal.user.name,
       propertyAddress: `${appeal.property.address}, ${appeal.property.city}, ${appeal.property.state}`,
       pin: formatPIN(appeal.property.pin),
+      township: appeal.property.township,
       taxYear: appeal.taxYear,
       deadline: appeal.filingDeadline,
       daysRemaining,

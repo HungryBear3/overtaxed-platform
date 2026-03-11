@@ -44,6 +44,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 37. [Mar 2026: Socrata columns, safe JSON parse, Rule 15 removal, logo, comps UX](#37-mar-2026-socrata-columns-safe-json-parse-rule-15-removal-logo-comps-ux)
 38. [Filing authorization: official Cook County form, signature, interest rate, purchased/refinanced](#38-filing-authorization-official-cook-county-form-signature-interest-rate-purchasedrefinanced)
 39. [Quick wins: How to file link, township deadline CTA, post-filing FAQ](#39-quick-wins-how-to-file-link-township-deadline-cta-post-filing-faq)
+40. [Product improvements: filing status, outcome tracking, township display, multi-year](#40-product-improvements-filing-status-outcome-tracking-township-display-multi-year)
 
 ---
 
@@ -935,6 +936,24 @@ This forces dark text on white background regardless of system color scheme.
 - **"What happens after I file?" FAQ** — New FAQ entry explaining: Filing ID/Docket Number by email; Assessor review timeline; OverTaxed monitors for reductions; check status at county portal; denied = can appeal again.
 
 **Lesson:** Quick wins improve conversion and reduce support questions. See `tasks/tasks-overtaxed-platform.md` — Improvement Roadmap for Product, UX, and Technical next steps.
+
+---
+
+## 40. Product improvements: filing status, outcome tracking, township display, multi-year
+
+**Context:** Roadmap Product improvements to improve post-filing experience and multi-year appeal flow.
+
+**Implementation:**
+
+- **Filing status tracking** — For appeals with status FILED, UNDER_REVIEW, HEARING_SCHEDULED, or DECISION_PENDING, add prominent "Check status at Cook County portal →" button in Actions sidebar linking to propertytaxfilings.cookcountyil.gov.
+
+- **Outcome tracking** — Dashboard: new "Reductions detected" section when user has appeals with outcome WON or PARTIALLY_WON and taxSavings. Shows address, tax year, full/partial reduction, annual savings, link to appeal.
+
+- **Township deadline display** — (1) Appeal API and detail page: include property.township; show Township in Appeal Info when available. (2) Dashboard upcoming deadlines: include township in property select and display. (3) Deadline reminder emails: add township to template (optional param); include in property select and pass to template.
+
+- **Multi-year appeal support** — (1) New appeal page: accept `taxYear` from URL (`?propertyId=X&taxYear=2025`) and pre-fill tax year. (2) Property detail: when assessment history has years with valid assessment but no appeal, show "Reassessed? Start an appeal for another year" with "Start [year] appeal" buttons linking to /appeals/new?propertyId=X&taxYear=Y.
+
+**Lesson:** Product improvements surface existing data (reductions, township) and reduce friction for multi-year appeals. See `tasks/tasks-overtaxed-platform.md` — Product (done).
 
 ---
 

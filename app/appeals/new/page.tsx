@@ -23,6 +23,7 @@ export default function NewAppealPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const preselectedPropertyId = searchParams.get("propertyId")
+  const preselectedTaxYear = searchParams.get("taxYear")
 
   const [properties, setProperties] = useState<Property[]>([])
   const [loading, setLoading] = useState(true)
@@ -31,7 +32,10 @@ export default function NewAppealPage() {
 
   // Form state
   const [selectedPropertyId, setSelectedPropertyId] = useState(preselectedPropertyId || "")
-  const [taxYear, setTaxYear] = useState(new Date().getFullYear())
+  const [taxYear, setTaxYear] = useState(() => {
+    const y = preselectedTaxYear ? parseInt(preselectedTaxYear, 10) : new Date().getFullYear()
+    return !isNaN(y) && y >= 2020 && y <= 2030 ? y : new Date().getFullYear()
+  })
   const [appealType, setAppealType] = useState<"ASSESSOR" | "BOARD_REVIEW">("ASSESSOR")
   const [noticeDate, setNoticeDate] = useState("")
   const [filingDeadline, setFilingDeadline] = useState("")
