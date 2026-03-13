@@ -354,14 +354,36 @@ export default function PricingPage() {
         {/* Property count hint - shown when user has properties */}
         {planInfo && planInfo.propertyCount > 0 && (
           <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-center">
-            <p className="text-sm text-gray-700">
-              You have <strong>{planInfo.propertyCount} propert{planInfo.propertyCount === 1 ? "y" : "ies"}</strong>
-              {planInfo.atLimit && " — at plan limit. Select a plan below to upgrade."}
-            </p>
-            {!planInfo.atLimit && (
-              <p className="text-xs text-gray-600 mt-1">
-                Growth (3–9): add up to {Math.max(0, 9 - planInfo.propertyCount)} more. Portfolio (10–20): add up to {Math.max(0, 20 - planInfo.propertyCount)} more.
+            {planInfo.subscriptionTier === "COMPS_ONLY" ? (
+              <>
+                <p className="text-sm text-gray-700">
+                  You have <strong>{planInfo.propertyCount} propert{planInfo.propertyCount === 1 ? "y" : "ies"}</strong> (DIY only).
+                </p>
+                <p className="text-sm text-amber-800 mt-1 font-medium">
+                  DIY properties don&apos;t count toward Starter, Growth, or Portfolio. Subscribe to Starter to get full automation.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-gray-700">
+                  You have <strong>{planInfo.propertyCount} propert{planInfo.propertyCount === 1 ? "y" : "ies"}</strong>
+                  {planInfo.subscriptionTier === "STARTER" && (
+                    <span className="text-gray-600"> ({tierUsed.starter} of 2 Starter slots)</span>
+                  )}
+                  {planInfo.subscriptionTier === "GROWTH" && (
+                    <span className="text-gray-600"> (2 Starter + {tierUsed.growth} Growth)</span>
+                  )}
+                  {planInfo.subscriptionTier === "PORTFOLIO" && (
+                    <span className="text-gray-600"> (2 Starter + 7 Growth + {tierUsed.portfolio} Portfolio)</span>
+                  )}
+                  {planInfo.atLimit && " — at plan limit. Select a plan below to upgrade."}
+                </p>
+                {!planInfo.atLimit && planInfo.subscriptionTier !== "PERFORMANCE" && (
+                  <p className="text-xs text-gray-600 mt-1">
+                    Growth (3–9): add up to {Math.max(0, 9 - planInfo.propertyCount)} more. Portfolio (10–20): add up to {Math.max(0, 20 - planInfo.propertyCount)} more.
               </p>
+                )}
+              </>
             )}
           </div>
         )}
