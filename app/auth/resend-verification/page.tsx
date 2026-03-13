@@ -1,17 +1,27 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 
 export default function ResendVerificationPage() {
   const [email, setEmail] = useState("")
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle")
   const [message, setMessage] = useState("")
+  const [devLink, setDevLink] = useState<string | null>(null)
+  const [smtpConfigured, setSmtpConfigured] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    fetch("/api/auth/email-status")
+      .then((r) => r.json())
+      .then((d) => setSmtpConfigured(d.smtpConfigured))
+      .catch(() => setSmtpConfigured(null))
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setStatus("loading")
     setMessage("")
+    setDevLink(null)
 
     try {
       const res = await fetch("/api/auth/resend-verification", {
@@ -23,7 +33,12 @@ export default function ResendVerificationPage() {
 
       if (res.ok) {
         setStatus("success")
-        setMessage("Verification email sent. Check your inbox.")
+        if (data._devLink) {
+          setMessage("SMTP not configured. Use the link below to verify your email:")
+          setDevLink(data._devLink)
+        } else {
+          setMessage(data.message || "Verification email sent. Check your inbox.")
+        }
       } else {
         setStatus("error")
         setMessage(data.error || "Failed to send")
@@ -44,6 +59,12 @@ export default function ResendVerificationPage() {
           <p className="mt-2 text-center text-sm text-gray-600">
             Enter your email to receive a new verification link.
           </p>
+          {smtpConfigured === false && (
+            <p className="mt-2 text-center text-sm text-amber-700 bg-amber-50 rounded px-3 py-2">
+              SMTP not configured. The verification link will appear below when you submit. Or add{" "}
+              <code className="bg-amber-100 px-1">ALLOW_DEV_VERIFICATION_LINK=true</code> to .env.local to always show it.
+            </p>
+          )}
         </div>
 
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
@@ -56,6 +77,14 @@ export default function ResendVerificationPage() {
               }`}
             >
               {message}
+              {devLink && (
+                <a
+                  href={devLink}
+                  className="mt-2 block font-medium text-blue-600 hover:underline"
+                >
+                  Click here to verify (dev)
+                </a>
+              )}
             </div>
           )}
 

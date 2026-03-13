@@ -9,6 +9,7 @@ import { RefreshSubscriptionButton } from "@/components/account/RefreshSubscript
 import { ProfileForm } from "@/components/account/ProfileForm"
 import { DeleteAccountSection } from "@/components/account/DeleteAccountSection"
 import { PendingInvoicesSection } from "@/components/account/PendingInvoicesSection"
+import { SignOutButton } from "@/components/auth/SignOutButton"
 import { getPropertyLimit } from "@/lib/billing/limits"
 import { formatPIN } from "@/lib/cook-county"
 import { isAppealSubmitted } from "@/lib/appeals/status"
@@ -195,12 +196,12 @@ export default async function AccountPage() {
         {freshUser.stripeCustomerId && (
           <ManageSubscriptionButton />
         )}
-        <Link
-          href="/api/auth/signout"
+        <SignOutButton
+          variant="button"
           className="inline-flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium hover:bg-gray-50"
         >
           Sign out
-        </Link>
+        </SignOutButton>
       </div>
     </div>
   )

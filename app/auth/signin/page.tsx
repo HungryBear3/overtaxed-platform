@@ -1,12 +1,11 @@
 "use client"
 
 import { useState } from "react"
-import { signIn } from "next-auth/react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import Link from "next/link"
+import { signInWithCredentials } from "./actions"
 
 export default function SignInPage() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const callbackUrl = searchParams.get("callbackUrl") || "/dashboard"
   
@@ -20,24 +19,13 @@ export default function SignInPage() {
     setError("")
     setIsLoading(true)
 
-    try {
-      const result = await signIn("credentials", {
-        email,
-        password,
-        redirect: false,
-      })
+    const result = await signInWithCredentials(email, password, callbackUrl)
 
-      if (result?.error) {
-        setError(result.error)
-      } else {
-        router.push(callbackUrl)
-        router.refresh()
-      }
-    } catch {
-      setError("An unexpected error occurred")
-    } finally {
-      setIsLoading(false)
+    if (result.error) {
+      setError(result.error)
     }
+    // On success, signIn redirects; no need to router.push
+    setIsLoading(false)
   }
 
   return (

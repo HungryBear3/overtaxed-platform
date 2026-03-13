@@ -7,6 +7,7 @@ import { Menu, X, Home, Building2, FileText, User, CreditCard } from "lucide-rea
 import { useState } from "react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { SignOutButton } from "@/components/auth/SignOutButton"
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: Home },
@@ -56,12 +57,7 @@ export function Header() {
         </nav>
 
         <div className="hidden md:flex md:items-center md:gap-2">
-          <Link
-            href="/api/auth/signout"
-            className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-          >
-            Sign out
-          </Link>
+          <SignOutButton className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900" />
         </div>
 
         {/* Mobile menu toggle */}
@@ -109,13 +105,12 @@ export function Header() {
               <User className="h-4 w-4" />
               Account
             </Link>
-            <Link
-              href="/api/auth/signout"
+            <SignOutButton
               onClick={() => setMobileOpen(false)}
               className="mt-2 flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-100"
             >
               Sign out
-            </Link>
+            </SignOutButton>
           </nav>
         </div>
       )}

@@ -140,9 +140,10 @@ function getQuantityRange(range: PlanRange, currentTier: string | null, currentS
       const growthUsed = currentSlots - STARTER_SLOTS
       if (growthUsed >= GROWTH_SLOTS) return [] // All 9 Growth slots used — must upgrade to Portfolio for 10+
       const maxAdditional = Math.max(1, GROWTH_SLOTS - growthUsed)
-      return Array.from({ length: maxAdditional }, (_, i) => i + 1) // 1..maxAdditional
+      return Array.from({ length: maxAdditional }, (_, i) => i + 1) // 1..maxAdditional (up to 7)
     }
-    return [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    // COMPS_ONLY or other: Growth total is 3–9, so show 3..9 (not 1–2 which is below Growth min)
+    return [3, 4, 5, 6, 7, 8, 9]
   }
   if (range === "10-20") {
     if (currentTier === "GROWTH") return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] // additional (9 + 1..11 = 10..20 total)
@@ -177,9 +178,10 @@ function propertyCountToSlotIndex(range: PlanRange, count: number, currentTier: 
   if (range === "1-2") return Math.min(Math.max(count, 1), 2)
   if (range === "3-9") {
     const fromStarter = currentTier === "STARTER" || currentTier === null
-    const max = fromStarter ? 7 : Math.max(1, GROWTH_MAX_PROPERTIES - currentSlots)
-    const min = 1
-    const raw = fromStarter ? count - 2 : (currentTier === "GROWTH" ? count - currentSlots : count)
+    const fromGrowth = currentTier === "GROWTH"
+    const min = fromStarter ? 1 : 3 // COMPS_ONLY/other: Growth min total is 3
+    const max = fromStarter ? 7 : (fromGrowth ? Math.max(1, GROWTH_MAX_PROPERTIES - currentSlots) : 9)
+    const raw = fromStarter ? count - 2 : (fromGrowth ? count - currentSlots : count)
     return Math.min(Math.max(raw, min), max)
   }
   if (range === "10-20") {
@@ -218,6 +220,14 @@ export default function PricingPage() {
       .then((r) => r.json())
       .then((data) => {
         setPlanInfo(data)
+        // #region agent log
+        const currentTier = data.subscriptionTier ?? null
+        const currentSlots = data.subscriptionQuantity ?? 0
+        const planToRange: Record<string, string> = { STARTER: "1-2", GROWTH: "3-9", PORTFOLIO: "10-20", CUSTOM: "20+" }
+        const effectiveRange = (data.recommendedPlan ? planToRange[data.recommendedPlan] : null) ?? ((data.propertyCount <= 2) ? "1-2" : (data.propertyCount <= 9) ? "3-9" : (data.propertyCount <= 20) ? "10-20" : "20+")
+        const qtyOpts = (() => { if (effectiveRange === "3-9") { if (currentTier === "STARTER" || currentTier === null) return [1,2,3,4,5,6,7]; if (currentTier === "GROWTH") { const gu = currentSlots - 2; const maxAdd = Math.max(1, 7 - gu); return Array.from({ length: maxAdd }, (_, i) => i + 1); } return [1,2,3,4,5,6,7,8,9]; } return []; })()
+        fetch('http://127.0.0.1:7242/ingest/48622b90-a5ef-4d61-bef0-d727777ab56e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'355d64'},body:JSON.stringify({sessionId:'355d64',location:'pricing/page.tsx:planInfo',message:'plan-info received',data:{propertyCount:data.propertyCount,subscriptionTier:currentTier,subscriptionQuantity:currentSlots,effectiveRange,quantityOptionsLen:qtyOpts.length,quantityOptions:qtyOpts,requiresStarterFirst:currentTier!=null&&currentTier!=="STARTER"&&currentTier!=="GROWTH"},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
         if (data.propertyCount > 0 && !selectedRange) {
           const tier = data.subscriptionTier
           if (data.propertyCount <= 2) setSelectedRange("1-2")

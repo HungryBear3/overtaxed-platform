@@ -1,5 +1,6 @@
 import { type NextAuthConfig } from "next-auth"
 import { type JWT } from "next-auth/jwt"
+import { CredentialsSignin } from "next-auth"
 import CredentialsProvider from "next-auth/providers/credentials"
 import bcrypt from "bcryptjs"
 
@@ -27,13 +28,13 @@ export const authOptions: NextAuthConfig = {
           typeof credentials?.password === "string" ? credentials.password : ""
 
         if (!email || !password) {
-          throw new Error("Please enter your email and password")
+          throw new CredentialsSignin("Please enter your email and password")
         }
 
         // Normalize email to lowercase
         const normalizedEmail = validateEmail(email)
         if (!normalizedEmail) {
-          throw new Error("Invalid email address")
+          throw new CredentialsSignin("Invalid email address")
         }
 
         // Lazy import Prisma to avoid loading it at module initialization
@@ -56,17 +57,17 @@ export const authOptions: NextAuthConfig = {
           })
 
           if (!user || !user.passwordHash || user.deletedAt) {
-            throw new Error("No user found with this email")
+            throw new CredentialsSignin("No user found with this email")
           }
 
           if (!user.emailVerified) {
-            throw new Error("Please verify your email before signing in. Check your inbox for the verification link.")
+            throw new CredentialsSignin("Please verify your email before signing in. Check your inbox for the verification link.")
           }
 
           const isPasswordValid = await bcrypt.compare(password, user.passwordHash)
 
           if (!isPasswordValid) {
-            throw new Error("Invalid password")
+            throw new CredentialsSignin("Invalid password")
           }
 
           return {
@@ -79,7 +80,8 @@ export const authOptions: NextAuthConfig = {
           }
         } catch (error) {
           console.error("Auth error:", error)
-          throw error
+          if (error instanceof CredentialsSignin) throw error
+          throw new CredentialsSignin("An error occurred during sign in. Please try again.")
         }
       }
     })

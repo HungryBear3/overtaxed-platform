@@ -96,7 +96,7 @@ Write-Host "  2. Property limits - Add properties to limit; 5th should be blocke
 Write-Host "  3. Email - Check inbox after cron or assessment alert"
 Write-Host "  4. Webhook - After checkout, Account/Dashboard should show updated slots"
 Write-Host "  5. Appeal flow - Property, Comps, Start Appeal with These Comps, PDF"
-Write-Host "  6. Filing auth - Appeal detail, Authorize filing, Admin Filing Queue"
+Write-Host "  6. Filing auth - Appeal detail, Authorize filing, Admin Filing Queue, Mark as filed"
 Write-Host ""
 
 exit $failed

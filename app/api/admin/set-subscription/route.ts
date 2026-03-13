@@ -17,6 +17,8 @@ const schema = z.object({
   performancePlanStartDate: z.string().datetime().optional().nullable(),
   /** Performance Plan: UPFRONT or INSTALLMENTS */
   performancePlanPaymentOption: z.enum(["UPFRONT", "INSTALLMENTS"]).optional().nullable(),
+  /** When true: clear stripeCustomerId and stripeSubscriptionId so subscription is DB-only (for dev testing without Stripe) */
+  clearStripeLinks: z.boolean().optional(),
 })
 
 export async function POST(request: NextRequest) {
@@ -63,6 +65,7 @@ export async function POST(request: NextRequest) {
       subscriptionQuantity,
       performancePlanStartDate,
       performancePlanPaymentOption,
+      clearStripeLinks,
     } = parsed.data
 
     if (!email && !userId) {
@@ -101,7 +104,9 @@ export async function POST(request: NextRequest) {
     }
 
     // If setting quantity and user has Stripe subscription, update Stripe so DB and Stripe stay in sync
+    // Skip when clearStripeLinks: we're making this DB-only (no Stripe)
     if (
+      !clearStripeLinks &&
       subscriptionQuantity !== undefined &&
       subscriptionQuantity != null &&
       user.stripeSubscriptionId &&
@@ -139,6 +144,7 @@ export async function POST(request: NextRequest) {
             : null,
         }),
         ...(performancePlanPaymentOption !== undefined && { performancePlanPaymentOption }),
+        ...(clearStripeLinks && { stripeCustomerId: null, stripeSubscriptionId: null }),
       },
       select: {
         id: true,

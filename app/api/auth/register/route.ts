@@ -87,12 +87,16 @@ export async function POST(request: NextRequest) {
     // Send verification email (2.5)
     const verifyToken = createEmailVerificationToken(user.email)
     const verifyUrl = `${appUrl}/auth/verify-email?token=${encodeURIComponent(verifyToken)}`
-    await sendEmail({
+    const emailSent = await sendEmail({
       to: user.email,
       subject: "Verify your OverTaxed IL email",
       text: `Welcome! Please verify your email by opening this link (valid 24 hours):\n\n${verifyUrl}\n\nIf you didn't create an account, you can ignore this email.`,
       html: `<p>Welcome! <a href="${verifyUrl}">Click here to verify your email</a> (link valid 24 hours).</p><p>If you didn't create an account, you can ignore this email.</p>`,
     })
+
+    if (!emailSent && process.env.NODE_ENV === "development") {
+      console.log("[register] SMTP not configured – verification link (copy to browser):", verifyUrl)
+    }
 
     return NextResponse.json(
       { 

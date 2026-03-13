@@ -106,7 +106,7 @@ Check response for 200 and any reminder emails sent.
 
 ---
 
-### 6. Filing authorization — ~5 min
+### 6. Filing authorization — ~6 min
 
 | Step | Action | Pass |
 |------|--------|------|
@@ -118,8 +118,9 @@ Check response for 200 and any reminder emails sent.
 | 6.6 | See appeal with full auth data | ☐ |
 | 6.7 | Click Auth PDF link — download works | ☐ |
 | 6.8 | Click Appeal packet link — download works | ☐ |
+| 6.9 | (Staff-assisted) Click **"Mark as filed"** — status updates to FILED; user receives appeal-filed email | ☐ |
 
-**Pass:** User auth form + admin queue + PDF links all work.
+**Pass:** User auth form + admin queue + PDF links + Mark as filed all work.
 
 ---
 

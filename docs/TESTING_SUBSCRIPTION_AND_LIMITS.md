@@ -51,6 +51,8 @@ curl -X POST https://www.overtaxed-il.com/api/admin/set-subscription \
 **Tiers:** `COMPS_ONLY` (1 property), `STARTER` (2), `GROWTH` (9), `PORTFOLIO` (20), `PERFORMANCE` (999).  
 **Status:** `ACTIVE`, `INACTIVE`, `PAST_DUE`, `CANCELLED`.
 
+**Dev-only (no Stripe):** Add `"clearStripeLinks": true` to make the subscription DB-only. Use when Stripe has no subscription but you want to test limits (e.g. Growth with 3 slots). This clears `stripeCustomerId` and `stripeSubscriptionId` so the site won't try to manage via Stripe.
+
 To simulate “no active subscription” (e.g. back to free/comps-only behavior), set:
 
 - `subscriptionTier: "COMPS_ONLY"` and `subscriptionStatus: "ACTIVE"`, **or**
