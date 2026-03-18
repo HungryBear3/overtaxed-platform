@@ -6,6 +6,9 @@ interface Township {
   name: string
   district: string
   status: "OPEN" | "UPCOMING" | "CLOSED" | "FUTURE"
+  openDate?: string
+  closeDate?: string
+  cities?: string
 }
 
 interface Props {
@@ -115,7 +118,7 @@ export function TownshipAlertForm({ townships, defaultTownship }: Props) {
                   .filter((t) => t.status === "FUTURE")
                   .map((t) => (
                     <option key={t.name} value={t.name}>
-                      {t.name} — {t.district} District ({t.openDate})
+                      {t.name} — {t.district} District{t.openDate ? ` (${t.openDate})` : ""}
                     </option>
                   ))}
               </optgroup>
