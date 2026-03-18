@@ -632,6 +632,31 @@ enum JobStatus {
 }
 
 // ============================================
+// Township Deadline Alerts (free lead gen)
+// ============================================
+
+model TownshipAlert {
+  id        String   @id @default(cuid())
+  email     String
+  township  String   // e.g. "Worth", "Bremen", "Orland"
+  district  String?  // e.g. "South", "North"
+
+  // Notification state
+  notifiedOpen  Boolean  @default(false)  // Emailed when window opened
+  notifiedClose Boolean  @default(false)  // Emailed 7 days before close
+
+  subscribedAt DateTime @default(now())
+  unsubscribedAt DateTime?
+  unsubscribeToken String @unique @default(cuid())
+
+  @@index([email])
+  @@index([township])
+  @@index([notifiedOpen])
+  @@index([notifiedClose])
+  @@unique([email, township])
+}
+
+// ============================================
 // Visitor Counter
 // ============================================
 

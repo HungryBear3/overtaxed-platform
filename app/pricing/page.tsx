@@ -220,14 +220,6 @@ export default function PricingPage() {
       .then((r) => r.json())
       .then((data) => {
         setPlanInfo(data)
-        // #region agent log
-        const currentTier = data.subscriptionTier ?? null
-        const currentSlots = data.subscriptionQuantity ?? 0
-        const planToRange: Record<string, string> = { STARTER: "1-2", GROWTH: "3-9", PORTFOLIO: "10-20", CUSTOM: "20+" }
-        const effectiveRange = (data.recommendedPlan ? planToRange[data.recommendedPlan] : null) ?? ((data.propertyCount <= 2) ? "1-2" : (data.propertyCount <= 9) ? "3-9" : (data.propertyCount <= 20) ? "10-20" : "20+")
-        const qtyOpts = (() => { if (effectiveRange === "3-9") { if (currentTier === "STARTER" || currentTier === null) return [1,2,3,4,5,6,7]; if (currentTier === "GROWTH") { const gu = currentSlots - 2; const maxAdd = Math.max(1, 7 - gu); return Array.from({ length: maxAdd }, (_, i) => i + 1); } return [1,2,3,4,5,6,7,8,9]; } return []; })()
-        fetch('http://127.0.0.1:7242/ingest/48622b90-a5ef-4d61-bef0-d727777ab56e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'355d64'},body:JSON.stringify({sessionId:'355d64',location:'pricing/page.tsx:planInfo',message:'plan-info received',data:{propertyCount:data.propertyCount,subscriptionTier:currentTier,subscriptionQuantity:currentSlots,effectiveRange,quantityOptionsLen:qtyOpts.length,quantityOptions:qtyOpts,requiresStarterFirst:currentTier!=null&&currentTier!=="STARTER"&&currentTier!=="GROWTH"},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-        // #endregion
         if (data.propertyCount > 0 && !selectedRange) {
           const tier = data.subscriptionTier
           if (data.propertyCount <= 2) setSelectedRange("1-2")
@@ -394,6 +386,79 @@ export default function PricingPage() {
           <p className="text-sm text-amber-800">
             <strong>Starter:</strong> up to 2 properties ($149 each). <strong>Growth:</strong> up to 7 more properties (3–9 total) at ${GROWTH_PRICE_PER_PROPERTY}/property. <strong>Portfolio:</strong> up to 11 more properties (10–20 total) at ${PORTFOLIO_PRICE_PER_PROPERTY}/property. You choose how many to pay for; you can add more later within the plan max. To downgrade or change plan, use Account or contact us.
           </p>
+        </div>
+
+        {/* 3-Year ROI Callout */}
+        <div className="mb-10 rounded-2xl overflow-hidden border border-blue-100">
+          <div className="bg-blue-900 text-white px-6 py-5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-blue-300 mb-1">
+              The 3-year math
+            </p>
+            <h2 className="text-xl font-bold">
+              A 2026 win saves you money through 2029.
+            </h2>
+            <p className="text-blue-200 text-sm mt-1">
+              Cook County reassesses on a 3-year cycle. South district townships are up this year.
+              A successful appeal locks in your reduced assessment for the entire cycle.
+            </p>
+          </div>
+          <div className="bg-white px-6 py-5">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+              <div className="rounded-xl bg-gray-50 border border-gray-200 p-4 text-center">
+                <p className="text-2xl font-bold text-gray-900">$0</p>
+                <p className="text-sm text-gray-600 mt-1">Cost to file with Cook County</p>
+              </div>
+              <div className="rounded-xl bg-green-50 border border-green-200 p-4 text-center">
+                <p className="text-2xl font-bold text-green-700">$1,500–$4,500</p>
+                <p className="text-sm text-green-800 mt-1">Potential 3-year savings ($500–$1,500/yr)</p>
+              </div>
+              <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-center">
+                <p className="text-2xl font-bold text-amber-700">30–50%</p>
+                <p className="text-sm text-amber-800 mt-1">Attorney fee — of your first-year savings</p>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    <th className="py-2 pr-4 text-left">Option</th>
+                    <th className="py-2 px-4 text-right">Cost</th>
+                    <th className="py-2 px-4 text-right">Avg savings/yr</th>
+                    <th className="py-2 pl-4 text-right">Net 3-year return</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  <tr className="hover:bg-gray-50">
+                    <td className="py-2.5 pr-4 font-medium text-gray-900">OverTaxed IL — DIY</td>
+                    <td className="py-2.5 px-4 text-right text-gray-600">$69 once</td>
+                    <td className="py-2.5 px-4 text-right text-gray-600">~$750</td>
+                    <td className="py-2.5 pl-4 text-right font-semibold text-green-700">$2,181</td>
+                  </tr>
+                  <tr className="hover:bg-gray-50">
+                    <td className="py-2.5 pr-4 font-medium text-gray-900">OverTaxed IL — Full automation</td>
+                    <td className="py-2.5 px-4 text-right text-gray-600">$149/yr</td>
+                    <td className="py-2.5 px-4 text-right text-gray-600">~$750</td>
+                    <td className="py-2.5 pl-4 text-right font-semibold text-green-700">$1,803</td>
+                  </tr>
+                  <tr className="hover:bg-gray-50">
+                    <td className="py-2.5 pr-4 font-medium text-gray-900">Tax attorney</td>
+                    <td className="py-2.5 px-4 text-right text-gray-600">30–50% of yr 1</td>
+                    <td className="py-2.5 px-4 text-right text-gray-600">~$750</td>
+                    <td className="py-2.5 pl-4 text-right font-semibold text-amber-700">$1,875–$2,025</td>
+                  </tr>
+                  <tr className="hover:bg-gray-50">
+                    <td className="py-2.5 pr-4 font-medium text-gray-900">Do nothing</td>
+                    <td className="py-2.5 px-4 text-right text-gray-600">$0</td>
+                    <td className="py-2.5 px-4 text-right text-gray-600">$0</td>
+                    <td className="py-2.5 pl-4 text-right font-semibold text-red-600">–$2,250</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-gray-400 mt-3">
+              Based on average savings of $750/year and 3-year savings lock-in. Individual results vary.
+            </p>
+          </div>
         </div>
 
         {error && (

@@ -46,6 +46,7 @@ This document captures bugs, deployment issues, and solutions encountered during
 39. [Quick wins: How to file link, township deadline CTA, post-filing FAQ](#39-quick-wins-how-to-file-link-township-deadline-cta-post-filing-faq)
 40. [Product improvements: filing status, outcome tracking, township display, multi-year](#40-product-improvements-filing-status-outcome-tracking-township-display-multi-year)
 41. [UX + Tech: Ready to File clarity, collapsible instructions, post-filing guidance, Vercel Analytics, performance fee doc, admin Mark as filed](#41-ux--tech-ready-to-file-clarity-collapsible-instructions-post-filing-guidance-vercel-analytics-performance-fee-doc-admin-mark-as-filed)
+42. [Mar 2026: Market positioning, growth roadmap, content strategy decisions](#42-mar-2026-market-positioning-growth-roadmap-content-strategy-decisions)
 
 ---
 
@@ -1090,9 +1091,69 @@ curl -H "x-admin-secret: your-secret" "https://www.overtaxed-il.com/api/admin/se
 
 ---
 
+---
+
+## 42. Mar 2026: Market Positioning, Growth Roadmap, Content Strategy Decisions
+
+### Context
+Market analysis (March 2026) identified three core positioning insights that should inform all product and content decisions going forward. These are captured here so they don't get lost and future development decisions stay aligned with the strategy.
+
+### The three positioning pillars
+
+**1. The inequality narrative is the emotional core of the brand.**
+
+Large commercial property owners in Cook County have always had tax attorneys who know the Assessor, the Board of Review, and how to negotiate reductions. Residential homeowners get a confusing notice and no guidance. This gap is real, it's significant, and it's the reason OverTaxed IL exists. Every homepage headline, every video hook, every ad should connect back to this. The product isn't automation — it's access.
+
+*Product implication:* Homepage hero should lead with empowerment/equality framing, not feature description. See §21.2 in `tasks/tasks-overtaxed-platform.md`.
+
+**2. The 2026 south district reassessment cycle is a time-limited acquisition window.**
+
+Cook County reassesses on a 3-year cycle. South district townships are in the 2026 cycle. A successful appeal this year locks in savings through 2029. Every piece of urgency content should frame it this way: not "appeal before the deadline," but "a win now is worth 3 years of savings." This framing also justifies the price point — $149/year vs. $1,500–$4,500 in potential 3-year savings is an obvious ROI.
+
+*Product implication:* Township deadline tracking is not just a feature, it's the primary acquisition hook for the current cycle. The `/townships` page (§21.1) and the free deadline email alert (§21.7) are the two highest-leverage builds right now.
+
+**3. The real competitors are inertia and confusion, not other tech companies.**
+
+No other company is doing social content in this niche. The bar to outpace every competitor in the space is simply showing up. Facebook and Nextdoor groups are the highest-intent free audience available — these are homeowners actively in distress about their tax bills, in the specific geography OverTaxed IL serves. The content strategy (community posts, educational videos, Meta ads timed to township openings) is the go-to-market.
+
+*Product implication:* The free assessment check (§21.8) and the free township deadline alert (§21.7) both serve as landing points for social content. Without a frictionless free entry point, the community strategy generates awareness but not conversions.
+
+### Key decisions made
+
+| Decision | Rationale |
+|----------|-----------|
+| Lead with inequality/empowerment framing, not automation | Automation is the mechanism; the emotional hook is fairness |
+| Build `/townships` page before Board of Review tier | SEO + urgency value immediate; Board of Review is a future product |
+| Free township deadline alert before referral program | Lead gen beats referral at this stage; need volume first |
+| Free assessment check as primary top-of-funnel | Converts researchers; shows the gap before asking for money |
+| Board of Review as future product tier (~$249/year) | Directly addresses inequality narrative; businesses file at both levels |
+| Results dashboard deferred until outcome data accumulates | Don't surface until meaningful sample; fake social proof backfires |
+
+### What "Board of Review support" means for the roadmap
+
+The Board of Review is a separate Cook County body (three commissioners). Appeals to the Board use a different form format, different deadlines (typically open after the Assessor's window closes), and historically have higher representation rates from attorneys. This is the second level of the appeal process and the one where the inequality is most visible.
+
+When OverTaxed IL is ready to expand to Board of Review:
+- Deadline tracking: `CountyConfig` needs Board of Review open/close dates (separate from Assessor dates)
+- Form format: different from the Assessor appeal-summary PDF; research required (see `docs/COOK_COUNTY_APPEAL_FORMS.md` for Assessor; add Board of Review equivalent)
+- Pricing: suggested $249/property/year for Assessor + Board of Review combined tier
+- The `FilingAuthorization` model already captures attorney/representative info that would apply at both levels
+
+### Content strategy assets created
+- `tasks/overtaxed-30day-strategy-v2.md` — 30-day net-new content calendar (Scripts 16–29), website copy recommendations, service offering recommendations (Parts 1–3)
+- `tasks/30-day-content-calendar.md` — Earlier 30-day calendar (based on existing scripts 14–15; partially superseded by v2)
+- Scripts 1–13 already produced and scheduled on Meta/Instagram and YouTube as of March 2026
+
+### Hashtag and community strategy notes
+- Facebook/Nextdoor posts follow a trust ladder: 2 posts with no product mention → 1 post mentioning OverTaxed IL as a tool, not a pitch. Never mass-post across groups; space 2–3 days apart per group.
+- Meta ad ZIP codes for south district: 60406, 60409, 60417, 60426, 60429, 60430, 60443, 60445, 60452, 60453, 60455, 60456, 60458, 60459, 60461, 60462, 60463, 60464, 60465, 60469, 60472, 60473, 60476, 60477, 60478, 60482
+- South district townships to name in content: Blue Island, Calumet City, Dolton, Harvey, Oak Lawn, Tinley Park, Orland Park, Alsip, Midlothian
+
+---
+
 **Last Updated:** March 2026
 
-**Mar 2026:** §41 — UX + Tech: Ready to File clarity, collapsible submission instructions, post-filing guidance, Vercel Analytics, docs/PERFORMANCE_FEE_FLOW.md, admin "Mark as filed" button. §40 — Product improvements (filing status, outcome tracking, township, multi-year). §39 — Quick wins. §38 — Filing authorization: official Cook County form fill; signature position; interest rate drawn at correct coords (x=365, y=72); purchased/refinanced question and checkboxes; fixed/variable rate (14=Variable, 15=Fixed); OverTaxed IL address 1028 W Leland Ave 60640; do not fill Text2–7 with interest rate. §37 — Socrata columns (pabr-t5kh: nbhd_code only; x54s-btds: pin only); safeResJson for API responses; Rule 15 removal (sales-only comps); logo OverTaxed IL; comps table: hide Assessment, conditional Type column. **Phase 1 validation:** See `docs/PHASE1_VALIDATION_GUIDE.md` for checklist; run `scripts/phase1-validation.ps1` for automated checks.
+**Mar 2026:** §42 — Market positioning decisions, growth roadmap, content strategy (inequality narrative, 3-year savings framing, real competitor = inertia, Board of Review roadmap). §41 — UX + Tech: Ready to File clarity, collapsible submission instructions, post-filing guidance, Vercel Analytics, docs/PERFORMANCE_FEE_FLOW.md, admin "Mark as filed" button. §40 — Product improvements (filing status, outcome tracking, township, multi-year). §39 — Quick wins. §38 — Filing authorization: official Cook County form fill; signature position; interest rate drawn at correct coords (x=365, y=72); purchased/refinanced question and checkboxes; fixed/variable rate (14=Variable, 15=Fixed); OverTaxed IL address 1028 W Leland Ave 60640; do not fill Text2–7 with interest rate. §37 — Socrata columns (pabr-t5kh: nbhd_code only; x54s-btds: pin only); safeResJson for API responses; Rule 15 removal (sales-only comps); logo OverTaxed IL; comps table: hide Assessment, conditional Type column. **Phase 1 validation:** See `docs/PHASE1_VALIDATION_GUIDE.md` for checklist; run `scripts/phase1-validation.ps1` for automated checks.
 
 **Feb 2026:** §36 — Admin filing queue, authorization PDF, user download; admin can access any appeal packet + auth PDF. §35 — Supabase pooler: auto-append `pgbouncer=true` in prisma.config.ts and lib/db/prisma.ts to fix "prepared statement already exists". §34 — Filing authorization form: FilingAuthorization model, POST /api/appeals/[id]/authorization, FilingAuthorizationForm component on appeal detail (DRAFT/PENDING_FILING); captures property + owner info for Cook County Attorney/Representative form; staff filing queue and "File for me" to follow. §33 — Automated Performance Fee billing: assessment-check detects Cook County reductions and auto-updates appeals (outcome, taxSavings); Stripe Invoice create/finalize/send; webhook invoice.paid; 4-step collection notices (7/14/30/45 days); Terms §4 strengthened (deadlines, claims court, legal fees, waiver, jurisdiction). Cron: assessment-checks 07:00 Mon, performance-invoices 08:00 Mon, invoice-collections daily 09:00. §32 — Prisma P3005 baseline. §31 — Street View heading to face building front. §30 — Legal website design. §27–29 — Requested assessment input, comps improvements, submission instructions.
 

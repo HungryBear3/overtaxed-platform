@@ -6,6 +6,7 @@ import {
   HowItWorksSection,
   StatsBar,
   CookCountyBadge,
+  WhatIsHappeningNow,
 } from "@/components/home"
 
 export default function HomePage() {
@@ -21,6 +22,18 @@ export default function HomePage() {
               className="text-gray-600 hover:text-gray-900 font-medium"
             >
               Pricing
+            </Link>
+            <Link
+              href="/check"
+              className="text-gray-600 hover:text-gray-900 font-medium"
+            >
+              Free check
+            </Link>
+            <Link
+              href="/townships"
+              className="text-gray-600 hover:text-gray-900 font-medium"
+            >
+              Deadlines
             </Link>
             <Link
               href="#how-it-works"
@@ -49,41 +62,54 @@ export default function HomePage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center">
           <div>
             <CookCountyBadge />
-            <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mt-6 mb-6">
-              Lower Your Property Taxes
+            <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mt-6 mb-5">
+              Cook County Is
               <br />
-              <span className="text-blue-600">Automatically</span>
+              <span className="text-blue-600">Overtaxing You.</span>
+              <br />
+              Fight Back.
             </h2>
-            <p className="text-xl text-gray-600 mb-6">
-              OverTaxed IL monitors your Cook County property assessments and files
-              appeals automatically when you&apos;re being overtaxed. Save money
-              without the hassle.
+            <p className="text-lg text-gray-700 mb-3 leading-relaxed">
+              The property tax appeal process has always favored those with attorneys.
+              Large commercial owners use them every year. Average homeowners get a
+              confusing notice and no guidance.
             </p>
-            <p className="text-sm text-gray-500 mb-8">
-              No lawyer required.
+            <p className="text-lg text-gray-700 mb-6 leading-relaxed">
+              OverTaxed IL gives every Cook County homeowner the same
+              professional-grade comparable analysis — automatically.
+            </p>
+            <p className="text-sm text-gray-500 font-medium mb-8">
+              No attorney needed · Filing is free · $69 DIY or $149 full automation
             </p>
             <div className="flex flex-wrap gap-4">
               <Link
                 href="/auth/signup"
-                className="bg-blue-600 text-white px-8 py-3 rounded-md hover:bg-blue-700 font-medium text-lg"
+                className="bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 font-semibold text-base shadow-sm"
               >
-                Start Saving Now
+                Start My Appeal
               </Link>
               <Link
-                href="#how-it-works"
-                className="border border-gray-300 text-gray-700 px-8 py-3 rounded-md hover:bg-gray-50 font-medium text-lg"
+                href="/check"
+                className="border border-blue-200 bg-blue-50 text-blue-700 px-8 py-3 rounded-lg hover:bg-blue-100 font-semibold text-base"
               >
-                How It Works
+                Free assessment check →
               </Link>
               <Link
-                href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-600 hover:text-blue-700 font-medium text-lg underline"
+                href="/townships"
+                className="border border-gray-300 bg-white text-gray-700 px-8 py-3 rounded-lg hover:bg-gray-50 font-semibold text-base"
               >
-                Check your township deadline →
+                Township deadlines
               </Link>
             </div>
+            <p className="mt-5 text-sm text-gray-500">
+              <Link href="#how-it-works" className="underline hover:text-gray-700">
+                How it works
+              </Link>
+              {" · "}
+              <Link href="/pricing" className="underline hover:text-gray-700">
+                Pricing
+              </Link>
+            </p>
           </div>
           <div className="relative aspect-[4/3] lg:aspect-square rounded-2xl overflow-hidden shadow-xl">
             <Image
@@ -99,6 +125,9 @@ export default function HomePage() {
 
         {/* Stats Bar */}
         <StatsBar />
+
+        {/* What's Happening Right Now */}
+        <WhatIsHappeningNow />
 
         {/* Features */}
         <div className="mt-24 grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -476,7 +505,13 @@ export default function HomePage() {
             <p className="text-gray-500 text-sm">
               &copy; {new Date().getFullYear()} OverTaxed IL. All rights reserved.
             </p>
-            <div className="flex gap-6">
+            <div className="flex flex-wrap gap-6">
+              <Link href="/townships" className="text-gray-500 hover:text-gray-700 text-sm">
+                Township Deadlines
+              </Link>
+              <Link href="/board-of-review" className="text-gray-500 hover:text-gray-700 text-sm">
+                Board of Review
+              </Link>
               <Link href="/terms" className="text-gray-500 hover:text-gray-700 text-sm">
                 Terms
               </Link>
