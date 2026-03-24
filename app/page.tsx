@@ -455,8 +455,8 @@ export default function HomePage() {
               View full pricing
             </Link>{" "}
             · Have questions?{" "}
-            <a href="https://calendly.com/overtaxed-il-support/30min" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-              Book a free 30-min call
+            <a href="https://calendly.com/overtaxed-il-support/15min" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+              Book a free 15-min call
             </a>
           </p>
         </div>
