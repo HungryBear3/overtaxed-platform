@@ -2,7 +2,7 @@ import React from 'react'
 
 export default function Hero() {
   return (
-    <section className="bg-navy text-white py-16 px-4">
+    <section className="text-white py-16 px-4" style={{ backgroundColor: '#1e3a5f' }}>
       <div className="max-w-3xl mx-auto text-center">
         <div className="inline-block bg-amber-500 text-white text-sm font-semibold px-3 py-1 rounded-full mb-4">
           2026 Reassessment Cycle — Townships Open Now
@@ -16,7 +16,7 @@ export default function Hero() {
         <div className="flex flex-col sm:flex-row justify-center gap-4">
           <a
             href="/check"
-            className="bg-white text-navy hover:bg-gray-100 font-semibold py-3 px-6 rounded"
+            className="bg-white hover:bg-gray-100 font-semibold py-3 px-6 rounded" style={{ color: '#1e3a5f' }}
           >
             Start Free Check
           </a>
