@@ -35,9 +35,9 @@ const plans: Array<{
     id: "STARTER",
     name: "Starter",
     priceLabel: "$149/property/year",
-    propertyLimit: "Up to 2 of your first properties",
-    pricingNote: "Retail pricing.",
-    exampleTotals: "1 = $149/yr · 2 = $298/yr",
+    propertyLimit: "1–2 properties",
+    pricingNote: "Best for homeowners and small landlords.",
+    exampleTotals: "1 property = $149/yr · 2 properties = $298/yr",
     popular: true,
     features: [
       "Full automation per property",
@@ -51,9 +51,9 @@ const plans: Array<{
     id: "GROWTH",
     name: "Growth",
     priceLabel: `$${GROWTH_PRICE_PER_PROPERTY}/property/year`,
-    propertyLimit: "Up to 7 more properties (after Starter)",
-    pricingNote: "Per-property pricing.",
-    exampleTotals: `1 = $${growthPriceForProperties(1)}/yr · 5 = $${growthPriceForProperties(5)}/yr · 9 = $${growthPriceForProperties(9)}/yr`,
+    propertyLimit: "3–9 properties",
+    pricingNote: "Best for small landlords and investors.",
+    exampleTotals: `3 properties = $${growthPriceForProperties(1)}/yr · 9 properties = $${growthPriceForProperties(9)}/yr`,
     features: [
       `Full automation for ${GROWTH_MIN_PROPERTIES}–${GROWTH_MAX_PROPERTIES} properties`,
       "Comparable property analysis",
@@ -66,9 +66,9 @@ const plans: Array<{
     id: "PORTFOLIO",
     name: "Portfolio",
     priceLabel: `$${PORTFOLIO_PRICE_PER_PROPERTY}/property/year`,
-    propertyLimit: "Up to 11 more properties (after Growth)",
-    pricingNote: "Per-property pricing.",
-    exampleTotals: `1 = $${portfolioPriceForProperties(1)}/yr · 10 = $${portfolioPriceForProperties(10)}/yr · 20 = $${portfolioPriceForProperties(20)}/yr`,
+    propertyLimit: "10–20 properties",
+    pricingNote: "Best for property managers and investors.",
+    exampleTotals: `10 properties = $${portfolioPriceForProperties(10)}/yr · 20 properties = $${portfolioPriceForProperties(20)}/yr`,
     features: [
       `Full automation for ${PORTFOLIO_MIN_PROPERTIES}–${PORTFOLIO_MAX_PROPERTIES} properties`,
       "Comparable property analysis",
@@ -334,12 +334,12 @@ export default function PricingPage() {
 
       <main className="mx-auto max-w-5xl px-4 py-12 sm:px-6 lg:px-8">
         <div className="text-center mb-12">
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-100 text-blue-800 text-sm font-medium mb-4">
-            DIY from $69 · Full automation from $149/property
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-navy/10 text-navy text-sm font-medium mb-4">
+            2026 Reassessment Cycle — South District Townships Open Now
           </div>
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">Simple, transparent pricing</h1>
-          <p className="text-lg text-gray-600">
-            DIY reports only · $149/property/year · Commercial tiers · Or 4% of savings deferred.
+          <h1 className="text-4xl font-bold text-gray-900 mb-4">Appeal one property or an entire portfolio</h1>
+          <p className="text-lg text-gray-600 max-w-2xl mx-auto">
+            Homeowners start at $69. Landlords and property managers get volume discounts — the more properties you appeal, the less you pay per property.
           </p>
         </div>
 
@@ -382,9 +382,9 @@ export default function PricingPage() {
 
         {/* How plans work - quantity = property count, 1 minimum at tier price */}
         <div className="mb-8 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
-          <p className="text-sm font-medium text-amber-900 mb-1">How upgrade tiers work</p>
+          <p className="text-sm font-medium text-amber-900 mb-1">Volume discounts — how it works</p>
           <p className="text-sm text-amber-800">
-            <strong>Starter:</strong> up to 2 properties ($149 each). <strong>Growth:</strong> up to 7 more properties (3–9 total) at ${GROWTH_PRICE_PER_PROPERTY}/property. <strong>Portfolio:</strong> up to 11 more properties (10–20 total) at ${PORTFOLIO_PRICE_PER_PROPERTY}/property. You choose how many to pay for; you can add more later within the plan max. To downgrade or change plan, use Account or contact us.
+            Tiers stack as you grow. <strong>Starter:</strong> up to 2 properties at $149 each — great for homeowners and small landlords. <strong>Growth:</strong> 3–9 properties at ${GROWTH_PRICE_PER_PROPERTY} each — ideal if you own a handful of rentals. <strong>Portfolio:</strong> 10–20 properties at ${PORTFOLIO_PRICE_PER_PROPERTY} each — built for property managers. You choose how many slots to pay for upfront and can add more later. To change plans, use Account or contact us.
           </p>
         </div>
 
@@ -475,7 +475,7 @@ export default function PricingPage() {
                 <CardTitle>DIY reports only</CardTitle>
                 <span className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded">Comps only</span>
               </div>
-              <CardDescription>Comparable sales + evidence packet. You file the appeal yourself.</CardDescription>
+              <CardDescription>Best for homeowners who want the data and handle the filing themselves.</CardDescription>
               <div className="mt-4">
                 <span className="text-3xl font-bold text-gray-900">$69</span>
                 <span className="text-gray-500 ml-1">one-time, per property</span>
@@ -532,7 +532,8 @@ export default function PricingPage() {
         </div>
 
         {/* Full automation */}
-        <h2 className="text-xl font-semibold text-gray-900 text-center mb-4">Full automation</h2>
+        <h2 className="text-xl font-semibold text-gray-900 text-center mb-2">Full automation — volume discounts for landlords & property managers</h2>
+        <p className="text-center text-sm text-gray-500 mb-4">The more properties you appeal, the less you pay per property.</p>
         <div className="flex flex-wrap justify-center gap-2 mb-2">
           <span className="text-sm text-gray-600">How many properties?</span>
           {RANGE_LABELS.map((range) => (
@@ -557,7 +558,7 @@ export default function PricingPage() {
           ))}
         </div>
         <p className="text-center text-sm text-gray-500 mb-6">
-          Pick a range: <strong>Starter</strong> up to 2 properties, <strong>Growth</strong> up to 7 more (3–9 total) at ${GROWTH_PRICE_PER_PROPERTY} each, <strong>Portfolio</strong> up to 11 more (10–20 total) at ${PORTFOLIO_PRICE_PER_PROPERTY} each. Minimum 1 at the tier price.
+          <strong>Starter</strong> (1–2 props) $149/property · <strong>Growth</strong> (3–9 props) ${GROWTH_PRICE_PER_PROPERTY}/property · <strong>Portfolio</strong> (10–20 props) ${PORTFOLIO_PRICE_PER_PROPERTY}/property
         </p>
         <div className="grid gap-6 md:grid-cols-3 mb-12">
           {plans.map((plan) => {
@@ -818,12 +819,12 @@ export default function PricingPage() {
             </div>
           )}
           <CardHeader>
-            <CardTitle>20+ properties?</CardTitle>
-            <CardDescription>Custom pricing available for large portfolios.</CardDescription>
+            <CardTitle>Managing 20+ properties?</CardTitle>
+            <CardDescription>Custom pricing for large portfolios and property management companies.</CardDescription>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600 mb-4">
-              Managing 20+ properties? We offer custom pricing tailored to your portfolio size and needs.
+              If you're managing 20+ Cook County properties, we'll build a custom pricing plan around your portfolio. Volume rates, bulk filing, and dedicated support available.
             </p>
             <a
               href="mailto:support@overtaxed-il.com?subject=Custom%20pricing%20for%2020%2B%20properties"
