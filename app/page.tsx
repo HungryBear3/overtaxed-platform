@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import Link from "next/link"
 import Image from "next/image"
 import { Logo } from "@/components/navigation/Logo"
@@ -12,8 +13,31 @@ import {
   HowItWorks,
 } from "@/components/home"
 
+export const metadata: Metadata = {
+  title: "Cook County Property Tax Appeal | Start Free Check",
+  description: "Appeal your Cook County property taxes in minutes. 2026 reassessment cycle is open for south district townships. Homeowners who appeal save $1,200+/year on average.",
+}
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "LocalBusiness",
+  name: "OverTaxed IL",
+  url: "https://www.overtaxed-il.com",
+  description: "Automated Cook County property tax appeal service. We find comparable properties and help you file your appeal.",
+  areaServed: {
+    "@type": "AdministrativeArea",
+    name: "Cook County, Illinois",
+  },
+  serviceType: "Property Tax Appeal",
+}
+
 export default function HomePage() {
   return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
       {/* Navigation */}
       <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -463,5 +487,6 @@ export default function HomePage() {
         </div>
       </footer>
     </div>
+    </>
   )
 }
