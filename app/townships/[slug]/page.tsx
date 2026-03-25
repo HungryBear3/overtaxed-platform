@@ -32,7 +32,7 @@ export async function generateStaticParams() {
 }
 
 export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
-  const township = townships[params.slug];
+  const township = townships[params.slug as keyof typeof townships];
   return {
     title: `${township?.title || 'Township'} - OverTaxed Platform`,
   };
@@ -40,7 +40,7 @@ export async function generateMetadata({ params }: { params: { slug: string } })
 
 export default function Page({ params }: { params: { slug: string } }) {
   const { slug } = params;
-  const township = townships[slug];
+  const township = townships[slug as keyof typeof townships];
 
   if (!township) {
     return <div>Township not found</div>;
