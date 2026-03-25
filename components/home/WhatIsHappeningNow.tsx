@@ -53,7 +53,7 @@ const updates = [
 
 export function WhatIsHappeningNow() {
   return (
-    <section className="mt-20 rounded-2xl border border-blue-100 bg-blue-50/60 px-6 py-8 sm:px-8">
+    <section className="mt-8 rounded-2xl border border-blue-100 bg-blue-50/60 px-6 py-8 sm:px-8">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
         <div>
           <span className="inline-block px-3 py-1 rounded-full bg-blue-600 text-white text-xs font-semibold uppercase tracking-wide mb-2">
