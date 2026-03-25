@@ -74,29 +74,41 @@ export function FreeCheckResult({ result }: Props) {
           )}
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-          <div className="rounded-xl bg-gray-50 border border-gray-200 p-4">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Your assessed value</p>
+        {hasGap && overpay > 0 && (
+          <div className="text-center mb-6">
+            <p className="text-3xl font-extrabold text-amber-800">Estimated savings</p>
+            <p className="text-5xl font-extrabold text-amber-900 -mt-1 mb-2">
+              {formatCurrency(overpay)}
+              <span className="text-xl ml-1 font-semibold">/year</span>
+            </p>
+            {overpay3 > 0 && <p className="text-lg font-semibold text-amber-700">~{formatCurrency(overpay3)} over 3 years</p>}
+            <p className="mt-4 text-gray-700 font-semibold">No lawyer required. Takes 5 minutes.</p>
+            <Link
+              href="/auth/signup"
+              className="mt-6 inline-block bg-blue-600 text-white font-semibold px-8 py-4 rounded-lg hover:bg-blue-700 transition-colors text-lg"
+            >
+              Start Your Appeal
+            </Link>
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-4 justify-center">
+          <div className="rounded-xl bg-gray-50 border border-gray-200 p-4 flex-1 min-w-[10rem] max-w-xs">
+            <p className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Your assessed value</p>
             <p className="text-xl font-bold text-gray-900">{formatCurrency(result.subject.assessedTotalValue)}</p>
           </div>
-          <div className="rounded-xl bg-blue-50 border border-blue-200 p-4">
-            <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1">
+          <div className="rounded-xl bg-blue-50 border border-blue-200 p-4 flex-1 min-w-[10rem] max-w-xs">
+            <p className="text-sm font-semibold text-blue-700 uppercase tracking-wide mb-2">
               Avg of {result.compCount} nearby comp{result.compCount !== 1 ? "s" : ""}
             </p>
             <p className="text-xl font-bold text-blue-900">
-              {result.avgComparableAssessedValue != null
-                ? formatCurrency(result.avgComparableAssessedValue)
-                : "—"}
+              {result.avgComparableAssessedValue != null ? formatCurrency(result.avgComparableAssessedValue) : "—"}
             </p>
           </div>
-          <div className={`rounded-xl border p-4 ${hasGap ? "bg-amber-50 border-amber-200" : "bg-gray-50 border-gray-200"}`}>
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Est. overpayment</p>
-            <p className={`text-xl font-bold ${hasGap ? "text-amber-800" : "text-gray-700"}`}>
-              {hasGap ? `~${formatCurrency(overpay)}/year` : "—"}
-            </p>
-            {hasGap && overpay3 > 0 && (
-              <p className="text-sm text-amber-700 mt-1">~{formatCurrency(overpay3)} over 3 years</p>
-            )}
+          <div className={`rounded-xl border p-4 flex-1 min-w-[10rem] max-w-xs ${hasGap ? "bg-amber-50 border-amber-200" : "bg-gray-50 border-gray-200"}`}>
+            <p className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Est. overpayment</p>
+            <p className={`text-xl font-bold ${hasGap ? "text-amber-800" : "text-gray-700"}`}>{hasGap ? `~${formatCurrency(overpay)}/year` : "—"}</p>
+            {hasGap && overpay3 > 0 && <p className="text-sm text-amber-700 mt-1">~{formatCurrency(overpay3)} over 3 years</p>}
           </div>
         </div>
 
@@ -114,18 +126,27 @@ export function FreeCheckResult({ result }: Props) {
           </div>
         )}
 
+        <div className="mb-6">
+          <p className="text-center font-medium text-gray-900 text-lg mb-4">What happens next</p>
+          <ol className="list-decimal list-inside space-y-3 text-gray-700 max-w-lg mx-auto">
+            <li>Review your results and estimate your potential savings.</li>
+            <li>Start your appeal by signing up and submitting your information.</li>
+            <li>Follow the appeal process and await your assessment update.</li>
+          </ol>
+        </div>
+
         <div className="flex flex-wrap gap-3">
           <Link
             href="/auth/signup?plan=diy"
             className="inline-flex items-center justify-center bg-blue-600 text-white font-semibold px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors text-sm"
           >
-            Get full comp packet — $69 DIY →
+            Get full comp packet 169 DIY 14
           </Link>
           <Link
             href="/pricing"
             className="inline-flex items-center justify-center border border-gray-300 bg-white text-gray-700 font-semibold px-6 py-3 rounded-lg hover:bg-gray-50 transition-colors text-sm"
           >
-            Full automation — $149/property
+            Full automation 149/property
           </Link>
         </div>
       </div>
@@ -136,10 +157,10 @@ export function FreeCheckResult({ result }: Props) {
           Save your results and get notified when your appeal window opens
         </h3>
         <p className="text-sm text-gray-600 mb-4">
-          Free. We’ll email you when your township’s appeal window opens and remind you 7 days before it closes.
+          Free. We17ll email you when your township19s appeal window opens and remind you 7 days before it closes.
         </p>
         {saveStatus === "success" ? (
-          <p className="text-sm font-medium text-green-700">You’re on the list. We’ll email you when your window opens.</p>
+          <p className="text-sm font-medium text-green-700">You19re on the list. We17ll email you when your window opens.</p>
         ) : (
           <form onSubmit={handleSaveResults} className="flex flex-col sm:flex-row gap-3">
             <input
@@ -162,7 +183,7 @@ export function FreeCheckResult({ result }: Props) {
               disabled={saveStatus === "loading" || !email.trim()}
               className="bg-gray-900 text-white font-semibold px-5 py-2.5 rounded-lg hover:bg-gray-800 disabled:opacity-50 text-sm"
             >
-              {saveStatus === "loading" ? "Saving…" : "Notify me"}
+              {saveStatus === "loading" ? "Saving26" : "Notify me"}
             </button>
           </form>
         )}
