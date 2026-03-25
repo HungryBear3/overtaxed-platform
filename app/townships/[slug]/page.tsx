@@ -31,14 +31,14 @@ export async function generateStaticParams() {
   return Object.keys(townships).map(slug => ({ slug }));
 }
 
-export async function generateMetadata({ params }): Promise<Metadata> {
+export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
   const township = townships[params.slug];
   return {
     title: `${township?.title || 'Township'} - OverTaxed Platform`,
   };
 }
 
-export default function Page({ params }) {
+export default function Page({ params }: { params: { slug: string } }) {
   const { slug } = params;
   const township = townships[slug];
 
