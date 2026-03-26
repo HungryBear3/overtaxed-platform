@@ -488,7 +488,7 @@ export default async function DashboardPage() {
               </Link>
             </div>
             <div className="divide-y divide-gray-100">
-              {properties.map((property: { id: string; address: string }) => (
+              {properties.map((property) => (
                 <Link
                   key={property.id}
                   href={`/properties/${property.id}`}
