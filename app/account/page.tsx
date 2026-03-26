@@ -140,7 +140,7 @@ export default async function AccountPage() {
           </div>
           <div className="pt-2 border-t border-gray-100">
             <PendingInvoicesSection
-              invoices={invoices.map((i: { id: string; invoiceNumber: string; amount: number; invoiceType: string; status: string; dueDate: Date }) => ({
+              invoices={invoices.map((i) => ({
                 id: i.id,
                 invoiceNumber: i.invoiceNumber,
                 amount: Number(i.amount),
