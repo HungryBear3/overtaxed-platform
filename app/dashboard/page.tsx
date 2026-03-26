@@ -111,7 +111,7 @@ export default async function DashboardPage() {
     }),
     prisma.property.findMany({
       where: { userId: user.id },
-      select: { id: true, address: true, createdAt: true },
+      select: { id: true, address: true, city: true, state: true, zipCode: true, pin: true, createdAt: true },
       orderBy: { createdAt: "desc" },
       take: 5,
     }),
