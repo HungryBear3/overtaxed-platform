@@ -1,4 +1,4 @@
-import { getMailer, defaultFrom } from "./transport"
+import { resend, FROM_EMAIL } from "./resend"
 
 const SUPPORT_EMAIL = "support@overtaxed-il.com"
 
@@ -40,7 +40,7 @@ export async function sendEmail({
   subject,
   text,
   html,
-  from = defaultFrom,
+  from = FROM_EMAIL,
 }: {
   to: string
   subject: string
@@ -48,18 +48,21 @@ export async function sendEmail({
   html: string
   from?: string
 }): Promise<boolean> {
-  const mailer = getMailer()
-  if (!mailer) {
-    console.warn("[email] Skipping send – SMTP not configured")
+  if (!resend) {
+    console.warn("[email] Skipping send – RESEND_API_KEY not configured")
     return false
   }
 
   try {
-    await mailer.sendMail({ from, to, subject, text, html })
+    const { error } = await resend.emails.send({ from, to, subject, html, text })
+    if (error) {
+      console.error(`[email] Resend error sending to ${to}:`, error)
+      return false
+    }
     console.log(`[email] Sent to ${to}: "${subject}"`)
     return true
   } catch (error) {
-    console.error("[email] Error sending:", error)
+    console.error("[email] Exception sending:", error)
     return false
   }
 }

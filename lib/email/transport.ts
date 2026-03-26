@@ -1,29 +1,13 @@
-import nodemailer from "nodemailer"
-
 /**
- * Create a reusable nodemailer transport from env config.
- * Call .sendMail({ from, to, subject, text, html }).
+ * Email transport — migrated from nodemailer/SMTP to Resend.
+ * Re-exports from resend.ts for backwards compat.
  */
-export function getMailer() {
-  if (
-    !process.env.SMTP_HOST ||
-    !process.env.SMTP_PORT ||
-    !process.env.SMTP_USER ||
-    !process.env.SMTP_PASSWORD
-  ) {
-    console.warn("[email] SMTP env vars not set – emails disabled")
-    return null
-  }
+export { resend, FROM_EMAIL } from "./resend"
 
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT, 10),
-    secure: process.env.SMTP_PORT === "465", // TLS on 465
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASSWORD,
-    },
-  })
+// Legacy compat shim — callers that imported getMailer/defaultFrom
+export function getMailer() {
+  console.warn("[email] getMailer() is deprecated — use Resend client from lib/email/resend.ts")
+  return null
 }
 
-export const defaultFrom = process.env.SMTP_FROM || "noreply@overtaxed.com"
+export const defaultFrom = process.env.RESEND_FROM || "OverTaxed IL <support@overtaxed-il.com>"

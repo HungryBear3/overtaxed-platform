@@ -738,4 +738,17 @@ model Referral {
   updatedAt   DateTime @updatedAt
 }
 
+model DripEmail {
+  id           String   @id @default(cuid())
+  email        String
+  sequence     String   // "ot-township"
+  step         Int      // 1-5
+  scheduledFor DateTime
+  sentAt       DateTime?
+  createdAt    DateTime @default(now())
+
+  @@index([scheduledFor, sentAt])
+  @@index([email, sequence])
+}
+
 // cache-bust: 1774495683

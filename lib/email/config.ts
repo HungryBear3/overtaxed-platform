@@ -1,17 +1,12 @@
 /**
  * Email configuration validation.
- * Use isEmailConfigured() before sending; transport logs a warning when env is missing.
+ * Migrated from SMTP/nodemailer to Resend.
  */
 
 export function isEmailConfigured(): boolean {
-  return !!(
-    process.env.SMTP_HOST &&
-    process.env.SMTP_PORT &&
-    process.env.SMTP_USER &&
-    process.env.SMTP_PASSWORD
-  )
+  return !!process.env.RESEND_API_KEY
 }
 
 export function getEmailFrom(): string {
-  return process.env.SMTP_FROM || "noreply@overtaxed.com"
+  return process.env.RESEND_FROM || "OverTaxed IL <support@overtaxed-il.com>"
 }

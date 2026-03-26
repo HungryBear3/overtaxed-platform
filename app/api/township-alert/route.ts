@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/db/prisma"
 import { sendEmail } from "@/lib/email/send"
+import { enrollInDrip } from "@/lib/drip"
 
 // Valid townships — must match the names used in the /townships page
 const VALID_TOWNSHIPS = new Set([
@@ -84,6 +85,11 @@ export async function POST(req: NextRequest) {
         </div>
       `,
     })
+
+    // Enroll in drip sequence (non-blocking)
+    enrollInDrip(email, "ot-township").catch(err =>
+      console.error("[Drip] Failed to enroll township alert subscriber:", err)
+    )
 
     return NextResponse.json({ ok: true })
   } catch (error) {
