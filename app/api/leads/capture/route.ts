@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
-import { PrismaClient } from "@prisma/client"
+import { prisma } from "@/lib/db"
 import Redis from "ioredis"
 
-const prisma = new PrismaClient()
-const redis = new Redis(process.env.REDIS_URL)
+const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL) : null
 
 const RATE_LIMIT = 3
 const RATE_LIMIT_WINDOW_SECONDS = 3600 // 1 hour
@@ -15,9 +14,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Could not determine IP for rate limiting" }, { status: 400 })
     }
 
-    // Rate limit
+    // Rate limit (skip if Redis not configured)
     const key = `leads_capture_rate:${ip}`
-    const currentCount = await redis.get(key)
+    const currentCount = redis ? await redis.get(key) : null
     if (currentCount && parseInt(currentCount) >= RATE_LIMIT) {
       return NextResponse.json({ error: "Too many requests from this IP, please try again later." }, { status: 429 })
     }
@@ -39,11 +38,12 @@ export async function POST(request: NextRequest) {
     })
 
     // Increment rate limit counter
-    if (currentCount) {
-      await redis.incr(key)
-    } else {
-      // Set expire
-      await redis.set(key, 1, "EX", RATE_LIMIT_WINDOW_SECONDS)
+    if (redis) {
+      if (currentCount) {
+        await redis.incr(key)
+      } else {
+        await redis.set(key, 1, "EX", RATE_LIMIT_WINDOW_SECONDS)
+      }
     }
 
     // Send confirmation email via Resend
