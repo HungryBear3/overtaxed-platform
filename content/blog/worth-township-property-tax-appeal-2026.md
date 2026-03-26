@@ -1,33 +1,50 @@
 ---
-title: "Worth Township Property Tax Appeal 2026"
-slug: "worth-township-property-tax-appeal-2026"
-description: "How to appeal your 2026 property taxes in Worth Township, covering Worth, Palos Hills, and Oak Lawn — and how much you could save."
-date: 2026-03-24
+title: "Worth Township Property Tax Appeal 2026: Oak Lawn and Palos Hills Homeowners"
+slug: worth-township-property-tax-appeal-2026
+description: "Worth Township is in the 2026 Cook County reassessment cycle. Homeowners in Oak Lawn, Palos Hills, Worth, Chicago Ridge, and Alsip can appeal their assessments now."
+date: "2026-03-25"
 ---
 
-Worth Township homeowners in Worth, Palos Hills, and Oak Lawn face yearly assessment notices that don't always match market reality. The 2026 reassessment cycle means more properties than ever are being re-evaluated — and many will come in too high. Filing an appeal can reduce your assessed value and shrink your tax bill.
+Worth Township is part of Cook County's South District, currently in the 2026 reassessment cycle. If you own property in Worth Township — covering Oak Lawn, Palos Hills, Worth, Chicago Ridge, Alsip, and surrounding areas — your assessed value is being recalculated and your appeal window is open.
 
-## Coverage Area
+## Communities in Worth Township
 
-Worth Township includes:
+- **Oak Lawn** — the largest community in Worth Township
+- **Palos Hills**
+- **Worth**
+- **Chicago Ridge**
+- **Alsip**
+- **Hometown**
+- **Bridgeview** (partial)
 
-- **Worth:** Established neighborhoods with mature trees and strong community ties.
-- **Palos Hills:** Scenic parks and family-oriented streets with strong school districts.
-- **Oak Lawn:** A bustling suburb with retail hubs and easy expressway access.
+## Why 2026 Is Your Year to Appeal
 
-## Reviewing Your Assessment
+Cook County reassesses properties on a three-year rotating schedule. 2026 is a reassessment year for the South District, meaning the Assessor is recalculating every property's value from scratch.
 
-Check your notice from the Cook County Assessor's Office, then compare it with sale prices of similar nearby properties sold in the past year. Assessments 20% or more above comparable market sales are prime candidates for appeal.
+Reassessment years offer the highest opportunity for reductions because the Assessor uses mass appraisal methods that don't account for individual property conditions, recent renovations, or hyperlocal market conditions. If comparable homes in your area sold for less than your assessment implies, you have a strong case.
 
-## Filing Your Appeal
+## How Much Can Worth Township Homeowners Save?
 
-1. **Gather supporting data:** Recent home sales in your neighborhood, any repair estimates, and interior photos if condition is a factor.
-2. **Complete the Worth Township form:** Available online at the Cook County Board of Review website.
-3. **File before the deadline:** Submit in writing or electronically — check the Board of Review for the exact date.
-4. **Attend your hearing:** Present your case, answer questions, and request a fair reassessment.
+Based on Cook County Board of Review data from recent reassessment cycles, homeowners who successfully appeal typically save:
 
-## Estimated Savings
+- **Oak Lawn single-family:** $900–$2,200/year
+- **Palos Hills single-family:** $1,000–$2,500/year  
+- **Condos and townhomes:** $500–$1,400/year
 
-Residents in Worth Township have achieved assessment reductions of 10–35%, translating to meaningful annual savings. There's no cost to file — only upside.
+Over a three-year cycle, that's $2,700–$7,500 in total savings.
 
-Take control of your Worth Township tax bill — visit [overtaxed-il.com](https://overtaxed-il.com) to start your 2026 appeal now.
+## The Appeal Process for Worth Township
+
+**Step 1:** Receive your reassessment notice (mailed by the Cook County Assessor)
+
+**Step 2:** You have 30 days from the notice date to file your appeal
+
+**Step 3:** Submit comparable sales showing similar homes assessed or sold for less
+
+**Step 4:** Wait for the Assessor's decision (typically 60-90 days)
+
+**Step 5:** Appeal to the Board of Review if unsatisfied with the result
+
+## Check Your Assessment for Free
+
+Not sure if you're overpaying? Visit [overtaxed-il.com/check](https://www.overtaxed-il.com/check) and enter your address or PIN. We'll pull comparable sales data for your area and show you your potential savings in 60 seconds — no account required.
