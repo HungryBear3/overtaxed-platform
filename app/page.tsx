@@ -171,6 +171,25 @@ export default function HomePage() {
           </div>
         </div>
 
+        {/* DIY Appeal Packet Banner */}
+        <div className="mt-10 bg-amber-50 border border-amber-200 rounded-2xl p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">New — Instant Download</p>
+            <h3 className="text-lg font-bold text-gray-900">
+              Want to DIY your appeal? Get the full toolkit.
+            </h3>
+            <p className="text-gray-600 text-sm mt-1">
+              Cover letter, evidence checklist, filing instructions, deadline calendar &amp; FAQ — everything you need to appeal yourself.
+            </p>
+          </div>
+          <Link
+            href="/appeal-packet"
+            className="flex-shrink-0 bg-amber-500 hover:bg-amber-600 text-white font-semibold px-6 py-3 rounded-lg text-sm transition-colors whitespace-nowrap"
+          >
+            DIY Appeal Toolkit — $37 →
+          </Link>
+        </div>
+
         {/* How It Works */}
         <HowItWorks />
 
