@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db"
 import type { Metadata } from "next"
 
 interface Props {
-  params: { code: string }
+  params: Promise<{ code: string }>
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -14,12 +14,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function PartnerDashboardPage({ params }: Props) {
+  const { code } = await params
   let referral = null
   try {
     referral = await prisma.referral.upsert({
-      where: { code: params.code.toLowerCase() },
+      where: { code: code.toLowerCase() },
       update: {},
-      create: { code: params.code.toLowerCase() },
+      create: { code: code.toLowerCase() },
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
