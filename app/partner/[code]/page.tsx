@@ -21,12 +21,14 @@ export default async function PartnerDashboardPage({ params }: Props) {
       update: {},
       create: { code: params.code.toLowerCase() },
     })
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
+        <div className="text-center max-w-lg px-4">
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Dashboard unavailable</h1>
-          <p className="text-gray-500">Please try again in a moment.</p>
+          <p className="text-gray-500 mb-4">Please try again in a moment.</p>
+          <pre className="text-xs text-left bg-gray-100 p-3 rounded overflow-auto">{msg}</pre>
         </div>
       </div>
     )
