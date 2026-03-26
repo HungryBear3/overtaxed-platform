@@ -272,6 +272,7 @@ export async function POST(request: NextRequest) {
           userId: user.id,
           plan: parsed.data.plan,
           propertyCount: String(quantity), // Use quantity charged (e.g. Starter capped at 2), not client request
+          referralCode: request.cookies.get("ot_ref")?.value ?? "",
         },
       })
     } catch (createErr: unknown) {

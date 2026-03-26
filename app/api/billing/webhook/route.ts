@@ -57,11 +57,34 @@ export async function POST(request: NextRequest) {
       const userId = metadata.userId
       const plan = metadata.plan
       const propertyCountStr = metadata.propertyCount
+      const referralCode = metadata.referralCode
       const mode = data.mode as string | undefined
 
       if (!userId || !plan) {
         console.error("[webhook] Missing userId or plan in metadata")
         break
+      }
+
+      // Track referral conversion
+      if (referralCode) {
+        try {
+          const amountTotal = (data.amount_total as number | null) ?? 0
+          await prisma.referral.upsert({
+            where: { code: referralCode },
+            update: {
+              conversions: { increment: 1 },
+              revenue: { increment: amountTotal / 100 },
+            },
+            create: { code: referralCode, conversions: 1, revenue: amountTotal / 100 },
+          })
+          await prisma.user.update({
+            where: { id: userId },
+            data: { referralCode },
+          })
+          console.log(`[webhook] Referral conversion tracked: code=${referralCode} user=${userId}`)
+        } catch (refErr) {
+          console.error("[webhook] Referral tracking error:", refErr)
+        }
       }
 
       const stripeCustomerId = (data.customer as string) ?? null

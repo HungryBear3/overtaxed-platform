@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
+import { Suspense } from "react";
+import { ReferralCapture } from "@/components/ReferralCapture";
 import "./globals.css";
 
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
@@ -41,6 +43,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
+        <Suspense fallback={null}>
+          <ReferralCapture />
+        </Suspense>
         {children}
         <Analytics />
       </body>
