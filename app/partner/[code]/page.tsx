@@ -14,11 +14,25 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function PartnerDashboardPage({ params }: Props) {
-  const referral = await prisma.referral.findUnique({
-    where: { code: params.code.toLowerCase() },
-  })
+  let referral = null
+  try {
+    referral = await prisma.referral.findUnique({
+      where: { code: params.code.toLowerCase() },
+    })
+  } catch {
+    // Table may not exist yet (migration pending)
+  }
 
-  if (!referral) notFound()
+  if (!referral) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">Partner not found</h1>
+          <p className="text-gray-500">This referral link doesn't exist. Contact us if you think this is an error.</p>
+        </div>
+      </div>
+    )
+  }
 
   const commissionRate = 0.20 // 20% — adjust when you set official rates
   const estimatedEarnings = Number(referral.revenue) * commissionRate

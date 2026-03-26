@@ -20,5 +20,5 @@ ALTER TABLE "User" ADD COLUMN "referralCode" TEXT;
 
 -- Seed initial referral code for John Grafft
 INSERT INTO "Referral" ("id", "code", "name", "visits", "conversions", "revenue", "createdAt", "updatedAt")
-VALUES (gen_random_uuid()::text, 'john', 'John Grafft', 0, 0, 0, NOW(), NOW())
+VALUES ('ref_john_grafft_001', 'john', 'John Grafft', 0, 0, 0, NOW(), NOW())
 ON CONFLICT ("code") DO NOTHING;
