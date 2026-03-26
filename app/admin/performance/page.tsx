@@ -35,7 +35,7 @@ export default async function AdminPerformancePage() {
         name: u.name,
         performancePlanStartDate: u.performancePlanStartDate?.toISOString() ?? null,
         performancePlanPaymentOption: u.performancePlanPaymentOption,
-        invoices: u.invoices.map((i => ({
+        invoices: u.invoices.map((i) => ({
           id: i.id,
           status: i.status,
           amount: Number(i.amount),
