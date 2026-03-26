@@ -28,6 +28,7 @@ export default async function PartnerDashboardPage({ params }: Props) {
         <div className="text-center max-w-lg px-4">
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Dashboard unavailable</h1>
           <p className="text-gray-500 mb-4">Please try again in a moment.</p>
+          <p className="text-xs text-red-400 font-mono break-all">{msg}</p>
           <pre className="text-xs text-left bg-gray-100 p-3 rounded overflow-auto">{msg}</pre>
         </div>
       </div>
