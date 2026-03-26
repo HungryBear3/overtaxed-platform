@@ -135,13 +135,13 @@ export default async function DashboardPage() {
     | { kind: "property_added"; at: Date; propertyId: string; address: string }
     | { kind: "appeal"; at: Date; appealId: string; address: string; taxYear: number; status: string }
   const activityItems: ActivityItem[] = [
-    ...recentProperties.map((p: { createdAt: Date; id: string; address: string }) => ({
+    ...recentProperties.map((p => ({
       kind: "property_added" as const,
       at: p.createdAt,
       propertyId: p.id,
       address: p.address,
     })),
-    ...recentAppeals.map((a: { updatedAt: Date; id: string; property: { address: string }; taxYear: number; status: string }) => ({
+    ...recentAppeals.map((a => ({
       kind: "appeal" as const,
       at: a.updatedAt,
       appealId: a.id,

@@ -78,7 +78,7 @@ export default async function AccountPage() {
   const propertyLimit = getPropertyLimit(tier, freshUser.subscriptionQuantity)
   const canAddMore = properties.length < propertyLimit || propertyLimit >= 999
 
-  const managedProperties = properties.map((p: { appeals?: { status: string }[]; id: string; pin: string; address: string; city: string; state: string; zipCode: string }, index: number) => {
+  const managedProperties = properties.map((p, index: number) => {
     const appeals = (p as { appeals: { status: string }[] }).appeals ?? []
     const hasSubmittedAppeal = appeals.some((a) => isAppealSubmitted(a.status))
     const appealStatusSummary =

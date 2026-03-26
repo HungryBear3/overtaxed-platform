@@ -25,7 +25,7 @@ export default async function AdminPerformancePage() {
   })
 
   const userData = await Promise.all(
-    performanceUsers.map(async (u: { id: string; email: string; name: string | null; performancePlanStartDate: Date | null; performancePlanPaymentOption: string | null; invoices: Array<{ id: string; status: string; amount: number; dueDate: Date }>; }) => {
+    performanceUsers.map(async (u) => {
       const window = await getPerformancePlanWindow(u.id)
       const savings = await getThreeYearSavings(u.id)
       const invoiceCheck = await shouldCreatePerformanceInvoice(u.id)
