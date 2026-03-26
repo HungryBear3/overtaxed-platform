@@ -1,47 +1,49 @@
-# PRD: OverTaxed IL — Free Check Page Refactor
+# PRD: FreeCheck Component Refactor
 
 ## Goal
-Refactor the free check page (`app/check/page.tsx`) to use a `FreeCheckFormWrapper` client component pattern for better architecture and maintainability.
+Fix encoding corruption and clean up the FreeCheckResult component in `components/check/FreeCheckResult.tsx`.
 
-## Working Directory
-`/Users/abigailclaw/overtaxed-platform` (branch: main)
+## Task 1: Fix encoding corruption in FreeCheckResult.tsx
 
-## Context
-- `app/check/page.tsx` — currently the main check page (server component)
-- `components/check/` — check-related components live here
-- There are backup files in `components/check/tmp_backup/` with previous versions for reference
+The following strings have corrupted apostrophes/ellipsis characters. Fix them all:
 
-## Tasks
+- `We17ll` → `We'll`
+- `you19re` → `you're`
+- `township19s` → `township's`
+- `Saving26` → `Saving…`
 
-### 1. Create FreeCheckFormWrapper component
-File: `components/check/FreeCheckFormWrapper.tsx`
+Search for any other garbled characters (stray numbers inside words) and fix them too.
 
-A client component (`"use client"`) that:
-- Wraps the FreeCheckForm and FreeCheckResult components
-- Manages the state between form submission and result display
-- Handles the transition: form → loading → result
-- Props: none needed (self-contained state machine)
+## Task 2: Fix garbled pricing button text
 
-### 2. Update app/check/page.tsx
-- Keep as server component for metadata/SEO
-- Import and render `<FreeCheckFormWrapper />` in the page body
-- Page should be clean and minimal — delegate all interaction to the wrapper
+In FreeCheckResult.tsx, these two buttons have broken text:
 
-### 3. Ensure existing functionality works
-- Free check form submission
-- Result display
-- Error states
+```
+"Get full comp packet 169 DIY 14"
+"Full automation 149/property"
+```
 
-### 4. Build and verify
-Run: `npm run build`
-Fix any TypeScript errors.
+Fix them to read clearly:
+- `"DIY Plan — $169"` 
+- `"Full Service — $149/property"`
 
-## Constraints
-- Use existing components — do not rewrite from scratch
-- No new npm dependencies
-- Keep existing UI/UX intact
+## Task 3: FreeCheckFormWrapper refactor
 
-## Completion
-1. Commit: `refactor: FreeCheckFormWrapper for clean client/server split`
-2. Push: `git push origin main`
-3. Run: `openclaw system event --text "Done: OT FreeCheckFormWrapper refactor complete" --mode now`
+Currently `FreeCheckForm.tsx` handles both input state and result display by rendering `<FreeCheckResult>` inline. This creates a messy component boundary.
+
+Refactor:
+1. Create `components/check/FreeCheckFormWrapper.tsx` — a new parent component that:
+   - Manages `result` state
+   - Renders `<FreeCheckForm>` passing `onResult` callback
+   - Renders `<FreeCheckResult>` when result is available
+2. Update `FreeCheckForm.tsx` to accept an `onResult: (result: Result) => void` prop instead of managing result state internally. Remove the `result` state and `FreeCheckResult` import from FreeCheckForm.
+3. Update `app/check/page.tsx` to import and use `<FreeCheckFormWrapper>` instead of `<FreeCheckForm>`.
+4. Export the shared `Result` type from a shared file or from FreeCheckResult.tsx so both components can import it without duplication.
+
+## Acceptance criteria
+- No TypeScript errors (`npx tsc --noEmit`)
+- All apostrophes render correctly
+- Button text is clean and readable
+- Check page works: user enters PIN/address → result appears below form
+- Commit all changes with message: `refactor: FreeCheckFormWrapper + fix encoding corruption`
+- Push to main

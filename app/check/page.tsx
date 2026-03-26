@@ -1,6 +1,6 @@
 import Link from "next/link"
 import { Logo } from "@/components/navigation/Logo"
-import { FreeCheckForm } from "@/components/check/FreeCheckForm"
+import { FreeCheckFormWrapper } from "@/components/check/FreeCheckFormWrapper"
 
 export const metadata = {
   title: "Free Property Tax Assessment Check | OverTaxed IL",
@@ -45,7 +45,7 @@ export default function CheckPage() {
           </p>
         </div>
 
-        <FreeCheckForm />
+        <FreeCheckFormWrapper />
 
         <div className="mt-12 pt-8 border-t border-gray-200">
           <p className="text-sm text-gray-500 text-center">

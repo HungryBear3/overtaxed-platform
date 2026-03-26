@@ -3,7 +3,7 @@
 import { useState } from "react"
 import Link from "next/link"
 
-type Result = {
+export type Result = {
   subject: {
     pin: string
     address: string
@@ -140,13 +140,13 @@ export function FreeCheckResult({ result }: Props) {
             href="/auth/signup?plan=diy"
             className="inline-flex items-center justify-center bg-blue-600 text-white font-semibold px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors text-sm"
           >
-            Get full comp packet 169 DIY 14
+            DIY Plan — $169
           </Link>
           <Link
             href="/pricing"
             className="inline-flex items-center justify-center border border-gray-300 bg-white text-gray-700 font-semibold px-6 py-3 rounded-lg hover:bg-gray-50 transition-colors text-sm"
           >
-            Full automation 149/property
+            Full Service — $149/property
           </Link>
         </div>
       </div>
@@ -157,10 +157,10 @@ export function FreeCheckResult({ result }: Props) {
           Save your results and get notified when your appeal window opens
         </h3>
         <p className="text-sm text-gray-600 mb-4">
-          Free. We17ll email you when your township19s appeal window opens and remind you 7 days before it closes.
+          Free. We&apos;ll email you when your township&apos;s appeal window opens and remind you 7 days before it closes.
         </p>
         {saveStatus === "success" ? (
-          <p className="text-sm font-medium text-green-700">You19re on the list. We17ll email you when your window opens.</p>
+          <p className="text-sm font-medium text-green-700">You&apos;re on the list. We&apos;ll email you when your window opens.</p>
         ) : (
           <form onSubmit={handleSaveResults} className="flex flex-col sm:flex-row gap-3">
             <input
@@ -183,7 +183,7 @@ export function FreeCheckResult({ result }: Props) {
               disabled={saveStatus === "loading" || !email.trim()}
               className="bg-gray-900 text-white font-semibold px-5 py-2.5 rounded-lg hover:bg-gray-800 disabled:opacity-50 text-sm"
             >
-              {saveStatus === "loading" ? "Saving26" : "Notify me"}
+              {saveStatus === "loading" ? "Saving…" : "Notify me"}
             </button>
           </form>
         )}
