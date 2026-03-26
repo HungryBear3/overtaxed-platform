@@ -1,8 +1,1 @@
 # Ralphy Progress Log
-
-- [✗] 2026-03-26 00:49 - sitemap.ts exports all blog + township URLs (verify by checking the output)
-- [✗] 2026-03-26 00:57 - Blog posts have JSON-LD Article schema
-- [✗] 2026-03-26 00:59 - Township pages have canonical tags
-- [✗] 2026-03-26 01:01 - 4 new blog posts exist in content/blog/ with proper frontmatter (title, description, date, slug)
-- [✗] 2026-03-26 01:01 - Existing blog posts have internal links added
-- [✗] 2026-03-26 01:05 - Everything compiles without TypeScript errors (run `npx tsc --noEmit` to check)
