@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 /** Retry prisma migrate deploy - P1002 advisory lock timeout is often transient on Vercel/Supabase */
 import { execSync } from "child_process"
+import { createRequire } from "module"
+import { fileURLToPath } from "url"
+import path from "path"
 const MAX_RETRIES = 3
 const RETRY_DELAY_MS = 5000
 
@@ -21,5 +24,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
     }
   }
   execSync("prisma generate", { stdio: "inherit" })
+
+  // Enforce RLS on all public tables after every migration
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url))
+  await import(path.join(scriptDir, "enforce-rls.mjs"))
+
   execSync("next build", { stdio: "inherit" })
 })()
