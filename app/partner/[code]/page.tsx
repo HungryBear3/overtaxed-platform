@@ -16,19 +16,17 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function PartnerDashboardPage({ params }: Props) {
   let referral = null
   try {
-    referral = await prisma.referral.findUnique({
+    referral = await prisma.referral.upsert({
       where: { code: params.code.toLowerCase() },
+      update: {},
+      create: { code: params.code.toLowerCase() },
     })
   } catch {
-    // Table may not exist yet (migration pending)
-  }
-
-  if (!referral) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Partner not found</h1>
-          <p className="text-gray-500">This referral link doesn't exist. Contact us if you think this is an error.</p>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">Dashboard unavailable</h1>
+          <p className="text-gray-500">Please try again in a moment.</p>
         </div>
       </div>
     )
