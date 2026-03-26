@@ -85,7 +85,7 @@ export default function AppealPacketPage() {
           {/* CTA */}
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
             <a
-              href="https://buy.stripe.com/PLACEHOLDER"
+              href="https://buy.stripe.com/eVqdR8dGngZ53iN66udUY00"
               className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-8 py-4 rounded-lg text-lg transition-colors w-full sm:w-auto text-center"
             >
               Get the Appeal Packet — $37
@@ -158,7 +158,7 @@ export default function AppealPacketPage() {
             gives you everything you need to change that today.
           </p>
           <a
-            href="https://buy.stripe.com/PLACEHOLDER"
+            href="https://buy.stripe.com/eVqdR8dGngZ53iN66udUY00"
             className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-8 py-4 rounded-lg text-lg transition-colors inline-block"
           >
             Get the Appeal Packet — $37
