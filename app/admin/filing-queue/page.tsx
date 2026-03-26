@@ -37,7 +37,7 @@ export default async function AdminFilingQueuePage() {
             <p className="text-gray-500 py-8 text-center">No appeals with signed authorization yet.</p>
           ) : (
             <div className="space-y-6">
-              {appealsWithAuth.map((a: { id: string; filingDeadline: Date | null; filingAuthorization: unknown }) => (
+              {appealsWithAuth.map((a) => (
                 <FilingQueueRow
                   key={a.id}
                   appeal={{
