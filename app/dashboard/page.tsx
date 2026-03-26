@@ -135,13 +135,13 @@ export default async function DashboardPage() {
     | { kind: "property_added"; at: Date; propertyId: string; address: string }
     | { kind: "appeal"; at: Date; appealId: string; address: string; taxYear: number; status: string }
   const activityItems: ActivityItem[] = [
-    ...recentProperties.map((p) => ({
+    ...recentProperties.map((p: { createdAt: Date; id: string; address: string }) => ({
       kind: "property_added" as const,
       at: p.createdAt,
       propertyId: p.id,
       address: p.address,
     })),
-    ...recentAppeals.map((a) => ({
+    ...recentAppeals.map((a: { updatedAt: Date; id: string; property: { address: string }; taxYear: number; status: string }) => ({
       kind: "appeal" as const,
       at: a.updatedAt,
       appealId: a.id,
@@ -288,7 +288,7 @@ export default async function DashboardPage() {
               We detected assessment reductions on these appeals. Your tax savings are reflected below.
             </p>
             <ul className="space-y-2">
-              {recentWins.map((appeal) => (
+              {recentWins.map((appeal: any) => (
                 <li key={appeal.id} className="flex justify-between items-center py-2 border-b border-green-100 last:border-0">
                   <div>
                     <p className="font-medium text-green-900">{appeal.property.address}</p>
@@ -319,7 +319,7 @@ export default async function DashboardPage() {
           <div className="bg-white rounded-lg shadow p-6 mb-8">
             <h3 className="text-lg font-medium text-gray-900 mb-3">Appeal status summary</h3>
             <div className="flex flex-wrap gap-3">
-              {appealStatusCounts.map(({ status, _count }) => (
+              {appealStatusCounts.map(({ status, _count }: { status: string; _count: number }) => (
                 <span
                   key={status}
                   className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-800"
@@ -488,7 +488,7 @@ export default async function DashboardPage() {
               </Link>
             </div>
             <div className="divide-y divide-gray-100">
-              {properties.map((property) => (
+              {properties.map((property: { id: string; address: string }) => (
                 <Link
                   key={property.id}
                   href={`/properties/${property.id}`}

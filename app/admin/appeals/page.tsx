@@ -38,7 +38,7 @@ export default async function AdminAppealsPage() {
                 </tr>
               </thead>
               <tbody>
-                {appeals.map((a) => (
+                {appeals.map((a: { id: string; property: { address: string; pin: string; city: string }; user: { id: string; email: string; name?: string | null }; taxYear: number; appealType: string; status: string }) => (
                   <tr key={a.id} className="border-b border-gray-100">
                     <td className="py-3">
                       <div className="font-medium text-gray-900">{a.property.address}</div>
