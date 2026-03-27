@@ -1,33 +1,12 @@
 #!/usr/bin/env node
-/** Retry prisma migrate deploy - P1002 advisory lock timeout is often transient on Vercel/Supabase */
+/**
+ * Build script for Vercel.
+ * Migrations are NOT run here — Vercel build servers can't reliably reach
+ * the DB (IPv6 ENETUNREACH). Run migrations manually via:
+ *   npx prisma migrate deploy
+ * or via a separate migration step outside of the build pipeline.
+ */
 import { execSync } from "child_process"
-import { createRequire } from "module"
-import { fileURLToPath } from "url"
-import path from "path"
-const MAX_RETRIES = 3
-const RETRY_DELAY_MS = 5000
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-
-;(async () => {
-  for (let i = 1; i <= MAX_RETRIES; i++) {
-    try {
-      execSync("prisma migrate deploy", { stdio: "inherit" })
-      break
-    } catch (e) {
-      if (i < MAX_RETRIES) {
-        console.log(`Migration timed out, retrying in ${RETRY_DELAY_MS / 1000}s (${i}/${MAX_RETRIES})...`)
-        await sleep(RETRY_DELAY_MS)
-      } else {
-        process.exit(1)
-      }
-    }
-  }
-  execSync("prisma generate", { stdio: "inherit" })
-
-  // Enforce RLS on all public tables after every migration
-  const scriptDir = path.dirname(fileURLToPath(import.meta.url))
-  await import(path.join(scriptDir, "enforce-rls.mjs"))
-
-  execSync("next build", { stdio: "inherit" })
-})()
+execSync("prisma generate", { stdio: "inherit" })
+execSync("next build", { stdio: "inherit" })
