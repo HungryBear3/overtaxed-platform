@@ -36,7 +36,7 @@ export default async function PartnerDashboardPage({ params }: Props) {
     )
   }
 
-  const commissionRate = 0.20 // 20% — adjust when you set official rates
+  const commissionRate = referral.commissionRate // per-partner rate (default 20%, John = 50%)
   const estimatedEarnings = Number(referral.revenue) * commissionRate
 
   return (

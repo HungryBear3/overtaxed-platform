@@ -733,8 +733,9 @@ model Referral {
   name        String?
   visits      Int      @default(0)
   conversions Int      @default(0)
-  revenue     Decimal  @default(0) @db.Decimal(10, 2)
-  createdAt   DateTime @default(now())
+  revenue        Decimal  @default(0) @db.Decimal(10, 2)
+  commissionRate Float    @default(0.20)
+  createdAt      DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
 
