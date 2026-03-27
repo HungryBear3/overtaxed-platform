@@ -180,13 +180,16 @@ export default function AddPropertyPage() {
                   id="pin"
                   value={pin}
                   onChange={(e) => handlePinChange(e.target.value)}
-                  placeholder="XX-XX-XXX-XXX-XXXX"
+                  placeholder="16-01-216-001-0000"
                   className="w-full px-4 py-3 text-lg text-gray-900 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono tracking-wider placeholder:text-gray-400"
                   maxLength={18} // 14 digits + 4 dashes = 18 characters
                   required
                 />
-                <p className="mt-2 text-xs text-gray-500">
-                  Example: 16-01-216-001-0000
+                <p className="mt-1 text-xs text-gray-400">
+                  Dashes are added automatically as you type
+                </p>
+                <p className="mt-1 text-xs text-gray-500">
+                  Example: 16-01-216-001-0000 — find your PIN on your tax bill or at <a href="https://www.cookcountyassessor.com" target="_blank" rel="noopener noreferrer" className="underline">cookcountyassessor.com</a>
                 </p>
               </div>
 

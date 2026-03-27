@@ -139,15 +139,37 @@ async function getParcelUniverseByPIN(
 ): Promise<ParcelUniverseRecord | null> {
   const normalizedPIN = normalizePIN(pin)
   const query = `$where=${encodeURIComponent(`pin='${normalizedPIN}'`)}&$limit=1`
-  for (const datasetId of [DATASETS.PARCEL_UNIVERSE_CURRENT, DATASETS.PARCEL_UNIVERSE]) {
+
+  let currentRecord: ParcelUniverseRecord | null = null
+  let archivedRecord: ParcelUniverseRecord | null = null
+
+  try {
+    const results = await fetchSocrataData<ParcelUniverseRecord>(DATASETS.PARCEL_UNIVERSE_CURRENT, query)
+    if (results[0]) currentRecord = results[0]
+  } catch { /* continue */ }
+
+  // Current dataset (pabr-t5kh) does not contain address fields (property_address, property_city).
+  // Fetch archived dataset (tx2p-k2g9) to get address fields and merge them in.
+  const currentHasAddress = currentRecord && currentRecord.property_address
+  if (!currentHasAddress) {
     try {
-      const results = await fetchSocrataData<ParcelUniverseRecord>(datasetId, query)
-      if (results[0]) return results[0]
-    } catch {
-      continue
+      const results = await fetchSocrataData<ParcelUniverseRecord>(DATASETS.PARCEL_UNIVERSE, query)
+      if (results[0]) archivedRecord = results[0]
+    } catch { /* continue */ }
+  }
+
+  if (currentRecord && archivedRecord) {
+    // Merge: current record wins for non-address fields; archived fills in the address
+    return {
+      ...archivedRecord,
+      ...currentRecord,
+      property_address: archivedRecord.property_address || currentRecord.property_address,
+      property_city: archivedRecord.property_city || currentRecord.property_city,
+      property_zip: archivedRecord.property_zip || currentRecord.property_zip,
     }
   }
-  return null
+
+  return currentRecord ?? archivedRecord
 }
 
 /**
