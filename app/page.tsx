@@ -190,6 +190,34 @@ export default function HomePage() {
           </Link>
         </div>
 
+        {/* Free Resources Row */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Link
+            href="/homestead-exemption"
+            className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-xl px-5 py-4 hover:bg-green-100 transition-colors"
+          >
+            <span className="text-2xl">🏠</span>
+            <div>
+              <p className="font-semibold text-gray-900 text-sm">Free: Homestead Exemption Guide</p>
+              <p className="text-xs text-gray-500 mt-0.5">Are you missing $600–$1,500/year?</p>
+            </div>
+            <span className="ml-auto text-green-600 font-bold text-sm">Free →</span>
+          </Link>
+          <Link
+            href="https://www.etsy.com/listing/4478290255"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-xl px-5 py-4 hover:bg-blue-100 transition-colors"
+          >
+            <span className="text-2xl">🚗</span>
+            <div>
+              <p className="font-semibold text-gray-900 text-sm">Traffic Ticket Dispute Kit</p>
+              <p className="text-xs text-gray-500 mt-0.5">Fight parking, red light &amp; speed cam tickets</p>
+            </div>
+            <span className="ml-auto text-blue-600 font-bold text-sm">$17 →</span>
+          </Link>
+        </div>
+
         {/* How It Works */}
         <HowItWorks />
 
