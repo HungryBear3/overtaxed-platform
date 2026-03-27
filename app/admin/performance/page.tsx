@@ -100,7 +100,7 @@ export default async function AdminPerformancePage() {
                 {u.invoices.length > 0 && (
                   <p className="text-sm">
                     <strong>Invoices:</strong>{" "}
-                    {u.invoices.map((i) => `${i.status} $${Number(i.amount).toFixed(2)}`).join(", ")}
+                    {u.invoices.map((i) => `${i.status} $${i.amount.toFixed(2)}`).join(", ")}
                   </p>
                 )}
                 <PerformanceAdminClient

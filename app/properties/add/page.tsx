@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef, useCallback } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { parseUnitFromAddress } from "@/lib/realie/address-lookup"
@@ -33,6 +33,7 @@ interface PropertyPreview {
 export default function AddPropertyPage() {
   const router = useRouter()
   const [pin, setPin] = useState("")
+  const pinInputRef = useRef<HTMLInputElement>(null)
   const [loading, setLoading] = useState(false)
   const [lookupLoading, setLookupLoading] = useState(false)
   const [error, setError] = useState("")
@@ -41,23 +42,46 @@ export default function AddPropertyPage() {
   const [unitNumber, setUnitNumber] = useState("")
   const [step, setStep] = useState<"lookup" | "confirm">("lookup")
 
-  // Format PIN as user types (XX-XX-XXX-XXX-XXXX)
-  function handlePinChange(value: string) {
-    // Remove all non-numeric characters
-    const digits = value.replace(/[^0-9]/g, "")
-    
-    // Format with dashes
+  // Format PIN as user types (XX-XX-XXX-XXX-XXXX) with cursor preservation
+  const handlePinChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.target
+    const rawValue = input.value
+    const cursorPos = input.selectionStart ?? rawValue.length
+
+    // Count digits before cursor in raw (pre-change) value
+    const digitsBeforeCursor = rawValue.slice(0, cursorPos).replace(/[^0-9]/g, "").length
+
+    // Strip to digits only
+    const digits = rawValue.replace(/[^0-9]/g, "").slice(0, 14)
+
+    // Rebuild formatted string
     let formatted = ""
     if (digits.length > 0) formatted += digits.slice(0, 2)
     if (digits.length > 2) formatted += "-" + digits.slice(2, 4)
     if (digits.length > 4) formatted += "-" + digits.slice(4, 7)
     if (digits.length > 7) formatted += "-" + digits.slice(7, 10)
     if (digits.length > 10) formatted += "-" + digits.slice(10, 14)
-    
+
     setPin(formatted)
     setError("")
     setPropertyPreview(null)
-  }
+
+    // Restore cursor: count through formatted string until we've passed digitsBeforeCursor digits
+    requestAnimationFrame(() => {
+      const el = pinInputRef.current
+      if (!el) return
+      let digitCount = 0
+      let newCursor = formatted.length
+      for (let i = 0; i < formatted.length; i++) {
+        if (formatted[i] !== "-") digitCount++
+        if (digitCount === digitsBeforeCursor) {
+          newCursor = i + 1
+          break
+        }
+      }
+      el.setSelectionRange(newCursor, newCursor)
+    })
+  }, [])
 
   async function handleLookup(e: React.FormEvent) {
     e.preventDefault()
@@ -178,15 +202,19 @@ export default function AddPropertyPage() {
                 <input
                   type="text"
                   id="pin"
+                  ref={pinInputRef}
                   value={pin}
-                  onChange={(e) => handlePinChange(e.target.value)}
-                  placeholder="XX-XX-XXX-XXX-XXXX"
+                  onChange={handlePinChange}
+                  placeholder="16-01-216-001-0000"
                   className="w-full px-4 py-3 text-lg text-gray-900 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono tracking-wider placeholder:text-gray-400"
                   maxLength={18} // 14 digits + 4 dashes = 18 characters
                   required
                 />
-                <p className="mt-2 text-xs text-gray-500">
-                  Example: 16-01-216-001-0000
+                <p className="mt-1 text-xs text-gray-400">
+                  Dashes are added automatically as you type
+                </p>
+                <p className="mt-1 text-xs text-gray-500">
+                  Example: 16-01-216-001-0000 — find your PIN on your tax bill or at <a href="https://www.cookcountyassessor.com" target="_blank" rel="noopener noreferrer" className="underline">cookcountyassessor.com</a>
                 </p>
               </div>
 

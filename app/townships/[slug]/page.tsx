@@ -1,6 +1,8 @@
 import { Metadata } from 'next';
 
-const townships = {
+type TownshipKey = 'bloom' | 'bremen' | 'calumet' | 'rich' | 'thornton' | 'worth';
+
+const townships: Record<TownshipKey, { title: string; cities: string[] }> = {
   bloom: {
     title: 'Bloom Township',
     cities: ['Chicago Heights', 'Steger', 'Lynwood', 'Glenwood'],
@@ -32,7 +34,7 @@ export async function generateStaticParams() {
 }
 
 export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
-  const township = townships[params.slug as keyof typeof townships];
+  const township = townships[params.slug as TownshipKey];
   return {
     title: `${township?.title || 'Township'} - OverTaxed Platform`,
   };
@@ -40,7 +42,7 @@ export async function generateMetadata({ params }: { params: { slug: string } })
 
 export default function Page({ params }: { params: { slug: string } }) {
   const { slug } = params;
-  const township = townships[slug as keyof typeof townships];
+  const township = townships[slug as TownshipKey];
 
   if (!township) {
     return <div>Township not found</div>;
@@ -56,7 +58,7 @@ export default function Page({ params }: { params: { slug: string } }) {
       <section>
         <h2>Cities</h2>
         <ul>
-          {township.cities.map(city => <li key={city}>{city}</li>)}
+          {township.cities.map((city: string) => <li key={city}>{city}</li>)}
         </ul>
       </section>
 

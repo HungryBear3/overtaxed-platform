@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getPropertyByPIN, isValidPIN, formatPIN } from '@/lib/cook-county'
 import { rateLimit, getClientIdentifier } from '@/lib/rate-limit'
+import { getFullPropertyByPin } from '@/lib/realie'
 
 export async function GET(request: NextRequest) {
   const clientId = getClientIdentifier(request)
@@ -46,9 +47,32 @@ export async function GET(request: NextRequest) {
       )
     }
     
+    const property = { ...result.data }
+
+    // If Cook County data is missing address, fall back to Realie enrichment
+    if (!property.address) {
+      try {
+        const realie = await getFullPropertyByPin(pin)
+        if (realie) {
+          // addressFull from Realie may contain "address, city, state zip" — use as address fallback
+          if (!property.address && realie.addressFull) property.address = realie.addressFull
+          if (!property.bedrooms && realie.bedrooms != null) property.bedrooms = realie.bedrooms
+          if (!property.bathrooms && realie.bathrooms != null) property.bathrooms = realie.bathrooms
+          if (!property.yearBuilt && realie.yearBuilt != null) property.yearBuilt = realie.yearBuilt
+          if (!property.livingArea && realie.livingArea != null) property.livingArea = realie.livingArea
+          if (!property.assessedTotalValue && realie.totalAssessedValue != null) property.assessedTotalValue = realie.totalAssessedValue
+          if (!property.marketValue && realie.totalMarketValue != null) property.marketValue = realie.totalMarketValue
+          if (!property.latitude && realie.latitude != null) property.latitude = realie.latitude
+          if (!property.longitude && realie.longitude != null) property.longitude = realie.longitude
+        }
+      } catch {
+        // Realie enrichment is best-effort — don't fail the lookup
+      }
+    }
+
     return NextResponse.json({
       success: true,
-      property: result.data,
+      property,
       source: result.source,
     })
   } catch (error) {
