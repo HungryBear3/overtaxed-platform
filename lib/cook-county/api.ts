@@ -259,7 +259,8 @@ async function getAssessedValuesByPIN(
   ]) {
     if (!val) continue
     try {
-      const query = `$where=${encodeURIComponent(`${col}='${val}'`)}&$limit=1&$order=${encodeURIComponent('year DESC')}`
+      // Filter mailed_tot > 0 to skip placeholder rows (e.g. future-year rows with no values yet)
+      const query = `$where=${encodeURIComponent(`${col}='${val}' AND mailed_tot > 0`)}&$limit=1&$order=${encodeURIComponent('year DESC')}`
       const results = await fetchSocrataData<Record<string, unknown>>(
         DATASETS.ASSESSED_VALUES,
         query
