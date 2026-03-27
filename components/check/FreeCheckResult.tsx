@@ -10,13 +10,15 @@ export type Result = {
     city: string
     zipCode: string
     township: string | null
-    assessedTotalValue: number
+    assessedTotalValue: number | null
     marketValue: number | null
   }
   compCount: number
   avgComparableAssessedValue: number | null
   potentialOverpaymentPerYear: number | null
   potentialOverpayment3Year: number | null
+  noAssessedValue?: boolean
+  message?: string
   source: string
 }
 
@@ -36,7 +38,7 @@ export function FreeCheckResult({ result }: Props) {
   const [saveStatus, setSaveStatus] = useState<"idle" | "loading" | "success" | "error">("idle")
   const [saveError, setSaveError] = useState("")
 
-  const hasGap = result.avgComparableAssessedValue != null && result.subject.assessedTotalValue > result.avgComparableAssessedValue
+  const hasGap = result.avgComparableAssessedValue != null && (result.subject.assessedTotalValue ?? 0) > result.avgComparableAssessedValue
   const overpay = result.potentialOverpaymentPerYear ?? 0
   const overpay3 = result.potentialOverpayment3Year ?? 0
 
@@ -74,6 +76,23 @@ export function FreeCheckResult({ result }: Props) {
           )}
         </p>
 
+        {result.noAssessedValue && (
+          <div className="rounded-lg bg-yellow-50 border border-yellow-200 px-4 py-4 mb-6">
+            <p className="text-sm font-semibold text-yellow-900 mb-1">Assessment not yet published</p>
+            <p className="text-sm text-yellow-800">
+              {result.message ?? "We found your property but the Cook County Assessor hasn't published an assessed value for this PIN yet. Visit cookcountyassessor.com to check your assessment status."}
+            </p>
+            <a
+              href="https://www.cookcountyassessoril.gov"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block mt-3 text-sm font-semibold text-blue-700 hover:underline"
+            >
+              Check your assessment at cookcountyassessor.com →
+            </a>
+          </div>
+        )}
+
         {hasGap && overpay > 0 && (
           <div className="text-center mb-6">
             <p className="text-3xl font-extrabold text-amber-800">Estimated savings</p>
@@ -95,7 +114,7 @@ export function FreeCheckResult({ result }: Props) {
         <div className="flex flex-wrap gap-4 justify-center">
           <div className="rounded-xl bg-gray-50 border border-gray-200 p-4 flex-1 min-w-[10rem] max-w-xs">
             <p className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Your assessed value</p>
-            <p className="text-xl font-bold text-gray-900">{formatCurrency(result.subject.assessedTotalValue)}</p>
+            <p className="text-xl font-bold text-gray-900">{result.subject.assessedTotalValue != null ? formatCurrency(result.subject.assessedTotalValue) : "—"}</p>
           </div>
           <div className="rounded-xl bg-blue-50 border border-blue-200 p-4 flex-1 min-w-[10rem] max-w-xs">
             <p className="text-sm font-semibold text-blue-700 uppercase tracking-wide mb-2">

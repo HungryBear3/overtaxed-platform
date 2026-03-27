@@ -86,11 +86,28 @@ export async function POST(req: NextRequest) {
     }
 
     const subjectAV = propertyData.assessedTotalValue ?? 0
+
+    // If no assessed value on file, return property info without overpayment estimate
     if (subjectAV <= 0) {
-      return NextResponse.json(
-        { error: "No assessed value on file for this property. It may not be in the current cycle." },
-        { status: 400 }
-      )
+      return NextResponse.json({
+        success: true,
+        subject: {
+          pin: formatPIN(propertyData.pin),
+          address: propertyData.address,
+          city: propertyData.city,
+          zipCode: propertyData.zipCode,
+          township: propertyData.township,
+          assessedTotalValue: null,
+          marketValue: null,
+        },
+        compCount: 0,
+        avgComparableAssessedValue: null,
+        potentialOverpaymentPerYear: null,
+        potentialOverpayment3Year: null,
+        noAssessedValue: true,
+        message: "We found your property but the Cook County Assessor hasn't published an assessed value for this PIN yet. This can happen with recently transferred properties or during reassessment. Visit cookcountyassessor.com to check your assessment status.",
+        source: "Cook County Open Data",
+      })
     }
 
     const [salesRes, equityRes] = await Promise.all([
