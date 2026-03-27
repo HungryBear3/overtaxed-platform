@@ -521,12 +521,13 @@ export async function searchPropertiesByAddress(
 ): Promise<CookCountyApiResponse<ParcelUniverseRecord[]>> {
   try {
     // Build query with case-insensitive search
-    let where = `upper(property_address) like upper('%${address.replace(/'/g, "''")}%')`
+    // PARCEL_UNIVERSE (tx2p-k2g9) uses prop_address_full / prop_address_city_name — NOT property_address / property_city
+    let where = `upper(prop_address_full) like upper('%${address.replace(/'/g, "''")}%')`
     if (city) {
-      where += ` AND upper(property_city) like upper('%${city.replace(/'/g, "''")}%')`
+      where += ` AND upper(prop_address_city_name) like upper('%${city.replace(/'/g, "''")}%')`
     }
     
-    const query = `$where=${encodeURIComponent(where)}&$limit=${limit}`
+    const query = `$where=${encodeURIComponent(where)}&$limit=${limit}&$order=${encodeURIComponent('year DESC')}`
     
     const results = await fetchSocrataData<ParcelUniverseRecord>(
       DATASETS.PARCEL_UNIVERSE,
