@@ -204,7 +204,7 @@ export default function HomePage() {
             <span className="ml-auto text-green-600 font-bold text-sm">Free →</span>
           </Link>
           <Link
-            href="https://www.etsy.com/listing/4478290255"
+            href="https://www.etsy.com/listing/4478749112"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-xl px-5 py-4 hover:bg-blue-100 transition-colors"
