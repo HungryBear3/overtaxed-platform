@@ -88,16 +88,25 @@ export function isValidPIN(pin: string): boolean {
  */
 async function fetchSocrataData<T>(
   datasetId: string,
-  query: string
+  query: string,
+  timeoutMs = 8000
 ): Promise<T[]> {
   const urls = [`${BASE_URL}/${datasetId}.json?${query}`, `${BASE_URL_FALLBACK}/${datasetId}.json?${query}`]
   let lastError: Error | null = null
 
   for (const url of urls) {
-    const response = await fetch(url, {
-      headers: { 'Accept': 'application/json' },
-      next: { revalidate: 3600 },
-    })
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let response: Response
+    try {
+      response = await fetch(url, {
+        headers: { 'Accept': 'application/json' },
+        next: { revalidate: 3600 },
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
 
     if (response.ok) return response.json()
 
@@ -520,19 +529,31 @@ export async function searchPropertiesByAddress(
   limit: number = 10
 ): Promise<CookCountyApiResponse<ParcelUniverseRecord[]>> {
   try {
-    // Build query with case-insensitive search
-    // PARCEL_UNIVERSE (tx2p-k2g9) uses prop_address_full / prop_address_city_name — NOT property_address / property_city
-    let where = `upper(prop_address_full) like upper('%${address.replace(/'/g, "''")}%')`
-    if (city) {
-      where += ` AND upper(prop_address_city_name) like upper('%${city.replace(/'/g, "''")}%')`
-    }
+    // Use Socrata full-text search ($q=) which is indexed, then filter by city client-side.
+    // LIKE '%...%' on prop_address_full causes full table scans and timeouts on Vercel.
+    const searchTerms = city ? `${address} ${city}` : address
+    const query = `$q=${encodeURIComponent(searchTerms)}&$limit=${limit * 3}`
     
-    const query = `$where=${encodeURIComponent(where)}&$limit=${limit}&$order=${encodeURIComponent('year DESC')}`
-    
-    const results = await fetchSocrataData<ParcelUniverseRecord>(
+    let results = await fetchSocrataData<ParcelUniverseRecord>(
       DATASETS.PARCEL_UNIVERSE,
-      query
+      query,
+      7000
     )
+
+    // Client-side filter: ensure address fragment matches and deduplicate by PIN
+    const addrLower = address.toLowerCase()
+    const cityLower = city?.toLowerCase() ?? ""
+    const seen = new Set<string>()
+    results = results.filter(r => {
+      const addr = (r.prop_address_full ?? r.property_address ?? "").toLowerCase()
+      const rCity = (r.prop_address_city_name ?? r.property_city ?? "").toLowerCase()
+      if (!addr.includes(addrLower)) return false
+      if (cityLower && !rCity.includes(cityLower)) return false
+      const pin = String(r.pin ?? "")
+      if (seen.has(pin)) return false
+      seen.add(pin)
+      return true
+    }).slice(0, limit)
     
     return {
       success: true,

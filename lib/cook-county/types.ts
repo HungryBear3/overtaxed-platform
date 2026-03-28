@@ -19,6 +19,12 @@ export interface ParcelUniverseRecord {
   property_address: string
   property_city: string
   property_zip: string
+  // Archived dataset (tx2p-k2g9) uses different column names
+  prop_address_full?: string
+  prop_address_city_name?: string
+  prop_address_zipcode_1?: string
+  lat?: string
+  lon?: string
   latitude: string
   longitude: string
   // Assessment values
