@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import Image from "next/image"
 import { Logo } from "@/components/navigation/Logo"
+import { MobileStickyBar } from "@/components/MobileStickyBar"
 import {
   TestimonialsSection,
   HowItWorksSection,
@@ -38,7 +39,8 @@ export default function HomePage() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
-    <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
+    <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white pb-20 md:pb-0">
+      <MobileStickyBar href="/check" label="Start Free Property Check →" subtext="Takes 5 minutes · No credit card" color="amber" />
       {/* Navigation */}
       <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="flex justify-between items-center">
@@ -52,9 +54,9 @@ export default function HomePage() {
             </Link>
             <Link
               href="/check"
-              className="text-gray-600 hover:text-gray-900 font-medium"
+              className="bg-amber-500 hover:bg-amber-600 text-white font-semibold px-5 py-2 rounded-lg text-sm transition-colors"
             >
-              Free check
+              Free Check →
             </Link>
             <Link
               href="/townships"
@@ -95,8 +97,8 @@ export default function HomePage() {
 
         {/* Features */}
         <div className="mt-10 grid grid-cols-1 md:grid-cols-3 gap-8">
-          <div className="text-center p-6">
-            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+          <div className="text-center p-6 bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4" style={{ background: 'linear-gradient(135deg, #dbeafe, #bfdbfe)' }}>
               <svg
                 className="w-6 h-6 text-blue-600"
                 fill="none"
@@ -120,8 +122,8 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className="text-center p-6">
-            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+          <div className="text-center p-6 bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4" style={{ background: 'linear-gradient(135deg, #dbeafe, #bfdbfe)' }}>
               <svg
                 className="w-6 h-6 text-blue-600"
                 fill="none"
@@ -145,8 +147,8 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className="text-center p-6">
-            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+          <div className="text-center p-6 bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4" style={{ background: 'linear-gradient(135deg, #dbeafe, #bfdbfe)' }}>
               <svg
                 className="w-6 h-6 text-blue-600"
                 fill="none"
@@ -169,6 +171,26 @@ export default function HomePage() {
               taxes.
             </p>
           </div>
+        </div>
+
+        {/* Urgency CTA */}
+        <div className="mt-10 text-center py-10 border-t border-b border-gray-100">
+          <p className="text-sm font-semibold text-amber-600 uppercase tracking-wide mb-2">
+            ⚡ South District Townships — Appeal Window Open Now
+          </p>
+          <h2 className="text-2xl font-bold text-gray-900 mb-3">
+            Don&apos;t miss the 2026 reassessment window.
+          </h2>
+          <p className="text-gray-600 mb-6 max-w-lg mx-auto">
+            Filing a late appeal is not an option. Run your free check now — it takes 5 minutes and tells you exactly what you could save.
+          </p>
+          <a
+            href="/check"
+            className="inline-flex items-center font-semibold py-3 px-8 rounded-lg transition-all duration-200 hover:scale-105 text-white"
+            style={{ backgroundColor: '#f59e0b' }}
+          >
+            Run My Free Property Check →
+          </a>
         </div>
 
         {/* DIY Appeal Packet Banner */}
