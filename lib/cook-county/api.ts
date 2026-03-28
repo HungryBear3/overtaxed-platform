@@ -18,6 +18,8 @@ import type {
 const DATASETS = {
   // Parcel Universe - Property locations, PINs, addresses (archived; some endpoints may use current)
   PARCEL_UNIVERSE: 'tx2p-k2g9',
+  // PIN lookup / address index (c49d-89sn) - smaller dataset, fast LIKE queries, property_address / property_city columns
+  PIN_ADDRESS_INDEX: 'c49d-89sn',
   // Parcel Universe Current Year - use for equity comps (has nbhd_code, township_code)
   PARCEL_UNIVERSE_CURRENT: 'pabr-t5kh',
   // Assessed Values - Land, building, and total assessed values (mailed, certified, board)
@@ -529,31 +531,21 @@ export async function searchPropertiesByAddress(
   limit: number = 10
 ): Promise<CookCountyApiResponse<ParcelUniverseRecord[]>> {
   try {
-    // Use Socrata full-text search ($q=) which is indexed, then filter by city client-side.
-    // LIKE '%...%' on prop_address_full causes full table scans and timeouts on Vercel.
-    const searchTerms = city ? `${address} ${city}` : address
-    const query = `$q=${encodeURIComponent(searchTerms)}&$limit=${limit * 3}`
+    // Use PIN_ADDRESS_INDEX (c49d-89sn) — smaller dataset, responds fast even with LIKE '%...%'.
+    // Columns: property_address, property_city, property_zip, pin, latitude, longitude
+    const addrSafe = address.trim().replace(/'/g, "''")
+    const citySafe = city?.trim().replace(/'/g, "''") ?? ""
+    let whereClause = `upper(property_address) like upper('%${addrSafe}%')`
+    if (citySafe) {
+      whereClause += ` AND upper(property_city) like upper('%${citySafe}%')`
+    }
+    const query = `$where=${encodeURIComponent(whereClause)}&$limit=${limit}`
     
     let results = await fetchSocrataData<ParcelUniverseRecord>(
-      DATASETS.PARCEL_UNIVERSE,
+      DATASETS.PIN_ADDRESS_INDEX,
       query,
       7000
     )
-
-    // Client-side filter: ensure address fragment matches and deduplicate by PIN
-    const addrLower = address.toLowerCase()
-    const cityLower = city?.toLowerCase() ?? ""
-    const seen = new Set<string>()
-    results = results.filter(r => {
-      const addr = (r.prop_address_full ?? r.property_address ?? "").toLowerCase()
-      const rCity = (r.prop_address_city_name ?? r.property_city ?? "").toLowerCase()
-      if (!addr.includes(addrLower)) return false
-      if (cityLower && !rCity.includes(cityLower)) return false
-      const pin = String(r.pin ?? "")
-      if (seen.has(pin)) return false
-      seen.add(pin)
-      return true
-    }).slice(0, limit)
     
     return {
       success: true,
