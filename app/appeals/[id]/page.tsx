@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation"
 import { AddCompsDialog } from "@/components/appeals/add-comps-dialog"
 import { PdfDownloadButton } from "@/components/appeals/pdf-download-button"
 import { FilingAuthorizationForm } from "@/components/appeals/filing-authorization-form"
+import { RavSuggestion } from "@/components/appeals/rav-suggestion"
 import { Textarea } from "@/components/ui/textarea"
 
 interface Appeal {
@@ -295,7 +296,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
 
   async function deleteAppeal() {
     if (!confirm("Are you sure you want to delete this draft appeal?")) return
-    
+
     try {
       const response = await fetch(`/api/appeals/${id}`, {
         method: "DELETE",
@@ -313,7 +314,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
   }
 
   function formatCurrency(value: number | null): string {
-    if (value === null) return "—"
+    if (value === null) return "-"
     return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
@@ -322,7 +323,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
   }
 
   function formatDate(dateStr: string | null): string {
-    if (!dateStr) return "—"
+    if (!dateStr) return "-"
     return new Date(dateStr).toLocaleDateString("en-US", {
       weekday: "short",
       month: "short",
@@ -332,7 +333,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
   }
 
   function formatNumber(value: number | null): string {
-    if (value === null) return "—"
+    if (value === null) return "-"
     return new Intl.NumberFormat("en-US").format(value)
   }
 
@@ -424,9 +425,9 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
         {/* Deadline Alert */}
         {appeal.status === "DRAFT" && (
           <div className={`mb-6 rounded-lg p-4 ${
-            isPastDeadline 
-              ? "bg-red-50 border border-red-200" 
-              : isUrgent 
+            isPastDeadline
+              ? "bg-red-50 border border-red-200"
+              : isUrgent
                 ? "bg-yellow-50 border border-yellow-200"
                 : "bg-blue-50 border border-blue-200"
           }`}>
@@ -466,7 +467,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                 <div className="bg-blue-50 rounded-lg p-4">
                   <p className="text-xs text-blue-600 uppercase tracking-wide">Requested</p>
                   <p className="text-xl font-bold text-blue-900">
-                    {appeal.requestedAssessmentValue 
+                    {appeal.requestedAssessmentValue
                       ? formatCurrency(appeal.requestedAssessmentValue)
                       : "Not set"}
                   </p>
@@ -476,14 +477,14 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                     Final
                   </p>
                   <p className={`text-xl font-bold ${appeal.finalAssessmentValue ? "text-green-900" : "text-gray-400"}`}>
-                    {appeal.finalAssessmentValue 
+                    {appeal.finalAssessmentValue
                       ? formatCurrency(appeal.finalAssessmentValue)
                       : "Pending"}
                   </p>
                 </div>
               </div>
 
-              {/* Set requested assessment value — required for PDF download */}
+              {/* Set requested assessment value - required for PDF download */}
               {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING") && (
                 <div className="mt-4 pt-4 border-t border-gray-200">
                   {/* Assessment history context */}
@@ -508,12 +509,12 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                                   <td className="py-1.5 pr-3 text-gray-900">{unavailable ? <span className="text-gray-500">Not available yet</span> : formatCurrency(ah.assessmentValue)}</td>
                                   <td className="py-1.5 text-gray-900">
                                     {unavailable ? (
-                                      <span className="text-gray-500">—</span>
+                                      <span className="text-gray-500">-</span>
                                     ) : ah.changePercent != null ? (
                                       <span className={ah.changePercent > 0 ? "text-red-600" : ah.changePercent < 0 ? "text-green-600" : "text-gray-500"}>
                                         {ah.changePercent > 0 ? "+" : ""}{ah.changePercent.toFixed(1)}%
                                       </span>
-                                    ) : "—"}
+                                    ) : "-"}
                                   </td>
                                 </tr>
                               )
@@ -526,8 +527,22 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                   <p className="text-sm font-medium text-gray-700 mb-1">
                     Requested assessment value is required before you can download your appeal summary PDF.
                   </p>
+
+                  {/* Data-backed RAV suggestion from comps */}
+                  {appeal.compsUsed.length > 0 && (
+                    <RavSuggestion
+                      comps={appeal.compsUsed}
+                      subjectLivingArea={appeal.property.livingArea}
+                      originalAssessmentValue={appeal.originalAssessmentValue}
+                      onUseValue={(val) => {
+                        setRequestedInput(String(val))
+                        setEditingRequested(true)
+                      }}
+                    />
+                  )}
+
                   <p className="text-sm text-gray-600 mb-3">
-                    Choose a value <strong>lower than the current assessment</strong> that your comparable sales support. Use your comps’ sale prices and $/sq ft to justify the number. Typical reductions are 10–20%. Enter a whole number (no commas).
+                    Choose a value <strong>lower than the current assessment</strong> that your comparable sales support. Use your comps' sale prices and $/sq ft to justify the number. Typical reductions are 10–20%. Enter a whole number (no commas).
                   </p>
                   {editingRequested || !appeal.requestedAssessmentValue ? (
                     <div className="flex flex-wrap items-center gap-2">
@@ -548,7 +563,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                         disabled={savingRequested}
                         className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50"
                       >
-                        {savingRequested ? "Saving…" : "Save requested value"}
+                        {savingRequested ? "Saving..." : "Save requested value"}
                       </button>
                       {appeal.requestedAssessmentValue && (
                         <button
@@ -642,36 +657,36 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                 </div>
                 <div>
                   <p className="text-gray-500">Neighborhood</p>
-                  <p className="font-medium text-gray-900">{appeal.property.neighborhood || "—"}</p>
+                  <p className="font-medium text-gray-900">{appeal.property.neighborhood || "-"}</p>
                 </div>
                 <div>
                   <p className="text-gray-500">Living Area</p>
                   <p className="font-medium text-gray-900">
-                    {appeal.property.livingArea ? `${formatNumber(appeal.property.livingArea)} sqft` : "—"}
+                    {appeal.property.livingArea ? `${formatNumber(appeal.property.livingArea)} sqft` : "-"}
                   </p>
                 </div>
                 <div>
                   <p className="text-gray-500">Year Built</p>
-                  <p className="font-medium text-gray-900">{appeal.property.yearBuilt || "—"}</p>
+                  <p className="font-medium text-gray-900">{appeal.property.yearBuilt || "-"}</p>
                 </div>
                 <div>
                   <p className="text-gray-500">Building Class</p>
-                  <p className="font-medium text-gray-900">{appeal.property.buildingClass || "—"}</p>
+                  <p className="font-medium text-gray-900">{appeal.property.buildingClass || "-"}</p>
                 </div>
                 <div>
                   <p className="text-gray-500">Tax Code</p>
-                  <p className="font-medium text-gray-900">{appeal.property.taxCode || "—"}</p>
+                  <p className="font-medium text-gray-900">{appeal.property.taxCode || "-"}</p>
                 </div>
                 <div>
                   <p className="text-gray-500">Tax Rate</p>
                   <p className="font-medium text-gray-900">
-                    {appeal.property.taxRate ? `${(appeal.property.taxRate * 100).toFixed(2)}%` : "—"}
+                    {appeal.property.taxRate ? `${(appeal.property.taxRate * 100).toFixed(2)}%` : "-"}
                   </p>
                 </div>
                 <div>
                   <p className="text-gray-500">State Equalizer</p>
                   <p className="font-medium text-gray-900">
-                    {appeal.property.stateEqualizer?.toFixed(4) || "—"}
+                    {appeal.property.stateEqualizer?.toFixed(4) || "-"}
                   </p>
                 </div>
               </div>
@@ -701,7 +716,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                           className="w-full h-auto min-h-[200px] bg-gray-100"
                         />
                         <p className="mt-2 text-xs text-gray-500">
-                          <strong>S</strong> = your property. <strong>1, 2, 3…</strong> = comps in the same order as the list below.
+                          <strong>S</strong> = your property. <strong>1, 2, 3...</strong> = comps in the same order as the list below.
                         </p>
                       </div>
                       {(() => {
@@ -739,7 +754,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
               <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900">
                 <p className="font-medium mb-1">How to choose comps</p>
                 <p>
-                  Add <strong>at least 3 comparable sales</strong> that support a lower valuation. Best comps: <strong>similar size</strong> (±25% living area), <strong>recent sale</strong> (within 2 years), same neighborhood, and <strong>lower price per sqft</strong> than your property — these strengthen your case.
+                  Add <strong>at least 3 comparable sales</strong> that support a lower valuation. Best comps: <strong>similar size</strong> (±25% living area), <strong>recent sale</strong> (within 2 years), same neighborhood, and <strong>lower price per sqft</strong> than your property - these strengthen your case.
                 </p>
               </div>
               {showAddComps && (
@@ -790,11 +805,11 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                       <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
                         <div>
                           <p className="text-gray-500">Living Area</p>
-                          <p className="text-gray-900">{comp.livingArea ? `${formatNumber(comp.livingArea)} sqft` : "—"}</p>
+                          <p className="text-gray-900">{comp.livingArea ? `${formatNumber(comp.livingArea)} sqft` : "-"}</p>
                         </div>
                         <div>
                           <p className="text-gray-500">Year Built</p>
-                          <p className="text-gray-900">{comp.yearBuilt ?? "—"}</p>
+                          <p className="text-gray-900">{comp.yearBuilt ?? "-"}</p>
                         </div>
                         <div>
                           <p className="text-gray-500">Sale Price</p>
@@ -802,31 +817,31 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                         </div>
                         <div>
                           <p className="text-gray-500">Sale Date</p>
-                          <p className="text-gray-900">{comp.saleDate ? formatDate(comp.saleDate) : "—"}</p>
+                          <p className="text-gray-900">{comp.saleDate ? formatDate(comp.saleDate) : "-"}</p>
                         </div>
                         <div>
                           <p className="text-gray-500">$/sq ft</p>
-                          <p className="text-gray-900">{comp.pricePerSqft != null ? `$${Math.round(comp.pricePerSqft).toLocaleString()}/sq ft` : "—"}</p>
+                          <p className="text-gray-900">{comp.pricePerSqft != null ? `$${Math.round(comp.pricePerSqft).toLocaleString()}/sq ft` : "-"}</p>
                         </div>
                         <div>
                           <p className="text-gray-500">Neighborhood</p>
-                          <p className="text-gray-900">{comp.neighborhood ?? "—"}</p>
+                          <p className="text-gray-900">{comp.neighborhood ?? "-"}</p>
                         </div>
                         <div>
                           <p className="text-gray-500">Class</p>
-                          <p className="text-gray-900">{comp.buildingClass ?? "—"}</p>
+                          <p className="text-gray-900">{comp.buildingClass ?? "-"}</p>
                         </div>
                         <div>
                           <p className="text-gray-500">Beds / Baths</p>
                           <p className="text-gray-900">
                             {(comp.bedrooms != null && comp.bedrooms > 0) || (comp.bathrooms != null && comp.bathrooms > 0)
-                              ? `${(comp.bedrooms != null && comp.bedrooms > 0) ? comp.bedrooms : "—"} / ${(comp.bathrooms != null && comp.bathrooms > 0) ? comp.bathrooms.toFixed(1) : "—"}`
-                              : "—"}
+                              ? `${(comp.bedrooms != null && comp.bedrooms > 0) ? comp.bedrooms : "-"} / ${(comp.bathrooms != null && comp.bathrooms > 0) ? comp.bathrooms.toFixed(1) : "-"}`
+                              : "-"}
                           </p>
                         </div>
                         <div>
                           <p className="text-gray-500">Distance</p>
-                          <p className="text-gray-900">{comp.distanceFromSubject != null ? `${comp.distanceFromSubject.toFixed(2)} mi` : "—"}</p>
+                          <p className="text-gray-900">{comp.distanceFromSubject != null ? `${comp.distanceFromSubject.toFixed(2)} mi` : "-"}</p>
                         </div>
                       </div>
                     </div>
@@ -854,7 +869,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                 disabled={savingEvidence}
                 className="text-sm font-medium text-blue-600 hover:text-blue-700 disabled:opacity-50"
               >
-                {savingEvidence ? "Saving…" : "Save to PDF"}
+                {savingEvidence ? "Saving..." : "Save to PDF"}
               </button>
             </div>
 
@@ -869,13 +884,13 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
 
           {/* Sidebar */}
           <div className="space-y-6">
-            {/* Filing explained — so "Ready to File" vs "Mark as Filed" is clear */}
+            {/* Filing explained - so "Ready to File" vs "Mark as Filed" is clear */}
             {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING") && (
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
                 <p className="font-medium text-amber-900 mb-2">How filing works</p>
                 <ul className="text-sm text-amber-800 space-y-2">
                   <li>
-                    <strong>Ready to File</strong> = your packet is prepared. We do <strong>not</strong> submit for you — you must file at the Cook County portal.
+                    <strong>Ready to File</strong> = your packet is prepared. We do <strong>not</strong> submit for you - you must file at the Cook County portal.
                   </li>
                   <li>
                     Download your PDF above, then submit it yourself at the{" "}
@@ -893,7 +908,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
               </div>
             )}
 
-            {/* Detailed submission instructions — collapsible */}
+            {/* Detailed submission instructions - collapsible */}
             {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING") && (
               <details id="submission-instructions" className="bg-white rounded-lg shadow scroll-mt-4 group">
                 <summary className="list-none cursor-pointer p-6 pb-4 [&::-webkit-details-marker]:hidden">
@@ -912,16 +927,16 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                 </p>
                 <ol className="space-y-4 text-sm text-gray-700 list-decimal list-inside">
                   <li>
-                    <strong>Download your appeal summary PDF</strong> — Click the Download PDF button above. This packet includes your property details, comparable sales (comps), and requested value. Print or save it.
+                    <strong>Download your appeal summary PDF</strong> - Click the Download PDF button above. This packet includes your property details, comparable sales (comps), and requested value. Print or save it.
                   </li>
                   <li>
-                    <strong>Check your township&apos;s filing window</strong> — Appeals are only accepted during specific periods by township. Confirm your deadline at{" "}
+                    <strong>Check your township&apos;s filing window</strong> - Appeals are only accepted during specific periods by township. Confirm your deadline at{" "}
                     <a href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                       cookcountyassessor.com/assessment-calendar-and-deadlines
                     </a>.
                   </li>
                   <li>
-                    <strong>Go to the Cook County filing portal</strong> — Visit{" "}
+                    <strong>Go to the Cook County filing portal</strong> - Visit{" "}
                     <a href="https://www.cookcountyassessor.com/online-appeals" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                       cookcountyassessor.com/online-appeals
                     </a>{" "}
@@ -931,19 +946,19 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                     </a>. Create an account with your email if you haven&apos;t already.
                   </li>
                   <li>
-                    <strong>Start a new residential appeal</strong> — Select the correct property type (Residential, Condo, etc.). You&apos;ll need your Property Index Number (PIN), address, and the requested assessment value from your PDF.
+                    <strong>Start a new residential appeal</strong> - Select the correct property type (Residential, Condo, etc.). You&apos;ll need your Property Index Number (PIN), address, and the requested assessment value from your PDF.
                   </li>
                   <li>
-                    <strong>Upload your OverTaxed IL packet</strong> — When the portal asks for supporting documents or evidence, upload your OverTaxed IL PDF. This is your comps and summary. The portal may also have fields for comp details; our PDF contains all PINs and values you need.
+                    <strong>Upload your OverTaxed IL packet</strong> - When the portal asks for supporting documents or evidence, upload your OverTaxed IL PDF. This is your comps and summary. The portal may also have fields for comp details; our PDF contains all PINs and values you need.
                   </li>
                   <li>
-                    <strong>Complete the county form</strong> — Fill in any required fields (signature, checkboxes, etc.). Our packet does not replace the official county form; it provides the evidence to support your appeal.
+                    <strong>Complete the county form</strong> - Fill in any required fields (signature, checkboxes, etc.). Our packet does not replace the official county form; it provides the evidence to support your appeal.
                   </li>
                   <li>
-                    <strong>Submit before the deadline</strong> — File only one application per deadline. You&apos;ll receive a Filing ID and Docket Number by email. Keep them for your records.
+                    <strong>Submit before the deadline</strong> - File only one application per deadline. You&apos;ll receive a Filing ID and Docket Number by email. Keep them for your records.
                   </li>
                   <li>
-                    <strong>Mark as filed in OverTaxed IL</strong> — After submitting at the county portal, return here and click <strong>Mark as Filed</strong> so we can track your appeal.
+                    <strong>Mark as filed in OverTaxed IL</strong> - After submitting at the county portal, return here and click <strong>Mark as Filed</strong> so we can track your appeal.
                   </li>
                 </ol>
                 <p className="mt-4 text-xs text-gray-500">
@@ -1014,7 +1029,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                       Ready to File
                     </button>
                     <p className="text-xs text-gray-500 -mt-1">
-                      Packet prepared — you still submit at Cook County portal
+                      Packet prepared - you still submit at Cook County portal
                     </p>
                     {appeal.filingAuthorization &&
                       ["STARTER", "GROWTH", "PORTFOLIO", "PERFORMANCE"].includes(appeal.user?.subscriptionTier ?? "") && (
@@ -1095,13 +1110,13 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
               </div>
             </div>
 
-            {/* Post-filing guidance — what to expect, when to check back */}
+            {/* Post-filing guidance - what to expect, when to check back */}
             {["FILED", "UNDER_REVIEW", "HEARING_SCHEDULED", "DECISION_PENDING"].includes(appeal.status) && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <p className="font-medium text-blue-900 mb-2">What to expect</p>
                 <ul className="text-sm text-blue-800 space-y-1">
                   <li>• Cook County typically reviews within a few months</li>
-                  <li>• You may receive a hearing notice — update status here if so</li>
+                  <li>• You may receive a hearing notice - update status here if so</li>
                   <li>• OverTaxed IL monitors for reductions and will notify you when we detect one</li>
                   <li>• Check the county portal above for the latest status</li>
                   <li>• Decisions usually arrive by mail or email; your next tax bill will reflect any reduction</li>
