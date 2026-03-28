@@ -84,10 +84,18 @@ export async function fetchRealieAddressLookup(
 
   const url = `${REALIE_ADDRESS_URL}?${params.toString()}`
   try {
-    const res = await fetch(url, {
-      headers: { Authorization: apiKey },
-      next: { revalidate: 0 },
-    })
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 8_000)
+    let res: Response
+    try {
+      res = await fetch(url, {
+        headers: { Authorization: apiKey },
+        signal: controller.signal,
+        next: { revalidate: 0 },
+      })
+    } finally {
+      clearTimeout(timer)
+    }
 
     if (res.status === 401) return { success: false, error: "Unauthorized" }
     if (res.status === 403) return { success: false, error: "Usage limit exceeded" }

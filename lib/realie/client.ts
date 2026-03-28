@@ -8,7 +8,8 @@
 import { prisma } from "@/lib/db"
 
 const REALIE_BASE = "https://app.realie.ai/api/public/property/parcelId"
-const FREE_TIER_MONTHLY_REQUESTS = 25
+/** $50/month plan quota. Update if plan changes. */
+const MONTHLY_REQUEST_QUOTA = 1250
 
 export type RealieEnrichment = {
   livingArea: number | null
@@ -62,7 +63,7 @@ function canMakeRequest(): boolean {
     monthKey = current
     requestsThisMonth = 0
   }
-  return requestsThisMonth < FREE_TIER_MONTHLY_REQUESTS
+  return requestsThisMonth < MONTHLY_REQUEST_QUOTA
 }
 
 function recordRequest(): void {
@@ -204,10 +205,18 @@ export async function fetchByParcelId(
   const url = `${REALIE_BASE}?${params.toString()}`
 
   try {
-    const res = await fetch(url, {
-      headers: { Authorization: apiKey },
-      next: { revalidate: 0 },
-    })
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 8_000)
+    let res: Response
+    try {
+      res = await fetch(url, {
+        headers: { Authorization: apiKey },
+        signal: controller.signal,
+        next: { revalidate: 0 },
+      })
+    } finally {
+      clearTimeout(timer)
+    }
     recordRequest()
     if (!res.ok) return null
     const json = (await res.json()) as { property?: Record<string, unknown> }
@@ -281,7 +290,14 @@ export async function getFullPropertyByPin(pin: string): Promise<RealiePropertyF
     }
     if (row && !raw && canMakeRequest()) {
       const url = `${REALIE_BASE}?${new URLSearchParams({ state: "IL", county: "Cook", parcelId: pinNormalized }).toString()}`
-      const res = await fetch(url, { headers: { Authorization: process.env.REALIE_API_KEY }, next: { revalidate: 0 } })
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 8_000)
+      let res: Response
+      try {
+        res = await fetch(url, { headers: { Authorization: process.env.REALIE_API_KEY! }, signal: controller.signal, next: { revalidate: 0 } })
+      } finally {
+        clearTimeout(timer)
+      }
       recordRequest()
       if (res.ok) {
         const json = (await res.json()) as { property?: Record<string, unknown> }
