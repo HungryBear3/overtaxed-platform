@@ -8,4 +8,4 @@ export const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null
 
-export const FROM_EMAIL = "OverTaxed IL <onboarding@resend.dev>"
+export const FROM_EMAIL = "OverTaxed IL <support@overtaxed-il.com>"

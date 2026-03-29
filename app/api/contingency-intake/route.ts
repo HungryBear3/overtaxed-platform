@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
 
     // Send confirmation email
     await resend.emails.send({
-      from: "Overtaxed IL <onboarding@resend.dev>",
+      from: "Overtaxed IL <support@overtaxed-il.com>",
       to: email,
       subject: "We received your property appeal request",
       html: `

@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
     }
 
     const message = {
-      from: "Overtaxed IL <onboarding@resend.dev>",
+      from: "Overtaxed IL <support@overtaxed-il.com>",
       to: email,
       subject: "Your Cook County property tax assessment summary",
       html: `<p>Thank you for using Overtaxed. Here is your summary for property: <strong>${address}</strong>.</p><p>Estimated savings: <strong>$${potentialSavings.toFixed(2)}</strong>.</p><p>We will follow up with comparable properties and filing instructions soon.</p>`,
