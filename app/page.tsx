@@ -77,7 +77,7 @@ export default function HomePage() {
               Sign in
             </Link>
             <Link
-              href="/auth/signup"
+              href="/pricing"
               className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 font-medium"
             >
               Get Started
@@ -251,281 +251,86 @@ export default function HomePage() {
           <h3 className="text-2xl font-bold text-center text-gray-900 mb-4">
             Simple, Transparent Pricing
           </h3>
-          <p className="text-center text-gray-600 mb-12 max-w-2xl mx-auto">
-            Choose the option that works for you. DIY with professional-grade
-            evidence, or let us handle everything automatically.
+          <p className="text-center text-gray-600 mb-8 max-w-2xl mx-auto">
+            Choose the option that works for you — from DIY to done-for-you.
           </p>
 
-          {/* DIY reports only */}
-          <div className="max-w-md mx-auto mb-12">
-            <div className="border border-gray-200 rounded-lg p-8 bg-gray-50">
-              <div className="flex items-center gap-2 mb-2">
-                <h4 className="text-lg font-semibold text-gray-900">
-                  DIY reports only
-                </h4>
-                <span className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded">
-                  Comps only
-                </span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 max-w-5xl mx-auto">
+            {/* T1 — DIY Starter */}
+            <div className="border border-gray-200 rounded-xl p-6 bg-white hover:shadow-md transition-shadow">
+              <h4 className="font-semibold text-gray-900 text-lg">DIY Starter</h4>
+              <p className="text-3xl font-bold text-gray-900 mt-2">$37</p>
+              <p className="text-gray-500 text-sm">one-time</p>
+              <p className="text-sm text-gray-600 mt-3 mb-4">
+                PDF packet + instructions. You find comps and file yourself.
+              </p>
+              <Link
+                href="/pricing"
+                className="block text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 px-4 rounded-lg text-sm transition-colors"
+              >
+                Get Started →
+              </Link>
+            </div>
+
+            {/* T2 — DIY Pro */}
+            <div className="border-2 border-blue-500 rounded-xl p-6 bg-white relative hover:shadow-md transition-shadow">
+              <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-500 text-white text-xs font-semibold px-3 py-1 rounded-full">
+                Most Popular
               </div>
+              <h4 className="font-semibold text-gray-900 text-lg">DIY Pro</h4>
               <p className="text-3xl font-bold text-gray-900 mt-2">$69</p>
-              <p className="text-gray-500">one-time, per property</p>
-              <p className="text-sm text-gray-600 mt-4 mb-4">
-                Get professional-grade comparable analysis and evidence packet.
-                You file the appeal yourself for free with the county.
+              <p className="text-gray-500 text-sm">one-time</p>
+              <p className="text-sm text-gray-600 mt-3 mb-4">
+                We build your comp package. You file yourself.
               </p>
-              <ul className="space-y-3">
-                <li className="flex items-center text-gray-600 text-sm">
-                  <svg
-                    className="w-5 h-5 text-green-500 mr-2 flex-shrink-0"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  Comparable sales analysis
-                </li>
-                <li className="flex items-center text-gray-600 text-sm">
-                  <svg
-                    className="w-5 h-5 text-green-500 mr-2 flex-shrink-0"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  PDF evidence packet ready to submit
-                </li>
-                <li className="flex items-center text-gray-600 text-sm">
-                  <svg
-                    className="w-5 h-5 text-green-500 mr-2 flex-shrink-0"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  Stronger evidence than most DIY appeals
-                </li>
-              </ul>
+              <Link
+                href="/pricing"
+                className="block text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 px-4 rounded-lg text-sm transition-colors"
+              >
+                Get Started →
+              </Link>
+            </div>
+
+            {/* T3 — Done-For-You */}
+            <div className="border border-gray-200 rounded-xl p-6 bg-white hover:shadow-md transition-shadow">
+              <h4 className="font-semibold text-gray-900 text-lg">Done-For-You</h4>
+              <p className="text-3xl font-bold text-gray-900 mt-2">$97</p>
+              <p className="text-gray-500 text-sm">flat, one-time</p>
+              <p className="text-sm text-gray-600 mt-3 mb-4">
+                We prepare everything + submit your appeal for you.
+              </p>
+              <Link
+                href="/pricing"
+                className="block text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 px-4 rounded-lg text-sm transition-colors"
+              >
+                Get Started →
+              </Link>
+            </div>
+
+            {/* T4 — Contingency */}
+            <div className="border border-gray-200 rounded-xl p-6 bg-gradient-to-br from-green-50 to-white hover:shadow-md transition-shadow">
+              <h4 className="font-semibold text-gray-900 text-lg">Contingency</h4>
+              <p className="text-3xl font-bold text-gray-900 mt-2">22%</p>
+              <p className="text-gray-500 text-sm">of first-year savings · $0 upfront</p>
+              <p className="text-sm text-gray-600 mt-3 mb-4">
+                We handle everything. Pay only if we win.
+              </p>
+              <Link
+                href="/pricing"
+                className="block text-center bg-green-600 hover:bg-green-700 text-white font-semibold py-2.5 px-4 rounded-lg text-sm transition-colors"
+              >
+                Learn More →
+              </Link>
             </div>
           </div>
-
-          {/* Full Automation Options */}
-          <h4 className="text-xl font-semibold text-center text-gray-900 mb-6">
-            Full Automation
-          </h4>
-          <p className="text-center text-gray-600 mb-8">
-            We monitor, file, and track your appeals automatically. Never miss a
-            deadline.
-          </p>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-5xl mx-auto">
-            {/* Starter - 1-2 properties */}
-            <div className="border-2 border-blue-500 rounded-lg p-6 relative">
-              <div className="absolute top-0 right-0 bg-blue-500 text-white text-xs px-3 py-1 rounded-bl-lg rounded-tr-lg">
-                1–2 properties
-              </div>
-              <h5 className="font-semibold text-gray-900 text-lg">Starter</h5>
-              <p className="text-2xl font-bold text-gray-900 mt-2">$149</p>
-              <p className="text-gray-500 text-sm">per property/year</p>
-              <p className="text-xs text-gray-600 mt-2">
-                1 = $149/yr · 2 = $298/yr
-              </p>
-              <p className="text-sm text-gray-600 mt-3 mb-3">
-                Per property. Perfect for 1–2 properties.
-              </p>
-              <ul className="space-y-2 text-sm text-gray-600">
-                <li className="flex items-start">
-                  <svg
-                    className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  Full automation
-                </li>
-                <li className="flex items-start">
-                  <svg
-                    className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  We file for you
-                </li>
-              </ul>
-            </div>
-
-            {/* Growth - 3-9 properties */}
-            <div className="border-2 border-emerald-500 rounded-lg p-6 bg-white relative">
-              <div className="absolute top-0 right-0 bg-emerald-500 text-white text-xs px-3 py-1 rounded-bl-lg rounded-tr-lg">
-                3–9 properties
-              </div>
-              <h5 className="font-semibold text-gray-900 text-lg">Growth</h5>
-              <p className="text-2xl font-bold text-gray-900 mt-2">$124</p>
-              <p className="text-gray-500 text-sm">per property/year</p>
-              <p className="text-xs text-gray-600 mt-2">
-                3–9 properties · 3 = $372 · 9 = $1,116/yr
-              </p>
-              <p className="text-sm text-gray-600 mt-3 mb-3">
-                Volume discount for 3–9 properties.
-              </p>
-              <ul className="space-y-2 text-sm text-gray-600">
-                <li className="flex items-start">
-                  <svg
-                    className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  Full automation
-                </li>
-                <li className="flex items-start">
-                  <svg
-                    className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  Priority support
-                </li>
-              </ul>
-            </div>
-
-            {/* Portfolio - 10-20 properties */}
-            <div className="border-2 border-indigo-500 rounded-lg p-6 bg-white relative">
-              <div className="absolute top-0 right-0 bg-indigo-500 text-white text-xs px-3 py-1 rounded-bl-lg rounded-tr-lg">
-                10–20 properties
-              </div>
-              <h5 className="font-semibold text-gray-900 text-lg">Portfolio</h5>
-              <p className="text-2xl font-bold text-gray-900 mt-2">$99</p>
-              <p className="text-gray-500 text-sm">per property/year</p>
-              <p className="text-xs text-gray-600 mt-2">
-                10–20 properties · 10 = $990 · 20 = $1,980/yr
-              </p>
-              <p className="text-sm text-gray-600 mt-3 mb-3">
-                Best rate for 10–20 properties.
-              </p>
-              <ul className="space-y-2 text-sm text-gray-600">
-                <li className="flex items-start">
-                  <svg
-                    className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  Full automation
-                </li>
-                <li className="flex items-start">
-                  <svg
-                    className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  Priority + phone
-                </li>
-              </ul>
-            </div>
-
-            {/* Performance */}
-            <div className="border border-gray-200 rounded-lg p-6 bg-gradient-to-br from-green-50 to-white">
-              <h5 className="font-semibold text-gray-900 text-lg">Performance</h5>
-              <p className="text-2xl font-bold text-gray-900 mt-2">4%</p>
-              <p className="text-gray-500 text-sm">
-                of 3-year savings (deferred)
-              </p>
-              <p className="text-sm text-gray-600 mt-3 mb-3">
-                Pay only when you save. No upfront cost.
-              </p>
-              <ul className="space-y-2 text-sm text-gray-600">
-                <li className="flex items-start">
-                  <svg
-                    className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  Unlimited properties
-                </li>
-                <li className="flex items-start">
-                  <svg
-                    className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  No payment if no savings
-                </li>
-              </ul>
-            </div>
-          </div>
-
-          <p className="text-center text-sm text-gray-500 mt-6">
-            20+ properties?{" "}
-            <Link href="/pricing" className="text-blue-600 hover:underline">
-              Contact us
-            </Link>{" "}
-            for custom pricing.
-          </p>
 
           <p className="text-center text-sm text-gray-500 mt-8">
-            <Link href="/pricing" className="text-blue-600 hover:underline">
-              View full pricing
+            <Link href="/pricing" className="text-blue-600 hover:underline font-medium">
+              Compare all plans in detail →
             </Link>{" "}
             · Have questions?{" "}
-            <a href="https://calendly.com/il-support/30min" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-              Book a free 15-min call
+            <a href="https://calendly.com/overtaxed-il-support/30min" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+              Book a free call
             </a>
           </p>
         </div>
