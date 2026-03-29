@@ -32,7 +32,7 @@ export default function ExpungementGuidePage() {
         </div>
         <p className="text-gray-500 text-sm mb-6">One-time purchase · Instant ZIP download</p>
         <a
-          href="https://www.etsy.com/listing/EXPUNGEMENT_PLACEHOLDER"
+          href="https://www.etsy.com/listing/4479848697"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-block bg-blue-900 hover:bg-blue-950 text-white font-bold px-10 py-4 rounded-xl text-lg transition-colors"
@@ -100,7 +100,7 @@ export default function ExpungementGuidePage() {
       {/* CTA repeat */}
       <div className="text-center">
         <a
-          href="https://www.etsy.com/listing/EXPUNGEMENT_PLACEHOLDER"
+          href="https://www.etsy.com/listing/4479848697"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-block bg-blue-900 hover:bg-blue-950 text-white font-bold px-10 py-4 rounded-xl text-lg transition-colors"

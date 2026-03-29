@@ -32,7 +32,7 @@ export default function DivorcePrepPage() {
         </div>
         <p className="text-gray-500 text-sm mb-6">One-time purchase · Instant ZIP download</p>
         <a
-          href="https://www.etsy.com/listing/DIVORCE_PLACEHOLDER"
+          href="https://www.etsy.com/listing/4479856396"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-block bg-teal-700 hover:bg-teal-800 text-white font-bold px-10 py-4 rounded-xl text-lg transition-colors"
@@ -100,7 +100,7 @@ export default function DivorcePrepPage() {
       {/* CTA repeat */}
       <div className="text-center">
         <a
-          href="https://www.etsy.com/listing/DIVORCE_PLACEHOLDER"
+          href="https://www.etsy.com/listing/4479856396"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-block bg-teal-700 hover:bg-teal-800 text-white font-bold px-10 py-4 rounded-xl text-lg transition-colors"
