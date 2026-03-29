@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.OT_RESEND_API_KEY);
-
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -23,6 +21,8 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+
+    const resend = new Resend(process.env.OT_RESEND_API_KEY);
 
     // Save to DB
     await prisma.contingencyLead.create({
