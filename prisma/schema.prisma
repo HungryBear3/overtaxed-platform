@@ -752,4 +752,19 @@ model DripEmail {
   @@index([email, sequence])
 }
 
+model ContingencyLead {
+  id                   String   @id @default(cuid())
+  fullName             String
+  email                String
+  phone                String
+  propertyPin          String
+  propertyAddress      String
+  estimatedAssessedValue String?
+  hearAboutUs          String?
+  createdAt            DateTime @default(now())
+
+  @@index([email])
+  @@index([createdAt])
+}
+
 // cache-bust: 1774495683
