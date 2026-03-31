@@ -7,13 +7,7 @@ import { Label } from "@/components/ui/label"
 import { safeResJson } from "@/lib/utils"
 
 const SignatureCanvas = dynamic(
-  () =>
-    import("react-signature-canvas").then((mod) => {
-      const SigPad = mod.default
-      return React.forwardRef<any, React.ComponentProps<typeof SigPad>>((props, ref) => (
-        <SigPad ref={ref} {...props} />
-      ))
-    }),
+  () => import("react-signature-canvas").then((mod) => mod.default),
   {
     ssr: false,
     loading: () => <div className="h-[120px] w-full rounded border border-gray-300 bg-gray-50 animate-pulse" />,
