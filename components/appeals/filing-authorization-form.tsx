@@ -6,13 +6,20 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { safeResJson } from "@/lib/utils"
 
-const SignatureCanvas = dynamic(
+import type SignaturePadType from "react-signature-canvas"
+
+// Cast to any to preserve ref forwarding through next/dynamic's limited typing.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const SignatureCanvas = dynamic<any>(
   () => import("react-signature-canvas").then((mod) => mod.default),
   {
     ssr: false,
     loading: () => <div className="h-[120px] w-full rounded border border-gray-300 bg-gray-50 animate-pulse" />,
   }
 )
+
+// Type alias so signatureRef can use the real API shape
+type SignaturePad = SignaturePadType
 
 function UploadOfficialForm({
   appealId,
@@ -125,7 +132,7 @@ export function FilingAuthorizationForm({
   const [agreed, setAgreed] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
-  const signatureRef = useRef<{ clear: () => void; isEmpty: () => boolean; toDataURL: (type?: string) => string } | null>(null)
+  const signatureRef = useRef<SignaturePad | null>(null)
 
   useEffect(() => {
     if (existingAuth) {
