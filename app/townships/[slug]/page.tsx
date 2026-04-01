@@ -33,15 +33,16 @@ export async function generateStaticParams() {
   return Object.keys(townships).map(slug => ({ slug }));
 }
 
-export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
-  const township = townships[params.slug as TownshipKey];
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+  const { slug } = await params;
+  const township = townships[slug as TownshipKey];
   return {
     title: `${township?.title || 'Township'} - OverTaxed Platform`,
   };
 }
 
-export default function Page({ params }: { params: { slug: string } }) {
-  const { slug } = params;
+export default async function Page({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
   const township = townships[slug as TownshipKey];
 
   if (!township) {
