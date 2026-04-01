@@ -40,23 +40,23 @@ export default function HomePage() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white pb-20 md:pb-0">
-      <MobileStickyBar href="/check" label="Start Free Property Check →" subtext="Takes 5 minutes · No credit card" color="amber" />
+      <MobileStickyBar href="/check" label="Check My Taxes — Free" subtext="Takes 5 minutes · No credit card" color="amber" />
       {/* Navigation */}
       <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="flex justify-between items-center">
           <Logo href="/" />
           <div className="flex items-center gap-6">
             <Link
+              href="#how-it-works"
+              className="text-gray-600 hover:text-gray-900 font-medium"
+            >
+              How It Works
+            </Link>
+            <Link
               href="/pricing"
               className="text-gray-600 hover:text-gray-900 font-medium"
             >
               Pricing
-            </Link>
-            <Link
-              href="/check"
-              className="bg-amber-500 hover:bg-amber-600 text-white font-semibold px-5 py-2 rounded-lg text-sm transition-colors"
-            >
-              Free Check →
             </Link>
             <Link
               href="/townships"
@@ -65,10 +65,10 @@ export default function HomePage() {
               Deadlines
             </Link>
             <Link
-              href="#how-it-works"
+              href="/appeal-packet"
               className="text-gray-600 hover:text-gray-900 font-medium"
             >
-              How It Works
+              Appeal Packet ($37)
             </Link>
             <Link
               href="/auth/signin"
@@ -77,10 +77,10 @@ export default function HomePage() {
               Sign in
             </Link>
             <Link
-              href="/pricing"
-              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 font-medium"
+              href="/check"
+              className="bg-amber-500 hover:bg-amber-600 text-white font-semibold px-5 py-2 rounded-lg text-sm transition-colors"
             >
-              Get Started
+              Free Tax Check →
             </Link>
           </div>
         </div>
