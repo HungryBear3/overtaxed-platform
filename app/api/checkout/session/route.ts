@@ -4,9 +4,9 @@ import Stripe from "stripe";
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 const PRICE_MAP: Record<string, string | undefined> = {
-  T1: process.env.STRIPE_PRICE_T1_DIY_STARTER,
-  T2: process.env.STRIPE_PRICE_T2_DIY_PRO,
-  T3: process.env.STRIPE_PRICE_T3_DFY,
+  T1: process.env.STRIPE_PRICE_T1_DIY_STARTER?.trim(),
+  T2: process.env.STRIPE_PRICE_T2_DIY_PRO?.trim(),
+  T3: process.env.STRIPE_PRICE_T3_DFY?.trim(),
 };
 
 export async function POST(req: NextRequest) {
