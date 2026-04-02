@@ -1,4 +1,5 @@
 import { Metadata } from 'next';
+import AppealButton from './AppealButton';
 
 type TownshipKey = 'bloom' | 'bremen' | 'calumet' | 'rich' | 'thornton' | 'worth';
 
@@ -78,11 +79,7 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
       </section>
 
       <section>
-        <button style={{ backgroundColor: '#0070f3', color: 'white', padding: '0.6rem 1.2rem', border: 'none', borderRadius: '0.3rem', cursor: 'pointer', marginBottom: '1rem' }} onClick={() => {
-          window.location.href = '/check';
-        }}>
-          Check Your Appeal
-        </button>
+        <AppealButton />
       </section>
 
       <section>
