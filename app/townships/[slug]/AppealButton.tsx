@@ -1,9 +1,11 @@
-'use client';
+import Link from 'next/link';
 
 export default function AppealButton() {
   return (
-    <button
+    <Link
+      href="/check"
       style={{
+        display: 'inline-block',
         backgroundColor: '#0070f3',
         color: 'white',
         padding: '0.6rem 1.2rem',
@@ -11,12 +13,10 @@ export default function AppealButton() {
         borderRadius: '0.3rem',
         cursor: 'pointer',
         marginBottom: '1rem',
-      }}
-      onClick={() => {
-        window.location.href = '/check';
+        textDecoration: 'none',
       }}
     >
       Check Your Appeal
-    </button>
+    </Link>
   );
 }
