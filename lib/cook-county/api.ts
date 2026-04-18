@@ -170,13 +170,23 @@ async function getParcelUniverseByPIN(
   }
 
   if (currentRecord && archivedRecord) {
-    // Merge: current record wins for non-address fields; archived fills in the address
+    // Merge: current record wins for non-address fields; archived fills in the address.
+    // IMPORTANT: archived dataset (tx2p-k2g9) stores address as prop_address_full / prop_address_city_name /
+    // prop_address_zipcode_1 — NOT as property_address. Spreading currentRecord over archivedRecord would
+    // silently delete these prop_address_* fields (they don't exist in pabr-t5kh). Preserve them explicitly.
+    const arch = archivedRecord as unknown as Record<string, unknown>
     return {
       ...archivedRecord,
       ...currentRecord,
-      property_address: archivedRecord.property_address || currentRecord.property_address,
-      property_city: archivedRecord.property_city || currentRecord.property_city,
-      property_zip: archivedRecord.property_zip || currentRecord.property_zip,
+      // Archived prop_address_* fields (override any undefined from current spread)
+      prop_address_full: (arch.prop_address_full as string | undefined) || undefined,
+      prop_address_city_name: (arch.prop_address_city_name as string | undefined) || undefined,
+      prop_address_zipcode_1: (arch.prop_address_zipcode_1 as string | undefined) || undefined,
+      prop_address_state: (arch.prop_address_state as string | undefined) || undefined,
+      // Fallback property_address / property_city columns (used by some API consumers)
+      property_address: archivedRecord.property_address || currentRecord.property_address || (arch.prop_address_full as string | undefined),
+      property_city: archivedRecord.property_city || currentRecord.property_city || (arch.prop_address_city_name as string | undefined),
+      property_zip: archivedRecord.property_zip || currentRecord.property_zip || (arch.prop_address_zipcode_1 as string | undefined),
     }
   }
 
@@ -523,7 +533,15 @@ export async function getPropertyByPIN(
 }
 
 /**
- * Search properties by address
+ * Search properties by address.
+ *
+ * Strategy:
+ *  1. PIN_ADDRESS_INDEX (c49d-89sn) — fast, has property_address / property_city columns.
+ *  2. If 0 results, fall back to archived Parcel Universe (tx2p-k2g9) which stores address
+ *     in prop_address_full / prop_address_city_name. Dedupes by PIN (dataset has one row per
+ *     tax year so the same PIN can appear multiple times).
+ *
+ * Both datasets include a `pin` (14-digit) field used by the caller to drive getPropertyByPIN.
  */
 export async function searchPropertiesByAddress(
   address: string,
@@ -531,27 +549,71 @@ export async function searchPropertiesByAddress(
   limit: number = 10
 ): Promise<CookCountyApiResponse<ParcelUniverseRecord[]>> {
   try {
-    // Use PIN_ADDRESS_INDEX (c49d-89sn) — smaller dataset, responds fast even with LIKE '%...%'.
-    // Columns: property_address, property_city, property_zip, pin, latitude, longitude
     const addrSafe = address.trim().replace(/'/g, "''")
     const citySafe = city?.trim().replace(/'/g, "''") ?? ""
+
+    // ── Primary: PIN_ADDRESS_INDEX (c49d-89sn) ──────────────────────────────
+    // Columns: property_address, property_city, property_zip, pin, latitude, longitude, township_name, nbhd
     let whereClause = `upper(property_address) like upper('%${addrSafe}%')`
     if (citySafe) {
       whereClause += ` AND upper(property_city) like upper('%${citySafe}%')`
     }
     const query = `$where=${encodeURIComponent(whereClause)}&$limit=${limit}`
-    
-    let results = await fetchSocrataData<ParcelUniverseRecord>(
-      DATASETS.PIN_ADDRESS_INDEX,
-      query,
-      7000
-    )
-    
+
+    let results: ParcelUniverseRecord[] = []
+    let source = 'Cook County Open Data - PIN Address Index'
+    try {
+      results = await fetchSocrataData<ParcelUniverseRecord>(DATASETS.PIN_ADDRESS_INDEX, query, 7000)
+    } catch (err) {
+      console.warn('[searchPropertiesByAddress] PIN_ADDRESS_INDEX failed, will try archived dataset', err)
+    }
+
+    // ── Fallback: archived Parcel Universe (tx2p-k2g9) ──────────────────────
+    // Used when primary returns 0 results (e.g. user omitted directional like "N"/"S").
+    // Address column here is prop_address_full; city is prop_address_city_name.
+    // Normalize results so callers always see property_address / property_city.
+    if (results.length === 0) {
+      const archWhereClause = citySafe
+        ? `upper(prop_address_full) like upper('%${addrSafe}%') AND upper(prop_address_city_name) like upper('%${citySafe}%')`
+        : `upper(prop_address_full) like upper('%${addrSafe}%')`
+      const archQuery = `$where=${encodeURIComponent(archWhereClause)}&$limit=${limit * 3}&$order=year DESC`
+      try {
+        const archResults = await fetchSocrataData<Record<string, unknown>>(
+          DATASETS.PARCEL_UNIVERSE,
+          archQuery,
+          8000
+        )
+        // Dedupe by PIN (multiple rows per PIN across years — keep most recent)
+        const seenPins = new Set<string>()
+        const dedupedArch: ParcelUniverseRecord[] = []
+        for (const r of archResults) {
+          const pin = String(r.pin ?? '').replace(/\D/g, '')
+          if (!pin || seenPins.has(pin)) continue
+          seenPins.add(pin)
+          // Normalize to ParcelUniverseRecord shape so callers work uniformly
+          dedupedArch.push({
+            ...(r as unknown as ParcelUniverseRecord),
+            // Map archived address columns → standard address columns
+            property_address: (r.prop_address_full as string | undefined) || (r.property_address as string | undefined) || '',
+            property_city: (r.prop_address_city_name as string | undefined) || (r.property_city as string | undefined) || '',
+            property_zip: (r.prop_address_zipcode_1 as string | undefined) || (r.property_zip as string | undefined) || '',
+          })
+          if (dedupedArch.length >= limit) break
+        }
+        if (dedupedArch.length > 0) {
+          results = dedupedArch
+          source = 'Cook County Open Data - Parcel Universe (archived)'
+        }
+      } catch (archErr) {
+        console.warn('[searchPropertiesByAddress] archived Parcel Universe fallback failed', archErr)
+      }
+    }
+
     return {
       success: true,
       data: results,
       error: null,
-      source: 'Cook County Open Data',
+      source,
     }
   } catch (error) {
     console.error('Error searching properties:', error)
