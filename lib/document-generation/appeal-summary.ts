@@ -118,6 +118,42 @@ function median(values: number[]): number | null {
   return sorted.length % 2 !== 0 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2
 }
 
+// Score and return the strongest comparable evidence for the opinion of value.
+// Ranked by: same class (+3), same neighborhood (+2), living area proximity (+3/+1),
+// distance (+3/+2/+1), sale recency (+2/+1), confirmed in both data sources (+1).
+function selectBestComps(
+  comps: AppealSummaryData["comps"],
+  property: AppealSummaryData["property"],
+  maxN = 5
+): AppealSummaryData["comps"] {
+  const today = Date.now()
+  const scored = comps.map((c) => {
+    let score = 0
+    if (c.buildingClass != null && property.buildingClass != null && c.buildingClass === property.buildingClass) score += 3
+    if (c.neighborhood && property.neighborhood && c.neighborhood === property.neighborhood) score += 2
+    if (property.livingArea != null && property.livingArea > 0 && c.livingArea != null) {
+      const ratio = c.livingArea / property.livingArea
+      if (ratio >= 0.9 && ratio <= 1.1) score += 3
+      else if (ratio >= 0.8 && ratio <= 1.2) score += 1
+    }
+    if (c.distanceFromSubject != null) {
+      const d = Number(c.distanceFromSubject)
+      if (d < 0.25) score += 3
+      else if (d < 0.5) score += 2
+      else if (d < 1.0) score += 1
+    }
+    if (c.saleDate) {
+      const daysAgo = (today - new Date(c.saleDate).getTime()) / 86_400_000
+      if (daysAgo < 365) score += 2
+      else if (daysAgo < 730) score += 1
+    }
+    if ((c as { inBothSources?: boolean }).inBothSources) score += 1
+    return { comp: c, score }
+  })
+  scored.sort((a, b) => b.score - a.score)
+  return scored.slice(0, maxN).map((s) => s.comp)
+}
+
 export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   doc.addPage() // pdf-lib starts with 0 pages; getPage(0) requires at least one page
@@ -245,32 +281,147 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   }
 
   // —— Title & generated date ——
-  drawText("OverTaxed IL — Property Tax Appeal Summary", { bold: true, fontSize: 16 })
-  y -= 4
-  drawText(`Generated ${new Date().toLocaleDateString("en-US")}`)
+  drawText("Illinois Property Tax Appeal — Opinion of Value and Comparable Evidence", { bold: true, fontSize: 15 })
+  y -= 2
+  drawText(`Prepared for submission to ${data.property.county} County Assessor / Board of Review`)
+  y -= 2
+  drawText(`Date prepared: ${new Date().toLocaleDateString("en-US")}`)
   drawLine()
 
-  // —— Executive summary (makes the case upfront for assessors) ——
-  drawText("Summary of Request", { bold: true, fontSize: 13 })
+  // —— I. Opinion of Value / Requested Relief (front-loaded for assessor review) ——
+  // Derive requested assessed value from best comparable evidence before presenting it.
+  const assessmentRatio = data.property.buildingClass?.startsWith("5") ? 0.25 : 0.10
+  const bestSalesComps = selectBestComps(salesComps, data.property, 5)
+  const bestEquityComps = selectBestComps(equityComps, data.property, 5)
+  const bestCompsForOpinion = bestSalesComps.length > 0 ? bestSalesComps : bestEquityComps
+
+  // Derive comp-supported market value (sales path: median $/sqft × subject sqft)
+  const bestSalesPrices = bestSalesComps.map((c) => c.salePrice).filter((v): v is number => v != null && v > 0)
+  const bestSalesSqftPrices = bestSalesComps
+    .map((c) => c.pricePerSqft)
+    .filter((v): v is number => v != null && v > 0)
+  const medianBestSalesSqft = bestSalesSqftPrices.length > 0 ? median(bestSalesSqftPrices) : null
+  const medianBestSalePrice = bestSalesPrices.length > 0 ? median(bestSalesPrices) : null
+
+  // Prefer $/sqft × subject sqft derivation (adjusts for size differences); fall back to median sale price
+  const subjectSqftForOpinion = data.property.livingAreaRealie ?? data.property.livingArea
+  const derivedMarketValue =
+    medianBestSalesSqft != null && subjectSqftForOpinion != null && subjectSqftForOpinion > 0
+      ? medianBestSalesSqft * subjectSqftForOpinion
+      : medianBestSalePrice
+
+  // For equity-only path: median assessed value per sqft × subject sqft = derived AV directly
+  const bestEquityAVSqfts = bestEquityComps
+    .map((c) => c.assessedMarketValuePerSqft)
+    .filter((v): v is number => v != null && v > 0)
+  const medianEquityAVSqft = bestEquityAVSqfts.length > 0 ? median(bestEquityAVSqfts) : null
+  const derivedAVFromEquity =
+    medianEquityAVSqft != null && subjectSqftForOpinion != null && subjectSqftForOpinion > 0
+      ? medianEquityAVSqft * subjectSqftForOpinion
+      : null
+
+  const derivedRequestedAV =
+    derivedMarketValue != null
+      ? Math.round(derivedMarketValue * assessmentRatio)
+      : derivedAVFromEquity != null
+      ? Math.round(derivedAVFromEquity)
+      : null
+
+  // Market value range from best comps (10th–90th percentile when ≥3)
+  const sortedSalesPrices = [...bestSalesPrices].sort((a, b) => a - b)
+  const rangeMin = sortedSalesPrices.length >= 3 ? sortedSalesPrices[Math.floor(sortedSalesPrices.length * 0.1)]! : sortedSalesPrices[0] ?? null
+  const rangeMax = sortedSalesPrices.length >= 3 ? sortedSalesPrices[Math.ceil(sortedSalesPrices.length * 0.9) - 1]! : sortedSalesPrices[sortedSalesPrices.length - 1] ?? null
+
+  const impliedCurrentMV = noticedValue != null ? noticedValue / assessmentRatio : null
+  const impliedRequestedMV = requestedValue != null ? requestedValue / assessmentRatio : null
+
+  drawText("I. Opinion of Value — Requested Relief", { bold: true, fontSize: 13 })
+  y -= 2
   drawText(
-    `Noticed/current assessed value: ${formatCurrency(noticedValue)}  |  ` +
-      `Taxpayer's opinion of value (requested): ${formatCurrency(requestedValue)}`
+    `Subject: ${data.property.address}, ${data.property.city}, ${data.property.state}  |  PIN: ${data.property.pin}  |  Tax year: ${data.appeal.taxYear}`
+  )
+  if (data.appeal.filingDeadline)
+    drawText(`Filing deadline: ${formatDate(data.appeal.filingDeadline)}`)
+  y -= 4
+
+  // Value summary table
+  const colVL = [margin, 260, 390]
+  drawTableRow(["", "Current (noticed)", "Requested"], colVL, true)
+  drawTableRow(
+    ["Assessed value", formatCurrency(noticedValue), formatCurrency(requestedValue)],
+    colVL
+  )
+  drawTableRow(
+    [
+      `Implied market value (${(assessmentRatio * 100).toFixed(0)}% ratio)`,
+      formatCurrency(impliedCurrentMV),
+      formatCurrency(impliedRequestedMV),
+    ],
+    colVL
   )
   if (reductionDollars != null && reductionDollars > 0 && reductionPct != null) {
-    drawText(
-      `Requested reduction: ${formatCurrency(reductionDollars)} (${formatPct(reductionPct)}). ` +
-        "This summary presents comparable sales and uniformity evidence in support of the requested assessment."
-    )
-  } else if (data.comps.length > 0) {
-    drawText(
-      "The following comparable sales and uniformity analysis support a fair market value consistent with similar properties in the same neighborhood and building class."
+    drawTableRow(
+      ["Reduction amount", "—", `${formatCurrency(reductionDollars)} (${formatPct(reductionPct)})`],
+      colVL
     )
   }
-  if (data.comps.length > 0) {
-    const n = data.comps.length
+  y -= 4
+
+  // Evidence basis
+  if (bestSalesComps.length > 0 && derivedMarketValue != null) {
     drawText(
-      `This submission includes ${n} comparable sale(s) from the same neighborhood and building class. All comparables are identified by Cook County PIN for verification. Comparables were selected by proximity, same neighborhood and class, and similar living area; no cherry-picking.`
+      `Comp-supported market value — derived from ${bestSalesComps.length} comparable sale(s):`,
+      { bold: true }
     )
+    if (medianBestSalesSqft != null && subjectSqftForOpinion != null)
+      drawText(
+        `  Median sale $/sq ft: ${formatCurrencySqft(medianBestSalesSqft)}  ×  ` +
+          `${subjectSqftForOpinion.toLocaleString()} sq ft subject  =  ${formatCurrency(derivedMarketValue)} (implied market value)`
+      )
+    if (rangeMin != null && rangeMax != null && rangeMin !== rangeMax)
+      drawText(`  Market value range of best comps: ${formatCurrency(rangeMin)} – ${formatCurrency(rangeMax)}`)
+    drawText(
+      `  At ${(assessmentRatio * 100).toFixed(0)}% assessment ratio: derived requested assessed value = ${formatCurrency(derivedRequestedAV)}`
+    )
+    if (
+      derivedRequestedAV != null &&
+      requestedValue != null &&
+      Math.abs(derivedRequestedAV - requestedValue) / Math.max(derivedRequestedAV, 1) > 0.05
+    ) {
+      drawText(
+        `  Note: Filed requested AV (${formatCurrency(requestedValue)}) differs from comp-derived AV (${formatCurrency(derivedRequestedAV)}) by ` +
+          `${formatPct(Math.abs(derivedRequestedAV - requestedValue) / Math.max(derivedRequestedAV, 1) * 100)}.`,
+        { color: rgb(0.5, 0.3, 0) }
+      )
+    }
+  } else if (bestEquityComps.length > 0 && derivedAVFromEquity != null) {
+    drawText(
+      `Comp-supported assessed value — derived from ${bestEquityComps.length} comparable assessed value(s):`,
+      { bold: true }
+    )
+    if (medianEquityAVSqft != null && subjectSqftForOpinion != null)
+      drawText(
+        `  Median comparable AV $/sq ft: ${formatCurrencySqft(medianEquityAVSqft)}  ×  ` +
+          `${subjectSqftForOpinion.toLocaleString()} sq ft subject  =  ${formatCurrency(derivedAVFromEquity)} (supported AV)`
+      )
+  } else if (requestedValue != null) {
+    drawText("  Requested assessed value is as filed. Add comparable sales to show comp-derived support.")
+  }
+
+  // List the best comps concisely in this section
+  if (bestCompsForOpinion.length > 0) {
+    y -= 4
+    drawText(`Best comparable${bestCompsForOpinion.length > 1 ? "s" : ""} used for this opinion:`, { bold: true })
+    for (let i = 0; i < bestCompsForOpinion.length; i++) {
+      const c = bestCompsForOpinion[i]!
+      const valStr =
+        c.compType === "SALES"
+          ? `Sale: ${formatCurrency(c.salePrice)}${c.saleDate ? ` (${formatDate(c.saleDate)})` : ""}${c.pricePerSqft != null ? `  ${formatCurrencySqft(c.pricePerSqft)}` : ""}`
+          : `Assessed: ${formatCurrency(c.assessedMarketValue)}${c.assessedMarketValuePerSqft != null ? `  ${formatCurrencySqft(c.assessedMarketValuePerSqft)}` : ""}`
+      const distStr = c.distanceFromSubject != null ? `  ${Number(c.distanceFromSubject).toFixed(2)} mi` : ""
+      const areaStr = c.livingArea != null ? `  ${c.livingArea.toLocaleString()} sq ft` : ""
+      drawText(`  ${i + 1}. ${c.address || `PIN ${c.pin}`}  |  PIN: ${c.pin}  |  ${valStr}${areaStr}${distStr}`)
+    }
   }
   drawLine()
 
@@ -303,27 +454,35 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
   drawLine()
 
   // —— Subject vs comparables table (one place to compare) ——
+  // Dual-source resolution: prefer Realie data when available; fall back to county.
+  // Conflicts (>5% difference) are noted in a footnote rather than shown as "X / Y".
   if (data.comps.length > 0) {
-    drawText("Subject vs Comparables", { bold: true, fontSize: 13 })
-    // Column X positions: Property/PIN needs room for formatted PIN (e.g. 14-08-211-050-1001)
+    drawText("II. Subject vs Comparables", { bold: true, fontSize: 13 })
     const colXs = [margin, 140, 165, 193, 228, 303, 383, 458]
     drawTableRow(
-      ["Property", "Class", "Sq ft", "Yr", "B/B", "Sale/Val", "$/sqft", "Dist"],
+      ["Property / PIN", "Class", "Sq ft", "Yr", "B/B", "Sale/Val", "$/sqft", "Dist"],
       colXs,
       true
     )
-    const subjectBath =
-      data.property.bathrooms != null ? Number(data.property.bathrooms) : null
-    const subjectSqftCell =
-      data.property.livingAreaCounty != null && data.property.livingAreaRealie != null && data.property.livingAreaCounty !== data.property.livingAreaRealie
-        ? `${data.property.livingAreaCounty} / ${data.property.livingAreaRealie}`
-        : (data.property.livingArea != null ? String(data.property.livingArea) : "—")
-    const subjectYrCell =
-      data.property.yearBuiltCounty != null && data.property.yearBuiltRealie != null && data.property.yearBuiltCounty !== data.property.yearBuiltRealie
-        ? `${data.property.yearBuiltCounty} / ${data.property.yearBuiltRealie}`
-        : (data.property.yearBuilt != null ? String(data.property.yearBuilt) : "—")
+
+    // Resolve subject attributes — prefer Realie, fall back to county
+    const subjectBath = data.property.bathrooms != null ? Number(data.property.bathrooms) : null
+    const resolvedSubjectSqft = data.property.livingAreaRealie ?? data.property.livingArea
+    const resolvedSubjectYr = data.property.yearBuiltRealie ?? data.property.yearBuilt
+    const subjectSqftCell = resolvedSubjectSqft != null ? String(resolvedSubjectSqft) : "—"
+    const subjectYrCell = resolvedSubjectYr != null ? String(resolvedSubjectYr) : "—"
     const subjectBbStr = [data.property.bedrooms ?? "—", subjectBath != null ? subjectBath.toFixed(1) : "—"].join("/")
     const subjectClassCell = data.property.buildingClass ?? "—"
+
+    // Track data conflicts for footnote
+    const conflictNotes: string[] = []
+    const subjectSqftConflict =
+      data.property.livingAreaCounty != null && data.property.livingAreaRealie != null &&
+      data.property.livingAreaCounty !== data.property.livingAreaRealie &&
+      Math.abs(data.property.livingAreaCounty - data.property.livingAreaRealie) / data.property.livingAreaCounty > 0.05
+    if (subjectSqftConflict)
+      conflictNotes.push(`Subject sq ft: county ${data.property.livingAreaCounty}, Realie ${data.property.livingAreaRealie} (using Realie)`)
+
     drawTableRow(
       [
         "Subject",
@@ -348,38 +507,36 @@ export async function generateAppealSummaryPdf(data: AppealSummaryData): Promise
           : (c.assessedMarketValuePerSqft != null ? formatCurrencySqft(c.assessedMarketValuePerSqft).replace("/sq ft", "") : "—")
       const distStr =
         c.distanceFromSubject != null ? `${Number(c.distanceFromSubject).toFixed(2)} mi` : "—"
-      const baths = c.bathrooms != null ? Number(c.bathrooms).toFixed(1) : "—"
-      const sqftCell =
-        c.livingArea != null && c.livingAreaRealie != null && c.livingArea !== c.livingAreaRealie
-          ? `${c.livingArea} / ${c.livingAreaRealie}`
-          : (c.livingArea != null ? String(c.livingArea) : (c.livingAreaRealie != null ? String(c.livingAreaRealie) : "—"))
-      const yrCell =
-        c.yearBuilt != null && c.yearBuiltRealie != null && c.yearBuilt !== c.yearBuiltRealie
-          ? `${c.yearBuilt} / ${c.yearBuiltRealie}`
-          : (c.yearBuilt != null ? String(c.yearBuilt) : (c.yearBuiltRealie != null ? String(c.yearBuiltRealie) : "—"))
-      const bbRe = c.bathroomsRealie != null ? Number(c.bathroomsRealie).toFixed(1) : "—"
-      const bbCell =
-        c.bedrooms != null && c.bedroomsRealie != null && (c.bedrooms !== c.bedroomsRealie || c.bathrooms !== c.bathroomsRealie)
-          ? `${c.bedrooms ?? "—"}/${baths} / ${c.bedroomsRealie ?? "—"}/${bbRe}`
-          : `${c.bedrooms ?? "—"}/${baths}`
+
+      // Resolve comp attributes — prefer Realie, fall back to county; note material conflicts
+      const resolvedSqft = c.livingAreaRealie ?? c.livingArea
+      const resolvedYr = c.yearBuiltRealie ?? c.yearBuilt
+      const resolvedBeds = c.bedroomsRealie ?? c.bedrooms
+      const resolvedBaths = c.bathroomsRealie ?? c.bathrooms
+      const sqftCell = resolvedSqft != null ? String(resolvedSqft) : "—"
+      const yrCell = resolvedYr != null ? String(resolvedYr) : "—"
+      const baths = resolvedBaths != null ? Number(resolvedBaths).toFixed(1) : "—"
+      const bbCell = `${resolvedBeds ?? "—"}/${baths}`
+
+      const compSqftConflict =
+        c.livingArea != null && c.livingAreaRealie != null &&
+        c.livingArea !== c.livingAreaRealie &&
+        Math.abs(c.livingArea - c.livingAreaRealie) / c.livingArea > 0.05
+      if (compSqftConflict)
+        conflictNotes.push(`PIN ${c.pin} sq ft: county ${c.livingArea}, Realie ${c.livingAreaRealie} (using Realie)`)
+
       const pinLabel = (c as { dataSource?: string }).dataSource === "manual" ? "Manual" : c.pin
       const classCell = c.buildingClass ?? "—"
       drawTableRow(
-        [
-          (c as { inBothSources?: boolean }).inBothSources ? `${pinLabel} *` : pinLabel,
-          classCell,
-          sqftCell,
-          yrCell,
-          bbCell,
-          saleOrVal,
-          sqftVal,
-          distStr,
-        ],
+        [pinLabel, classCell, sqftCell, yrCell, bbCell, saleOrVal, sqftVal, distStr],
         colXs
       )
     }
-    if (data.comps.some((c) => (c as { inBothSources?: boolean }).inBothSources))
-      drawText(" * = in both County & Realie (prioritized)", { fontSize: 9 })
+    if (conflictNotes.length > 0) {
+      drawText("Data source conflicts resolved (Realie preferred):", { fontSize: 9, color: rgb(0.4, 0.4, 0.4) })
+      for (const note of conflictNotes)
+        drawText(`  • ${note}`, { fontSize: 9, color: rgb(0.4, 0.4, 0.4) })
+    }
     drawLine()
   }
 

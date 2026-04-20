@@ -229,6 +229,7 @@ export function FreeCheckResult({ result }: Props) {
               className="mt-6 inline-block bg-blue-600 text-white font-semibold px-8 py-4 rounded-lg hover:bg-blue-700 transition-colors text-lg">
               Start Your Appeal
             </Link>
+            <p className="mt-2 text-xs text-gray-400">No attorney needed · No credit card to start</p>
             {aw?.status === "open" && (
               <p className="mt-3 text-sm text-gray-500">
                 Or{" "}
@@ -436,7 +437,10 @@ export function FreeCheckResult({ result }: Props) {
             </button>
           </div>
           <p className="text-xs text-gray-500 mb-3">
-            This is a starting point — you can customize it before filing with the CCAO.
+            Generated from your equity ratio
+            {result.equityRatio != null ? ` (${result.equityRatio.toFixed(1)}%)` : ""} and{" "}
+            {result.compCount} comparable {result.compCount === 1 ? "property" : "properties"}.
+            Copy and paste when you file.
           </p>
           <textarea
             readOnly
@@ -548,7 +552,8 @@ export function FreeCheckResult({ result }: Props) {
           Save your results and get notified when your appeal window opens
         </h3>
         <p className="text-sm text-gray-600 mb-4">
-          Free. We&apos;ll email you when your township&apos;s appeal window opens and remind you 7 days before it closes.
+          Free. We&apos;ll email you when your township&apos;s appeal window opens and remind you 7 days before it closes.{" "}
+          <span className="text-gray-400">No spam. Unsubscribe anytime.</span>
         </p>
         {saveStatus === "success" ? (
           <p className="text-sm font-medium text-green-700">You&apos;re on the list. We&apos;ll email you when your window opens.</p>

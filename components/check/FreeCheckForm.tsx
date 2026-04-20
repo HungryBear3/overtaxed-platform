@@ -187,6 +187,9 @@ export function FreeCheckForm({ onResult, onReset }: Props) {
       >
         {loading ? "Checking…" : "Check my assessment"}
       </button>
+      <p className="mt-3 text-xs text-gray-400">
+        Free · No account required · Uses public Cook County Assessor records
+      </p>
     </form>
   )
 }
