@@ -2,7 +2,7 @@
 
 ## When Are Deadlines Published?
 
-Cook County Assessor publishes the [Assessment & Appeal Calendar](https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines) annually. The page is **updated progressively** as townships open:
+Cook County Assessor publishes the [Assessment & Appeal Calendar](https://www.cookcountyassessor.com/assessment-calendar-and-deadlines) annually. The page is **updated progressively** as townships open:
 
 - **Timing:** New year's data typically appears in **late fall / early winter** (Nov–Jan). The calendar shows "Last updated: [date]" at the top.
 - **No fixed date:** There is no single "publish day" — the Assessor adds townships as the triennial reassessment cycle progresses. North suburbs, City of Chicago, and South/West suburbs rotate.
@@ -19,7 +19,7 @@ Cook County Assessor publishes the [Assessment & Appeal Calendar](https://www.co
 
 ### 2. Fetch and review new data
 
-1. Open https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines
+1. Open https://www.cookcountyassessor.com/assessment-calendar-and-deadlines
 2. For each township section (North Suburbs, City of Chicago & South/West), note:
    - Township name
    - Reassessment Notice Date (MM/DD/YYYY)

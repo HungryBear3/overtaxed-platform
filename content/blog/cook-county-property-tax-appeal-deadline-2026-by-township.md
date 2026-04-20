@@ -66,7 +66,7 @@ Chicago property owners in the 2024 reassessment cycle can also appeal at the Bo
 
 ## What to Do Before Your Deadline
 
-**Step 1: Verify your assessed value.** Find it on your most recent tax bill or at the Cook County Assessor's website (cookcountyassessoril.gov).
+**Step 1: Verify your assessed value.** Find it on your most recent tax bill or at the Cook County Assessor's website (cookcountyassessor.com).
 
 **Step 2: Check for over-assessment.** Your assessment should reflect 10% of your property's market value. If comparable homes in your area have sold for significantly less than what your assessment implies, you likely have grounds for an appeal.
 

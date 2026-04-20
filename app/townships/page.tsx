@@ -417,21 +417,36 @@ export default function TownshipsPage() {
                           <td className="hidden sm:table-cell px-3 py-3.5 text-gray-600">
                             {t.status === "FUTURE" ? "—" : t.closeDate}
                           </td>
-                          <td className="hidden md:table-cell px-3 py-3.5 text-gray-500 text-xs max-w-[220px] truncate">
+                          <td className="hidden md:table-cell px-3 py-3.5 text-gray-500 text-xs max-w-[240px] leading-relaxed">
                             {t.cities}
                           </td>
                           <td className="px-3 py-3.5 text-right">
                             {t.status === "OPEN" ? (
-                              <Link
-                                href="/auth/signup"
-                                className="inline-block bg-blue-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors"
-                              >
-                                Appeal now
-                              </Link>
+                              <div className="inline-flex flex-col items-end gap-1.5">
+                                <Link
+                                  href="/auth/signup"
+                                  className="inline-block bg-blue-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors"
+                                >
+                                  Appeal now
+                                </Link>
+                                <a
+                                  href="https://www.cookcountyassessor.com/online-appeals"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-green-700 font-medium hover:underline"
+                                >
+                                  File at CCAO →
+                                </a>
+                              </div>
                             ) : t.status === "UPCOMING" ? (
-                              <span className="text-xs text-gray-500">Get notified ↓</span>
+                              <a
+                                href="#township-alert"
+                                className="inline-block text-xs font-medium text-blue-600 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors"
+                              >
+                                Get notified
+                              </a>
                             ) : (
-                              <span className="text-xs text-gray-400">Not yet</span>
+                              <span className="text-xs text-gray-400">Opens {t.openDate}</span>
                             )}
                           </td>
                         </tr>
@@ -445,7 +460,7 @@ export default function TownshipsPage() {
         })}
 
         {/* Email alert sign-up */}
-        <div className="mt-8 mb-10">
+        <div id="township-alert" className="mt-8 mb-10">
           <TownshipAlertForm townships={townships} />
         </div>
 

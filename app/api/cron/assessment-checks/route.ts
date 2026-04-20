@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { runAssessmentChecks } from "@/lib/monitoring/assessment-check"
 
 export const dynamic = "force-dynamic"
+export const maxDuration = 55
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization")
@@ -12,7 +13,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const results = await runAssessmentChecks()
+  // Wall-clock guard: leave 5s buffer before Vercel kills the function
+  const deadline = Date.now() + 50_000
+  const results = await runAssessmentChecks(deadline)
   const updated = results.filter((r) => r.updated).length
   const increases = results.filter((r) => r.increaseDetected).length
   const errors = results.filter((r) => r.error).length

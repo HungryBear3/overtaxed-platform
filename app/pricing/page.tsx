@@ -53,7 +53,7 @@ const tiers = [
     id: "T3",
     name: "Done-For-You",
     price: "$97",
-    priceSub: "flat, one-time",
+    priceSub: "one-time",
     description: "We prepare everything + submit your appeal on your behalf.",
     features: [
       "Everything in DIY Pro",
@@ -70,7 +70,7 @@ const tiers = [
     id: "T4",
     name: "Contingency",
     price: "22%",
-    priceSub: "of first-year savings · $0 upfront · $50 min",
+    priceSub: "of first-year savings · $0 upfront · $50 minimum",
     description:
       "We handle everything. You pay only if we win your appeal.",
     features: [
@@ -117,7 +117,7 @@ export default function PricingPage() {
       {/* Hero */}
       <section className="bg-white border-b border-gray-100 py-16 px-4 text-center">
         <h1 className="text-4xl font-bold text-gray-900 max-w-3xl mx-auto leading-tight">
-          Pay only if we win — or choose a flat rate that beats any attorney
+          Pay only if we win — or choose a flat rate at a fraction of typical attorney fees
         </h1>
         <p className="mt-4 text-lg text-gray-500 max-w-xl mx-auto">
           Illinois homeowners overpay $1B+ in property taxes every year. We fix

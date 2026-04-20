@@ -767,4 +767,13 @@ model ContingencyLead {
   @@index([createdAt])
 }
 
+model StripeEvent {
+  id        String   @id  // Stripe event ID (evt_...)
+  type      String
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("stripe_event")
+}
+
 // cache-bust: 1774495683

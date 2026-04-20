@@ -15,48 +15,10 @@ import {
   isValidPIN,
 } from "@/lib/cook-county"
 import type { PropertyData, SalesRecord, EquityRecord } from "@/lib/cook-county"
+import { rateLimit, getClientIdentifier } from "@/lib/rate-limit"
+import { BOR_APPEAL_WINDOWS } from "@/lib/appeals/bor-appeal-windows"
 
 export const maxDuration = 25
-
-// ─── Township appeal windows (approximate 2025/2026 Cook County schedule) ───
-// CCAO opens townships on a rolling basis. Dates are approximate — users should verify at cookcountyassessoril.gov
-const TOWNSHIP_APPEAL_WINDOWS: Record<string, { open: string; close: string }> = {
-  "chicago": { open: "2026-01-12", close: "2026-04-30" },
-  "city of chicago": { open: "2026-01-12", close: "2026-04-30" },
-  "evanston": { open: "2026-03-02", close: "2026-06-12" },
-  "new trier": { open: "2026-03-02", close: "2026-06-12" },
-  "niles": { open: "2026-04-06", close: "2026-07-10" },
-  "elk grove": { open: "2026-04-06", close: "2026-07-10" },
-  "maine": { open: "2026-04-06", close: "2026-07-10" },
-  "norwood park": { open: "2026-04-06", close: "2026-07-10" },
-  "jefferson": { open: "2026-04-06", close: "2026-07-10" },
-  "oak park": { open: "2026-02-17", close: "2026-05-22" },
-  "river forest": { open: "2026-02-17", close: "2026-05-22" },
-  "proviso": { open: "2026-02-17", close: "2026-05-22" },
-  "berwyn": { open: "2026-02-17", close: "2026-05-22" },
-  "cicero": { open: "2026-02-17", close: "2026-05-22" },
-  "lyons": { open: "2026-02-17", close: "2026-05-22" },
-  "riverside": { open: "2026-02-17", close: "2026-05-22" },
-  "stickney": { open: "2026-02-17", close: "2026-05-22" },
-  "worth": { open: "2026-05-04", close: "2026-08-07" },
-  "palos": { open: "2026-05-04", close: "2026-08-07" },
-  "orland": { open: "2026-05-04", close: "2026-08-07" },
-  "lemont": { open: "2026-05-04", close: "2026-08-07" },
-  "thornton": { open: "2026-05-04", close: "2026-08-07" },
-  "calumet": { open: "2026-05-04", close: "2026-08-07" },
-  "bloom": { open: "2026-05-04", close: "2026-08-07" },
-  "rich": { open: "2026-05-04", close: "2026-08-07" },
-  "Bremen": { open: "2026-05-04", close: "2026-08-07" },
-  "lake": { open: "2026-04-06", close: "2026-07-10" },
-  "hanover": { open: "2026-04-06", close: "2026-07-10" },
-  "schaumburg": { open: "2026-04-06", close: "2026-07-10" },
-  "palatine": { open: "2026-04-06", close: "2026-07-10" },
-  "wheeling": { open: "2026-04-06", close: "2026-07-10" },
-  "barrington": { open: "2026-04-06", close: "2026-07-10" },
-  "north chicago": { open: "2026-03-02", close: "2026-06-12" },
-  "south chicago": { open: "2026-01-12", close: "2026-04-30" },
-  "west chicago": { open: "2026-02-17", close: "2026-05-22" },
-}
 
 function getAppealWindowStatus(township: string | null): {
   township: string
@@ -66,12 +28,12 @@ function getAppealWindowStatus(township: string | null): {
   filingUrl: string
   note: string | null
 } {
-  const filingUrl = "https://www.cookcountyassessoril.gov/online-appeals"
+  const filingUrl = "https://www.cookcountyassessor.com/online-appeals"
   if (!township) {
     return { township: "Unknown", status: "unknown", openDate: null, closeDate: null, filingUrl, note: null }
   }
   const key = township.toLowerCase().replace(/\s*township$/i, "").trim()
-  const window = TOWNSHIP_APPEAL_WINDOWS[key]
+  const window = BOR_APPEAL_WINDOWS[key]
   if (!window) {
     return { township, status: "unknown", openDate: null, closeDate: null, filingUrl, note: `Check ${filingUrl} for your township's exact appeal dates.` }
   }
@@ -79,7 +41,7 @@ function getAppealWindowStatus(township: string | null): {
   const open = new Date(window.open)
   const close = new Date(window.close)
   const status: "open" | "closed" = today >= open && today <= close ? "open" : "closed"
-  return { township, status, openDate: window.open, closeDate: window.close, filingUrl, note: "Dates are approximate — verify at cookcountyassessoril.gov" }
+  return { township, status, openDate: window.open, closeDate: window.close, filingUrl, note: "Dates are approximate — verify at cookcountyassessor.com" }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -134,6 +96,11 @@ We request a reduction in the assessed value to $${Math.round(targetAV).toLocale
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  const { allowed } = rateLimit(getClientIdentifier(req), 10, 60_000)
+  if (!allowed) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 })
+  }
+
   try {
     const body = await req.json().catch(() => ({}))
     const pinRaw = typeof body.pin === "string" ? body.pin.trim() : ""
@@ -335,8 +302,10 @@ export async function POST(req: NextRequest) {
         : 0
 
     // ── Appeal argument text ─────────────────────────────────────────────────
+    // Only generate for meaningfully positive cases — tiny estimates are likely noise
+    const MEANINGFUL_SAVINGS_THRESHOLD = 100
     const appealArgumentText =
-      potentialOverpaymentPerYear > 0 && avgCompAV != null
+      potentialOverpaymentPerYear >= MEANINGFUL_SAVINGS_THRESHOLD && avgCompAV != null
         ? buildAppealArgument(
             propertyData.address,
             propertyData.city,

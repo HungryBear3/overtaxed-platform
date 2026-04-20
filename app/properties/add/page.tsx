@@ -272,7 +272,7 @@ export default function AddPropertyPage() {
                   <span>
                     The{" "}
                     <a
-                      href="https://www.cookcountyassessoril.gov/address-search"
+                      href="https://www.cookcountyassessor.com/address-search"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-blue-600 hover:underline"

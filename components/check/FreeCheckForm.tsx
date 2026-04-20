@@ -5,6 +5,7 @@ import type { Result } from "./FreeCheckResult"
 
 interface Props {
   onResult: (result: Result) => void
+  onReset?: () => void
 }
 
 function formatPinDisplay(raw: string): string {
@@ -18,7 +19,7 @@ function formatPinDisplay(raw: string): string {
   return formatted
 }
 
-export function FreeCheckForm({ onResult }: Props) {
+export function FreeCheckForm({ onResult, onReset }: Props) {
   const [pin, setPin] = useState("")
   const pinInputRef = useRef<HTMLInputElement>(null)
   const [address, setAddress] = useState("")
@@ -50,6 +51,7 @@ export function FreeCheckForm({ onResult }: Props) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError("")
+    onReset?.()
     if (mode === "pin" && !pin.trim()) {
       setError("Enter your 14-digit PIN.")
       return
@@ -59,6 +61,8 @@ export function FreeCheckForm({ onResult }: Props) {
       return
     }
     setLoading(true)
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 28_000)
     try {
       const res = await fetch("/api/free-check", {
         method: "POST",
@@ -68,16 +72,26 @@ export function FreeCheckForm({ onResult }: Props) {
             ? { pin: pin.trim().replace(/\D/g, "") }
             : { address: address.trim(), city: city.trim() || undefined }
         ),
+        signal: controller.signal,
       })
       const data = await res.json()
       if (!res.ok) {
-        setError(data.error ?? "Something went wrong.")
+        if (res.status === 429) {
+          setError("Too many checks — please wait a minute and try again.")
+        } else {
+          setError(data.error ?? "Something went wrong. Please try again.")
+        }
         return
       }
       onResult(data)
-    } catch {
-      setError("Network error. Please try again.")
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        setError("The request took too long. Property data may be slow — please try again.")
+      } else {
+        setError("Network error. Please try again.")
+      }
     } finally {
+      clearTimeout(timeoutId)
       setLoading(false)
     }
   }
@@ -87,7 +101,7 @@ export function FreeCheckForm({ onResult }: Props) {
       <div className="flex gap-2 mb-4">
         <button
           type="button"
-          onClick={() => { setMode("pin"); setError(""); }}
+          onClick={() => { setMode("pin"); setError(""); onReset?.(); }}
           className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
             mode === "pin" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
           }`}
@@ -96,7 +110,7 @@ export function FreeCheckForm({ onResult }: Props) {
         </button>
         <button
           type="button"
-          onClick={() => { setMode("address"); setError(""); }}
+          onClick={() => { setMode("address"); setError(""); onReset?.(); }}
           className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
             mode === "address" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
           }`}

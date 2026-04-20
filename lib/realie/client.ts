@@ -49,12 +49,46 @@ const memoryCache = new Map<string, RealieEnrichment>()
 /** In-memory cache for full property (subject only). */
 const memoryCacheFull = new Map<string, RealiePropertyFull>()
 
-/** Requests made in current calendar month (resets when month changes). */
+/** Requests made in current calendar month. Backed by SystemConfig; in-memory is hot cache. */
 let requestsThisMonth = 0
 let monthKey = new Date().toISOString().slice(0, 7) // "2025-01"
+let quotaLoaded = false
+
+const USAGE_CONFIG_KEY = "realie_usage"
+const QUOTA_WARN_THRESHOLD = Math.floor(MONTHLY_REQUEST_QUOTA * 0.9)
 
 function getMonthKey(): string {
   return new Date().toISOString().slice(0, 7)
+}
+
+async function loadQuotaFromDb(): Promise<void> {
+  if (quotaLoaded) return
+  quotaLoaded = true
+  try {
+    const row = await prisma.systemConfig.findUnique({ where: { key: USAGE_CONFIG_KEY } })
+    if (row) {
+      const parsed = JSON.parse(row.value) as { monthKey: string; count: number }
+      const current = getMonthKey()
+      if (parsed.monthKey === current) {
+        monthKey = current
+        requestsThisMonth = parsed.count ?? 0
+      } else {
+        monthKey = current
+        requestsThisMonth = 0
+      }
+    }
+  } catch {
+    // Non-fatal: fall back to in-memory counter
+  }
+}
+
+function persistQuotaToDb(): void {
+  const snapshot = { monthKey, count: requestsThisMonth }
+  prisma.systemConfig.upsert({
+    where: { key: USAGE_CONFIG_KEY },
+    create: { key: USAGE_CONFIG_KEY, value: JSON.stringify(snapshot) },
+    update: { value: JSON.stringify(snapshot) },
+  }).catch(() => {/* non-fatal */})
 }
 
 function canMakeRequest(): boolean {
@@ -68,6 +102,10 @@ function canMakeRequest(): boolean {
 
 function recordRequest(): void {
   requestsThisMonth += 1
+  if (requestsThisMonth === QUOTA_WARN_THRESHOLD) {
+    console.warn(`[realie] Quota at 90% (${requestsThisMonth}/${MONTHLY_REQUEST_QUOTA}) for ${monthKey}`)
+  }
+  persistQuotaToDb()
 }
 
 export function normalizePin(pin: string): string {
@@ -193,6 +231,7 @@ export async function fetchByParcelId(
   }
 
   if (!apiKey) return null
+  await loadQuotaFromDb()
   if (!canMakeRequest()) return null
 
   const state = options.state ?? "IL"
@@ -288,6 +327,7 @@ export async function getFullPropertyByPin(pin: string): Promise<RealiePropertyF
         return full
       }
     }
+    await loadQuotaFromDb()
     if (row && !raw && canMakeRequest()) {
       const url = `${REALIE_BASE}?${new URLSearchParams({ state: "IL", county: "Cook", parcelId: pinNormalized }).toString()}`
       const controller = new AbortController()

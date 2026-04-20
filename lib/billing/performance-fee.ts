@@ -214,6 +214,12 @@ export async function createPerformanceFeeInvoice(
 
   if (paymentOption === "UPFRONT") {
     const dueDate = baseDue
+    // Guard against duplicate cron delivery: return existing invoice if already created
+    const existingUpfront = await prisma.invoice.findFirst({
+      where: { userId, invoiceType: "PERFORMANCE_FEE", paymentOption: "UPFRONT", status: { not: "CANCELLED" } },
+      select: { id: true },
+    })
+    if (existingUpfront) return { invoiceIds: [existingUpfront.id] }
     const invoice = await prisma.invoice.create({
       data: {
         userId,
@@ -252,6 +258,12 @@ export async function createPerformanceFeeInvoice(
     const due = new Date(baseDue)
     due.setFullYear(due.getFullYear() + i - 1)
     const amount = i === 3 ? perInstallment + remainder : perInstallment
+    // Guard against duplicate cron delivery per installment
+    const existingInstallment = await prisma.invoice.findFirst({
+      where: { userId, invoiceType: "PERFORMANCE_FEE", installmentNumber: i, status: { not: "CANCELLED" } },
+      select: { id: true },
+    })
+    if (existingInstallment) { invoiceIds.push(existingInstallment.id); continue }
     const inv = await prisma.invoice.create({
       data: {
         userId,

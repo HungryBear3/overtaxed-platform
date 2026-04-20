@@ -5,7 +5,7 @@
 Today, **all users** (including paid Starter/Growth/Portfolio) use a **DIY filing flow**:
 
 1. We prepare the appeal packet (summary PDF, comps, requested value).
-2. The user downloads the PDF and submits it themselves at the [Cook County Assessor portal](https://www.cookcountyassessoril.gov/file-appeal).
+2. The user downloads the PDF and submits it themselves at the [Cook County Assessor portal](https://www.cookcountyassessor.com/file-appeal).
 3. The user then clicks **Mark as Filed** in our app so we can track status.
 
 We do **not** submit the appeal to the county for them. The in-app copy says *"Filing on your behalf (Starter+) is coming soon."*

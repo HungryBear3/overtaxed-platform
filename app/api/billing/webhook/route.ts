@@ -34,6 +34,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 })
   }
 
+  // Idempotency: skip events we have already successfully processed.
+  // The StripeEvent record is created AFTER the switch block succeeds, so a 500 return
+  // leaves no record and Stripe retries correctly.
+  const existing = await prisma.stripeEvent.findUnique({ where: { id: event.id } })
+  if (existing) {
+    console.log(`[webhook] Duplicate event ${event.id} (${event.type}) — skipping`)
+    return NextResponse.json({ received: true })
+  }
+
   const data = event.data.object as unknown as Record<string, unknown>
   const metadata = (data.metadata ?? {}) as Record<string, string | undefined>
 
@@ -65,23 +74,29 @@ export async function POST(request: NextRequest) {
         break
       }
 
-      // Track referral conversion
+      // Track referral conversion — guard against double-counting on webhook replay
       if (referralCode) {
         try {
           const amountTotal = (data.amount_total as number | null) ?? 0
-          await prisma.referral.upsert({
-            where: { code: referralCode },
-            update: {
-              conversions: { increment: 1 },
-              revenue: { increment: amountTotal / 100 },
-            },
-            create: { code: referralCode, conversions: 1, revenue: amountTotal / 100 },
-          })
-          await prisma.user.update({
-            where: { id: userId },
-            data: { referralCode },
-          })
-          console.log(`[webhook] Referral conversion tracked: code=${referralCode} user=${userId}`)
+          const existingUser = await prisma.user.findUnique({ where: { id: userId }, select: { referralCode: true } })
+          const alreadyTracked = existingUser?.referralCode === referralCode
+          if (!alreadyTracked) {
+            await prisma.referral.upsert({
+              where: { code: referralCode },
+              update: {
+                conversions: { increment: 1 },
+                revenue: { increment: amountTotal / 100 },
+              },
+              create: { code: referralCode, conversions: 1, revenue: amountTotal / 100 },
+            })
+            await prisma.user.update({
+              where: { id: userId },
+              data: { referralCode },
+            })
+            console.log(`[webhook] Referral conversion tracked: code=${referralCode} user=${userId}`)
+          } else {
+            console.log(`[webhook] Referral already tracked for user=${userId}, skipping`)
+          }
         } catch (refErr) {
           console.error("[webhook] Referral tracking error:", refErr)
         }
@@ -147,6 +162,7 @@ export async function POST(request: NextRequest) {
             console.log(`[webhook] SUCCESS: User ${userId} DIY/comps-only payment completed`)
           } catch (dbError) {
             console.error(`[webhook] Database error updating user ${userId}:`, dbError)
+            return NextResponse.json({ error: "Database error" }, { status: 500 })
           }
         }
         break
@@ -197,6 +213,7 @@ export async function POST(request: NextRequest) {
         )
       } catch (dbError) {
         console.error(`[webhook] Database error updating user ${userId}:`, dbError)
+        return NextResponse.json({ error: "Database error" }, { status: 500 })
       }
       break
     }
@@ -255,6 +272,7 @@ export async function POST(request: NextRequest) {
         )
       } catch (err) {
         console.error("[webhook] Error processing subscription update:", err)
+        return NextResponse.json({ error: "Database error" }, { status: 500 })
       }
       break
     }
@@ -336,6 +354,16 @@ export async function POST(request: NextRequest) {
 
     default:
       console.log(`[webhook] Unhandled event: ${event.type}`)
+  }
+
+  // Mark event as successfully processed — only reached on non-500 paths.
+  // On 500 (retryable failure), we don't create this record so Stripe retries correctly.
+  try {
+    await prisma.stripeEvent.create({ data: { id: event.id, type: event.type } })
+  } catch (e) {
+    // P2002 = unique constraint violation: a concurrent request beat us here — safe to ignore.
+    const code = (e as { code?: string })?.code
+    if (code !== "P2002") throw e
   }
 
   return NextResponse.json({ received: true })

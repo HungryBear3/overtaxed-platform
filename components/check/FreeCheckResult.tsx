@@ -74,7 +74,7 @@ function formatCurrency(n: number): string {
 
 function formatDate(iso: string): string {
   const d = new Date(iso + "T12:00:00")
-  return d.toLocaleDateString("en-US", { month: "long", d: "numeric", year: "numeric" } as Intl.DateTimeFormatOptions)
+  return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
 }
 
 export function FreeCheckResult({ result }: Props) {
@@ -87,9 +87,11 @@ export function FreeCheckResult({ result }: Props) {
   const [showComps, setShowComps] = useState(false)
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle")
 
+  const MEANINGFUL_SAVINGS_THRESHOLD = 100
   const hasGap = result.avgComparableAssessedValue != null && (result.subject.assessedTotalValue ?? 0) > result.avgComparableAssessedValue
   const overpay = result.potentialOverpaymentPerYear ?? 0
   const overpay3 = result.potentialOverpayment3Year ?? 0
+  const hasMeaningfulSavings = hasGap && overpay >= MEANINGFUL_SAVINGS_THRESHOLD
 
   async function handleSaveResults(e: React.FormEvent) {
     e.preventDefault()
@@ -149,8 +151,8 @@ export function FreeCheckResult({ result }: Props) {
                 )}
               </div>
               <a href={aw.filingUrl} target="_blank" rel="noopener noreferrer"
-                className="text-sm font-semibold text-green-700 underline hover:text-green-900 whitespace-nowrap">
-                File appeal now →
+                className="inline-block bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap">
+                File your appeal now →
               </a>
             </>
           )}
@@ -165,10 +167,11 @@ export function FreeCheckResult({ result }: Props) {
           )}
           {aw.status === "unknown" && (
             <div>
-              <span className="text-sm text-blue-800">We don&apos;t have exact dates for <strong>{aw.township}</strong> township.</span>
+              <p className="text-sm font-semibold text-blue-900 mb-0.5">Appeal window dates not confirmed for <strong>{aw.township}</strong></p>
+              <p className="text-sm text-blue-800">Cook County opens townships on a rolling schedule and we don&apos;t have confirmed dates for your area. Check the CCAO site to find your exact window and file if it&apos;s currently open.</p>
               <a href={aw.filingUrl} target="_blank" rel="noopener noreferrer"
-                className="text-sm font-semibold text-blue-700 ml-2 underline hover:text-blue-900">
-                Check CCAO for your window →
+                className="inline-block mt-1.5 text-sm font-semibold text-blue-700 underline hover:text-blue-900">
+                Check your appeal window at CCAO →
               </a>
             </div>
           )}
@@ -205,7 +208,7 @@ export function FreeCheckResult({ result }: Props) {
             <p className="text-sm text-yellow-800">
               {result.message ?? "We found your property but the Cook County Assessor hasn't published an assessed value for this PIN yet. Visit cookcountyassessor.com to check your assessment status."}
             </p>
-            <a href="https://www.cookcountyassessoril.gov" target="_blank" rel="noopener noreferrer"
+            <a href="https://www.cookcountyassessor.com" target="_blank" rel="noopener noreferrer"
               className="inline-block mt-3 text-sm font-semibold text-blue-700 hover:underline">
               Check your assessment at cookcountyassessor.com →
             </a>
@@ -213,7 +216,7 @@ export function FreeCheckResult({ result }: Props) {
         )}
 
         {/* Savings hero */}
-        {hasGap && overpay > 0 && (
+        {hasMeaningfulSavings && (
           <div className="text-center mb-6">
             <p className="text-3xl font-extrabold text-amber-800">Estimated savings</p>
             <p className="text-5xl font-extrabold text-amber-900 -mt-1 mb-2">
@@ -226,6 +229,16 @@ export function FreeCheckResult({ result }: Props) {
               className="mt-6 inline-block bg-blue-600 text-white font-semibold px-8 py-4 rounded-lg hover:bg-blue-700 transition-colors text-lg">
               Start Your Appeal
             </Link>
+            {aw?.status === "open" && (
+              <p className="mt-3 text-sm text-gray-500">
+                Or{" "}
+                <a href={aw.filingUrl} target="_blank" rel="noopener noreferrer"
+                  className="text-blue-600 font-semibold hover:underline">
+                  file directly at CCAO
+                </a>
+                {" "}— free, no account needed.
+              </p>
+            )}
           </div>
         )}
 
@@ -255,17 +268,23 @@ export function FreeCheckResult({ result }: Props) {
         </div>
 
         {/* Gap context */}
-        {hasGap ? (
+        {hasMeaningfulSavings ? (
           <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 mb-6">
             <p className="text-sm font-medium text-amber-900">
               Your assessment is higher than nearby comparable properties. An appeal could lower your taxes — and a win in 2026 locks in savings through 2029.
             </p>
           </div>
+        ) : hasGap && !result.noAssessedValue ? (
+          <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 mb-6">
+            <p className="text-sm font-medium text-gray-700">Your assessed value is slightly above comparable properties, but the estimated difference is within normal variation and below our confidence threshold.</p>
+            <p className="text-sm text-gray-600 mt-1">You can still file an appeal if you have supporting evidence — for example, errors in square footage, bedroom count, or property class.</p>
+          </div>
         ) : (
           !result.noAssessedValue && (
-            <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 mb-6">
-              <p className="text-sm text-gray-700">
-                Your assessed value is in line with or below the average of nearby properties. You can still appeal if you have evidence of over-assessment.
+            <div className="rounded-lg bg-green-50 border border-green-200 px-4 py-3 mb-6">
+              <p className="text-sm font-semibold text-green-800 mb-0.5">Your property appears fairly assessed</p>
+              <p className="text-sm text-green-700">
+                Your assessed value is in line with or below the average of nearby comparable properties. An appeal based on assessed value is unlikely to succeed, but you can still file if there are errors in the property details on file (square footage, bedroom count, or property class).
               </p>
             </div>
           )
@@ -372,7 +391,7 @@ export function FreeCheckResult({ result }: Props) {
                     {result.comps.map((c, i) => (
                       <tr key={i}>
                         <td className="py-2 pr-3 font-mono text-xs text-gray-600">{c.pin}</td>
-                        <td className="py-2 pr-3 text-gray-700">{c.address || "—"}{c.city ? `, ${c.city}` : ""}</td>
+                        <td className="py-2 pr-3 text-gray-700">{c.address ? `${c.address}${c.city ? `, ${c.city}` : ""}` : c.city || <span className="text-gray-400 italic">Address not on file</span>}</td>
                         <td className="py-2 pr-3 text-right font-medium text-gray-900">{formatCurrency(c.assessedValue)}</td>
                         <td className="py-2 pr-3 text-right text-gray-600">{c.squareFeet ? c.squareFeet.toLocaleString() : "—"}</td>
                         <td className="py-2 text-right text-gray-600">{c.yearBuilt ?? "—"}</td>
@@ -386,7 +405,7 @@ export function FreeCheckResult({ result }: Props) {
                 {result.comps.map((c, i) => (
                   <div key={i} className="rounded-lg bg-gray-50 border border-gray-100 p-3 text-sm">
                     <p className="font-mono text-xs text-gray-500 mb-1">{c.pin}</p>
-                    <p className="font-medium text-gray-900">{c.address || "—"}{c.city ? `, ${c.city}` : ""}</p>
+                    <p className="font-medium text-gray-900">{c.address ? `${c.address}${c.city ? `, ${c.city}` : ""}` : c.city || <span className="text-gray-400 italic text-xs">Address not on file</span>}</p>
                     <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-gray-600 text-xs">
                       <span>Assessed: <strong className="text-gray-900">{formatCurrency(c.assessedValue)}</strong></span>
                       {c.squareFeet && <span>{c.squareFeet.toLocaleString()} sq ft</span>}
@@ -427,12 +446,18 @@ export function FreeCheckResult({ result }: Props) {
           <div className="mt-3 flex flex-wrap gap-3">
             <Link href="/auth/signup?plan=diy"
               className="inline-flex items-center justify-center bg-blue-600 text-white font-semibold px-5 py-2.5 rounded-lg hover:bg-blue-700 transition-colors text-sm">
-              Start Your Appeal — DIY $169
+              Start Your Appeal
             </Link>
             <Link href="/pricing"
               className="inline-flex items-center justify-center border border-gray-300 bg-white text-gray-700 font-semibold px-5 py-2.5 rounded-lg hover:bg-gray-50 transition-colors text-sm">
-              Full Service — $149/property
+              View Appeal Options
             </Link>
+            {aw?.status === "open" && (
+              <a href={aw.filingUrl} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center justify-center border border-green-300 bg-green-50 text-green-700 font-semibold px-5 py-2.5 rounded-lg hover:bg-green-100 transition-colors text-sm">
+                File at CCAO →
+              </a>
+            )}
           </div>
         </div>
       )}
@@ -449,11 +474,11 @@ export function FreeCheckResult({ result }: Props) {
           <div className="flex flex-wrap gap-3">
             <Link href="/auth/signup?plan=diy"
               className="inline-flex items-center justify-center bg-blue-600 text-white font-semibold px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors text-sm">
-              DIY Plan — $169
+              Start Your Appeal
             </Link>
             <Link href="/pricing"
               className="inline-flex items-center justify-center border border-gray-300 bg-white text-gray-700 font-semibold px-6 py-3 rounded-lg hover:bg-gray-50 transition-colors text-sm">
-              Full Service — $149/property
+              View Appeal Options
             </Link>
           </div>
         </div>
@@ -555,6 +580,12 @@ export function FreeCheckResult({ result }: Props) {
         )}
         {saveStatus === "error" && <p className="text-sm text-red-600 mt-2">{saveError}</p>}
       </div>
+
+      {/* ── Source attribution ───────────────────────────────────────────── */}
+      <p className="text-xs text-gray-400 text-center">
+        Data source: {result.source}. Assessment data reflects public Cook County Assessor records.
+        Savings estimates are based on comparable property analysis and may vary.
+      </p>
     </div>
   )
 }

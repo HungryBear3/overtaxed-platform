@@ -369,7 +369,8 @@ async function getTaxRateByCode(
 ): Promise<number | null> {
   try {
     const startYear = taxYearHint ?? new Date().getFullYear() - 1
-    const yearsToTry = Array.from({ length: Math.max(1, startYear - 2012) }, (_, i) => startYear - i).filter((y) => y >= 2006)
+    // Cap at 4 attempts: dataset only has data through ~2013, so trying 14 years wastes 13 sequential 8s calls
+    const yearsToTry = Array.from({ length: 4 }, (_, i) => startYear - i).filter((y) => y >= 2006 && y <= startYear)
 
     for (const year of yearsToTry) {
       const query = `$where=${encodeURIComponent(`tax_code='${taxCode}' AND tax_year='${year}'`)}&$limit=1`

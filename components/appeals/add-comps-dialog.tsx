@@ -311,7 +311,7 @@ export function AddCompsDialog({
                 <ul className="mt-2 list-disc list-inside space-y-1 text-sm text-gray-600">
                   <li>Use <a href="https://www.redfin.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Redfin</a> or <a href="https://www.zillow.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Zillow</a> sold listings for address, sale price, sale date, sq ft, beds, baths.</li>
                   <li>To get the Cook County PIN: search by address at{" "}
-                    <a href="https://www.cookcountyassessoril.gov/address-search" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">cookcountyassessor.com/address-search</a> — PIN is required for the county form.</li>
+                    <a href="https://www.cookcountyassessor.com/address-search" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">cookcountyassessor.com/address-search</a> — PIN is required for the county form.</li>
                   <li>If Zillow or Redfin show a PIN, confirm it at the Assessor site before entering.</li>
                 </ul>
               </details>
@@ -518,7 +518,7 @@ export function AddCompsDialog({
                     <ul className="mt-2 list-disc list-inside space-y-1 text-sm text-gray-600">
                       <li>Use <a href="https://www.redfin.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Redfin</a> or <a href="https://www.zillow.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Zillow</a> sold listings for address, sale price, sale date, sq ft, beds, baths.</li>
                       <li>To get the Cook County PIN: search by address at{" "}
-                        <a href="https://www.cookcountyassessoril.gov/address-search" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">cookcountyassessor.com/address-search</a> — PIN is required for the county form.</li>
+                        <a href="https://www.cookcountyassessor.com/address-search" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">cookcountyassessor.com/address-search</a> — PIN is required for the county form.</li>
                       <li>If Zillow or Redfin show a PIN, confirm it at the Assessor site before entering.</li>
                     </ul>
                   </details>

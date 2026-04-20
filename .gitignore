@@ -48,3 +48,7 @@ next-env.d.ts
 # Sentry
 .env.sentry-build-plugin
 .env.test
+
+# graphify
+/graphify-out/
+.graphify_detect.json

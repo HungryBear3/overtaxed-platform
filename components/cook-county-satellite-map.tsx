@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { townships, statusLabels, triadInfo, getTownshipWindowInfo, type TownshipData } from "@/lib/cook-county-townships"
 
 interface CookCountySatelliteMapProps {
@@ -15,22 +15,52 @@ export function CookCountySatelliteMap({
   interactive = true,
 }: CookCountySatelliteMapProps) {
   const [hoveredTownship, setHoveredTownship] = useState<TownshipData | null>(null)
+  const [selectedTownship, setSelectedTownship] = useState<TownshipData | null>(null)
+  const [isTouchDevice, setIsTouchDevice] = useState(false)
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 })
 
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return
+
+    const media = window.matchMedia("(hover: none), (pointer: coarse)")
+    const sync = () => setIsTouchDevice(media.matches)
+    sync()
+
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", sync)
+      return () => media.removeEventListener("change", sync)
+    }
+
+    media.addListener(sync)
+    return () => media.removeListener(sync)
+  }, [])
+
+  const activeTownship = isTouchDevice ? selectedTownship : hoveredTownship
+
   const handleMouseEnter = (township: TownshipData, event: React.MouseEvent) => {
-    if (!interactive) return
+    if (!interactive || isTouchDevice) return
     setHoveredTownship(township)
     setTooltipPosition({ x: event.clientX, y: event.clientY })
   }
 
   const handleMouseMove = (event: React.MouseEvent) => {
-    if (hoveredTownship) {
+    if (!isTouchDevice && hoveredTownship) {
       setTooltipPosition({ x: event.clientX, y: event.clientY })
     }
   }
 
   const handleMouseLeave = () => {
+    if (isTouchDevice) return
     setHoveredTownship(null)
+  }
+
+  const handleTownshipSelect = (township: TownshipData) => {
+    if (!interactive) return
+    if (isTouchDevice) {
+      setSelectedTownship((current) => current?.name === township.name ? null : township)
+      return
+    }
+    setHoveredTownship(township)
   }
 
   const getFillColor = (township: TownshipData) => {
@@ -49,6 +79,27 @@ export function CookCountySatelliteMap({
     if (township.status === "open") return "rgba(34, 197, 94, 0.9)"
     if (township.status === "opening-soon") return "rgba(245, 158, 11, 0.9)"
     return "rgba(148, 163, 184, 0.5)"
+  }
+
+  const getTooltipStyle = () => {
+    const padding = 12
+    const estimatedWidth = 240
+    const estimatedHeight = 140
+    let left = tooltipPosition.x + 12
+    let top = tooltipPosition.y - 12
+
+    if (typeof window !== "undefined") {
+      left = Math.min(left, window.innerWidth - estimatedWidth - padding)
+      top = Math.min(top, window.innerHeight - estimatedHeight - padding)
+      left = Math.max(padding, left)
+      top = Math.max(padding, top)
+    }
+
+    return {
+      left,
+      top,
+      maxWidth: "min(15rem, calc(100vw - 24px))",
+    }
   }
 
   return (
@@ -102,12 +153,13 @@ export function CookCountySatelliteMap({
         
         {/* Townships */}
         {townships.map((township) => {
-          const isHovered = hoveredTownship?.name === township.name
+          const isHovered = activeTownship?.name === township.name
           return (
             <g 
               key={township.name}
               onMouseEnter={(e) => handleMouseEnter(township, e)}
               onMouseLeave={handleMouseLeave}
+              onClick={() => handleTownshipSelect(township)}
               className={interactive ? "cursor-pointer" : ""}
               filter={isHovered ? "url(#glow)" : undefined}
             >
@@ -143,38 +195,75 @@ export function CookCountySatelliteMap({
       </svg>
 
       {/* Tooltip */}
-      {hoveredTownship && (() => {
-        const windowInfo = getTownshipWindowInfo(hoveredTownship.name)
-        return (
-          <div
-            className="fixed z-50 px-3 py-2.5 text-sm font-medium bg-secondary/95 backdrop-blur text-secondary-foreground rounded-lg shadow-xl pointer-events-none whitespace-nowrap border border-white/10"
-            style={{
-              left: tooltipPosition.x + 12,
-              top: tooltipPosition.y - 12,
-            }}
-          >
-            <div className="font-semibold">
-              {hoveredTownship.name}
-              {hoveredTownship.triad !== "city" && " Township"}
+      {activeTownship && (() => {
+        const windowInfo = getTownshipWindowInfo(activeTownship.name)
+        return isTouchDevice ? (
+          <div className="absolute inset-x-3 bottom-3 z-40 rounded-lg border border-white/10 bg-secondary/95 px-4 py-3 text-sm text-secondary-foreground shadow-xl backdrop-blur">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-semibold">
+                  {activeTownship.name}
+                  {activeTownship.triad !== "city" && " Township"}
+                </div>
+                <div className="mt-0.5 text-xs opacity-60">
+                  {triadInfo[activeTownship.triad].name}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedTownship(null)}
+                className="rounded-md border border-white/10 px-2 py-1 text-xs font-medium text-secondary-foreground/80"
+              >
+                Close
+              </button>
             </div>
-            <div className="text-xs opacity-60 mt-0.5">
-              {triadInfo[hoveredTownship.triad].name}
-            </div>
-            <div className="text-xs opacity-80 flex items-center gap-1.5 mt-1.5">
+            <div className="mt-2 flex items-center gap-1.5 text-xs opacity-85">
               <span 
-                className="w-2 h-2 rounded-full shrink-0"
+                className="h-2 w-2 shrink-0 rounded-full"
                 style={{
-                  backgroundColor: hoveredTownship.status === "open" 
+                  backgroundColor: activeTownship.status === "open" 
                     ? "rgb(34, 197, 94)" 
-                    : hoveredTownship.status === "opening-soon" 
+                    : activeTownship.status === "opening-soon" 
                       ? "rgb(245, 158, 11)" 
                       : "rgb(148, 163, 184)"
                 }}
               />
-              {statusLabels[hoveredTownship.status]}
+              {statusLabels[activeTownship.status]}
             </div>
             {windowInfo && (
-              <div className="text-xs mt-2 pt-2 border-t border-white/10">
+              <div className="mt-2 border-t border-white/10 pt-2 text-xs">
+                <span className="opacity-60">{windowInfo.label}: </span>
+                <span className="opacity-90">{windowInfo.dates}</span>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div
+            className="fixed z-50 rounded-lg border border-white/10 bg-secondary/95 px-3 py-2.5 text-sm font-medium text-secondary-foreground shadow-xl pointer-events-none whitespace-normal backdrop-blur"
+            style={getTooltipStyle()}
+          >
+            <div className="font-semibold">
+              {activeTownship.name}
+              {activeTownship.triad !== "city" && " Township"}
+            </div>
+            <div className="mt-0.5 text-xs opacity-60">
+              {triadInfo[activeTownship.triad].name}
+            </div>
+            <div className="mt-1.5 flex items-center gap-1.5 text-xs opacity-80">
+              <span 
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{
+                  backgroundColor: activeTownship.status === "open" 
+                    ? "rgb(34, 197, 94)" 
+                    : activeTownship.status === "opening-soon" 
+                      ? "rgb(245, 158, 11)" 
+                      : "rgb(148, 163, 184)"
+                }}
+              />
+              {statusLabels[activeTownship.status]}
+            </div>
+            {windowInfo && (
+              <div className="mt-2 border-t border-white/10 pt-2 text-xs">
                 <span className="opacity-60">{windowInfo.label}: </span>
                 <span className="opacity-90">{windowInfo.dates}</span>
               </div>

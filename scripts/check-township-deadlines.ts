@@ -6,7 +6,7 @@
  * The Assessor page structure may change; if parsing fails, update this script or enter data manually.
  */
 
-const CALENDAR_URL = "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
+const CALENDAR_URL = "https://www.cookcountyassessor.com/assessment-calendar-and-deadlines"
 
 async function main() {
   console.log("Fetching Assessment Calendar...")

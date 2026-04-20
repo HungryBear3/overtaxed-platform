@@ -10,6 +10,16 @@ import { assessmentIncreaseTemplate, appealDecisionTemplate } from "@/lib/email/
 import type { AssessmentHistoryRecord } from "@/lib/cook-county/types"
 
 const ASSESSMENT_CHECK_SOURCE = "Cook County Open Data (automated check)"
+const PROPERTY_TIMEOUT_MS = 15_000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    ),
+  ])
+}
 
 export interface AssessmentCheckResult {
   propertyId: string
@@ -20,7 +30,7 @@ export interface AssessmentCheckResult {
   error?: string
 }
 
-export async function runAssessmentChecks(): Promise<AssessmentCheckResult[]> {
+export async function runAssessmentChecks(deadline?: number): Promise<AssessmentCheckResult[]> {
   const properties = await prisma.property.findMany({
     where: { monitoringEnabled: true },
     include: { user: { select: { id: true, email: true, name: true } } },
@@ -29,6 +39,10 @@ export async function runAssessmentChecks(): Promise<AssessmentCheckResult[]> {
   const results: AssessmentCheckResult[] = []
 
   for (const prop of properties) {
+    if (deadline && Date.now() > deadline) {
+      console.warn(`[assessment-check] Wall-clock deadline reached after ${results.length}/${properties.length} properties`)
+      break
+    }
     const r: AssessmentCheckResult = {
       propertyId: prop.id,
       pin: prop.pin,
@@ -38,7 +52,11 @@ export async function runAssessmentChecks(): Promise<AssessmentCheckResult[]> {
     }
 
     try {
-      const api = await getPropertyByPIN(prop.pin)
+      const api = await withTimeout(
+        getPropertyByPIN(prop.pin),
+        PROPERTY_TIMEOUT_MS,
+        `getPropertyByPIN(${prop.pin})`
+      )
       if (!api.success || !api.data) {
         r.error = api.error ?? "Property not found in Cook County"
         results.push(r)
@@ -237,7 +255,9 @@ export async function runAssessmentChecks(): Promise<AssessmentCheckResult[]> {
           newValue: currLatestVal,
           propertyLink: link,
         })
-        await sendEmail({ to: prop.user.email, subject: t.subject, text: t.text, html: t.html })
+        sendEmail({ to: prop.user.email, subject: t.subject, text: t.text, html: t.html }).catch((e) =>
+          console.error("[assessment-check] Failed to send increase email:", e)
+        )
       }
     } catch (e) {
       r.error = e instanceof Error ? e.message : "Unknown error"

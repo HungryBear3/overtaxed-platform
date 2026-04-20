@@ -12,7 +12,7 @@ Your concerns are valid. The current implementation may not meet Cook County Ass
 
 **County requirement:** Cook County provides their **own official Attorney/Representative Authorization Form** (residential) at:
 - https://www.cookcountyassessor.com/form-document/attorney-representative-authorizationresidential
-- Direct PDF: https://prodassets.cookcountyassessoril.gov/s3fs-public/form_documents/attorneyrepresentativeauthorizationform.pdf?VersionId=Lf5aaF.oc6aPygRAoAqn2JS5B56_MAxa
+- Direct PDF: https://prodassets.cookcountyassessor.com/s3fs-public/form_documents/attorneyrepresentativeauthorizationform.pdf?VersionId=Lf5aaF.oc6aPygRAoAqn2JS5B56_MAxa
 
 The official form includes:
 - Owner/lessee declarations (authorization, income/expense accuracy, familiarity with operations, etc.)

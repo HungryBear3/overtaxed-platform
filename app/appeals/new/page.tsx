@@ -169,7 +169,7 @@ export default function NewAppealPage() {
   }
   const effectiveAssessmentValue = getAssessmentForAppeal(selectedProperty)
 
-  const ASSESSOR_CALENDAR_URL = "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
+  const ASSESSOR_CALENDAR_URL = "https://www.cookcountyassessor.com/assessment-calendar-and-deadlines"
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

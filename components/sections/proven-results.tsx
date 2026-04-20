@@ -1,7 +1,6 @@
 "use client"
 
 import { useScrollAnimation } from "@/hooks/use-scroll-animation"
-import { useCountUp } from "@/hooks/use-count-up"
 
 const stats = [
   { end: 1,  prefix: "$", suffix: "B+", label: "Overpaid annually by Cook County homeowners" },
@@ -10,6 +9,10 @@ const stats = [
   { end: 1,  prefix: "$", suffix: "K+", label: "Typical annual savings for successful appellants" },
 ]
 
+function formatStatValue(end: number, prefix: string, suffix: string) {
+  return `${prefix}${end.toFixed(0)}${suffix}`
+}
+
 function StatCard({
   end,
   prefix,
@@ -17,16 +20,10 @@ function StatCard({
   label,
   delay,
 }: (typeof stats)[0] & { delay: number }) {
-  const { ref, value } = useCountUp({ end, prefix, suffix, duration: 1600 })
-
   return (
-    <div
-      ref={ref}
-      className="text-center"
-      style={{ transitionDelay: `${delay}ms` }}
-    >
+    <div className="text-center" style={{ transitionDelay: `${delay}ms` }}>
       <div className="text-4xl md:text-5xl font-bold text-primary mb-2 tabular-nums">
-        {value}
+        {formatStatValue(end, prefix, suffix)}
       </div>
       <p className="text-sm text-secondary-foreground/80 leading-snug max-w-[160px] mx-auto">
         {label}

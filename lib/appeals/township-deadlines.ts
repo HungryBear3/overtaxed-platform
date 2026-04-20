@@ -1,6 +1,6 @@
 /**
  * Cook County township appeal deadlines (from Assessor's Assessment & Appeal Calendar).
- * Source: https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines
+ * Source: https://www.cookcountyassessor.com/assessment-calendar-and-deadlines
  * Updated periodically when the calendar changes.
  *
  * Key: township name (case-insensitive match)
@@ -51,7 +51,7 @@ export const TOWNSHIP_DEADLINES_2025: Record<
   "north chicago": { noticeDate: "2025-10-07", lastFileDate: "2025-11-20" },
 }
 
-const ASSESSOR_CALENDAR_URL = "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
+const ASSESSOR_CALENDAR_URL = "https://www.cookcountyassessor.com/assessment-calendar-and-deadlines"
 
 export function getTownshipDeadline(township: string | null): {
   noticeDate: string

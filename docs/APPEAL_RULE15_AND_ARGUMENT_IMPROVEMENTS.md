@@ -1,6 +1,6 @@
 # Appeal Summary: Rule 15 Alignment & Argument Improvements
 
-Reference: [Official Appeal Rules of the Cook County Assessor](https://www.cookcountyassessoril.gov/official-appeal-rules-cook-county-assessor) (Rule 15), PRD Appendix D, and sample report format (Sales Analysis + Lack of Uniformity).
+Reference: [Official Appeal Rules of the Cook County Assessor](https://www.cookcountyassessor.com/official-appeal-rules-cook-county-assessor) (Rule 15), PRD Appendix D, and sample report format (Sales Analysis + Lack of Uniformity).
 
 **Assessor guidance (March 2025):** Sales OR equity comps are acceptable; both are not required. Most important factors: **identical classification** (age, stories, # units) and **$/sqft**. We implement: year built filter (±10 years), building class match for equity comps, and $/sqft computation and sorting.
 
@@ -64,6 +64,6 @@ Reference: [Official Appeal Rules of the Cook County Assessor](https://www.cookc
 
 ## References
 
-- [Cook County Assessor – Assessment calendar and deadlines](https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines)
-- [Official Appeal Rules (Rule 15)](https://www.cookcountyassessoril.gov/official-appeal-rules-cook-county-assessor)
+- [Cook County Assessor – Assessment calendar and deadlines](https://www.cookcountyassessor.com/assessment-calendar-and-deadlines)
+- [Official Appeal Rules (Rule 15)](https://www.cookcountyassessor.com/official-appeal-rules-cook-county-assessor)
 - PRD Appendix D: Report structure (subject, Sales Analysis 3+ comps, Lack of Uniformity 5+ comps), Rule 15 compliance

@@ -25,7 +25,7 @@ The only way to fix it is to appeal.
 
 ## How the Appeal Process Works
 
-**Step 1: Get your current assessed value.** Look at your most recent tax bill or search your address at cookcountyassessoril.gov.
+**Step 1: Get your current assessed value.** Look at your most recent tax bill or search your address at cookcountyassessor.com.
 
 **Step 2: Find comparable sales.** Recent sales of similar homes in Oak Lawn or nearby Worth Township communities are your strongest evidence. If those homes sold for less than your assessment implies, you have grounds to appeal.
 

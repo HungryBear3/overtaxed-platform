@@ -531,7 +531,7 @@ const user = { ...session.user, ...freshUser }
 ### Ready to File vs Mark as Filed
 **Context:** Users thought "Ready to File" would submit the appeal. The platform does not submit to the county; users must file at the Cook County Assessor portal. "Mark as Filed" is for updating our status after they’ve filed there.
 
-**Solution:** On the appeal detail page, when status is DRAFT or PENDING_FILING, show an amber "How filing works" box: (1) Ready to File = packet prepared, does not submit; (2) User submits at [Cook County Assessor portal](https://www.cookcountyassessoril.gov/file-appeal); (3) After submitting there, click Mark as Filed here to track status; (4) "Filing on your behalf (Starter+) is coming soon." New appeal page step 3 copy updated to: "Submit at the Cook County Assessor portal (we'll link you). Filing on your behalf (Starter+) is coming soon."
+**Solution:** On the appeal detail page, when status is DRAFT or PENDING_FILING, show an amber "How filing works" box: (1) Ready to File = packet prepared, does not submit; (2) User submits at [Cook County Assessor portal](https://www.cookcountyassessor.com/file-appeal); (3) After submitting there, click Mark as Filed here to track status; (4) "Filing on your behalf (Starter+) is coming soon." New appeal page step 3 copy updated to: "Submit at the Cook County Assessor portal (we'll link you). Filing on your behalf (Starter+) is coming soon."
 
 **Lesson:** Make it explicit that we prepare the packet and they file at the county; "Mark as Filed" is a status update in our app, not the actual filing.
 
@@ -745,7 +745,7 @@ This forces dark text on white background regardless of system color scheme.
 **Implementation:**
 - **Appeal page sidebar:** New "Submission instructions for Cook County Assessor" section with 8 numbered steps: (1) Download PDF; (2) Check township filing window; (3) Go to portal (cookcountyassessor.com/online-appeals, propertytaxfilings.cookcountyil.gov); (4) Start residential appeal; (5) Upload OverTaxed packet; (6) Complete county form; (7) Submit before deadline; (8) Mark as filed in OverTaxed. Links to assessment calendar, online appeals guide, official rules.
 - **PDF:** Submission instructions were removed from the appeal PDF. The county reviewer evaluates evidence (property, comps, requested value), not "how to file" steps. Instructions live on the website only as a walkthrough guide.
-- **Link update:** cookcountyassessoril.gov → cookcountyassessor.com (current domain).
+- **Link update:** cookcountyassessor.com → cookcountyassessor.com (current domain).
 
 **Lesson:** Users file at the county; we prepare the packet. Provide clear, numbered instructions with direct links on the website. Keep the PDF focused on evidence the county processes.
 
