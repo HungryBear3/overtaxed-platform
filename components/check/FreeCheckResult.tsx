@@ -105,6 +105,8 @@ export function FreeCheckResult({ result }: Props) {
         body: JSON.stringify({
           email: email.trim().toLowerCase(),
           township: township.trim() || "Free Check",
+          address: [result.subject.address, result.subject.city].filter(Boolean).join(", "),
+          potentialSavings: result.potentialOverpaymentPerYear ?? null,
         }),
       })
       const data = await res.json()

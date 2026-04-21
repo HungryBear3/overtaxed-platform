@@ -2,6 +2,53 @@ import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/db/prisma"
 import { sendEmail } from "@/lib/email/send"
 import { enrollInDrip } from "@/lib/drip"
+import { freeCheckFollowupTemplate, shouldSendFreeCheckFollowup } from "@/lib/email/templates"
+
+// ── Same-day conversion follow-up ─────────────────────────────────────────────
+// Sends once per email (idempotent via OTLead.followupStep).
+// Called fire-and-forget from POST handler — never fails the main response.
+async function sendFreeCheckFollowup(args: {
+  email: string
+  address: string
+  potentialSavings: number
+}): Promise<{ status: "sent" | "skipped" | "failed"; reason?: string }> {
+  const { email, address, potentialSavings } = args
+  try {
+    const existing = await prisma.oTLead.findFirst({
+      where: { email },
+      orderBy: { createdAt: "desc" },
+    })
+    const followupStep = existing?.followupStep ?? 0
+
+    if (!shouldSendFreeCheckFollowup(potentialSavings, followupStep)) {
+      return { status: "skipped", reason: existing ? "already_sent" : "below_threshold" }
+    }
+
+    const { subject, html, text } = freeCheckFollowupTemplate({ address, potentialSavings })
+    const sent = await sendEmail({ to: email, subject, html, text })
+
+    if (!sent) {
+      return { status: "failed", reason: "send_error" }
+    }
+
+    if (existing) {
+      await prisma.oTLead.update({
+        where: { id: existing.id },
+        data: { followupStep: 1 },
+      })
+    } else {
+      await prisma.oTLead.create({
+        data: { email, address, potentialSavings, followupStep: 1 },
+      })
+    }
+
+    console.log(`[freecheck-followup] Sent to ${email}`)
+    return { status: "sent" }
+  } catch (err) {
+    console.error(`[freecheck-followup] Exception for ${email}:`, err)
+    return { status: "failed", reason: "exception" }
+  }
+}
 
 // Valid townships — must match the names used in the /townships page
 const VALID_TOWNSHIPS = new Set([
@@ -30,6 +77,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const rawEmail = typeof body.email === "string" ? body.email : ""
     const rawTownship = typeof body.township === "string" ? body.township : ""
+    const rawAddress = typeof body.address === "string" ? body.address.trim().slice(0, 200) : ""
+    const potentialSavings = typeof body.potentialSavings === "number" && isFinite(body.potentialSavings)
+      ? body.potentialSavings
+      : null
 
     const email = sanitizeEmail(rawEmail)
     const township = sanitizeTownship(rawTownship)
@@ -90,6 +141,13 @@ export async function POST(req: NextRequest) {
     enrollInDrip(email, "ot-township").catch(err =>
       console.error("[Drip] Failed to enroll township alert subscriber:", err)
     )
+
+    // Same-day conversion follow-up when free check result data is available (non-blocking)
+    if (potentialSavings !== null && rawAddress) {
+      sendFreeCheckFollowup({ email, address: rawAddress, potentialSavings }).catch(err =>
+        console.error("[freecheck-followup] Error:", err)
+      )
+    }
 
     return NextResponse.json({ ok: true })
   } catch (error) {
