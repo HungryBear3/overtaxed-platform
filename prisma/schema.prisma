@@ -550,7 +550,18 @@ model Invoice {
   // Comps-only invoices
   propertyId    String?
   compPacketGenerated Boolean @default(false)
-  
+
+  // Shared appeal-packet fulfillment (used by COMPS_ONLY today; reusable by T3/T4).
+  // The fulfillment lives on Invoice — one row per purchase — to avoid a redundant order model.
+  packetAppealId        String?        // Appeal the packet was generated for
+  packetStatus          PacketStatus   @default(NOT_STARTED)
+  packetPdfUrl          String?        // Vercel Blob URL (primary store)
+  packetPdfPath         String?        // Blob pathname for re-generation
+  packetGeneratedAt     DateTime?
+  packetDeliveredAt     DateTime?      // When delivery email sent
+  packetLastError       String?        // Truthful error string on FAILED / MANUAL_REVIEW
+  packetStripeSessionId String? @unique // Idempotency anchor: matched by Stripe webhook
+
   // Payment
   status        InvoiceStatus @default(PENDING)
   paidAt        DateTime?
@@ -587,6 +598,15 @@ enum InvoiceStatus {
   OVERDUE
   CANCELLED
   REFUNDED
+}
+
+enum PacketStatus {
+  NOT_STARTED        // Invoice created, payment pending
+  GENERATING         // Payment confirmed, packet being built
+  READY              // PDF generated and stored
+  DELIVERED          // Delivery email sent at least once
+  MANUAL_REVIEW      // Weak data (no comps, missing requested value, etc.) — truthful fallback
+  FAILED             // Generation error after payment; ops should intervene
 }
 
 // ============================================

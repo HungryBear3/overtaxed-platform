@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { stripe } from "@/lib/stripe/client"
 import { prisma } from "@/lib/db"
+import { generatePacketForInvoice } from "@/lib/packet/generate-and-deliver"
 
 export async function POST(request: NextRequest) {
   console.log("[webhook] Received webhook request")
@@ -34,13 +35,35 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 })
   }
 
-  // Idempotency: skip events we have already successfully processed.
-  // The StripeEvent record is created AFTER the switch block succeeds, so a 500 return
-  // leaves no record and Stripe retries correctly.
-  const existing = await prisma.stripeEvent.findUnique({ where: { id: event.id } })
-  if (existing) {
-    console.log(`[webhook] Duplicate event ${event.id} (${event.type}) — skipping`)
-    return NextResponse.json({ received: true })
+  // Idempotency: claim the event row before doing business work. Two changes
+  // vs. the prior "check first, write later" pattern:
+  //  1. We INSERT first. The unique PK on StripeEvent.id means concurrent
+  //     deliveries race here, and at most one can win.
+  //  2. If business work fails, we DELETE the row at the bottom so Stripe
+  //     retries correctly. (See the `eventClaimed` flag near the end.)
+  let eventClaimed = false
+  try {
+    await prisma.stripeEvent.create({ data: { id: event.id, type: event.type } })
+    eventClaimed = true
+  } catch (e) {
+    const code = (e as { code?: string })?.code
+    if (code === "P2002") {
+      console.log(`[webhook] Duplicate event ${event.id} (${event.type}) — skipping`)
+      return NextResponse.json({ received: true })
+    }
+    throw e
+  }
+
+  /** Release the StripeEvent claim so Stripe retries. Must be awaited before
+   *  any 500 response or before rethrowing into the outer try/catch. */
+  const releaseEventClaim = async () => {
+    if (!eventClaimed) return
+    eventClaimed = false
+    try {
+      await prisma.stripeEvent.delete({ where: { id: event.id } })
+    } catch (err) {
+      console.error(`[webhook] Failed to release StripeEvent claim ${event.id}:`, err)
+    }
   }
 
   const data = event.data.object as unknown as Record<string, unknown>
@@ -51,14 +74,78 @@ export async function POST(request: NextRequest) {
       console.log("[webhook] Processing checkout.session.completed")
       const invoiceId = metadata.invoiceId
       if (invoiceId) {
+        // Required business work for an invoiceId-driven one-time payment:
+        //   1. Mark the Invoice PAID (paidAt, paymentMethod).
+        //   2. For COMPS_ONLY: persist the user-state side effects (tier patch
+        //      or stripeCustomerId backfill) — these are required because the
+        //      account UI and invoice-history surfaces depend on them.
+        //
+        // Any failure across these required writes must release the StripeEvent
+        // claim and return 500 so Stripe retries. The packet generation handoff
+        // itself is fire-and-forget by design — its idempotent atomic claim
+        // (NOT_STARTED → GENERATING) is the right retry surface for the
+        // generation step, and its failures are captured on Invoice.packetStatus
+        // / packetLastError, NOT on the Stripe event. We trigger it AFTER the
+        // required writes succeed.
+        let isCompsOnlyTrigger = false
         try {
-          await prisma.invoice.update({
+          const updated = await prisma.invoice.update({
             where: { id: invoiceId },
             data: { status: "PAID", paidAt: new Date(), paymentMethod: "credit_card" },
           })
-          console.log(`[webhook] Marked invoice ${invoiceId} as PAID (Performance Fee)`)
+          console.log(`[webhook] Marked invoice ${invoiceId} as PAID (type=${updated.invoiceType})`)
+
+          if (updated.invoiceType === "COMPS_ONLY" && updated.userId) {
+            // One-off packet purchases must NOT downgrade an existing recurring
+            // subscription (STARTER / GROWTH / PORTFOLIO / PERFORMANCE).
+            const existing = await prisma.user.findUnique({
+              where: { id: updated.userId },
+              select: { subscriptionTier: true, stripeCustomerId: true },
+            })
+            const stronger = new Set([
+              "STARTER",
+              "GROWTH",
+              "PORTFOLIO",
+              "PERFORMANCE",
+            ])
+            const hasStrongerPlan = existing?.subscriptionTier
+              ? stronger.has(existing.subscriptionTier as string)
+              : false
+
+            if (hasStrongerPlan) {
+              if (!existing?.stripeCustomerId && (data.customer as string)) {
+                await prisma.user.update({
+                  where: { id: updated.userId },
+                  data: { stripeCustomerId: (data.customer as string) },
+                })
+              }
+            } else {
+              await prisma.user.update({
+                where: { id: updated.userId },
+                data: {
+                  subscriptionTier: "COMPS_ONLY",
+                  subscriptionStatus: "ACTIVE",
+                  subscriptionQuantity: 1,
+                  stripeCustomerId: ((data.customer as string) ?? null) ?? undefined,
+                },
+              })
+            }
+            isCompsOnlyTrigger = true
+          }
         } catch (err) {
-          console.error("[webhook] Error marking invoice PAID:", err)
+          console.error(
+            `[webhook] CRITICAL: invoiceId branch failed for ${invoiceId}; releasing claim so Stripe retries:`,
+            err,
+          )
+          await releaseEventClaim()
+          return NextResponse.json({ error: "Database error" }, { status: 500 })
+        }
+
+        // Required writes committed. Trigger the packet engine for COMPS_ONLY only.
+        if (isCompsOnlyTrigger) {
+          generatePacketForInvoice(invoiceId).catch((err) =>
+            console.error(`[webhook] packet generation trigger failed for ${invoiceId}:`, err),
+          )
         }
         break
       }
@@ -150,18 +237,41 @@ export async function POST(request: NextRequest) {
           }
         } else {
           try {
-            await prisma.user.update({
+            // Don't downgrade an existing recurring plan to COMPS_ONLY on a
+            // one-off purchase. Same logic as the invoiceId branch above.
+            const existing = await prisma.user.findUnique({
               where: { id: userId },
-              data: {
-                subscriptionTier: "COMPS_ONLY",
-                subscriptionStatus: "ACTIVE",
-                subscriptionQuantity: 1,
-                stripeCustomerId: stripeCustomerId ?? undefined,
-              },
+              select: { subscriptionTier: true, stripeCustomerId: true },
             })
-            console.log(`[webhook] SUCCESS: User ${userId} DIY/comps-only payment completed`)
+            const stronger = new Set(["STARTER", "GROWTH", "PORTFOLIO", "PERFORMANCE"])
+            const hasStrongerPlan = existing?.subscriptionTier
+              ? stronger.has(existing.subscriptionTier as string)
+              : false
+            if (hasStrongerPlan) {
+              if (!existing?.stripeCustomerId && stripeCustomerId) {
+                await prisma.user.update({
+                  where: { id: userId },
+                  data: { stripeCustomerId },
+                })
+              }
+              console.log(
+                `[webhook] DIY purchase: preserving recurring tier=${existing?.subscriptionTier} for user ${userId}`,
+              )
+            } else {
+              await prisma.user.update({
+                where: { id: userId },
+                data: {
+                  subscriptionTier: "COMPS_ONLY",
+                  subscriptionStatus: "ACTIVE",
+                  subscriptionQuantity: 1,
+                  stripeCustomerId: stripeCustomerId ?? undefined,
+                },
+              })
+              console.log(`[webhook] SUCCESS: User ${userId} DIY/comps-only payment completed`)
+            }
           } catch (dbError) {
             console.error(`[webhook] Database error updating user ${userId}:`, dbError)
+            await releaseEventClaim()
             return NextResponse.json({ error: "Database error" }, { status: 500 })
           }
         }
@@ -213,6 +323,7 @@ export async function POST(request: NextRequest) {
         )
       } catch (dbError) {
         console.error(`[webhook] Database error updating user ${userId}:`, dbError)
+        await releaseEventClaim()
         return NextResponse.json({ error: "Database error" }, { status: 500 })
       }
       break
@@ -272,6 +383,7 @@ export async function POST(request: NextRequest) {
         )
       } catch (err) {
         console.error("[webhook] Error processing subscription update:", err)
+        await releaseEventClaim()
         return NextResponse.json({ error: "Database error" }, { status: 500 })
       }
       break
@@ -289,7 +401,12 @@ export async function POST(request: NextRequest) {
           })
           console.log(`[webhook] Marked invoice ${ourInvoiceId} as PAID (Performance Fee Stripe Invoice)`)
         } catch (err) {
-          console.error("[webhook] Error marking invoice PAID from Stripe Invoice:", err)
+          console.error(
+            `[webhook] CRITICAL: invoice.paid failed marking ${ourInvoiceId} PAID; releasing claim so Stripe retries:`,
+            err,
+          )
+          await releaseEventClaim()
+          return NextResponse.json({ error: "Database error" }, { status: 500 })
         }
         break
       }
@@ -346,7 +463,12 @@ export async function POST(request: NextRequest) {
           })
           console.log(`[webhook] Marked invoice ${invoiceId} as PAID (Performance Fee)`)
         } catch (err) {
-          console.error("[webhook] Error marking invoice PAID:", err)
+          console.error(
+            `[webhook] CRITICAL: payment_intent.succeeded failed marking ${invoiceId} PAID; releasing claim so Stripe retries:`,
+            err,
+          )
+          await releaseEventClaim()
+          return NextResponse.json({ error: "Database error" }, { status: 500 })
         }
       }
       break
@@ -356,15 +478,8 @@ export async function POST(request: NextRequest) {
       console.log(`[webhook] Unhandled event: ${event.type}`)
   }
 
-  // Mark event as successfully processed — only reached on non-500 paths.
-  // On 500 (retryable failure), we don't create this record so Stripe retries correctly.
-  try {
-    await prisma.stripeEvent.create({ data: { id: event.id, type: event.type } })
-  } catch (e) {
-    // P2002 = unique constraint violation: a concurrent request beat us here — safe to ignore.
-    const code = (e as { code?: string })?.code
-    if (code !== "P2002") throw e
-  }
-
+  // The StripeEvent claim was taken at the top of the handler and is left in
+  // place on success. Internal 500 returns above call releaseEventClaim() so
+  // Stripe retries correctly.
   return NextResponse.json({ received: true })
 }
