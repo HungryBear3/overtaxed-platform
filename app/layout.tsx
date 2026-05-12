@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
 import { Suspense } from "react";
 import { ReferralCapture } from "@/components/ReferralCapture";
+import { isProductionMarketingRuntime } from "@/lib/marketing/preview-gate";
 import "./globals.css";
 
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
@@ -40,14 +41,20 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Preview/dev/test must not mount Vercel Analytics or the ?ref= referral
+  // capture. Both are gated through the marketing preview gate so that
+  // production builds on overtaxed-il.com keep their existing behavior.
+  const liveMarketing = isProductionMarketingRuntime();
   return (
     <html lang="en">
       <body>
-        <Suspense fallback={null}>
-          <ReferralCapture />
-        </Suspense>
+        {liveMarketing && (
+          <Suspense fallback={null}>
+            <ReferralCapture />
+          </Suspense>
+        )}
         {children}
-        <Analytics />
+        {liveMarketing && <Analytics />}
       </body>
     </html>
   );

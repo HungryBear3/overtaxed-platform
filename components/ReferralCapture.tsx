@@ -2,11 +2,16 @@
 
 import { useEffect } from "react"
 import { useSearchParams } from "next/navigation"
+import { isClientPreviewStubMode } from "@/lib/marketing/preview-gate-client"
 
 export function ReferralCapture() {
   const searchParams = useSearchParams()
 
   useEffect(() => {
+    // Layout already gates the mount in preview, but if anyone else mounts
+    // this component directly we must still refuse to set cookies or POST.
+    if (isClientPreviewStubMode()) return
+
     const ref = searchParams.get("ref")
     if (ref && ref.length > 0 && ref.length <= 64) {
       // Store in cookie for 30 days

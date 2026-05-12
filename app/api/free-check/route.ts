@@ -17,8 +17,87 @@ import {
 import type { PropertyData, SalesRecord, EquityRecord } from "@/lib/cook-county"
 import { rateLimit, getClientIdentifier } from "@/lib/rate-limit"
 import { BOR_APPEAL_WINDOWS } from "@/lib/appeals/bor-appeal-windows"
+import {
+  hostFromRequest,
+  isPreviewStubEnabled,
+  marketingGateReason,
+} from "@/lib/marketing/preview-gate"
 
 export const maxDuration = 25
+
+/**
+ * Static sample returned to clients in preview/dev/test. Shaped to match
+ * the live Result so `<FreeCheckResult>` renders without changes. Numbers
+ * are illustrative — clearly inside the same neighborhood as the homepage
+ * `/api/check` stub.
+ */
+const PREVIEW_FREE_CHECK_SAMPLE = {
+  success: true,
+  mode: "preview_noop" as const,
+  subject: {
+    pin: "14-18-102-034-0000",
+    address: "1234 N Sample St",
+    city: "Chicago",
+    zipCode: "60618",
+    township: "Jefferson",
+    neighborhoodCode: "70-070",
+    taxYear: 2025,
+    assessedTotalValue: 42500,
+    marketValue: 425000,
+  },
+  compCount: 3,
+  comps: [
+    {
+      pin: "14-18-102-035-0000",
+      address: "123 Sample Ave",
+      city: "Chicago",
+      assessedValue: 36400,
+      marketValue: 364000,
+      squareFeet: 1200,
+      yearBuilt: 1925,
+      propertyClass: "2-03",
+    },
+    {
+      pin: "14-18-102-036-0000",
+      address: "127 Sample Ave",
+      city: "Chicago",
+      assessedValue: 34800,
+      marketValue: 348000,
+      squareFeet: 1180,
+      yearBuilt: 1923,
+      propertyClass: "2-03",
+    },
+    {
+      pin: "14-18-102-037-0000",
+      address: "131 Sample Ave",
+      city: "Chicago",
+      assessedValue: 34100,
+      marketValue: 341000,
+      squareFeet: 1210,
+      yearBuilt: 1924,
+      propertyClass: "2-03",
+    },
+  ],
+  avgComparableAssessedValue: 35100,
+  equityRatio: 10.0,
+  targetEquityRatio: 10.0,
+  avgCompEquityRatio: 10.0,
+  assessmentGap: 7400,
+  potentialOverpaymentPerYear: 1420,
+  potentialOverpayment3Year: 4260,
+  appealArgumentText:
+    "[preview sample — illustrative only] The subject property's assessment exceeds comparable Jefferson Township properties.",
+  appealWindowStatus: {
+    township: "Jefferson",
+    status: "open" as const,
+    openDate: "2026-06-01",
+    closeDate: "2026-08-12",
+    filingUrl: "https://www.cookcountyassessor.com/online-appeals",
+    note: "Preview sample — verify the actual window at cookcountyassessor.com",
+  },
+  propertyCharacteristics: null,
+  source: "preview-noop",
+}
 
 function getAppealWindowStatus(township: string | null): {
   township: string
@@ -96,6 +175,16 @@ We request a reduction in the assessed value to $${Math.round(targetAV).toLocale
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  // Preview/dev/test: no Cook County lookup, no rate-limit, no DB. Return a
+  // static sample so the FreeCheckResult UI still renders end-to-end.
+  const host = hostFromRequest(req)
+  if (isPreviewStubEnabled({ host })) {
+    return NextResponse.json({
+      ...PREVIEW_FREE_CHECK_SAMPLE,
+      reason: marketingGateReason({ host }),
+    })
+  }
+
   const { allowed } = rateLimit(getClientIdentifier(req), 10, 60_000)
   if (!allowed) {
     return NextResponse.json({ error: "Too many requests" }, { status: 429 })

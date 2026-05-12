@@ -3,6 +3,12 @@ import { prisma } from "@/lib/db/prisma"
 import { sendEmail } from "@/lib/email/send"
 import { enrollInDrip } from "@/lib/drip"
 import { freeCheckFollowupTemplate, shouldSendFreeCheckFollowup } from "@/lib/email/templates"
+import {
+  hostFromRequest,
+  isPreviewStubEnabled,
+  marketingGateReason,
+  previewNoopResponseBody,
+} from "@/lib/marketing/preview-gate"
 
 // ── Same-day conversion follow-up ─────────────────────────────────────────────
 // Sends once per email (idempotent via OTLead.followupStep).
@@ -73,6 +79,12 @@ function sanitizeTownship(township: string): string {
 }
 
 export async function POST(req: NextRequest) {
+  // Preview/dev/test: no DB upsert, no email, no drip, no follow-up.
+  const host = hostFromRequest(req)
+  if (isPreviewStubEnabled({ host })) {
+    return NextResponse.json(previewNoopResponseBody(marketingGateReason({ host })))
+  }
+
   try {
     const body = await req.json()
     const rawEmail = typeof body.email === "string" ? body.email : ""

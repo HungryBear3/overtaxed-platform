@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/db"
 import Redis from "ioredis"
+import {
+  hostFromRequest,
+  isPreviewStubEnabled,
+  marketingGateReason,
+  previewNoopResponseBody,
+} from "@/lib/marketing/preview-gate"
 
 const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL) : null
 
@@ -8,6 +14,12 @@ const RATE_LIMIT = 3
 const RATE_LIMIT_WINDOW_SECONDS = 3600 // 1 hour
 
 export async function POST(request: NextRequest) {
+  // Preview/dev/test: do not write DB, do not call Redis, do not send email.
+  const host = hostFromRequest(request)
+  if (isPreviewStubEnabled({ host })) {
+    return NextResponse.json(previewNoopResponseBody(marketingGateReason({ host })))
+  }
+
   try {
     const ip = request.headers.get("x-real-ip") || request.headers.get("x-forwarded-for") || "unknown"
     if (ip === "unknown") {

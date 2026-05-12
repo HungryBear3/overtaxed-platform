@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
+import {
+  hostFromRequest,
+  isPreviewStubEnabled,
+  marketingGateReason,
+  previewNoopResponseBody,
+} from "@/lib/marketing/preview-gate";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
@@ -10,6 +16,13 @@ const PRICE_MAP: Record<string, string | undefined> = {
 };
 
 export async function POST(req: NextRequest) {
+  // Preview/dev/test: do not call Stripe. The client UI also disables Buy
+  // Now in preview, but this is the authoritative safety net.
+  const host = hostFromRequest(req);
+  if (isPreviewStubEnabled({ host })) {
+    return NextResponse.json(previewNoopResponseBody(marketingGateReason({ host })));
+  }
+
   try {
     const { tier, propertyPin } = await req.json();
     const priceId = PRICE_MAP[tier];
