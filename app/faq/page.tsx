@@ -1,17 +1,18 @@
 import Link from "next/link"
 import { HelpCircle } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Logo } from "@/components/navigation/Logo"
+import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
+import "../ot-design.css"
 
 export const metadata = {
   title: "FAQ | OverTaxed IL",
-  description: "Frequently asked questions about property tax appeals, Cook County, DIY comps, and OverTaxed IL services.",
+  description: "Frequently asked questions about Cook County property tax appeals, DIY comp packets, and OverTaxed IL services.",
 }
 
 const faqs = [
   {
     q: "What is a property tax appeal?",
-    a: "A property tax appeal is a formal request to lower your property's assessed value. In Illinois, your property taxes are based on the assessed value set by the county assessor. If you believe your assessment is too high compared to similar properties, you can file an appeal with the Cook County Assessor or Board of Review. A successful appeal can reduce your assessment and lower your tax bill.",
+    a: "A property tax appeal is a formal request to lower your property's assessed value. In Illinois, your property taxes are based on the assessed value set by the county assessor. If you believe your assessment is too high compared to similar properties, you can file an appeal with the Cook County Assessor or Board of Review. A successful appeal can reduce your assessment and lower your tax bill — though decisions are made by the county and there is no guarantee of a reduction.",
   },
   {
     q: "What is a PIN?",
@@ -19,19 +20,19 @@ const faqs = [
   },
   {
     q: "What is the Cook County appeal deadline?",
-    a: "Cook County uses a township-based calendar. Each township has its own appeal window—typically you have 30 days from when your township's new assessments are published to file. Deadlines vary by township and year. OverTaxed IL helps you track your township's deadline and reminds you before it closes.",
+    a: "Cook County uses a township-based calendar. Each township has its own appeal window — typically you have 30 days from when your township's new assessments are published to file. Deadlines vary by township and year. OverTaxed IL tracks every township's window on the deadlines page and can email you a reminder before your window closes.",
   },
   {
-    q: "What's the difference between DIY (comps-only) and full automation?",
-    a: "DIY ($69/property): We generate a comp packet (comparable sales and evidence) so you can file the appeal yourself at the Cook County Assessor portal for free. Full automation (Starter, Growth, Portfolio): We monitor your assessments, alert you to increases, prepare appeals and comps, and guide you through filing. PIN monitoring and deadline notifications are included in full automation; they are not included in DIY.",
+    q: "DIY packet vs. done-for-you — which should I pick?",
+    a: "DIY ($69 one-time per property): We build the comp packet (comparable sales and supporting evidence). You file the appeal yourself at the Cook County Assessor portal — filing there is free. Done-for-you ($97 one-time per property): We prepare the packet and submit the appeal on your behalf where the county process supports it. Both options include the same comp evidence and equity-ratio analysis.",
   },
   {
     q: "Do you file the appeal for me?",
-    a: "Today, the Cook County Assessor has not released a public e-filing API, so we cannot submit appeals on your behalf. We prepare the packet (comps, summary, PDF) and give you clear instructions to file at cookcountyassessor.com/file-appeal. Once Cook County releases an API, we will add filing-on-behalf for Starter and above.",
+    a: "On the Done-for-you tier ($97) we submit on your behalf where the county process supports it. On the DIY tier ($69) you file yourself at the Cook County Assessor portal at cookcountyassessor.com/file-appeal — the packet is formatted so you can submit it in one focused session once your evidence is ready.",
   },
   {
     q: "How many comparable properties (comps) do I need?",
-    a: "For a strong appeal, Cook County typically expects at least 3 comparable sales (recent sales of similar properties). Our comp packet includes comparable sales from Cook County Open Data and optionally enriches with Realie (when you have a paid plan) for better coverage. Note: Board of Review Rule 15 refers to document submission requirements, not comp counts—the comparable-sales guidance above comes from Cook County Assessor requirements.",
+    a: "For a strong appeal, Cook County typically expects at least 3 comparable sales (recent sales of similar properties). Our comp packet includes comparable sales from Cook County Open Data. The 'at least 3 comparable sales' guidance comes from Cook County Assessor requirements; Board of Review Rule 15 is a separate document-submission rule (it governs which documents must accompany an appeal, not the comp count).",
   },
   {
     q: "What is Board of Review Rule 15?",
@@ -39,40 +40,35 @@ const faqs = [
   },
   {
     q: "What happens after I file?",
-    a: "After you submit at the Cook County Assessor portal, you'll receive a Filing ID and Docket Number by email—keep them for your records. The Assessor reviews your appeal (typically within a few months). If approved, your assessment is reduced and your next tax bill reflects the lower value. OverTaxed IL monitors assessment changes and will notify you when we detect a reduction. You can also check status at the Cook County portal. If denied, you can appeal again in a future year or to the Board of Review.",
+    a: "After you submit at the Cook County Assessor portal, you'll receive a Filing ID and Docket Number by email — keep them for your records. The Assessor reviews your appeal (typically within a few months). If approved, your assessment is reduced and your next tax bill reflects the lower value. You can also check status at the Cook County portal. If denied, you can appeal again in a future year or to the Board of Review.",
   },
   {
     q: "What if my appeal is denied?",
-    a: "The county assessor or board of review decides appeals. Denials can happen for many reasons. OverTaxed IL does not guarantee a reduction—county decisions are final. We focus on building strong, evidence-backed appeals to improve your odds. You can always appeal again in a future year if your assessment changes.",
+    a: "The county assessor or board of review decides appeals. Denials can happen for many reasons. OverTaxed IL does not guarantee a reduction — county decisions are final. We focus on building strong, evidence-backed appeals to improve your odds. You can always appeal again in a future year if your assessment changes.",
   },
   {
     q: "How do I get a refund?",
-    a: "We offer a 30-day satisfaction guarantee for subscription plans. Contact us at support@overtaxed-il.com within 30 days of your initial signup to request a refund. See our Terms of Service for full details.",
+    a: "We offer a procedural money-back guarantee on the DIY and Done-for-you packets: if your township denies the filing on procedural grounds, we refund the packet. Contact us at support@overtaxed-il.com. See our Terms of Service for full details.",
   },
   {
-    q: "How can I get notified about reassessment notices?",
-    a: "Cook County has a notification system for reassessment notices. You can sign up for alerts when your township is reassessed by visiting the Cook County Assessment & Appeal Calendar at cookcountyassessor.com/assessment-calendar-and-deadlines. OverTaxed IL also monitors your properties and sends township-open and deadline reminders when you have an active subscription.",
+    q: "Are you a law firm?",
+    a: "No. OverTaxed IL is not a law firm and does not provide legal or tax advice. We organize public Cook County records into the format the Assessor and Board of Review accept. For complex situations or legal advice, consult a licensed Illinois attorney or property tax consultant.",
+  },
+  {
+    q: "Do you support HOA or condo associations?",
+    a: "We're rolling out HOA / condo board support for the 2026 cycle. If your association manages multiple PINs and wants a bulk packet, use the HOA section on the homepage or email support@overtaxed-il.com — no attorney referral required.",
   },
 ]
 
 export default function FAQPage() {
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white shadow-sm">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <Logo href="/" />
-            <Link href="/" className="text-sm text-blue-600 hover:text-blue-700 font-medium">
-              Back to home
-            </Link>
-          </div>
-        </div>
-      </header>
+    <div className="ot-root">
+      <SiteHeader active="faq" />
 
-      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12 bg-white">
         <div className="flex items-center gap-3 mb-2">
           <HelpCircle className="h-8 w-8 text-blue-600 flex-shrink-0" />
-          <h1 className="text-3xl font-bold text-gray-900">Frequently Asked Questions</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Frequently asked questions</h1>
         </div>
         <p className="text-gray-500 mb-8">
           Common questions about property tax appeals, Cook County, and OverTaxed IL.
@@ -95,6 +91,8 @@ export default function FAQPage() {
           Still have questions? <Link href="/contact" className="text-blue-600 hover:underline">Contact us</Link>.
         </p>
       </main>
+
+      <SiteFooter />
     </div>
   )
 }

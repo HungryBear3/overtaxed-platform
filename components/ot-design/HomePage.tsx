@@ -199,7 +199,11 @@ function HeroCheckCard({
           />
           <span id="pin-hint" className="ot-field-hint">
             14 digits · dashes added as you type · find yours at{" "}
-            <a href="#" onClick={(e) => e.preventDefault()}>
+            <a
+              href="https://www.cookcountyassessor.com/address-search"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               cookcountyassessor.com
             </a>
           </span>
@@ -787,6 +791,120 @@ const FAQ_ITEMS = [
   },
 ];
 
+/**
+ * HOA / condo association capture. Routes to /api/township-alert with the
+ * "HOA Waitlist" sentinel — the same gated endpoint other capture forms
+ * use, so it inherits the P0 preview-noop behavior automatically.
+ */
+function HoaSection() {
+  const [email, setEmail] = useState("");
+  const [pins, setPins] = useState("");
+  const [association, setAssociation] = useState("");
+  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email) return;
+    setStatus("loading");
+    setErrorMsg("");
+    try {
+      const res = await fetch("/api/township-alert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          township: "HOA Waitlist",
+          address: [association, pins ? `${pins} PINs` : null].filter(Boolean).join(" · "),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Something went wrong");
+      setStatus("success");
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Something went wrong");
+      setStatus("error");
+    }
+  }
+
+  return (
+    <section id="hoa" className="ot-faq" aria-labelledby="ot-hoa-h">
+      <div className="ot-faq-inner">
+        <div className="ot-faq-eyebrow">HOA & condo associations</div>
+        <h2 id="ot-hoa-h" className="ot-h2">
+          Managing many PINs? We&apos;ll build a bulk packet for your association.
+        </h2>
+        <p className="ot-method-lede">
+          Condo boards and HOA managers in Cook County can use the same comp +
+          equity-ratio packet, run across every PIN in the association. No
+          attorney referral, no per-unit upsell. Drop your email and we&apos;ll
+          come back with a packet plan once your township is in cycle.
+        </p>
+
+        {status === "success" ? (
+          <div className="ot-rrb ot-rrb-inline" style={{ marginTop: 16 }}>
+            <span className="ot-rrb-shield" aria-hidden="true">○</span>
+            <span className="ot-rrb-text">
+              <strong>You&apos;re on the list.</strong> We&apos;ll email you with a packet plan once we can support your township.
+            </span>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} style={{ marginTop: 16, display: "grid", gap: 12, maxWidth: 540 }}>
+            <label className="ot-field">
+              <span className="ot-field-label">Association name</span>
+              <input
+                type="text"
+                value={association}
+                onChange={(e) => setAssociation(e.target.value)}
+                placeholder="e.g. Lakeside Condominium Association"
+                className="ot-input"
+                maxLength={120}
+              />
+            </label>
+            <label className="ot-field">
+              <span className="ot-field-label">Approximate number of PINs</span>
+              <input
+                type="text"
+                value={pins}
+                onChange={(e) => setPins(e.target.value.replace(/\D/g, "").slice(0, 5))}
+                placeholder="e.g. 48"
+                className="ot-input"
+                inputMode="numeric"
+              />
+            </label>
+            <label className="ot-field">
+              <span className="ot-field-label">Contact email</span>
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="board@example.com"
+                className="ot-input"
+                autoComplete="email"
+              />
+            </label>
+            <button
+              type="submit"
+              className="ot-cta ot-cta-block"
+              disabled={status === "loading" || !email}
+            >
+              {status === "loading" ? "Saving…" : "Get an association packet plan"}
+            </button>
+            <p className="ot-method-disclosure">
+              OverTaxed IL is not a law firm and does not provide legal advice.
+              We do not guarantee a reduction — county decisions are final.
+            </p>
+            {status === "error" && (
+              <p style={{ color: "#b91c1c", fontSize: 13 }}>{errorMsg}</p>
+            )}
+          </form>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function FaqSection() {
   const [open, setOpen] = useState<Record<string, boolean>>(
     () => Object.fromEntries(FAQ_ITEMS.map((it) => [it.id, !!it.expanded])),
@@ -844,6 +962,7 @@ export default function HomePage() {
       <MethodologyCard />
       <Testimonials />
       <PricingCompare />
+      <HoaSection />
       <FaqSection />
     </>
   );

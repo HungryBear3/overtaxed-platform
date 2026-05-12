@@ -1,5 +1,5 @@
-import { Header } from "@/components/header"
-import { Footer } from "@/components/footer"
+import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
+import "../ot-design.css"
 
 export const metadata = {
   title: "Terms of Service | OverTaxed IL",
@@ -8,9 +8,9 @@ export const metadata = {
 
 export default function TermsPage() {
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-16">
+    <div className="ot-root">
+      <SiteHeader />
+      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12 bg-white">
         <h1 className="text-3xl font-bold text-foreground mb-2">Terms of Service</h1>
         <p className="text-muted-foreground text-sm mb-8">Last updated: February 2026</p>
 
@@ -35,7 +35,7 @@ export default function TermsPage() {
           <section>
             <h2 className="text-xl font-semibold text-foreground mb-3">3. Fee Structure and Payment Terms</h2>
             <p className="text-muted-foreground mb-3">
-              <strong>3.1 Subscription Plans (Starter, Growth, Portfolio).</strong> For subscription-based plans, you agree to pay the annual subscription fee as selected at the time of signup. Fees are billed annually on your subscription anniversary date and will automatically renew unless cancelled.
+              <strong>3.1 Subscription or package plans.</strong> For any subscription-based or package plan, you agree to pay the fee shown at checkout for the product you select. Recurring fees, if any, are billed on the renewal schedule disclosed at checkout and will automatically renew unless cancelled.
             </p>
             <p className="text-muted-foreground mb-3">
               <strong>3.2 Performance Plan – Percentage-Based Fee.</strong> If you select the Performance Plan, you agree to pay OverTaxed IL a fee equal to four percent (4%) of the total tax savings achieved over a three (3) year period from the date of the first successful appeal reduction.
@@ -158,7 +158,7 @@ export default function TermsPage() {
           By signing up and using OverTaxed IL, you acknowledge that you have read, understood, and agree to be bound by these Terms of Service and User Agreement.
         </p>
       </main>
-      <Footer />
+      <SiteFooter />
     </div>
   )
 }

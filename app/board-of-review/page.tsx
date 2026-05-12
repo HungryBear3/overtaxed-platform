@@ -1,34 +1,20 @@
 import Link from "next/link"
-import { Logo } from "@/components/navigation/Logo"
+import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import { BoardOfReviewWaitlist } from "@/components/board-of-review/BoardOfReviewWaitlist"
+import "../ot-design.css"
 
 export const metadata = {
   title: "Cook County Board of Review Appeals | OverTaxed IL",
   description:
-    "The Board of Review is the second level of Cook County property tax appeals — used by large commercial owners with attorneys. OverTaxed IL is building support for it. Join the waitlist.",
+    "The Board of Review is the second level of Cook County property tax appeals. OverTaxed IL is building homeowner-friendly support for it. Join the waitlist.",
 }
 
 export default function BoardOfReviewPage() {
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-          <Logo href="/" />
-          <div className="flex items-center gap-4">
-            <Link href="/auth/signin" className="text-sm text-gray-600 hover:text-gray-900 font-medium">
-              Sign in
-            </Link>
-            <Link
-              href="/auth/signup"
-              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 font-medium text-sm"
-            >
-              Start Your Assessor Appeal
-            </Link>
-          </div>
-        </div>
-      </header>
+    <div className="ot-root">
+      <SiteHeader />
 
-      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12 bg-white">
         {/* Badge */}
         <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-100 text-amber-800 text-sm font-medium mb-6">
           Coming soon
@@ -125,17 +111,25 @@ export default function BoardOfReviewPage() {
           <h2 className="text-lg font-semibold text-gray-900 mb-2">What to do right now</h2>
           <p className="text-sm text-gray-700 mb-4">
             While we build Board of Review support, the highest-value action is filing your
-            Assessor appeal first. South district townships are open now. A successful Assessor
+            Assessor appeal first. South-district townships are open now. A successful Assessor
             appeal often eliminates the need to escalate to the Board of Review.
           </p>
-          <Link
-            href="/auth/signup"
-            className="inline-block bg-blue-600 text-white font-semibold px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors text-sm"
-          >
-            Start my Assessor appeal now →
-          </Link>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Link
+              href="/check"
+              className="inline-block bg-blue-600 text-white font-semibold px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors text-sm"
+            >
+              Run my free check →
+            </Link>
+            <Link
+              href="/pricing"
+              className="inline-block bg-white text-blue-700 font-semibold px-6 py-3 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors text-sm"
+            >
+              See pricing
+            </Link>
+          </div>
           <p className="text-xs text-gray-500 mt-3">
-            $69 DIY · $149 full automation · No attorney needed
+            $69 DIY packet · $97 done-for-you · No attorney needed. OverTaxed IL is not a law firm.
           </p>
         </div>
 
@@ -148,11 +142,13 @@ export default function BoardOfReviewPage() {
             support@overtaxed-il.com
           </a>
           {" · "}
-          <Link href="/townships" className="underline hover:text-gray-600">
+          <Link href="/deadlines" className="underline hover:text-gray-600">
             Check township deadlines
           </Link>
         </p>
       </main>
+
+      <SiteFooter />
     </div>
   )
 }

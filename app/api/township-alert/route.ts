@@ -66,6 +66,8 @@ const VALID_TOWNSHIPS = new Set([
   "Berwyn", "Hanover", "Oak Park", "River Forest", "Schaumburg",
   // Waitlist sentinel — used by Board of Review waitlist form
   "Board of Review Waitlist",
+  // HOA / condo association waitlist — homepage HOA section
+  "HOA Waitlist",
   // Free check result signup when township unknown or user just wants reminders
   "Free Check",
 ])

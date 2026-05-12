@@ -3,13 +3,17 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { buildTickerItems, TOWNSHIP_STATUS_COUNTS } from "@/lib/townships";
 
+// Featured townships shown in the footer. These point at the canonical
+// `/township/[slug]` detail route. List below tracks the South-district 2026
+// triennial cycle (the cohort currently open or opening soon). When the cycle
+// rolls to North/Northwest, refresh this list.
 const FOOTER_TOWNSHIPS = [
-  { slug: "oak-park", name: "Oak Park" },
-  { slug: "evanston", name: "Evanston" },
-  { slug: "palatine", name: "Palatine" },
-  { slug: "berwyn", name: "Berwyn" },
-  { slug: "schaumburg", name: "Schaumburg" },
-  { slug: "new-trier", name: "New Trier" },
+  { slug: "bloom", name: "Bloom" },
+  { slug: "bremen", name: "Bremen" },
+  { slug: "calumet", name: "Calumet" },
+  { slug: "rich", name: "Rich" },
+  { slug: "thornton", name: "Thornton" },
+  { slug: "worth", name: "Worth" },
 ];
 
 export function SiteHeader({

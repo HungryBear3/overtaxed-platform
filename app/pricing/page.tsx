@@ -12,6 +12,9 @@ import {
 } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { Check } from "lucide-react";
+import { isClientPreviewStubMode } from "@/lib/marketing/preview-gate-client";
+import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
+import "../ot-design.css";
 
 const tiers = [
   {
@@ -90,8 +93,15 @@ export default function PricingPage() {
   const router = useRouter();
   const [loadingTier, setLoadingTier] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const previewMode = isClientPreviewStubMode();
 
   async function handleBuyNow(tierId: string) {
+    if (previewMode) {
+      // Belt and suspenders — the button is also disabled in preview, but
+      // refuse to call /api/checkout/session in any case.
+      setError("Preview checkout disabled — Stripe is not called in this environment.");
+      return;
+    }
     setLoadingTier(tierId);
     setError(null);
     try {
@@ -113,15 +123,16 @@ export default function PricingPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-50">
+    <div className="ot-root">
+      <SiteHeader active="offer" />
+      <main className="bg-gray-50">
       {/* Hero */}
       <section className="bg-white border-b border-gray-100 py-16 px-4 text-center">
         <h1 className="text-4xl font-bold text-gray-900 max-w-3xl mx-auto leading-tight">
-          Pay only if we win — or choose a flat rate at a fraction of typical attorney fees
+          Two ways to file your Cook County appeal — starting at $69
         </h1>
         <p className="mt-4 text-lg text-gray-500 max-w-xl mx-auto">
-          Illinois homeowners overpay $1B+ in property taxes every year. We fix
-          that — starting at $37.
+          Build the comp packet yourself ($69) or have us prepare and submit it for you ($97). Both built around Cook County Assessor + Board of Review public records. We don&apos;t guarantee a reduction — county decisions are final.
         </p>
       </section>
 
@@ -183,9 +194,15 @@ export default function PricingPage() {
                     <button
                       className={buttonVariants({ variant: "primary", size: "md", className: "w-full justify-center" })}
                       onClick={() => handleBuyNow(tier.id)}
-                      disabled={loadingTier === tier.id}
+                      disabled={loadingTier === tier.id || previewMode}
+                      aria-disabled={previewMode}
+                      title={previewMode ? "Preview checkout disabled — Stripe is not called in this environment." : undefined}
                     >
-                      {loadingTier === tier.id ? "Loading..." : tier.cta}
+                      {previewMode
+                        ? "Preview checkout disabled"
+                        : loadingTier === tier.id
+                        ? "Loading..."
+                        : tier.cta}
                     </button>
                   )}
                 </div>
@@ -199,17 +216,17 @@ export default function PricingPage() {
         )}
       </section>
 
-      {/* ROI Comparison */}
+      {/* Illustrative cost comparison */}
       <section className="bg-white border-t border-gray-100 py-12 px-4">
         <div className="max-w-2xl mx-auto text-center">
           <h2 className="text-2xl font-bold text-gray-900 mb-2">
-            How we compare to a tax attorney
+            How a flat packet compares to an attorney contingency
           </h2>
-          <p className="text-gray-500 mb-8 text-sm">
-            Most Illinois property tax attorneys charge 33–40% of savings.
-            We&apos;re 22% — and you can start for as little as $37.
+          <p className="text-gray-500 mb-2 text-sm">
+            Illustrative example only — your actual savings depend on the
+            reduction granted by the county and your township tax rate.
           </p>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto mt-6">
             <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="bg-gray-50">
@@ -220,67 +237,72 @@ export default function PricingPage() {
                     Cost
                   </th>
                   <th className="text-right p-3 font-semibold text-gray-700 border border-gray-200">
-                    You keep (on $2k savings)
+                    You keep on a $2,000 illustrative reduction
                   </th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
                   <td className="p-3 border border-gray-200 text-gray-600">
-                    DIY (no help)
+                    DIY filing (no help)
                   </td>
                   <td className="p-3 border border-gray-200 text-right text-gray-600">
                     $0
                   </td>
                   <td className="p-3 border border-gray-200 text-right text-gray-600">
-                    $2,000 (if you win)
+                    $2,000 if granted
                   </td>
                 </tr>
                 <tr className="bg-blue-50">
                   <td className="p-3 border border-gray-200 font-semibold text-blue-800">
-                    Overtaxed IL — Contingency
+                    OverTaxed IL DIY packet ($69) or DFY ($97)
                   </td>
                   <td className="p-3 border border-gray-200 text-right font-semibold text-blue-800">
-                    22%
+                    Flat $69 or $97
                   </td>
                   <td className="p-3 border border-gray-200 text-right font-semibold text-blue-800">
-                    $1,560
+                    $1,903–$1,931 if granted
                   </td>
                 </tr>
                 <tr>
                   <td className="p-3 border border-gray-200 text-gray-600">
-                    Tax attorney (typical)
+                    Attorney contingency
                   </td>
                   <td className="p-3 border border-gray-200 text-right text-gray-600">
-                    33–40%
+                    Percentage of savings (varies by firm)
                   </td>
                   <td className="p-3 border border-gray-200 text-right text-gray-600">
-                    $1,200–$1,340
+                    Whatever the contingency leaves you with
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
+          <p className="text-xs text-gray-400 mt-4">
+            OverTaxed IL is not a law firm. Attorney fees vary widely — check
+            your attorney&apos;s engagement letter for their actual rate.
+          </p>
         </div>
       </section>
 
-      {/* FAQ / CTA */}
       <section className="py-12 px-4 text-center">
         <p className="text-gray-500 text-sm">
           Questions?{" "}
           <Link
-            href="mailto:hello@overtaxed-il.com"
+            href="mailto:support@overtaxed-il.com"
             className="text-blue-600 underline"
           >
             Email us
           </Link>{" "}
           or{" "}
           <Link href="/check" className="text-blue-600 underline">
-            check your property for free first
+            run a free check first
           </Link>
           .
         </p>
       </section>
-    </main>
+      </main>
+      <SiteFooter />
+    </div>
   );
 }

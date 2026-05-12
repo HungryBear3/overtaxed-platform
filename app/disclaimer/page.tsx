@@ -1,5 +1,5 @@
-import Link from "next/link"
-import { Logo } from "@/components/navigation/Logo"
+import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
+import "../ot-design.css"
 
 export const metadata = {
   title: "Disclaimer | OverTaxed IL",
@@ -8,19 +8,9 @@ export const metadata = {
 
 export default function DisclaimerPage() {
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white shadow-sm">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <Logo href="/" />
-            <Link href="/" className="text-sm text-blue-600 hover:text-blue-700 font-medium">
-              Back to home
-            </Link>
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <div className="ot-root">
+      <SiteHeader />
+      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12 bg-white">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Disclaimer</h1>
         <p className="text-gray-500 text-sm mb-8">Last updated: February 2026</p>
 
@@ -79,6 +69,7 @@ export default function DisclaimerPage() {
           </section>
         </div>
       </main>
+      <SiteFooter />
     </div>
   )
 }

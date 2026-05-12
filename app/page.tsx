@@ -7,23 +7,23 @@ const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://overtaxed-il.com";
 
 export const metadata: Metadata = {
   title:
-    "OverTaxed IL — Cook County property tax appeals, $97 done-for-you",
+    "OverTaxed IL — Cook County property tax appeals, from $69",
   description:
-    "Free 30-second check tells you if your Cook County assessment is too high. We file the appeal for $97 — or free if we don't reduce your bill.",
+    "Free check tells you if your Cook County assessment is out of line with comparable properties. DIY packet ($69) or done-for-you filing ($97). Procedural money-back guarantee. Not a law firm.",
   alternates: { canonical: siteUrl + "/" },
   openGraph: {
     type: "website",
     url: siteUrl + "/",
     title: "OverTaxed IL — Cook County property tax appeals",
     description:
-      "Free check, $97 done-for-you filing — or free if we don't reduce your bill.",
+      "Free check, $69 DIY packet, $97 done-for-you filing. Procedural money-back guarantee.",
     siteName: "OverTaxed IL",
     // og:image auto-wired by app/opengraph-image.tsx
   },
   twitter: {
     card: "summary_large_image",
     title: "OverTaxed IL — Cook County property tax appeals",
-    description: "Free check, $97 done-for-you filing.",
+    description: "Free check, $69 DIY packet, $97 done-for-you filing.",
     // twitter:image auto-wired by app/opengraph-image.tsx
   },
   robots: { index: true, follow: true },

@@ -1,6 +1,7 @@
 import Link from "next/link"
-import { Logo } from "@/components/navigation/Logo"
+import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import { TownshipAlertForm } from "@/components/townships/TownshipAlertForm"
+import "../ot-design.css"
 
 export const metadata = {
   title: "Cook County Township Appeal Deadlines 2026 | OverTaxed IL",
@@ -269,26 +270,10 @@ export default function TownshipsPage() {
   const upcomingCount = townships.filter((t) => t.status === "UPCOMING").length
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-          <Logo href="/" />
-          <div className="flex items-center gap-4">
-            <Link href="/auth/signin" className="text-sm text-gray-600 hover:text-gray-900 font-medium">
-              Sign in
-            </Link>
-            <Link
-              href="/auth/signup"
-              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 font-medium text-sm"
-            >
-              Start Your Appeal
-            </Link>
-          </div>
-        </div>
-      </header>
+    <div className="ot-root">
+      <SiteHeader active="deadlines" />
 
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12 bg-white">
         {/* Page header */}
         <div className="mb-10">
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-100 text-blue-800 text-sm font-medium mb-4">
@@ -333,17 +318,18 @@ export default function TownshipsPage() {
                 A win in 2026 saves you money through 2029.
               </h2>
               <p className="text-blue-200 mt-2 text-sm">
-                Cook County reassesses on a 3-year cycle. South district townships are up this
-                year. A successful appeal locks in your reduced assessment — $500–$1,500/year
-                savings for up to 3 years.
+                Cook County reassesses on a 3-year cycle. South-district townships are up this
+                year. A successful appeal locks in your reduced assessment for up to 3 years
+                — actual savings depend on your assessed value, township tax rate, and the
+                reduction the county grants.
               </p>
-              <p className="text-blue-100 mt-2 text-sm font-semibold">
-                $500–$1,500/year × 3 years = $1,500–$4,500 from one appeal.
+              <p className="text-blue-100 mt-2 text-xs italic">
+                We do not guarantee a reduction. County decisions are final.
               </p>
             </div>
             <div className="shrink-0">
               <Link
-                href="/auth/signup"
+                href="/check"
                 className="inline-block bg-white text-blue-900 font-semibold px-6 py-3 rounded-lg hover:bg-blue-50 transition-colors whitespace-nowrap"
               >
                 Start my appeal →
@@ -424,19 +410,17 @@ export default function TownshipsPage() {
                             {t.status === "OPEN" ? (
                               <div className="inline-flex flex-col items-end gap-1.5">
                                 <Link
-                                  href="/auth/signup"
+                                  href="/check"
                                   className="inline-block bg-blue-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors"
                                 >
-                                  Appeal now
+                                  Run free check
                                 </Link>
-                                <a
-                                  href="https://www.cookcountyassessor.com/online-appeals"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-xs text-green-700 font-medium hover:underline"
+                                <Link
+                                  href={`/township/${t.name.toLowerCase().replace(/\s+/g, "-")}`}
+                                  className="text-xs text-blue-700 font-medium hover:underline"
                                 >
-                                  File at CCAO →
-                                </a>
+                                  {t.name} details →
+                                </Link>
                               </div>
                             ) : t.status === "UPCOMING" ? (
                               <a
@@ -523,17 +507,7 @@ export default function TownshipsPage() {
         </p>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-gray-200 mt-12 py-8">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-gray-500">
-          <p>© {new Date().getFullYear()} OverTaxed IL. Cook County property tax appeals.</p>
-          <div className="flex gap-6">
-            <Link href="/terms" className="hover:text-gray-700">Terms</Link>
-            <Link href="/privacy" className="hover:text-gray-700">Privacy</Link>
-            <Link href="/contact" className="hover:text-gray-700">Contact</Link>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   )
 }
