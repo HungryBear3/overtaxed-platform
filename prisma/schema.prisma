@@ -796,4 +796,176 @@ model StripeEvent {
   @@map("stripe_event")
 }
 
+// ============================================
+// OT Condo Outreach v1 (see docs/OT_OUTREACH_V1_RUNBOOK.md)
+// Isolated from transactional product flows. Do not reuse these models for
+// subscription email, order delivery, or marketing drips.
+// ============================================
+
+model OutreachProspect {
+  id                          String   @id @default(cuid())
+  campaignId                  String?  @map("campaign_id")
+  boardName                   String   @map("board_name")
+  buildingName                String?  @map("building_name")
+  buildingAddressRaw          String   @map("building_address_raw")
+  buildingAddressNormalized   String   @map("building_address_normalized")
+  boardEmail                  String   @map("board_email")
+  boardEmailLowercase         String   @map("board_email_lowercase")
+  sourceUrl                   String   @map("source_url")
+  scrapedAt                   DateTime @map("scraped_at")
+  scraperVersion              String   @map("scraper_version")
+  rowStatus                   String   @default("needs_review") @map("row_status") // ok | needs_review | rejected
+  rawPayload                  Json     @map("raw_payload")
+  lastContactedAt             DateTime? @map("last_contacted_at")
+  lastCampaignId              String?  @map("last_campaign_id")
+  contactCount                Int      @default(0) @map("contact_count")
+  createdAt                   DateTime @default(now()) @map("created_at")
+  updatedAt                   DateTime @updatedAt @map("updated_at")
+
+  campaign OutreachCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  sends    OutreachSend[]
+  replies  OutreachReply[]
+  leads    OutreachLead[]
+
+  @@unique([buildingAddressNormalized, boardEmailLowercase], name: "outreach_prospects_addr_email_uq")
+  @@index([boardEmailLowercase])
+  @@index([rowStatus])
+  @@index([lastContactedAt])
+  @@map("outreach_prospects")
+}
+
+model OutreachCampaign {
+  id           String   @id @default(cuid())
+  name         String
+  status       String   @default("draft") // draft | ready | running | paused | completed | halted
+  utmCampaign  String   @map("utm_campaign")
+  sendLimit    Int      @default(50) @map("send_limit")
+  haltedAt     DateTime? @map("halted_at")
+  haltReason   String?  @map("halt_reason")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  prospects OutreachProspect[]
+  sends     OutreachSend[]
+  replies   OutreachReply[]
+  leads    OutreachLead[]
+
+  @@index([status])
+  @@map("outreach_campaigns")
+}
+
+model OutreachSend {
+  id                 String   @id @default(cuid())
+  campaignId         String   @map("campaign_id")
+  prospectId         String   @map("prospect_id")
+  email              String
+  messageId          String?  @map("message_id")
+  customId           String   @unique @map("custom_id")
+  provider           String   @default("resend")
+  status             String   @default("queued") // queued | sent | delivered | delivery_delayed | bounced | complained | opened | clicked | suppressed | skipped
+  skippedReason      String?  @map("skipped_reason")
+  sentAt             DateTime? @map("sent_at")
+  deliveredAt        DateTime? @map("delivered_at")
+  openedAt           DateTime? @map("opened_at")
+  clickedAt          DateTime? @map("clicked_at")
+  bouncedAt          DateTime? @map("bounced_at")
+  bounceType         String?  @map("bounce_type") // hard | soft
+  bounceReason       String?  @map("bounce_reason")
+  complainedAt       DateTime? @map("complained_at")
+  replyToAddress     String   @map("reply_to_address")
+  listUnsubscribeUrl String   @map("list_unsubscribe_url")
+  templateVersion    String   @map("template_version")
+  utmSource          String   @map("utm_source")
+  utmMedium          String   @map("utm_medium")
+  utmCampaign        String   @map("utm_campaign")
+  utmContent         String?  @map("utm_content")
+  utmTerm            String   @map("utm_term")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  campaign OutreachCampaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  prospect OutreachProspect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, status])
+  @@index([email])
+  @@index([messageId])
+  @@map("outreach_sends")
+}
+
+model OutreachSuppression {
+  id              String   @id @default(cuid())
+  email           String
+  emailLowercase  String   @map("email_lowercase")
+  campaignId      String?  @map("campaign_id")
+  reason          String   // HARD_BOUNCED | SOFT_BOUNCED_REPEATED | COMPLAINED | MANUAL_OPT_OUT | ONE_CLICK_UNSUB | LEGAL_HOLD | ALREADY_CONTACTED_30D | ROLE_ADDRESS | INVALID_SYNTAX | PROPERTY_MANAGER
+  source          String   // webhook | manual | unsubscribe | preflight
+  note            String?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([emailLowercase])
+  @@index([campaignId])
+  @@map("outreach_suppression")
+}
+
+model OutreachWebhookEvent {
+  id               String   @id @default(cuid())
+  provider         String   @default("resend")
+  providerEventId  String   @map("provider_event_id")
+  messageId        String?  @map("message_id")
+  eventType        String   @map("event_type")
+  payload          Json
+  receivedAt       DateTime @default(now()) @map("received_at")
+  processedAt      DateTime? @map("processed_at")
+
+  @@unique([provider, providerEventId], name: "outreach_webhook_events_provider_eventid_uq")
+  @@index([messageId])
+  @@index([eventType])
+  @@map("outreach_webhook_events")
+}
+
+model OutreachReply {
+  id          String   @id @default(cuid())
+  campaignId  String?  @map("campaign_id")
+  prospectId  String?  @map("prospect_id")
+  email       String
+  replyType   String   @map("reply_type") // opt_out | neutral | interested | legal | other
+  subject     String?
+  bodyText    String   @map("body_text")
+  handledBy   String?  @map("handled_by")
+  handledAt   DateTime? @map("handled_at")
+  status      String   @default("new") // new | handled | escalated
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  campaign OutreachCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  prospect OutreachProspect? @relation(fields: [prospectId], references: [id], onDelete: SetNull)
+
+  @@index([email])
+  @@index([status])
+  @@map("outreach_replies")
+}
+
+model OutreachLead {
+  id               String   @id @default(cuid())
+  prospectId       String?  @map("prospect_id")
+  campaignId       String?  @map("campaign_id")
+  email            String
+  source           String   // outreach_email | reply | appeal_bulk | manual
+  utmSource        String   @map("utm_source")
+  utmMedium        String   @map("utm_medium")
+  utmCampaign      String   @map("utm_campaign")
+  utmContent       String?  @map("utm_content")
+  utmTerm          String   @map("utm_term")
+  qualified        Boolean  @default(false)
+  qualifiedReason  String?  @map("qualified_reason")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  campaign OutreachCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  prospect OutreachProspect? @relation(fields: [prospectId], references: [id], onDelete: SetNull)
+
+  @@index([email])
+  @@index([campaignId])
+  @@index([createdAt])
+  @@map("outreach_leads")
+}
+
 // cache-bust: 1774495683
