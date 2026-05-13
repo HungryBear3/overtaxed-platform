@@ -226,13 +226,14 @@ describe("OT v2 marketing — home hero preview card", () => {
   });
 });
 
-describe("OT v2 marketing — SiteChrome footer references currently-open townships", () => {
-  it("featured footer townships point at the singular /township/[slug] route", () => {
+describe("OT v2 marketing — SiteChrome footer references canonical township groups", () => {
+  it("footer township examples point at the singular /township/[slug] route", () => {
     const src = read("components/ot-design/SiteChrome.tsx");
     expect(src).toMatch(/`\/township\/\$\{t\.slug\}`/);
-    // Spot-check at least one south-district open township in the list.
-    expect(src).toMatch(/slug:\s*"bloom"/);
-    expect(src).toMatch(/slug:\s*"thornton"/);
+    expect(src).toMatch(/TOWNSHIPS\.filter/);
+    expect(src).toMatch(/south-west-suburbs/);
+    expect(src).toMatch(/north-suburbs/);
+    expect(src).toMatch(/chicago/);
   });
 });
 
@@ -253,5 +254,31 @@ describe("OT v2 marketing — township deadline source of truth", () => {
     expect(src).not.toMatch(/equity-ratio|equity ratio/i);
     expect(src).toMatch(/Lyons Twp/);
     expect(src).toMatch(/assessment level/i);
+  });
+});
+
+describe("OT v2 marketing — fourth-preview polish", () => {
+  it("softens preview hero copy and keeps outcomes compact/deliverable-focused", () => {
+    const src = read("components/ot-design/HomePage.tsx");
+    expect(src).not.toMatch(/Find out in 60 seconds/);
+    expect(src).toMatch(/See whether your home is over-assessed/);
+    expect(src).toMatch(/See what the packet includes/);
+    expect(src).toMatch(/Verified Cook County outcomes will publish after 2026 Board decisions/);
+  });
+
+  it("footer groups township links by canonical district instead of six arbitrary townships", () => {
+    const src = read("components/ot-design/SiteChrome.tsx");
+    expect(src).toMatch(/FOOTER_TOWNSHIP_GROUPS/);
+    expect(src).toMatch(/South & West/);
+    expect(src).toMatch(/North Suburbs/);
+    expect(src).toMatch(/City of Chicago/);
+    expect(src).not.toMatch(/const FOOTER_TOWNSHIPS = \[/);
+  });
+
+  it("legacy floating risk rail is not exported or styled", () => {
+    const chrome = read("components/ot-design/SiteChrome.tsx");
+    const css = read("app/ot-design.css");
+    expect(chrome).not.toMatch(/RiskReversalRail/);
+    expect(css).not.toMatch(/ot-risk-rail/);
   });
 });

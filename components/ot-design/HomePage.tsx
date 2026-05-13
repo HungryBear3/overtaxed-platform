@@ -49,7 +49,7 @@ function HeroNarrative() {
       <h1 className="ot-h1">
         Cook County is probably <em>over-assessing</em> your home.
       </h1>
-      <p className="ot-hero-subhead">Find out in 60 seconds.</p>
+      <p className="ot-hero-subhead">See whether your home is over-assessed — free, no signup.</p>
       <p className="ot-hero-valueprop">
         Plain math on Cook County&apos;s own public records — no signup, no
         credit card. If you&apos;re fairly assessed, we&apos;ll tell you.
@@ -675,13 +675,25 @@ function Testimonials() {
       <div className="ot-ledger-grain" aria-hidden="true" />
       <div className="ot-testimonials-inner">
         <div className="ot-testimonials-eyebrow">Outcomes</div>
-        <h2 className="ot-h2">Customer wins, on the record — coming in the 2026 cycle.</h2>
-        <p className="ot-testimonials-note">
-          We don&apos;t publish testimonials we haven&apos;t verified. Our first
-          customer filings are being prepared for the 2026 South & West
-          Suburbs window — once the Cook County Board of Review rules,
-          we&apos;ll publish names, townships, and Board outcomes here.
-        </p>
+        <div className="ot-testimonials-compact">
+          <div>
+            <h2 className="ot-h2">Verified Cook County outcomes will publish after 2026 Board decisions.</h2>
+            <p className="ot-testimonials-note">
+              We don&apos;t publish testimonials or savings averages we haven&apos;t
+              verified. Until the first 2026 decisions come back, review the
+              actual deliverable instead: a Cook County-ready appeal packet with
+              comps, assessment-level analysis, filing instructions, and deadline tracking.
+            </p>
+          </div>
+          <div className="ot-testimonials-actions">
+            <a href="/appeal-packet" className="ot-cta ot-cta-sm">
+              See what the packet includes <span className="ot-cta-arrow">→</span>
+            </a>
+            <a href="/#sample-report" className="ot-link-muted">
+              View sample report
+            </a>
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -966,11 +978,9 @@ function FaqSection() {
 
 /**
  * Compact above-the-fold preview of the assessment-check report a user
- * receives after running the free check. Replaces the earlier right-edge
- * icon stack (RiskReversalRail) with a clearly-labeled sample card so the
- * product output is visible without scrolling. Numbers are illustrative
- * and the "Sample" badge is always rendered — there is no live data path
- * into this card.
+ * receives after running the free check. The product output is visible
+ * without scrolling, and the "Sample" badge is always rendered — there is
+ * no live data path into this card.
  */
 function HeroPreviewCard() {
   const Row = ({

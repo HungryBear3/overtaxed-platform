@@ -1598,7 +1598,7 @@ body.ot-stars-on .ot-logo-mark::before {
 .ot-offer-deadline { margin-bottom: 22px; }
 
 /* ───────────────────────── Testimonials ───────────────────────── */
-.ot-testimonials { padding: 80px 0; background: white; }
+.ot-testimonials { padding: 44px 0; background: white; }
 .ot-testimonials-inner {
   max-width: 1100px;
   margin: 0 auto;
@@ -1613,10 +1613,34 @@ body.ot-stars-on .ot-logo-mark::before {
   margin-bottom: 14px;
 }
 .ot-testimonials .ot-h2 { margin-bottom: 10px; }
+.ot-testimonials-compact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 24px;
+  align-items: center;
+  padding: 22px 24px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--muted);
+}
+.ot-testimonials-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  min-width: 220px;
+}
+.ot-link-muted {
+  color: var(--ink-soft);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ot-link-muted:hover { color: var(--primary-strong); }
 .ot-testimonials-note {
   font-size: 13px;
   color: var(--ink-soft);
-  margin: 0 0 36px;
+  margin: 0;
   font-style: italic;
 }
 .ot-tcards {
@@ -1743,8 +1767,10 @@ body.ot-stars-on .ot-logo-mark::before {
   padding-bottom: 1px;
 }
 @media (max-width: 720px) {
-  .ot-testimonials { padding: 56px 0; }
+  .ot-testimonials { padding: 36px 0; }
   .ot-testimonials-inner { padding: 0 20px; }
+  .ot-testimonials-compact { grid-template-columns: 1fr; padding: 18px; }
+  .ot-testimonials-actions { align-items: stretch; min-width: 0; }
   .ot-tcard { grid-template-columns: 1fr; gap: 16px; padding: 18px; }
   .ot-tcard-photo { width: 100%; height: 160px; }
   .ot-tcard-numbers { grid-template-columns: 1fr; gap: 8px; }
@@ -2568,6 +2594,37 @@ body.ot-stars-on .ot-logo-mark::before {
   color: var(--primary-strong) !important;
   margin-top: 4px;
 }
+.ot-footer-township-groups {
+  display: grid;
+  gap: 12px;
+}
+.ot-footer-township-group {
+  display: grid;
+  gap: 5px;
+}
+.ot-footer-township-group-head {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  color: var(--ink) !important;
+  font-weight: 600 !important;
+}
+.ot-footer-township-group-head span {
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 400;
+}
+.ot-footer-township-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.ot-footer-township-examples a {
+  color: var(--ink-soft) !important;
+  font-size: 12.5px !important;
+}
+.ot-footer-township-examples a:hover { color: var(--primary-strong) !important; }
 .ot-footer-col-legal .ot-footer-disclaimer {
   font-size: 12.5px;
   line-height: 1.55;
@@ -3193,120 +3250,6 @@ body.ot-stars-on .ot-logo-mark::before {
   .ot-pcompare-feats { grid-template-rows: none; }
   .ot-pcompare-card { padding: 24px 22px; }
   .ot-pcompare-price-amount { font-size: 38px; }
-}
-
-/* ───────────────────────── P6.4 RiskReversalRail (B: slim chip, no floating tooltip) ───────────────────────── */
-/* Rail at rest: 44px wide column of icons. On hover, the hovered icon's
-   label slides out leftward as a pill (max-width 180px). Others stay collapsed. */
-.ot-risk-rail {
-  position: fixed;
-  top: 50%;
-  right: 12px;
-  transform: translateY(-50%);
-  z-index: 55;
-  width: 44px;
-  pointer-events: none;
-}
-.ot-risk-rail-list {
-  list-style: none;
-  margin: 0;
-  padding: 6px;
-  display: grid;
-  gap: 4px;
-  width: 44px;
-  background: var(--background);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  box-shadow:
-    0 1px 0 rgba(0,0,0,0.02),
-    0 14px 30px -18px rgba(0,0,0,0.18);
-}
-.ot-risk-rail-item {
-  pointer-events: auto;
-  position: relative;
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: default;
-}
-.ot-risk-rail-icon {
-  position: relative;
-  z-index: 2;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: color-mix(in oklab, var(--primary) 14%, var(--background));
-  color: oklch(0.42 0.12 150);
-  font-size: 13px;
-  font-weight: 600;
-  border: 1px solid color-mix(in oklab, var(--primary) 30%, var(--border));
-  transition: background-color 160ms, border-color 160ms;
-}
-.ot-risk-rail-item:hover .ot-risk-rail-icon,
-.ot-risk-rail-item:focus-within .ot-risk-rail-icon {
-  background: color-mix(in oklab, var(--primary) 26%, var(--background));
-  border-color: color-mix(in oklab, var(--primary) 48%, var(--border));
-}
-.ot-risk-rail-label {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  transform: translateY(-50%);
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  height: 30px;
-  /* Right padding leaves room for the icon to overlay the pill's right edge */
-  padding: 0 38px 0 14px;
-  background: var(--ink);
-  color: var(--background);
-  font-size: 12px;
-  font-weight: 500;
-  border-radius: 999px;
-  white-space: nowrap;
-  max-width: 32px;
-  overflow: hidden;
-  opacity: 0;
-  pointer-events: none;
-  transition: max-width 260ms ease, opacity 200ms ease;
-  box-shadow: 0 6px 14px -8px rgba(0,0,0,0.3);
-}
-.ot-risk-rail-item:hover .ot-risk-rail-label,
-.ot-risk-rail-item:focus-within .ot-risk-rail-label {
-  max-width: 180px;
-  opacity: 1;
-}
-
-/* Mobile: collapse rail into a bottom strip */
-@media (max-width: 760px) {
-  .ot-risk-rail {
-    top: auto;
-    bottom: 8px;
-    right: 8px;
-    left: 8px;
-    transform: none;
-  }
-  .ot-risk-rail-list {
-    display: flex;
-    flex-direction: row;
-    justify-content: center;
-    width: auto;
-    gap: 6px;
-    padding: 6px 10px;
-    border-radius: 999px;
-  }
-  .ot-risk-rail-item { grid-template-columns: 18px 1fr; padding: 4px 8px; }
-  .ot-risk-rail-icon { width: 18px; height: 18px; font-size: 11px; }
-  .ot-risk-rail-label { font-size: 11px; }
-}
-@media (max-width: 380px) {
-  .ot-risk-rail-label { display: none; }
-  .ot-risk-rail-item { grid-template-columns: 18px; }
 }
 
 /* ───────────────────────── P6.1 StickyAddressBar ───────────────────────── */

@@ -1,19 +1,33 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { buildTickerItems, TOWNSHIP_STATUS_COUNTS } from "@/lib/townships";
+import { buildTickerItems, TOWNSHIPS, TOWNSHIP_STATUS_COUNTS } from "@/lib/townships";
 
-// Featured townships shown in the footer. These point at the canonical
-// `/township/[slug]` detail route. List below tracks the South-district 2026
-// triennial cycle (the cohort currently open or opening soon). When the cycle
-// rolls to North/Northwest, refresh this list.
-const FOOTER_TOWNSHIPS = [
-  { slug: "bloom", name: "Bloom" },
-  { slug: "bremen", name: "Bremen" },
-  { slug: "calumet", name: "Calumet" },
-  { slug: "rich", name: "Rich" },
-  { slug: "thornton", name: "Thornton" },
-  { slug: "worth", name: "Worth" },
+const FOOTER_TOWNSHIP_GROUPS = [
+  {
+    label: "South & West",
+    cycle: "2026 cycle",
+    count: TOWNSHIPS.filter((t) => t.district === "south-west-suburbs").length,
+    examples: TOWNSHIPS.filter((t) => t.district === "south-west-suburbs" && t.status === "open")
+      .slice(0, 4)
+      .map((t) => ({ slug: t.slug, name: t.name })),
+  },
+  {
+    label: "North Suburbs",
+    cycle: "2027 cycle",
+    count: TOWNSHIPS.filter((t) => t.district === "north-suburbs").length,
+    examples: TOWNSHIPS.filter((t) => t.district === "north-suburbs")
+      .slice(0, 3)
+      .map((t) => ({ slug: t.slug, name: t.name })),
+  },
+  {
+    label: "City of Chicago",
+    cycle: "2028 cycle",
+    count: TOWNSHIPS.filter((t) => t.district === "chicago").length,
+    examples: TOWNSHIPS.filter((t) => t.district === "chicago")
+      .slice(0, 3)
+      .map((t) => ({ slug: t.slug, name: t.name })),
+  },
 ];
 
 export function SiteHeader({
@@ -85,20 +99,26 @@ export function SiteFooter() {
             </ul>
           </div>
 
-          <div className="ot-footer-col">
+          <div className="ot-footer-col ot-footer-col-townships">
             <div className="ot-footer-col-head">Townships</div>
-            <ul className="ot-footer-links">
-              {FOOTER_TOWNSHIPS.map((t) => (
-                <li key={t.slug}>
-                  <Link href={`/township/${t.slug}`}>{t.name}</Link>
-                </li>
+            <div className="ot-footer-township-groups">
+              {FOOTER_TOWNSHIP_GROUPS.map((group) => (
+                <div key={group.label} className="ot-footer-township-group">
+                  <Link href="/townships" className="ot-footer-township-group-head">
+                    {group.label}
+                    <span>{group.count} · {group.cycle}</span>
+                  </Link>
+                  <div className="ot-footer-township-examples">
+                    {group.examples.map((t) => (
+                      <Link key={t.slug} href={`/township/${t.slug}`}>{t.name}</Link>
+                    ))}
+                  </div>
+                </div>
               ))}
-              <li>
-                <Link href="/townships" className="ot-footer-link-all">
-                  See all 38 →
-                </Link>
-              </li>
-            </ul>
+              <Link href="/townships" className="ot-footer-link-all">
+                See all 38 townships →
+              </Link>
+            </div>
           </div>
 
           <div className="ot-footer-col ot-footer-col-legal">
@@ -162,50 +182,6 @@ export function LiveTicker() {
         </span>
       </div>
     </div>
-  );
-}
-
-/**
- * Risk-reversal rail. Locked ON. Icon-only at rest; full label only on
- * hover via `:hover` styling in ot-design.css (the .ot-risk-rail-label
- * stays visible-on-hover by the design's stylesheet — we don't need
- * special handling here).
- */
-const RISK_ITEMS = [
-  {
-    id: "money",
-    icon: "$",
-    label: "Money-back",
-    full: "100% money-back on procedural denial.",
-  },
-  {
-    id: "signup",
-    icon: "⌗",
-    label: "No signup",
-    full: "Run the check — no account required.",
-  },
-  {
-    id: "card",
-    icon: "○",
-    label: "No credit card",
-    full: "No card needed to see your overpayment.",
-  },
-];
-
-export function RiskReversalRail() {
-  return (
-    <aside className="ot-risk-rail ot-risk-rail-collapsed" aria-label="Buyer protections">
-      <ul className="ot-risk-rail-list">
-        {RISK_ITEMS.map((it) => (
-          <li key={it.id} className="ot-risk-rail-item" title={it.full}>
-            <span className="ot-risk-rail-icon" aria-hidden="true">
-              {it.icon}
-            </span>
-            <span className="ot-risk-rail-label">{it.label}</span>
-          </li>
-        ))}
-      </ul>
-    </aside>
   );
 }
 
