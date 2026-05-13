@@ -2,7 +2,6 @@
 import { useCallback, useState } from "react";
 import {
   RiskReversalBadge,
-  RiskReversalRail,
   StatusChip,
   StickyAddressBar,
   LiveTicker,
@@ -939,18 +938,170 @@ function FaqSection() {
   );
 }
 
+/**
+ * Compact above-the-fold preview of the assessment-check report a user
+ * receives after running the free check. Replaces the earlier right-edge
+ * icon stack (RiskReversalRail) with a clearly-labeled sample card so the
+ * product output is visible without scrolling. Numbers are illustrative
+ * and the "Sample" badge is always rendered — there is no live data path
+ * into this card.
+ */
+function HeroPreviewCard() {
+  const Row = ({
+    label,
+    value,
+    emph,
+  }: {
+    label: string;
+    value: string;
+    emph?: boolean;
+  }) => (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        padding: "6px 0",
+        borderTop: "1px dashed var(--border)",
+      }}
+    >
+      <span style={{ color: "var(--muted-foreground)" }}>{label}</span>
+      <span
+        style={{
+          fontWeight: emph ? 700 : 500,
+          color: emph ? "oklch(0.42 0.12 150)" : "var(--foreground)",
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+
+  return (
+    <aside
+      className="ot-hero-preview"
+      aria-label="Sample of the assessment-check report you receive"
+      style={{
+        marginTop: 22,
+        padding: 18,
+        background: "var(--background)",
+        border: "1px solid var(--border)",
+        borderRadius: 14,
+        boxShadow: "0 12px 30px -18px rgba(0,0,0,0.16)",
+        maxWidth: 380,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 10,
+        }}
+      >
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: 0.7,
+            color: "var(--muted-foreground)",
+          }}
+        >
+          What your check returns
+        </span>
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: 0.8,
+            background:
+              "color-mix(in oklab, var(--primary) 14%, var(--background))",
+            color: "oklch(0.42 0.12 150)",
+            border:
+              "1px solid color-mix(in oklab, var(--primary) 30%, var(--border))",
+            padding: "2px 8px",
+            borderRadius: 999,
+          }}
+        >
+          Sample
+        </span>
+      </div>
+
+      <div
+        style={{
+          fontSize: 13,
+          color: "var(--muted-foreground)",
+          marginBottom: 4,
+        }}
+      >
+        1234 N Sample St · Jefferson Township
+      </div>
+      <div
+        style={{
+          fontSize: 11,
+          color: "var(--muted-foreground)",
+          marginBottom: 2,
+        }}
+      >
+        Estimated annual overpayment
+      </div>
+      <div
+        style={{
+          fontSize: 28,
+          fontWeight: 800,
+          color: "var(--foreground)",
+          lineHeight: 1.1,
+        }}
+      >
+        $1,420
+        <span
+          style={{
+            fontSize: 14,
+            fontWeight: 500,
+            color: "var(--muted-foreground)",
+          }}
+        >
+          /yr
+        </span>
+      </div>
+
+      <div style={{ marginTop: 14, display: "grid", gap: 0 }}>
+        <Row label="Your assessed value" value="$42,500" />
+        <Row label="Avg of 3 nearby comps" value="$35,100" />
+        <Row label="Assessment gap" value="+$7,400 (21%)" emph />
+      </div>
+
+      <div
+        style={{
+          marginTop: 14,
+          fontSize: 11,
+          color: "var(--muted-foreground)",
+          lineHeight: 1.45,
+        }}
+      >
+        Illustrative figures. Your real check runs against Cook County
+        public records — no signup, no card. We do not guarantee a
+        reduction.
+      </div>
+    </aside>
+  );
+}
+
 export default function HomePage() {
   const [result, setResult] = useState<Result | null>(null);
   return (
     <>
       <LiveTicker />
       <StickyAddressBar />
-      <RiskReversalRail />
 
       <section id="hero-check" className="ot-hero ot-hero-split">
         <div className="ot-hero-inner ot-hero-inner-split">
           <div className="ot-hero-l">
             <HeroNarrative />
+            <HeroPreviewCard />
           </div>
           <div className="ot-hero-r">
             <HeroCheckCard result={result} onResult={setResult} />

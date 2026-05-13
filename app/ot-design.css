@@ -5056,3 +5056,51 @@ html, body { overflow-x: clip; max-width: 100%; }
   .ot-checkout-form-row { grid-template-columns: 1fr; }
   .ot-checkout-plan { padding: 14px 16px; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────
+   Pass 3 — sub-400px responsive polish.
+   Targeted at narrow phones (iPhone 13 mini and similar) where the
+   existing 720 / 480 breakpoints leave headlines, the deadlines
+   summary, and the township countdown a touch oversized or crowded
+   against the page edge. No markup changes; no behavior changes.
+   ────────────────────────────────────────────────────────────────────── */
+@media (max-width: 420px) {
+  /* ── Home hero + page-level chrome ── */
+  /* `.ot-h1` already steps to 40px @ <=480; tighten once more here so
+     "over-assessing" doesn't pack against the right edge at 390/400px. */
+  .ot-h1 { font-size: 32px; line-height: 1.08; letter-spacing: -0.022em; }
+  .ot-hero-sub { font-size: 15px; margin-bottom: 24px; }
+
+  /* Free-check result preview — $1,240/yr is 38px @ <=480; bigger
+     hypothetical values (5 digits) can fight the 22px card padding. */
+  .ot-result-savings-amount { font-size: 32px; }
+
+  /* Sample-doc savings + stamp — keep them inside the 360px column. */
+  .ot-sample-savings-val { font-size: 36px; }
+  .ot-sample-stamp { transform: rotate(7deg) scale(0.82); transform-origin: top right; }
+
+  /* Trust strip — drop the orphaned "·" separator when wrapping. */
+  .ot-trust-sep { display: none; }
+
+  /* ── Deadlines page header ── */
+  /* Match the home H1 step-down; `.ot-page-h1` still floors at 40px. */
+  .ot-page-h1 { font-size: 32px; line-height: 1.08; }
+
+  /* Status summary — the 1px×36px dividers become visual orphans once
+     the three counters wrap. Drop them and tighten the gap. */
+  .ot-status-summary-divider { display: none; }
+  .ot-status-summary { gap: 12px 22px; }
+
+  /* ── Township page — countdown ring ── */
+  /* `.ot-tp-countdown-num` is 72px serif; on a ≤360px hero card a
+     three-digit value plus the surrounding padding can crowd the
+     "days until close" label. Step the number + label down together. */
+  .ot-tp-countdown-num,
+  .ot-tp-countdown-cycle { font-size: 56px; letter-spacing: -0.025em; }
+  .ot-tp-countdown { padding-bottom: 14px; }
+
+  /* ── Dark bottom CTA (homepage + deadlines) ── */
+  /* `padding: 0 32px` on `.ot-bottom-cta-inner` eats 64px at 400px;
+     reclaim 24px of breathing room without losing centering. */
+  .ot-bottom-cta-inner { padding: 0 20px; }
+}

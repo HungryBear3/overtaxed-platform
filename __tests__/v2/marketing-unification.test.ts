@@ -203,6 +203,29 @@ describe("OT v2 marketing — HOA / condo capture", () => {
   });
 });
 
+describe("OT v2 marketing — home hero preview card", () => {
+  const src = read("components/ot-design/HomePage.tsx");
+
+  it("replaces the right-edge icon stack with a HeroPreviewCard", () => {
+    // The floating RiskReversalRail must no longer be mounted from the
+    // homepage (it is still exported from SiteChrome but unused on /).
+    expect(src).not.toMatch(/<RiskReversalRail\s*\/>/);
+    expect(src).toMatch(/function HeroPreviewCard\b/);
+    expect(src).toMatch(/<HeroPreviewCard\s*\/>/);
+  });
+
+  it("preview card is always labeled as Sample and includes illustrative caveat", () => {
+    expect(src).toMatch(/>\s*Sample\s*</);
+    expect(src).toMatch(/Illustrative figures\./);
+    expect(src).toMatch(/do not guarantee/i);
+  });
+
+  it("preview card lives in the hero left column above the fold", () => {
+    // Ensures the new card is mounted inside ot-hero-l alongside HeroNarrative.
+    expect(src).toMatch(/<HeroNarrative\s*\/>\s*<HeroPreviewCard\s*\/>/);
+  });
+});
+
 describe("OT v2 marketing — SiteChrome footer references currently-open townships", () => {
   it("featured footer townships point at the singular /township/[slug] route", () => {
     const src = read("components/ot-design/SiteChrome.tsx");
