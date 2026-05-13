@@ -1089,6 +1089,23 @@ body.ot-stars-on .ot-logo-mark::before {
   margin-bottom: 18px;
   border: 1px solid oklch(0.748 0.175 75 / 0.25);
 }
+.ot-result-savings--sample {
+  background: linear-gradient(180deg, oklch(0.97 0.04 75 / 0.72), oklch(0.99 0.02 75 / 0.62));
+  border-style: dashed;
+  opacity: 0.82;
+}
+.ot-result-sample-strip {
+  margin: -2px 0 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: repeating-linear-gradient(135deg, oklch(0.96 0.04 75), oklch(0.96 0.04 75) 8px, oklch(0.98 0.025 75) 8px, oklch(0.98 0.025 75) 16px);
+  color: oklch(0.42 0.12 55);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-align: center;
+}
 .ot-result-savings-label {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1125,12 +1142,19 @@ body.ot-stars-on .ot-logo-mark::before {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
+.ot-result-table--sample .ot-result-row-val {
+  color: oklch(0.42 0.07 65);
+  opacity: 0.82;
+}
 .ot-result-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
   font-size: 13.5px;
 }
+.ot-result-row-key { min-width: 0; }
+.ot-result-row-val { text-align: right; }
 .ot-result-row-key { color: var(--ink-soft); }
 .ot-result-row-val {
   font-weight: 600;
@@ -1187,6 +1211,26 @@ body.ot-stars-on .ot-logo-mark::before {
 }
 .ot-result-altline a { color: var(--primary-strong); text-decoration: none; font-weight: 500; }
 .ot-result-altline a:hover { text-decoration: underline; }
+
+.ot-result-tier-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.ot-result-tier-cta {
+  min-width: 0;
+  padding-left: 10px;
+  padding-right: 10px;
+  text-align: center;
+  white-space: normal;
+  line-height: 1.15;
+}
+.ot-result-tier-cta-secondary {
+  background: oklch(0.23 0.04 235);
+}
+@media (max-width: 520px) {
+  .ot-result-tier-actions { grid-template-columns: 1fr; }
+}
 
 /* ───────────────────────── Specificity Bar ───────────────────────── */
 .ot-specbar {
@@ -1455,7 +1499,7 @@ body.ot-stars-on .ot-logo-mark::before {
 /* ───────────────────────── Township Deadline (3 tiers) ───────────────────────── */
 .ot-deadline {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 18px;
   padding: 14px 18px;
@@ -1465,33 +1509,22 @@ body.ot-stars-on .ot-logo-mark::before {
   border: 1px solid;
   line-height: 1.4;
 }
-.ot-deadline-l { display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; }
+.ot-deadline-l { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.ot-deadline-l strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ot-deadline-c {
-  font-size: 14px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  column-gap: 10px;
-  row-gap: 4px;
+  justify-self: end;
+  display: grid;
+  grid-template-columns: auto;
+  text-align: right;
+  line-height: 1.15;
+  white-space: nowrap;
 }
-.ot-deadline-c strong { font-weight: 700; font-size: 15px; }
-.ot-deadline-r { font-family: var(--font-mono); font-size: 12px; opacity: 0.78; white-space: nowrap; }
+.ot-deadline-c strong { font-weight: 800; font-size: 20px; letter-spacing: -0.02em; }
+.ot-deadline-c span { font-size: 12px; opacity: 0.82; }
+.ot-deadline-r { grid-column: 1; margin-left: 19px; font-family: var(--font-mono); font-size: 12px; opacity: 0.78; min-width: 0; overflow-wrap: anywhere; }
 .ot-deadline-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
-.ot-deadline-nudge {
-  display: inline-flex;
-  align-items: center;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  font-weight: 600;
-  opacity: 0.85;
-}
-.ot-deadline-nudge::before {
-  content: "·";
-  margin-right: 8px;
-  opacity: 0.5;
-}
+.ot-deadline-nudge { display: none; }
+.ot-deadline-nudge::before { display: none; }
 
 /* Tier: open with >30 days — neutral / informational */
 .ot-deadline-info {
@@ -1535,9 +1568,9 @@ body.ot-stars-on .ot-logo-mark::before {
 }
 
 @media (max-width: 720px) {
-  .ot-deadline { grid-template-columns: 1fr; gap: 6px; padding: 12px 14px; }
-  .ot-deadline-r { order: 3; }
-  .ot-deadline-c { flex-direction: column; align-items: flex-start; row-gap: 4px; }
+  .ot-deadline { grid-template-columns: 1fr; gap: 8px; padding: 12px 14px; }
+  .ot-deadline-c { justify-self: start; text-align: left; }
+  .ot-deadline-r { margin-left: 19px; }
   .ot-deadline-nudge::before { display: none; }
 }
 

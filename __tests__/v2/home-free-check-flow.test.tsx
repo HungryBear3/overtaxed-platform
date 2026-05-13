@@ -43,11 +43,11 @@ describe("OT home free-check flow", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }));
 
-    await waitFor(() => expect(screen.getByText(/Your free check · Sample result/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Sample data — not your submitted address · Sample result/i)).toBeTruthy());
     expect(screen.getAllByText(/12\.1%/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Lyons Township/).length).toBeGreaterThan(0);
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/check",
+      "/api/free-check",
       expect.objectContaining({ method: "POST" }),
     );
   });
@@ -62,7 +62,9 @@ describe("OT home free-check flow", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }));
 
-    await waitFor(() => expect(screen.getByText(/Your free check · Sample result/i)).toBeTruthy());
-    expect(screen.getByText(/Review filing options/)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(/Sample data — not your submitted address · Sample result/i)).toBeTruthy());
+    expect(screen.getByText(/DIY \$69/)).toBeTruthy();
+    expect(screen.getByText(/Done-For-You \$97/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: /^Contingency$/ })).toBeTruthy();
   });
 });

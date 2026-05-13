@@ -79,7 +79,7 @@ const PREVIEW_FREE_CHECK_SAMPLE = {
     },
   ],
   avgComparableAssessedValue: 35100,
-  equityRatio: 10.0,
+  equityRatio: 12.1,
   targetEquityRatio: 10.0,
   avgCompEquityRatio: 10.0,
   assessmentGap: 7400,

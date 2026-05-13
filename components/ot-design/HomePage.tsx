@@ -12,7 +12,7 @@ const SAMPLE_RESULT = {
   address: "Sample result — not your submitted address",
   township: "Lyons",
   windowStatus: "open" as const,
-  windowCloses: "Lyons Township appeal window open through Jun 9, 2026",
+  windowCloses: "Window closes Jun 9, 2026",
   windowDaysRemaining: 27,
   yourAssessed: 42500,
   compsAvg: 35100,
@@ -22,26 +22,89 @@ const SAMPLE_RESULT = {
   comps: 3,
 };
 
-type Result = typeof SAMPLE_RESULT & { preview?: boolean };
-type RawCheckResult = Partial<Result> & { equityRatio?: number };
+type Result = Omit<typeof SAMPLE_RESULT, "windowStatus"> & {
+  windowStatus: "open" | "closed" | "unknown";
+  preview?: boolean;
+  submittedInput?: string;
+  source?: string;
+};
+type RawCheckResult = Partial<Result> & {
+  equityRatio?: number | null;
+  subject?: {
+    address?: string | null;
+    city?: string | null;
+    zipCode?: string | null;
+    township?: string | null;
+    assessedTotalValue?: number | null;
+    marketValue?: number | null;
+  };
+  avgComparableAssessedValue?: number | null;
+  assessmentGap?: number | null;
+  potentialOverpaymentPerYear?: number | null;
+  potentialOverpayment3Year?: number | null;
+  compCount?: number | null;
+  appealWindowStatus?: {
+    township?: string | null;
+    status?: "open" | "closed" | "unknown" | null;
+    closeDate?: string | null;
+  } | null;
+  source?: string | null;
+  mode?: string | null;
+};
 
 function asFiniteNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-function normalizeCheckResult(raw?: RawCheckResult | null, preview = true): Result {
+function formatIsoDateLabel(iso?: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(`${iso}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function daysUntilIso(iso?: string | null): number {
+  if (!iso) return SAMPLE_RESULT.windowDaysRemaining;
+  const close = new Date(`${iso}T23:59:59`);
+  if (Number.isNaN(close.getTime())) return SAMPLE_RESULT.windowDaysRemaining;
+  const now = new Date();
+  return Math.max(0, Math.ceil((close.getTime() - now.getTime()) / 86_400_000));
+}
+
+function normalizeCheckResult(
+  raw?: RawCheckResult | null,
+  preview = true,
+  submittedInput = "",
+): Result {
   const r = raw ?? {};
+  const subject = r.subject;
+  const aw = r.appealWindowStatus;
+  const isFreeCheckShape = Boolean(subject);
+  const township = aw?.township ?? subject?.township ?? r.township ?? SAMPLE_RESULT.township;
+  const closeLabel = formatIsoDateLabel(aw?.closeDate);
+  const status = aw?.status === "closed" || aw?.status === "unknown" ? aw.status : "open";
+
   return {
     ...SAMPLE_RESULT,
-    ...r,
-    assessmentLevel: asFiniteNumber(r.assessmentLevel ?? r.equityRatio, SAMPLE_RESULT.assessmentLevel),
-    yourAssessed: asFiniteNumber(r.yourAssessed, SAMPLE_RESULT.yourAssessed),
-    compsAvg: asFiniteNumber(r.compsAvg, SAMPLE_RESULT.compsAvg),
-    overpayPerYear: asFiniteNumber(r.overpayPerYear, SAMPLE_RESULT.overpayPerYear),
-    overpay3Year: asFiniteNumber(r.overpay3Year, SAMPLE_RESULT.overpay3Year),
-    windowDaysRemaining: asFiniteNumber(r.windowDaysRemaining, SAMPLE_RESULT.windowDaysRemaining),
-    comps: asFiniteNumber(r.comps, SAMPLE_RESULT.comps),
+    ...(!isFreeCheckShape ? r : {}),
+    address: subject
+      ? [subject.address, subject.city, subject.zipCode].filter(Boolean).join(", ")
+      : (r.address ?? SAMPLE_RESULT.address),
+    township,
+    windowStatus: status,
+    windowCloses: closeLabel
+      ? `${township} window closes ${closeLabel}`
+      : (r.windowCloses ?? SAMPLE_RESULT.windowCloses),
+    windowDaysRemaining: asFiniteNumber(r.windowDaysRemaining, daysUntilIso(aw?.closeDate)),
+    yourAssessed: asFiniteNumber(subject?.assessedTotalValue ?? r.yourAssessed, SAMPLE_RESULT.yourAssessed),
+    compsAvg: asFiniteNumber(r.avgComparableAssessedValue ?? r.compsAvg, SAMPLE_RESULT.compsAvg),
+    assessmentLevel: asFiniteNumber(r.equityRatio ?? r.assessmentLevel, SAMPLE_RESULT.assessmentLevel),
+    overpayPerYear: asFiniteNumber(r.potentialOverpaymentPerYear ?? r.overpayPerYear, SAMPLE_RESULT.overpayPerYear),
+    overpay3Year: asFiniteNumber(r.potentialOverpayment3Year ?? r.overpay3Year, SAMPLE_RESULT.overpay3Year),
+    comps: asFiniteNumber(r.compCount ?? r.comps, SAMPLE_RESULT.comps),
     preview,
+    submittedInput: submittedInput.trim(),
+    source: typeof r.source === "string" ? r.source : undefined,
   };
 }
 
@@ -117,7 +180,7 @@ function TownshipDeadline({
   township: string;
   daysRemaining: number;
   closeDate: string;
-  status?: "open" | "closed";
+  status?: "open" | "closed" | "unknown";
   sticky?: boolean;
 }) {
   let tier: "info" | "urgent" | "soon" = "info";
@@ -137,17 +200,11 @@ function TownshipDeadline({
       </div>
       <div className="ot-deadline-c">
         {status === "closed" ? (
-          <>Appeal window status: <strong>closed</strong></>
+          <><strong>Closed</strong><span>{closeDate}</span></>
+        ) : status === "unknown" ? (
+          <><strong>Check dates</strong><span>{closeDate}</span></>
         ) : (
-          <>Appeal window closes in <strong>{daysRemaining} days</strong></>
-        )}
-        {tier === "soon" && (
-          <span className="ot-deadline-nudge">Don&apos;t miss this window</span>
-        )}
-        {tier === "urgent" && (
-          <span className="ot-deadline-nudge">
-            Closes this week — file now
-          </span>
+          <><strong>{daysRemaining} days</strong><span>until close</span></>
         )}
       </div>
       <div className="ot-deadline-r">{closeDate}</div>
@@ -176,17 +233,19 @@ function HeroCheckCard({
       e.preventDefault();
       setLoading(true);
       try {
-        const res = await fetch("/api/check", {
+        const submittedInput = mode === "pin" ? pin : address;
+        const res = await fetch("/api/free-check", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ address, pin, mode }),
         });
         const data = await res.json().catch(() => null);
         setLoading(false);
-        onResult(normalizeCheckResult(data?.result, Boolean(data?.preview ?? true)));
+        const isPreview = Boolean(data?.preview || data?.mode === "preview_noop" || data?.source === "preview-noop");
+        onResult(normalizeCheckResult(data?.result ?? data, isPreview, submittedInput));
       } catch {
         setLoading(false);
-        onResult(normalizeCheckResult(null, true));
+        onResult(normalizeCheckResult(null, true, mode === "pin" ? pin : address));
       }
     },
     [address, pin, mode, onResult],
@@ -309,7 +368,7 @@ function HeroCheckResult({
     <div className="ot-check-card ot-check-result">
       <div className="ot-result-head">
         <div className="ot-result-eyebrow">
-          Your free check · {result.address}
+          {result.preview ? "Sample data — not your submitted address" : "Your free check"} · {result.address}
         </div>
         <button type="button" onClick={onReset} className="ot-result-reset">
           Check another →
@@ -317,11 +376,11 @@ function HeroCheckResult({
       </div>
       {result.preview && (
         <div className="ot-result-altline" role="note">
-          Preview sample — this is not a Cook County lookup for your submitted address.
-          Live public-record results will be enabled before production launch.
+          Preview sample — this is not a Cook County lookup{result.submittedInput ? ` for ${result.submittedInput}` : ""}.
+          Live public-record results run only on the production domain.
         </div>
       )}
-      <div className="ot-result-savings">
+      <div className={`ot-result-savings${result.preview ? " ot-result-savings--sample" : ""}`}>
         <div className="ot-result-savings-label">Estimated annual overpayment</div>
         <div className="ot-result-savings-amount">
           {fmtUSD(result.overpayPerYear)}
@@ -331,7 +390,8 @@ function HeroCheckResult({
           ≈ {fmtUSD(result.overpay3Year)} over the 3-year cycle
         </div>
       </div>
-      <div className="ot-result-table">
+      {result.preview && <div className="ot-result-sample-strip">SAMPLE DATA</div>}
+      <div className={`ot-result-table${result.preview ? " ot-result-table--sample" : ""}`}>
         <div className="ot-result-row">
           <span className="ot-result-row-key">Your assessed value</span>
           <span className="ot-result-row-val">{fmtUSD(result.yourAssessed)}</span>
@@ -351,7 +411,6 @@ function HeroCheckResult({
           <span className="ot-result-row-key">Assessment level</span>
           <span className="ot-result-row-val">
             {result.assessmentLevel.toFixed(1)}%
-            <span className="ot-result-tag ot-result-tag-warn">sample only</span>
           </span>
         </div>
       </div>
@@ -363,12 +422,13 @@ function HeroCheckResult({
         status={result.windowStatus}
       />
 
-      <a href="/checkout" className="ot-cta ot-cta-block">
-        Review filing options — DIY $69, Done-For-You $97, or Contingency <span className="ot-cta-arrow">→</span>
-      </a>
+      <div className="ot-result-tier-actions" aria-label="Filing options">
+        <a href="/checkout?plan=diy" className="ot-cta ot-cta-block ot-result-tier-cta">DIY $69</a>
+        <a href="/checkout?plan=done-for-you" className="ot-cta ot-cta-block ot-result-tier-cta">Done-For-You $97</a>
+        <a href="/appeal-contingency" className="ot-cta ot-cta-block ot-result-tier-cta ot-result-tier-cta-secondary">Contingency</a>
+      </div>
       <div className="ot-result-altline">
-        Flat-fee help or 22% contingency on granted first-year savings · No account to start
-        · No credit card to check
+        Pick a filing option if the check shows a real opportunity · no account required to review
       </div>
     </div>
   );
@@ -1154,8 +1214,8 @@ export default function HomePage() {
 
   useEffect(() => {
     function handleStickyResult(event: Event) {
-      const detail = (event as CustomEvent<{ result?: RawCheckResult; preview?: boolean }>).detail;
-      setResult(normalizeCheckResult(detail?.result, Boolean(detail?.preview ?? true)));
+      const detail = (event as CustomEvent<{ result?: RawCheckResult; preview?: boolean; submittedInput?: string }>).detail;
+      setResult(normalizeCheckResult(detail?.result, Boolean(detail?.preview ?? true), detail?.submittedInput ?? ""));
     }
     window.addEventListener(FREE_CHECK_RESULT_EVENT, handleStickyResult);
     return () => window.removeEventListener(FREE_CHECK_RESULT_EVENT, handleStickyResult);

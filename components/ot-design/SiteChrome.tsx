@@ -294,18 +294,23 @@ export function StickyAddressBar() {
     if (loading || !addr.trim()) return;
     setLoading(true);
     try {
-      const res = await fetch("/api/check", {
+      const submittedInput = addr.trim();
+      const res = await fetch("/api/free-check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ address: addr, mode: "address" }),
       });
       const data = await res.json().catch(() => null);
       window.dispatchEvent(new CustomEvent("ot:free-check-result", {
-        detail: { result: data?.result, preview: Boolean(data?.preview ?? true) },
+        detail: {
+          result: data?.result ?? data,
+          preview: Boolean(data?.preview || data?.mode === "preview_noop" || data?.source === "preview-noop"),
+          submittedInput,
+        },
       }));
     } catch {
       window.dispatchEvent(new CustomEvent("ot:free-check-result", {
-        detail: { preview: true },
+        detail: { preview: true, submittedInput: addr.trim() },
       }));
     }
     // Scroll to hero-check after surfacing the same preview result as the main form.
