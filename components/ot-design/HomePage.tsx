@@ -99,8 +99,12 @@ function normalizeCheckResult(
     yourAssessed: asFiniteNumber(subject?.assessedTotalValue ?? r.yourAssessed, SAMPLE_RESULT.yourAssessed),
     compsAvg: asFiniteNumber(r.avgComparableAssessedValue ?? r.compsAvg, SAMPLE_RESULT.compsAvg),
     assessmentLevel: asFiniteNumber(r.equityRatio ?? r.assessmentLevel, SAMPLE_RESULT.assessmentLevel),
-    overpayPerYear: asFiniteNumber(r.potentialOverpaymentPerYear ?? r.overpayPerYear, SAMPLE_RESULT.overpayPerYear),
-    overpay3Year: asFiniteNumber(r.potentialOverpayment3Year ?? r.overpay3Year, SAMPLE_RESULT.overpay3Year),
+    overpayPerYear: isFreeCheckShape
+      ? asFiniteNumber(r.potentialOverpaymentPerYear, 0)
+      : asFiniteNumber(r.potentialOverpaymentPerYear ?? r.overpayPerYear, SAMPLE_RESULT.overpayPerYear),
+    overpay3Year: isFreeCheckShape
+      ? asFiniteNumber(r.potentialOverpayment3Year, 0)
+      : asFiniteNumber(r.potentialOverpayment3Year ?? r.overpay3Year, SAMPLE_RESULT.overpay3Year),
     comps: asFiniteNumber(r.compCount ?? r.comps, SAMPLE_RESULT.comps),
     preview,
     submittedInput: submittedInput.trim(),
@@ -317,7 +321,7 @@ function HeroCheckCard({
         <span className="ot-trust-sep" aria-hidden="true">
           ·
         </span>
-        <span>No real Cook County lookup in this preview</span>
+        <span>Real Cook County public-record lookup · no signup</span>
       </div>
 
       <button
@@ -364,6 +368,8 @@ function HeroCheckResult({
 }) {
   const gap = result.yourAssessed - result.compsAvg;
   const gapPct = result.compsAvg > 0 ? ((gap / result.compsAvg) * 100).toFixed(1) : "0.0";
+  const gapDisplay = `${gap >= 0 ? "+" : ""}${fmtUSD(gap)}`;
+  const resultOpportunity = result.overpayPerYear > 0;
   return (
     <div className="ot-check-card ot-check-result">
       <div className="ot-result-head">
@@ -381,7 +387,9 @@ function HeroCheckResult({
         </div>
       )}
       <div className={`ot-result-savings${result.preview ? " ot-result-savings--sample" : ""}`}>
-        <div className="ot-result-savings-label">Estimated annual overpayment</div>
+        <div className="ot-result-savings-label">
+          {resultOpportunity ? "Estimated annual overpayment" : "Estimated annual overpayment found"}
+        </div>
         <div className="ot-result-savings-amount">
           {fmtUSD(result.overpayPerYear)}
           <span>/yr</span>
@@ -403,7 +411,7 @@ function HeroCheckResult({
         <div className="ot-result-row ot-result-row-emph">
           <span className="ot-result-row-key">Assessment gap</span>
           <span className="ot-result-row-val">
-            +{fmtUSD(gap)}{" "}
+            {gapDisplay}{" "}
             <span className="ot-result-pct">({gapPct}%)</span>
           </span>
         </div>

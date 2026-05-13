@@ -67,4 +67,46 @@ describe("OT home free-check flow", () => {
     expect(screen.getByText(/Done-For-You \$97/)).toBeTruthy();
     expect(screen.getByRole("link", { name: /^Contingency$/ })).toBeTruthy();
   });
+
+  it("renders real fair-assessment results without sample copy or double signs", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      json: async () => ({
+        success: true,
+        source: "Cook County Open Data - Parcel Sales",
+        subject: {
+          pin: "17-09-434-020-8064",
+          address: "100 W RANDOLPH ST",
+          city: "CHICAGO",
+          zipCode: "60601",
+          township: "South Chicago",
+          assessedTotalValue: 22538,
+        },
+        compCount: 3,
+        avgComparableAssessedValue: 36396,
+        equityRatio: 10,
+        potentialOverpaymentPerYear: null,
+        potentialOverpayment3Year: null,
+        appealWindowStatus: {
+          township: "South Chicago",
+          status: "closed",
+          closeDate: "2026-04-01",
+        },
+      }),
+    });
+    Object.defineProperty(global, "fetch", { value: fetchMock, writable: true });
+
+    render(<HomePage />);
+
+    fireEvent.change(screen.getByPlaceholderText("123 Main St, Chicago, IL 60601"), {
+      target: { value: "100 W Randolph St, Chicago IL 60601" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }));
+
+    await waitFor(() => expect(screen.getByText(/Your free check · 100 W RANDOLPH ST/i)).toBeTruthy());
+    expect(screen.queryByText(/Sample data — not your submitted address/i)).toBeNull();
+    expect(screen.getByText(/Estimated annual overpayment found/i)).toBeTruthy();
+    expect(screen.getByText("-$13,858")).toBeTruthy();
+    expect(screen.queryByText(/\+-\$/)).toBeNull();
+  });
+
 });
