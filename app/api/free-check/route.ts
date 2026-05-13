@@ -16,7 +16,7 @@ import {
 } from "@/lib/cook-county"
 import type { PropertyData, SalesRecord, EquityRecord } from "@/lib/cook-county"
 import { rateLimit, getClientIdentifier } from "@/lib/rate-limit"
-import { BOR_APPEAL_WINDOWS } from "@/lib/appeals/bor-appeal-windows"
+import { getFreeCheckAppealWindowStatus } from "@/lib/free-check-appeal-window"
 import { normalizeFreeCheckSearchInput } from "@/lib/free-check-address"
 import {
   hostFromRequest,
@@ -97,30 +97,6 @@ const PREVIEW_FREE_CHECK_SAMPLE = {
   },
   propertyCharacteristics: null,
   source: "preview-noop",
-}
-
-function getAppealWindowStatus(township: string | null): {
-  township: string
-  status: "open" | "closed" | "unknown"
-  openDate: string | null
-  closeDate: string | null
-  filingUrl: string
-  note: string | null
-} {
-  const filingUrl = "https://www.cookcountyassessor.com/online-appeals"
-  if (!township) {
-    return { township: "Unknown", status: "unknown", openDate: null, closeDate: null, filingUrl, note: null }
-  }
-  const key = township.toLowerCase().replace(/\s*township$/i, "").trim()
-  const window = BOR_APPEAL_WINDOWS[key]
-  if (!window) {
-    return { township, status: "unknown", openDate: null, closeDate: null, filingUrl, note: `Check ${filingUrl} for your township's exact appeal dates.` }
-  }
-  const today = new Date()
-  const open = new Date(window.open)
-  const close = new Date(window.close)
-  const status: "open" | "closed" = today >= open && today <= close ? "open" : "closed"
-  return { township, status, openDate: window.open, closeDate: window.close, filingUrl, note: "Dates are approximate — verify at cookcountyassessor.com" }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -298,7 +274,7 @@ export async function POST(req: NextRequest) {
         potentialOverpaymentPerYear: null,
         potentialOverpayment3Year: null,
         appealArgumentText: null,
-        appealWindowStatus: getAppealWindowStatus(propertyData.township),
+        appealWindowStatus: getFreeCheckAppealWindowStatus(propertyData.township),
         propertyCharacteristics,
         noAssessedValue: true,
         message: "We found your property but the Cook County Assessor hasn't published an assessed value for this PIN yet. This can happen with recently transferred properties or during reassessment. Visit cookcountyassessor.com to check your assessment status.",
@@ -439,7 +415,7 @@ export async function POST(req: NextRequest) {
       potentialOverpaymentPerYear: potentialOverpaymentPerYear > 0 ? potentialOverpaymentPerYear : null,
       potentialOverpayment3Year: potentialOverpaymentPerYear > 0 ? potentialOverpaymentPerYear * 3 : null,
       appealArgumentText,
-      appealWindowStatus: getAppealWindowStatus(propertyData.township),
+      appealWindowStatus: getFreeCheckAppealWindowStatus(propertyData.township),
       propertyCharacteristics,
       source: salesRes.source ?? "Cook County Open Data",
     })

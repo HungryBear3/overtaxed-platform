@@ -1534,6 +1534,17 @@ body.ot-stars-on .ot-logo-mark::before {
 }
 .ot-deadline-info .ot-deadline-dot { background: var(--success); }
 
+.ot-deadline-future,
+.ot-deadline-unknown {
+  background: oklch(0.98 0.006 245);
+  border-color: var(--border);
+  color: var(--muted-foreground);
+}
+.ot-deadline-future .ot-deadline-dot,
+.ot-deadline-unknown .ot-deadline-dot {
+  background: var(--border-strong);
+}
+
 /* Tier: <30 days — warm orange, mild urgency */
 .ot-deadline-soon {
   background: oklch(0.97 0.04 75);

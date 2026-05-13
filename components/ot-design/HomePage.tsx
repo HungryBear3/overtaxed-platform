@@ -22,8 +22,11 @@ const SAMPLE_RESULT = {
   comps: 3,
 };
 
+type WindowStatus = "open" | "closed" | "future_cycle" | "unknown";
+
 type Result = Omit<typeof SAMPLE_RESULT, "windowStatus"> & {
-  windowStatus: "open" | "closed" | "unknown";
+  windowStatus: WindowStatus;
+  windowOpens?: string;
   preview?: boolean;
   submittedInput?: string;
   source?: string;
@@ -45,7 +48,8 @@ type RawCheckResult = Partial<Result> & {
   compCount?: number | null;
   appealWindowStatus?: {
     township?: string | null;
-    status?: "open" | "closed" | "unknown" | null;
+    status?: WindowStatus | null;
+    openDate?: string | null;
     closeDate?: string | null;
   } | null;
   source?: string | null;
@@ -82,7 +86,9 @@ function normalizeCheckResult(
   const isFreeCheckShape = Boolean(subject);
   const township = aw?.township ?? subject?.township ?? r.township ?? SAMPLE_RESULT.township;
   const closeLabel = formatIsoDateLabel(aw?.closeDate);
-  const status = aw?.status === "closed" || aw?.status === "unknown" ? aw.status : "open";
+  const openLabel = formatIsoDateLabel(aw?.openDate);
+  const status: WindowStatus =
+    aw?.status === "closed" || aw?.status === "unknown" || aw?.status === "future_cycle" ? aw.status : "open";
 
   return {
     ...SAMPLE_RESULT,
@@ -95,7 +101,8 @@ function normalizeCheckResult(
     windowCloses: closeLabel
       ? `${township} window closes ${closeLabel}`
       : (isFreeCheckShape ? "Exact appeal dates unavailable" : (r.windowCloses ?? SAMPLE_RESULT.windowCloses)),
-    windowDaysRemaining: asFiniteNumber(r.windowDaysRemaining, status === "unknown" ? 0 : daysUntilIso(aw?.closeDate)),
+    windowOpens: openLabel ? `Opens ${openLabel}` : undefined,
+    windowDaysRemaining: asFiniteNumber(r.windowDaysRemaining, status === "unknown" || status === "future_cycle" ? 0 : daysUntilIso(aw?.closeDate)),
     yourAssessed: asFiniteNumber(subject?.assessedTotalValue ?? r.yourAssessed, SAMPLE_RESULT.yourAssessed),
     compsAvg: asFiniteNumber(r.avgComparableAssessedValue ?? r.compsAvg, SAMPLE_RESULT.compsAvg),
     assessmentLevel: asFiniteNumber(r.equityRatio ?? r.assessmentLevel, SAMPLE_RESULT.assessmentLevel),
@@ -178,17 +185,21 @@ function TownshipDeadline({
   township,
   daysRemaining,
   closeDate,
+  openDate,
   status = "open",
   sticky = false,
 }: {
   township: string;
   daysRemaining: number;
   closeDate: string;
-  status?: "open" | "closed" | "unknown";
+  openDate?: string;
+  status?: WindowStatus;
   sticky?: boolean;
 }) {
-  let tier: "info" | "urgent" | "soon" = "info";
-  if (status === "open" && daysRemaining < 7) tier = "urgent";
+  let tier: "info" | "urgent" | "soon" | "future" | "unknown" = "info";
+  if (status === "future_cycle") tier = "future";
+  else if (status === "unknown" || status === "closed") tier = "unknown";
+  else if (status === "open" && daysRemaining < 7) tier = "urgent";
   else if (status === "open" && daysRemaining < 30) tier = "soon";
 
   const stickyClass = sticky && tier === "urgent" ? "is-sticky" : "";
@@ -207,6 +218,8 @@ function TownshipDeadline({
           <><strong>Closed</strong><span>Appeal window closed</span></>
         ) : status === "unknown" ? (
           <><strong>Unknown</strong><span>{closeDate}</span></>
+        ) : status === "future_cycle" ? (
+          <><strong>Future cycle</strong><span>{openDate ?? "Appeal window not open"}</span></>
         ) : (
           <><strong>{daysRemaining} days</strong><span>until close</span></>
         )}
@@ -386,6 +399,7 @@ function HeroCheckResult({
   const gapPct = result.compsAvg > 0 ? ((gap / result.compsAvg) * 100).toFixed(1) : "0.0";
   const gapDisplay = `${gap >= 0 ? "+" : ""}${fmtUSD(gap)}`;
   const resultOpportunity = result.overpayPerYear > 0;
+  const resultWindowOpen = result.windowStatus === "open";
   return (
     <div className="ot-check-card ot-check-result">
       <div className="ot-result-head">
@@ -443,10 +457,11 @@ function HeroCheckResult({
         township={result.township}
         daysRemaining={result.windowDaysRemaining}
         closeDate={result.windowCloses}
+        openDate={result.windowOpens}
         status={result.windowStatus}
       />
 
-      {resultOpportunity ? (
+      {resultOpportunity && resultWindowOpen ? (
         <>
           <div className="ot-result-tier-actions" aria-label="Filing options">
             <a href="/checkout?plan=diy" className="ot-cta ot-cta-block ot-result-tier-cta">DIY $69</a>
@@ -457,6 +472,10 @@ function HeroCheckResult({
             Pick a filing option if the check shows a real opportunity · no account required to review
           </div>
         </>
+      ) : resultOpportunity ? (
+        <div className="ot-result-altline" role="status">
+          This property shows a potential over-assessment, but {result.township} Township is not currently in an open appeal window. Save this check and verify filing dates before buying a filing package.
+        </div>
       ) : (
         <div className="ot-result-altline" role="status">
           This property does not show a clear over-assessment from the available public-record comps. No filing package is recommended from this free check.

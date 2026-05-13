@@ -26,8 +26,13 @@ describe("OT home free-check flow", () => {
   });
 
   function mockPreviewFetch() {
+    return mockFetch({ ok: true, preview: true, result: apiResultWithLegacyField });
+  }
+
+  function mockFetch(payload: unknown, ok = true) {
     const fetchMock = jest.fn().mockResolvedValue({
-      json: async () => ({ ok: true, preview: true, result: apiResultWithLegacyField }),
+      ok,
+      json: async () => payload,
     });
     Object.defineProperty(global, "fetch", { value: fetchMock, writable: true });
     return fetchMock;
@@ -175,6 +180,45 @@ describe("OT home free-check flow", () => {
     expect(screen.getAllByText(/Exact appeal dates unavailable/i)).toHaveLength(1);
     expect(screen.queryByText(/Window closes Jun 9, 2026/i)).toBeNull();
     expect(screen.queryByText(/Lake View window closes/i)).toBeNull();
+  });
+
+  it("renders future-cycle township windows without green/open urgency", async () => {
+    mockFetch({
+      success: true,
+      subject: {
+        address: "5236 N KENMORE AVE",
+        city: "CHICAGO",
+        zipCode: "60640",
+        township: "Lake View",
+        assessedTotalValue: 37500,
+      },
+      compCount: 3,
+      avgComparableAssessedValue: 30692,
+      equityRatio: 12.2,
+      potentialOverpaymentPerYear: 1447,
+      potentialOverpayment3Year: 4341,
+      appealWindowStatus: {
+        township: "Lake View",
+        status: "future_cycle",
+        openDate: "2028-05-08",
+        closeDate: "2028-06-12",
+      },
+      source: "Cook County Open Data - Parcel Sales",
+    });
+
+    render(<HomePage />);
+
+    fireEvent.change(screen.getByPlaceholderText("123 Main St, Chicago, IL 60601"), {
+      target: { value: "5236 N Kenmore Ave, Chicago IL 60640" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }));
+
+    await waitFor(() => expect(screen.getByText(/Your free check · 5236 N KENMORE AVE/i)).toBeTruthy());
+    expect(screen.getByText(/Future cycle/i)).toBeTruthy();
+    expect(screen.getByText(/Opens May 8, 2028/i)).toBeTruthy();
+    expect(screen.getByText(/Lake View window closes Jun 12, 2028/i)).toBeTruthy();
+    expect(screen.queryByText(/days until close/i)).toBeNull();
+    expect(screen.queryByText(/Exact appeal dates unavailable/i)).toBeNull();
   });
 
 });
