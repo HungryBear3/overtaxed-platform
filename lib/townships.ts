@@ -198,6 +198,6 @@ export function buildTickerItems(): string[] {
     );
   }
 
-  items.push(`${TOWNSHIP_STATUS_COUNTS.total} Cook County townships tracked`);
+  items.push(`${TOWNSHIP_STATUS_COUNTS.open} open / ${TOWNSHIP_STATUS_COUNTS["opening-soon"]} opening soon`);
   return items;
 }

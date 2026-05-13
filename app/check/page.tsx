@@ -23,7 +23,7 @@ export default function CheckPage() {
           </h1>
           <p className="text-lg text-gray-600">
             Enter your PIN or address. We&apos;ll compare your assessed value to nearby
-            comparable properties and show the gap, your equity ratio against Cook County&apos;s
+            comparable properties and show the assessment-level gap against Cook County&apos;s
             10% target, and your township&apos;s appeal-window status. No account, no card.
           </p>
         </div>

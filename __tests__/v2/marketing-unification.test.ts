@@ -235,3 +235,23 @@ describe("OT v2 marketing — SiteChrome footer references currently-open townsh
     expect(src).toMatch(/slug:\s*"thornton"/);
   });
 });
+
+describe("OT v2 marketing — township deadline source of truth", () => {
+  it("/townships renders from lib/townships instead of a duplicate hardcoded dataset", () => {
+    const src = read("app/townships/page.tsx");
+    expect(src).toMatch(/from\s+["']@\/lib\/townships["']/);
+    expect(src).toMatch(/TOWNSHIP_STATUS_COUNTS/);
+    expect(src).not.toMatch(/const townships = \[/);
+    expect(src).not.toMatch(/Northwest District/);
+    expect(src).not.toMatch(/Berwyn[\s\S]{0,240}2028/);
+    expect(src).not.toMatch(/Oak Park[\s\S]{0,240}2028/);
+  });
+
+  it("home sample and pricing copy no longer references Jefferson or equity-ratio language", () => {
+    const src = read("components/ot-design/HomePage.tsx");
+    expect(src).not.toMatch(/Jefferson Twp|Jefferson Township/);
+    expect(src).not.toMatch(/equity-ratio|equity ratio/i);
+    expect(src).toMatch(/Lyons Twp/);
+    expect(src).toMatch(/assessment level/i);
+  });
+});

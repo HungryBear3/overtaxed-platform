@@ -34,7 +34,7 @@ const howItWorks = [
     icon: DollarSign,
     title: "You file with the right evidence",
     description:
-      "We give you the comps, equity-ratio math, and a ready-to-submit packet. You file at the Cook County Assessor portal — usually in one focused session once your packet is ready. We do not guarantee a reduction.",
+      "We give you the comps, assessment-level math, uniformity context, and a ready-to-submit packet. You file at the Cook County Assessor portal — usually in one focused session once your packet is ready. We do not guarantee a reduction.",
   },
 ]
 

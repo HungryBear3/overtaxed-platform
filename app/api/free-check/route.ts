@@ -2,7 +2,7 @@
  * Free assessment check (top-of-funnel). No auth required.
  * POST: { pin?: string, address?: string, city?: string }
  * Returns: subject property, up to 3 comps summary, avg comp value, potential overpayment/year,
- *          equity ratios, comp details, appeal argument, township window status, property characteristics.
+ *          assessment-level metrics, comp details, appeal argument, township window status, property characteristics.
  */
 import { NextRequest, NextResponse } from "next/server"
 import {
@@ -368,7 +368,7 @@ export async function POST(req: NextRequest) {
         ? Math.round((subjectAV / subjectMarketValue) * 1000) / 10  // e.g. 10.7
         : null
 
-    // Average comp equity ratio — use comp market values if available
+    // Average comp assessment level — use comp market values if available
     const compEquityRatios: number[] = []
     compDetails.forEach((c) => {
       if (c.marketValue != null && c.marketValue > 0 && c.assessedValue > 0) {

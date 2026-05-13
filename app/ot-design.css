@@ -447,8 +447,8 @@ body.ot-stars-on .ot-logo-mark::before {
 .ot-sample-bar-you { background: linear-gradient(90deg, var(--primary), oklch(0.62 0.18 50)); }
 .ot-sample-bar-comp { background: oklch(0.78 0.04 240); }
 .ot-sample-bar-val { font-family: var(--font-mono); font-size: 11px; text-align: right; color: var(--ink); }
-.ot-sample-equity { margin-bottom: 14px; }
-.ot-sample-equity-head {
+.ot-sample-assessment { margin-bottom: 14px; }
+.ot-sample-assessment-head {
   display: flex;
   justify-content: space-between;
   font-family: var(--font-mono);
@@ -458,14 +458,14 @@ body.ot-stars-on .ot-logo-mark::before {
   color: var(--ink-soft);
   margin-bottom: 8px;
 }
-.ot-sample-equity-target { color: var(--primary-strong); }
-.ot-sample-equity-track {
+.ot-sample-assessment-target { color: var(--primary-strong); }
+.ot-sample-assessment-track {
   position: relative;
   height: 8px;
   background: var(--muted-2);
   border-radius: 4px;
 }
-.ot-sample-equity-fill {
+.ot-sample-assessment-fill {
   position: absolute;
   top: 0;
   left: 0;
@@ -473,7 +473,7 @@ body.ot-stars-on .ot-logo-mark::before {
   background: linear-gradient(90deg, var(--success) 0%, var(--success) 70%, var(--primary) 100%);
   border-radius: 4px;
 }
-.ot-sample-equity-target-mark {
+.ot-sample-assessment-target-mark {
   position: absolute;
   top: -3px;
   height: 14px;
@@ -482,7 +482,7 @@ body.ot-stars-on .ot-logo-mark::before {
   opacity: 0.5;
   transform: translateX(-1px);
 }
-.ot-sample-equity-marker {
+.ot-sample-assessment-marker {
   position: absolute;
   top: -22px;
   transform: translateX(-50%);
@@ -496,7 +496,7 @@ body.ot-stars-on .ot-logo-mark::before {
   border-radius: 3px;
   white-space: nowrap;
 }
-.ot-sample-equity-foot { margin-top: 8px; }
+.ot-sample-assessment-foot { margin-top: 8px; }
 .ot-sample-flag {
   display: inline-block;
   font-size: 11px;
@@ -3695,11 +3695,11 @@ body.ot-stars-on .ot-logo-mark::before {
 .ot-sample-bar-comp-3 { background: oklch(0.78 0.03 240); }
 
 /* ─── Equity ratio: target line BELOW the bar with vertical guide ─── */
-.ot-sample-equity-head {
+.ot-sample-assessment-head {
   margin-bottom: 10px;
   align-items: baseline;
 }
-.ot-sample-equity-label {
+.ot-sample-assessment-label {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
@@ -3707,7 +3707,7 @@ body.ot-stars-on .ot-logo-mark::before {
   letter-spacing: 0.1em;
   color: var(--ink-soft);
 }
-.ot-sample-equity-badge {
+.ot-sample-assessment-badge {
   font-family: var(--font-serif);
   font-size: 22px;
   font-weight: 600;
@@ -3719,29 +3719,29 @@ body.ot-stars-on .ot-logo-mark::before {
   border-radius: 4px;
   background: oklch(0.97 0.04 75);
 }
-.ot-sample-equity-track {
+.ot-sample-assessment-track {
   position: relative;
   height: 14px;
   background: var(--muted-2);
   border-radius: 7px;
   overflow: visible;
 }
-.ot-sample-equity-zone-ok,
-.ot-sample-equity-zone-over {
+.ot-sample-assessment-zone-ok,
+.ot-sample-assessment-zone-over {
   position: absolute;
   top: 0;
   height: 100%;
 }
-.ot-sample-equity-zone-ok {
+.ot-sample-assessment-zone-ok {
   left: 0;
   background: oklch(0.85 0.07 150);
   border-radius: 7px 0 0 7px;
 }
-.ot-sample-equity-zone-over {
+.ot-sample-assessment-zone-over {
   background: linear-gradient(90deg, oklch(0.82 0.10 65), oklch(0.66 0.18 45));
   border-radius: 0 7px 7px 0;
 }
-.ot-sample-equity-marker {
+.ot-sample-assessment-marker {
   position: absolute;
   top: -3px;
   width: 4px;
@@ -3751,12 +3751,12 @@ body.ot-stars-on .ot-logo-mark::before {
   transform: translateX(-2px);
   box-shadow: 0 0 0 2px white, 0 1px 4px oklch(0 0 0 / 0.2);
 }
-.ot-sample-equity-axis {
+.ot-sample-assessment-axis {
   position: relative;
   height: 18px;
   margin-top: 6px;
 }
-.ot-sample-equity-target-line {
+.ot-sample-assessment-target-line {
   position: absolute;
   top: -7px;
   height: 8px;
@@ -3764,7 +3764,7 @@ body.ot-stars-on .ot-logo-mark::before {
   background: var(--ink-soft);
   transform: translateX(-0.5px);
 }
-.ot-sample-equity-target-label {
+.ot-sample-assessment-target-label {
   position: absolute;
   top: 4px;
   transform: translateX(-50%);
@@ -3776,11 +3776,11 @@ body.ot-stars-on .ot-logo-mark::before {
   color: var(--ink-soft);
   white-space: nowrap;
 }
-.ot-sample-equity-foot { margin-top: 18px; }
+.ot-sample-assessment-foot { margin-top: 18px; }
 
 /* Old equity styles deprecated */
-.ot-sample-equity-fill,
-.ot-sample-equity-target-mark { display: none !important; }
+.ot-sample-assessment-fill,
+.ot-sample-assessment-target-mark { display: none !important; }
 
 /* Sample doc: cleaner card style (border + soft shadow + cream) */
 .ot-sample-doc {

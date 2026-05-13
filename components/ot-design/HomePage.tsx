@@ -16,7 +16,7 @@ const SAMPLE_RESULT = {
   windowDaysRemaining: 27,
   yourAssessed: 42500,
   compsAvg: 35100,
-  equityRatio: 12.1,
+  assessmentLevel: 12.1,
   overpayPerYear: 1420,
   overpay3Year: 4260,
   comps: 3,
@@ -325,9 +325,9 @@ function HeroCheckResult({
           </span>
         </div>
         <div className="ot-result-row">
-          <span className="ot-result-row-key">Equity ratio</span>
+          <span className="ot-result-row-key">Assessment level</span>
           <span className="ot-result-row-val">
-            {result.equityRatio.toFixed(1)}%
+            {result.assessmentLevel.toFixed(1)}%
             <span className="ot-result-tag ot-result-tag-warn">sample only</span>
           </span>
         </div>
@@ -351,7 +351,7 @@ function HeroCheckResult({
   );
 }
 
-/* ── Equity-ratio histogram (locked default per brief) ──────────────────── */
+/* ── Assessment-level histogram (locked default per brief) ──────────────────── */
 const HISTOGRAM_BUCKETS = [
   { x: 6.0, h: 4 }, { x: 6.5, h: 7 }, { x: 7.0, h: 12 }, { x: 7.5, h: 18 },
   { x: 8.0, h: 26 }, { x: 8.5, h: 34 }, { x: 9.0, h: 42 }, { x: 9.5, h: 47 },
@@ -451,7 +451,7 @@ function HeatmapHistogram() {
         textAnchor="middle"
         className="ot-hist-axis-title"
       >
-        Equity ratio across Cook County properties
+        Assessment level across Cook County properties
       </text>
     </svg>
   );
@@ -490,23 +490,23 @@ function SampleReportPreview() {
     { label: "127 Sample Ave", val: 34800 },
     { label: "131 Sample Ave", val: 34100 },
   ];
-  const equityRatio = 12.1;
+  const assessmentLevel = 12.1;
   const targetRatio = 10.0;
   const max = Math.max(yourAV, compsAV) * 1.1;
   const trackMax = 14;
   const targetPct = (targetRatio / trackMax) * 100;
-  const valuePct = (equityRatio / trackMax) * 100;
+  const valuePct = (assessmentLevel / trackMax) * 100;
 
   return (
     <div className="ot-sample" aria-hidden="true">
       <div className="ot-sample-doc">
         <div className="ot-sample-stamp">
           <span className="ot-sample-stamp-line ot-sample-stamp-l1">Sample</span>
-          <span className="ot-sample-stamp-line ot-sample-stamp-l2">Jefferson Twp</span>
+          <span className="ot-sample-stamp-line ot-sample-stamp-l2">Lyons Twp</span>
         </div>
         <div className="ot-sample-head">
           <div className="ot-sample-eyebrow">Your free check · sample</div>
-          <div className="ot-sample-addr">1234 N Sample St, Chicago IL 60618</div>
+          <div className="ot-sample-addr">1234 S Sample Ave, La Grange IL 60526</div>
           <div className="ot-sample-meta">PIN 18-06-214-011-0000 · Lyons Township</div>
         </div>
         <div className="ot-sample-savings">
@@ -532,23 +532,23 @@ function SampleReportPreview() {
             </div>
           ))}
         </div>
-        <div className="ot-sample-equity">
-          <div className="ot-sample-equity-head">
-            <span className="ot-sample-equity-label">Equity ratio</span>
-            <span className="ot-sample-equity-badge">{equityRatio.toFixed(1)}%</span>
+        <div className="ot-sample-assessment">
+          <div className="ot-sample-assessment-head">
+            <span className="ot-sample-assessment-label">Assessment level</span>
+            <span className="ot-sample-assessment-badge">{assessmentLevel.toFixed(1)}%</span>
           </div>
-          <div className="ot-sample-equity-track">
-            <div className="ot-sample-equity-zone-ok" style={{ width: `${targetPct}%` }} />
-            <div className="ot-sample-equity-zone-over" style={{ left: `${targetPct}%`, width: `${100 - targetPct}%` }} />
-            <div className="ot-sample-equity-marker" style={{ left: `${valuePct}%` }} />
+          <div className="ot-sample-assessment-track">
+            <div className="ot-sample-assessment-zone-ok" style={{ width: `${targetPct}%` }} />
+            <div className="ot-sample-assessment-zone-over" style={{ left: `${targetPct}%`, width: `${100 - targetPct}%` }} />
+            <div className="ot-sample-assessment-marker" style={{ left: `${valuePct}%` }} />
           </div>
-          <div className="ot-sample-equity-axis">
-            <span className="ot-sample-equity-target-line" style={{ left: `${targetPct}%` }} />
-            <span className="ot-sample-equity-target-label" style={{ left: `${targetPct}%` }}>
+          <div className="ot-sample-assessment-axis">
+            <span className="ot-sample-assessment-target-line" style={{ left: `${targetPct}%` }} />
+            <span className="ot-sample-assessment-target-label" style={{ left: `${targetPct}%` }}>
               Target 10.0%
             </span>
           </div>
-          <div className="ot-sample-equity-foot">
+          <div className="ot-sample-assessment-foot">
             <span className="ot-sample-flag">Over-assessed by 2.1 percentage points</span>
           </div>
         </div>
@@ -696,7 +696,7 @@ const PRICING_PLANS = [
     href: "/checkout",
     cta: "Get the DIY Packet",
     features: [
-      { label: "Pre-written appeal argument", ok: true, detail: "Tailored to your equity ratio" },
+      { label: "Pre-written appeal argument", ok: true, detail: "Tailored to assessment level + comp uniformity" },
       { label: "3 nearby comparables", ok: true, detail: "Formatted for Board of Review" },
       { label: "Step-by-step filing instructions", ok: true, detail: "Specific to your township" },
       { label: "Deadline reminders", ok: true, detail: "2026 window + 2027 second pass" },
@@ -711,7 +711,7 @@ const PRICING_PLANS = [
     href: "/checkout",
     cta: "Choose Done-For-You",
     features: [
-      { label: "Pre-written appeal argument", ok: true, detail: "Tailored to your equity ratio" },
+      { label: "Pre-written appeal argument", ok: true, detail: "Tailored to assessment level + comp uniformity" },
       { label: "3 nearby comparables", ok: true, detail: "Formatted for Board of Review" },
       { label: "Step-by-step filing instructions", ok: true, detail: "Or skip — we file for you" },
       { label: "Deadline reminders", ok: true, detail: "2026 window + 2027 second pass" },
@@ -789,32 +789,32 @@ const FAQ_ITEMS = [
   {
     id: "after-check",
     q: "What happens after I submit my free check?",
-    a: "You'll see your full report on the next screen — assessed value vs. comparable properties, equity ratio, estimated annual and 3-year overpayment, and your township's appeal window status. No signup, no credit card. If your check shows over-assessment, you can pick the DIY Appeal Packet ($69), Done-For-You ($97), or request contingency review for larger cases. If your numbers don't suggest an appeal, we'll tell you that too.",
+    a: "You'll see your full report on the next screen — assessed value vs. comparable properties, assessment-level gap, estimated annual and 3-year overpayment, and your township's appeal window status. No signup, no credit card. If your check shows over-assessment, you can pick the DIY Appeal Packet ($69), Done-For-You ($97), or request contingency review for larger cases. If your numbers don't suggest an appeal, we'll tell you that too.",
     expanded: true,
   },
   {
     id: "data",
     q: "Where does your data come from? How fresh is it?",
     a: "Cook County Assessor and Board of Review public records, refreshed every Sunday night. It's the same data the Board of Review uses to decide appeals.",
-    expanded: false,
+    expanded: true,
   },
   {
     id: "win-rate",
     q: "What if my appeal isn't successful?",
     a: "Cook County doesn't penalize you for filing — you keep the assessed value on file. Flat-fee filings include a procedural money-back guarantee if an OverTaxed IL error causes the county to reject the filing.",
-    expanded: false,
+    expanded: true,
   },
   {
     id: "diy-vs-dfy",
     q: "DIY Packet vs Done-For-You — which should I pick?",
     a: "Most homeowners pick the $69 DIY Appeal Packet when they want us to build the comp package and they are comfortable filing it themselves. Done-For-You at $97 is for homeowners who want us to submit after they sign explicit filing authorization.",
-    expanded: false,
+    expanded: true,
   },
   {
     id: "law-firm",
     q: "Are you a law firm?",
     a: "No. OverTaxed IL is not a law firm and does not provide legal advice. We help you organize public records into the format the Board of Review accepts.",
-    expanded: false,
+    expanded: true,
   },
 ];
 
@@ -862,8 +862,8 @@ function HoaSection() {
           Managing many PINs? We&apos;ll build a bulk packet for your association.
         </h2>
         <p className="ot-method-lede">
-          Condo boards and HOA managers in Cook County can use the same comp +
-          equity-ratio packet, run across every PIN in the association. No
+          Condo boards and HOA managers in Cook County can use the same comparable-property +
+          assessment-level packet, run across every PIN in the association. No
           attorney referral, no per-unit upsell. Drop your email and we&apos;ll
           come back with a packet plan once your township is in cycle.
         </p>
@@ -1063,7 +1063,7 @@ function HeroPreviewCard() {
           marginBottom: 4,
         }}
       >
-        1234 N Sample St · Jefferson Township
+        1234 S Sample Ave · Lyons Township
       </div>
       <div
         style={{

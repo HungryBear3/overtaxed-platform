@@ -95,7 +95,7 @@ export function TownshipAlertForm({ townships, defaultTownship }: Props) {
               className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
               <option value="">Select your township…</option>
-              <optgroup label="Open Now — South District">
+              <optgroup label="Open now">
                 {actionableTownships
                   .filter((t) => t.status === "OPEN")
                   .map((t) => (
@@ -104,7 +104,7 @@ export function TownshipAlertForm({ townships, defaultTownship }: Props) {
                     </option>
                   ))}
               </optgroup>
-              <optgroup label="Opening Soon — South District">
+              <optgroup label="Opening soon">
                 {actionableTownships
                   .filter((t) => t.status === "UPCOMING")
                   .map((t) => (
@@ -113,12 +113,12 @@ export function TownshipAlertForm({ townships, defaultTownship }: Props) {
                     </option>
                   ))}
               </optgroup>
-              <optgroup label="Future Cycles (2027–2028)">
+              <optgroup label="Future cycles">
                 {townships
                   .filter((t) => t.status === "FUTURE")
                   .map((t) => (
                     <option key={t.name} value={t.name}>
-                      {t.name} — {t.district} District{t.openDate ? ` (${t.openDate})` : ""}
+                      {t.name} — {t.district}{t.openDate ? ` (${t.openDate})` : ""}
                     </option>
                   ))}
               </optgroup>

@@ -32,7 +32,7 @@ const PLANS: Array<{
     price: "$69",
     priceNote: "one-time · keep 100% of your savings",
     bullets: [
-      "Pre-written appeal argument tailored to your equity ratio",
+      "Pre-written appeal argument tailored to assessment level and comp uniformity",
       "3 nearby comps formatted for the Board of Review",
       "Step-by-step filing instructions for your township",
       "Deadline reminders for your 2026 window + 2027 second pass",

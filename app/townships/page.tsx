@@ -1,375 +1,175 @@
 import Link from "next/link"
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import { TownshipAlertForm } from "@/components/townships/TownshipAlertForm"
+import {
+  TOWNSHIPS,
+  TOWNSHIP_STATUS_COUNTS,
+  type Township,
+  type TownshipDistrict,
+  type TownshipStatus,
+} from "@/lib/townships"
 import "../ot-design.css"
 
 export const metadata = {
   title: "Cook County Township Appeal Deadlines 2026 | OverTaxed IL",
   description:
-    "Check which Cook County townships are open for property tax appeals in 2026. South district reassessment cycle. Find your deadline and start your appeal.",
+    "Check appeal windows for all 38 Cook County townships using the same deadline data as OverTaxed IL's deadlines page. See open, opening-soon, and future-cycle townships.",
 }
 
-// Township data — updated for the 2026 south district reassessment cycle.
-// Status: OPEN | UPCOMING | CLOSED | FUTURE
-// Source: Cook County Assessor assessment calendar (cookcountyassessor.com/assessment-calendar-and-deadlines)
-// Update this data each year after the CCAO publishes the new calendar (typically Nov–Jan).
-const townships = [
-  // South district — 2026 reassessment cycle
-  {
-    name: "Bloom",
-    district: "South",
-    status: "OPEN" as const,
-    openDate: "Jan 2026",
-    closeDate: "Mar 2026",
-    cities: "Chicago Heights, Flossmoor, Glenwood, Homewood, Lansing, Lynwood, Sauk Village, South Chicago Heights, Thornton",
-  },
-  {
-    name: "Bremen",
-    district: "South",
-    status: "OPEN" as const,
-    openDate: "Jan 2026",
-    closeDate: "Mar 2026",
-    cities: "Alsip, Blue Island, Crestwood, Evergreen Park, Merrionette Park, Midlothian, Oak Forest, Posen, Robbins",
-  },
-  {
-    name: "Calumet",
-    district: "South",
-    status: "OPEN" as const,
-    openDate: "Feb 2026",
-    closeDate: "Apr 2026",
-    cities: "Burnham, Calumet City, Dolton, Riverdale, South Holland, Thornton",
-  },
-  {
-    name: "Rich",
-    district: "South",
-    status: "OPEN" as const,
-    openDate: "Feb 2026",
-    closeDate: "Apr 2026",
-    cities: "Country Club Hills, Flossmoor, Matteson, Olympia Fields, Park Forest, Richton Park, Steger",
-  },
-  {
-    name: "Thornton",
-    district: "South",
-    status: "OPEN" as const,
-    openDate: "Feb 2026",
-    closeDate: "Apr 2026",
-    cities: "Blue Island, Harvey, Hazel Crest, Markham, Phoenix, Posen, Riverdale, South Holland",
-  },
-  {
-    name: "Worth",
-    district: "South",
-    status: "OPEN" as const,
-    openDate: "Jan 2026",
-    closeDate: "Mar 2026",
-    cities: "Bridgeview, Chicago Ridge, Hickory Hills, Justice, Oak Lawn, Palos Hills, Palos Park, Willow Springs",
-  },
-  {
-    name: "Lemont",
-    district: "South",
-    status: "UPCOMING" as const,
-    openDate: "Mar 2026",
-    closeDate: "May 2026",
-    cities: "Lemont, Homer Glen, Lockport (partial)",
-  },
-  {
-    name: "Lyons",
-    district: "South",
-    status: "UPCOMING" as const,
-    openDate: "Mar 2026",
-    closeDate: "May 2026",
-    cities: "Berwyn, Brookfield, Countryside, LaGrange, LaGrange Park, Stickney, Western Springs",
-  },
-  {
-    name: "Orland",
-    district: "South",
-    status: "UPCOMING" as const,
-    openDate: "Mar 2026",
-    closeDate: "May 2026",
-    cities: "Orland Hills, Orland Park, Tinley Park (partial)",
-  },
-  {
-    name: "Palos",
-    district: "South",
-    status: "UPCOMING" as const,
-    openDate: "Mar 2026",
-    closeDate: "May 2026",
-    cities: "Palos Heights, Palos Hills, Palos Park, Willow Springs",
-  },
-  {
-    name: "Stickney",
-    district: "South",
-    status: "UPCOMING" as const,
-    openDate: "Apr 2026",
-    closeDate: "Jun 2026",
-    cities: "Bedford Park, Burbank, Forest View, Oak Lawn (partial), Stickney, Summit",
-  },
-  // North district — future reassessment cycle
-  {
-    name: "Barrington",
-    district: "North",
-    status: "FUTURE" as const,
-    openDate: "2027",
-    closeDate: "2027",
-    cities: "Barrington, Barrington Hills, Lake Barrington, North Barrington, South Barrington",
-  },
-  {
-    name: "Elk Grove",
-    district: "North",
-    status: "FUTURE" as const,
-    openDate: "2027",
-    closeDate: "2027",
-    cities: "Elk Grove Village, Schaumburg (partial)",
-  },
-  {
-    name: "Evanston",
-    district: "North",
-    status: "FUTURE" as const,
-    openDate: "2027",
-    closeDate: "2027",
-    cities: "Evanston",
-  },
-  {
-    name: "Maine",
-    district: "North",
-    status: "FUTURE" as const,
-    openDate: "2027",
-    closeDate: "2027",
-    cities: "Des Plaines, Glenview, Morton Grove, Niles, Park Ridge",
-  },
-  {
-    name: "Niles",
-    district: "North",
-    status: "FUTURE" as const,
-    openDate: "2027",
-    closeDate: "2027",
-    cities: "Lincolnwood, Morton Grove, Niles, Skokie (partial)",
-  },
-  {
-    name: "New Trier",
-    district: "North",
-    status: "FUTURE" as const,
-    openDate: "2027",
-    closeDate: "2027",
-    cities: "Glencoe, Kenilworth, Northfield, Wilmette, Winnetka",
-  },
-  {
-    name: "Northfield",
-    district: "North",
-    status: "FUTURE" as const,
-    openDate: "2027",
-    closeDate: "2027",
-    cities: "Glenview, Northbrook, Northfield, Prospect Heights, Wheeling",
-  },
-  {
-    name: "Palatine",
-    district: "North",
-    status: "FUTURE" as const,
-    openDate: "2027",
-    closeDate: "2027",
-    cities: "Arlington Heights (partial), Palatine, Rolling Meadows, Schaumburg (partial)",
-  },
-  {
-    name: "Wheeling",
-    district: "North",
-    status: "FUTURE" as const,
-    openDate: "2027",
-    closeDate: "2027",
-    cities: "Buffalo Grove, Prospect Heights, Wheeling",
-  },
-  // City of Chicago — triennial reassessment
-  {
-    name: "Chicago (City)",
-    district: "City",
-    status: "FUTURE" as const,
-    openDate: "2027",
-    closeDate: "2027",
-    cities: "All Chicago neighborhoods",
-  },
-  // Northwest district — future
-  {
-    name: "Berwyn",
-    district: "Northwest",
-    status: "FUTURE" as const,
-    openDate: "2028",
-    closeDate: "2028",
-    cities: "Berwyn, Cicero, Stickney (partial)",
-  },
-  {
-    name: "Hanover",
-    district: "Northwest",
-    status: "FUTURE" as const,
-    openDate: "2028",
-    closeDate: "2028",
-    cities: "Bartlett, Bloomingdale, Hanover Park, Streamwood",
-  },
-  {
-    name: "Oak Park",
-    district: "Northwest",
-    status: "FUTURE" as const,
-    openDate: "2028",
-    closeDate: "2028",
-    cities: "Forest Park, Oak Park, River Forest, River Grove",
-  },
-  {
-    name: "River Forest",
-    district: "Northwest",
-    status: "FUTURE" as const,
-    openDate: "2028",
-    closeDate: "2028",
-    cities: "Elmwood Park, Franklin Park, River Forest, River Grove, Rosemont",
-  },
-  {
-    name: "Schaumburg",
-    district: "Northwest",
-    status: "FUTURE" as const,
-    openDate: "2028",
-    closeDate: "2028",
-    cities: "Hoffman Estates, Roselle, Schaumburg, Streamwood",
-  },
-]
-
-const statusConfig = {
-  OPEN: {
-    label: "Open Now",
+const statusConfig: Record<
+  TownshipStatus,
+  { label: string; badge: string; row: string; dot: string; action: string }
+> = {
+  open: {
+    label: "Open now",
     badge: "bg-green-100 text-green-800 border border-green-200",
     row: "bg-green-50/40",
     dot: "bg-green-500",
+    action: "Run free check",
   },
-  UPCOMING: {
-    label: "Opening Soon",
+  "opening-soon": {
+    label: "Opening soon",
     badge: "bg-yellow-100 text-yellow-800 border border-yellow-200",
     row: "bg-yellow-50/30",
     dot: "bg-yellow-400",
+    action: "Get notified",
   },
-  CLOSED: {
-    label: "Closed",
+  closed: {
+    label: "Future cycle",
     badge: "bg-gray-100 text-gray-600 border border-gray-200",
     row: "",
     dot: "bg-gray-300",
-  },
-  FUTURE: {
-    label: "Future cycle",
-    badge: "bg-gray-100 text-gray-500 border border-gray-200",
-    row: "",
-    dot: "bg-gray-200",
+    action: "View details",
   },
 }
 
-const districtOrder = ["South", "City", "North", "Northwest"]
+const districtOrder: TownshipDistrict[] = ["south-west-suburbs", "north-suburbs", "chicago"]
+
+const districtMeta: Record<TownshipDistrict, { label: string; chip: string; dot: string }> = {
+  "south-west-suburbs": {
+    label: "South & West Suburbs",
+    chip: "2026 reassessment cycle",
+    dot: "bg-green-500",
+  },
+  "north-suburbs": {
+    label: "North Suburbs",
+    chip: "2027 reassessment cycle",
+    dot: "bg-gray-300",
+  },
+  chicago: {
+    label: "City of Chicago",
+    chip: "2028 reassessment cycle",
+    dot: "bg-blue-400",
+  },
+}
+
+function formatWindow(t: Township): string {
+  return `${t.openDateShort} – ${t.closeDateShort}, ${t.cycleYear}`
+}
+
+function alertFormTownships() {
+  return TOWNSHIPS.map((t) => ({
+    name: t.name,
+    district: districtMeta[t.district].label,
+    status:
+      t.status === "open"
+        ? ("OPEN" as const)
+        : t.status === "opening-soon"
+          ? ("UPCOMING" as const)
+          : ("FUTURE" as const),
+    openDate: t.openDateShort,
+    closeDate: t.closeDateShort,
+    cities: t.neighbors.map((slug) => slug.replace(/-/g, " ")).join(", "),
+  }))
+}
 
 export default function TownshipsPage() {
-  const grouped = districtOrder.reduce<Record<string, typeof townships>>(
-    (acc, d) => {
-      acc[d] = townships.filter((t) => t.district === d)
+  const grouped = districtOrder.reduce<Record<TownshipDistrict, Township[]>>(
+    (acc, district) => {
+      acc[district] = TOWNSHIPS.filter((t) => t.district === district)
       return acc
     },
-    {}
+    {
+      "south-west-suburbs": [],
+      "north-suburbs": [],
+      chicago: [],
+    },
   )
-
-  const openCount = townships.filter((t) => t.status === "OPEN").length
-  const upcomingCount = townships.filter((t) => t.status === "UPCOMING").length
 
   return (
     <div className="ot-root">
       <SiteHeader active="deadlines" />
 
       <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12 bg-white">
-        {/* Page header */}
         <div className="mb-10">
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-100 text-blue-800 text-sm font-medium mb-4">
-            2026 South District Reassessment Cycle
+            Same canonical deadline data as /deadlines
           </div>
           <h1 className="text-3xl font-bold text-gray-900 mb-3">
             Cook County Township Appeal Deadlines
           </h1>
           <p className="text-lg text-gray-600 max-w-2xl">
-            Each Cook County township has its own appeal window. Find yours below, check your
-            deadline, and start your appeal before the window closes.
+            All 38 Cook County townships are listed below using one shared source of truth:
+            2026 South & West Suburbs, 2027 North Suburbs, and 2028 City of Chicago.
           </p>
         </div>
 
-        {/* Status summary */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-10">
           <div className="bg-green-50 border border-green-200 rounded-xl p-5">
-            <p className="text-3xl font-bold text-green-700">{openCount}</p>
+            <p className="text-3xl font-bold text-green-700">{TOWNSHIP_STATUS_COUNTS.open}</p>
             <p className="text-sm font-medium text-green-800 mt-1">Townships open now</p>
-            <p className="text-xs text-green-600 mt-1">File before your deadline</p>
+            <p className="text-xs text-green-600 mt-1">Matches the /deadlines count</p>
           </div>
           <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-5">
-            <p className="text-3xl font-bold text-yellow-700">{upcomingCount}</p>
+            <p className="text-3xl font-bold text-yellow-700">{TOWNSHIP_STATUS_COUNTS["opening-soon"]}</p>
             <p className="text-sm font-medium text-yellow-800 mt-1">Opening soon</p>
-            <p className="text-xs text-yellow-600 mt-1">Get notified when your window opens</p>
+            <p className="text-xs text-yellow-600 mt-1">Get notified before the window opens</p>
           </div>
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-5">
-            <p className="text-3xl font-bold text-blue-700">3 yrs</p>
-            <p className="text-sm font-medium text-blue-800 mt-1">Savings locked in</p>
-            <p className="text-xs text-blue-600 mt-1">A 2026 win saves you through 2029</p>
+          <div className="bg-gray-50 border border-gray-200 rounded-xl p-5">
+            <p className="text-3xl font-bold text-gray-700">{TOWNSHIP_STATUS_COUNTS.closed}</p>
+            <p className="text-sm font-medium text-gray-800 mt-1">Future-cycle / closed</p>
+            <p className="text-xs text-gray-600 mt-1">North Suburbs and Chicago follow later</p>
           </div>
         </div>
 
-        {/* 3-year savings callout */}
         <div className="bg-blue-900 text-white rounded-xl p-6 mb-10">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
               <p className="text-sm font-semibold text-blue-300 uppercase tracking-wide mb-1">
-                Why 2026 matters
+                Why the cycle matters
               </p>
               <h2 className="text-xl font-bold">
-                A win in 2026 saves you money through 2029.
+                The deadline page and township index now render from the same data.
               </h2>
               <p className="text-blue-200 mt-2 text-sm">
-                Cook County reassesses on a 3-year cycle. South-district townships are up this
-                year. A successful appeal locks in your reduced assessment for up to 3 years
-                — actual savings depend on your assessed value, township tax rate, and the
-                reduction the county grants.
-              </p>
-              <p className="text-blue-100 mt-2 text-xs italic">
-                We do not guarantee a reduction. County decisions are final.
+                If a township is open on /deadlines, it is open here too. Dates are still
+                public-record estimates and should be verified against the official Cook County
+                assessment calendar before filing.
               </p>
             </div>
             <div className="shrink-0">
               <Link
-                href="/check"
+                href="/deadlines"
                 className="inline-block bg-white text-blue-900 font-semibold px-6 py-3 rounded-lg hover:bg-blue-50 transition-colors whitespace-nowrap"
               >
-                Start my appeal →
+                Compare deadline view →
               </Link>
             </div>
           </div>
         </div>
 
-        {/* Township tables by district */}
         {districtOrder.map((district) => {
           const rows = grouped[district]
-          if (!rows || rows.length === 0) return null
+          const meta = districtMeta[district]
+          if (!rows.length) return null
           return (
             <div key={district} className="mb-10">
-              <h2 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                {district === "South" && (
-                  <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
-                )}
-                {district === "City" && (
-                  <span className="inline-block w-2 h-2 rounded-full bg-blue-400" />
-                )}
-                {(district === "North" || district === "Northwest") && (
-                  <span className="inline-block w-2 h-2 rounded-full bg-gray-300" />
-                )}
-                {district} District
-                {district === "South" && (
-                  <span className="ml-2 text-xs font-normal text-green-700 bg-green-100 px-2 py-0.5 rounded-full">
-                    2026 reassessment cycle
-                  </span>
-                )}
-                {(district === "North" || district === "City") && (
-                  <span className="ml-2 text-xs font-normal text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
-                    next cycle 2027
-                  </span>
-                )}
-                {district === "Northwest" && (
-                  <span className="ml-2 text-xs font-normal text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
-                    next cycle 2028
-                  </span>
-                )}
+              <h2 className="text-lg font-semibold text-gray-900 mb-3 flex flex-wrap items-center gap-2">
+                <span className={`inline-block w-2 h-2 rounded-full ${meta.dot}`} />
+                {meta.label}
+                <span className="text-xs font-normal text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">
+                  {meta.chip}
+                </span>
               </h2>
               <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
                 <table className="w-full text-sm">
@@ -377,9 +177,8 @@ export default function TownshipsPage() {
                     <tr className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
                       <th className="py-3 pl-4 pr-3 text-left font-semibold">Township</th>
                       <th className="px-3 py-3 text-left font-semibold">Status</th>
-                      <th className="hidden sm:table-cell px-3 py-3 text-left font-semibold">Open</th>
-                      <th className="hidden sm:table-cell px-3 py-3 text-left font-semibold">Deadline</th>
-                      <th className="hidden md:table-cell px-3 py-3 text-left font-semibold">Includes</th>
+                      <th className="hidden sm:table-cell px-3 py-3 text-left font-semibold">Window</th>
+                      <th className="hidden md:table-cell px-3 py-3 text-left font-semibold">Nearby townships</th>
                       <th className="px-3 py-3 text-right font-semibold">Action</th>
                     </tr>
                   </thead>
@@ -387,9 +186,11 @@ export default function TownshipsPage() {
                     {rows.map((t) => {
                       const cfg = statusConfig[t.status]
                       return (
-                        <tr key={t.name} className={`${cfg.row} hover:bg-gray-50 transition-colors`}>
+                        <tr key={t.slug} className={`${cfg.row} hover:bg-gray-50 transition-colors`}>
                           <td className="py-3.5 pl-4 pr-3 font-medium text-gray-900">
-                            {t.name}
+                            <Link href={`/township/${t.slug}`} className="hover:text-blue-700 hover:underline">
+                              {t.name}
+                            </Link>
                           </td>
                           <td className="px-3 py-3.5">
                             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${cfg.badge}`}>
@@ -398,39 +199,49 @@ export default function TownshipsPage() {
                             </span>
                           </td>
                           <td className="hidden sm:table-cell px-3 py-3.5 text-gray-600">
-                            {t.openDate}
+                            {formatWindow(t)}
                           </td>
-                          <td className="hidden sm:table-cell px-3 py-3.5 text-gray-600">
-                            {t.status === "FUTURE" ? "—" : t.closeDate}
-                          </td>
-                          <td className="hidden md:table-cell px-3 py-3.5 text-gray-500 text-xs max-w-[240px] leading-relaxed">
-                            {t.cities}
+                          <td className="hidden md:table-cell px-3 py-3.5 text-gray-500 text-xs max-w-[240px] leading-relaxed capitalize">
+                            {t.neighbors.map((slug) => slug.replace(/-/g, " ")).join(", ")}
                           </td>
                           <td className="px-3 py-3.5 text-right">
-                            {t.status === "OPEN" ? (
+                            {t.status === "open" ? (
                               <div className="inline-flex flex-col items-end gap-1.5">
                                 <Link
                                   href="/check"
                                   className="inline-block bg-blue-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors"
                                 >
-                                  Run free check
+                                  {cfg.action}
                                 </Link>
                                 <Link
-                                  href={`/township/${t.name.toLowerCase().replace(/\s+/g, "-")}`}
+                                  href={`/township/${t.slug}`}
                                   className="text-xs text-blue-700 font-medium hover:underline"
                                 >
                                   {t.name} details →
                                 </Link>
                               </div>
-                            ) : t.status === "UPCOMING" ? (
-                              <a
-                                href="#township-alert"
-                                className="inline-block text-xs font-medium text-blue-600 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors"
-                              >
-                                Get notified
-                              </a>
+                            ) : t.status === "opening-soon" ? (
+                              <div className="inline-flex flex-col items-end gap-1.5">
+                                <a
+                                  href="#township-alert"
+                                  className="inline-block text-xs font-medium text-blue-600 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors"
+                                >
+                                  {cfg.action}
+                                </a>
+                                <Link
+                                  href={`/township/${t.slug}`}
+                                  className="text-xs text-blue-700 font-medium hover:underline"
+                                >
+                                  Opens {t.openDateShort} →
+                                </Link>
+                              </div>
                             ) : (
-                              <span className="text-xs text-gray-400">Opens {t.openDate}</span>
+                              <Link
+                                href={`/township/${t.slug}`}
+                                className="text-xs text-gray-500 hover:text-blue-700 hover:underline"
+                              >
+                                Opens {t.cycleYear} →
+                              </Link>
                             )}
                           </td>
                         </tr>
@@ -443,56 +254,37 @@ export default function TownshipsPage() {
           )
         })}
 
-        {/* Email alert sign-up */}
         <div id="township-alert" className="mt-8 mb-10">
-          <TownshipAlertForm townships={townships} />
+          <TownshipAlertForm townships={alertFormTownships()} />
         </div>
 
-        {/* How appeals work — brief */}
         <div className="bg-white border border-gray-200 rounded-xl p-6 mb-10">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">How the appeal process works</h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
             <div>
               <p className="text-sm font-semibold text-blue-700 mb-1">1. Check your assessment</p>
               <p className="text-sm text-gray-600">
-                Look up your current assessed value at{" "}
-                <a
-                  href="https://www.cookcountyassessor.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 hover:underline"
-                >
-                  cookcountyassessor.com
-                </a>{" "}
-                using your address or PIN.
+                Look up your current assessed value using your address or PIN, then compare it
+                with similar nearby homes.
               </p>
             </div>
             <div>
-              <p className="text-sm font-semibold text-blue-700 mb-1">2. Get comparable properties</p>
+              <p className="text-sm font-semibold text-blue-700 mb-1">2. Build the packet</p>
               <p className="text-sm text-gray-600">
-                You need at least 3 sales comps — similar homes that sold recently in your area.
-                OverTaxed IL pulls these automatically from Cook County data.
+                OverTaxed IL organizes assessment-level and uniformity evidence from Cook County
+                public records into a filing-ready packet.
               </p>
             </div>
             <div>
               <p className="text-sm font-semibold text-blue-700 mb-1">3. File before your deadline</p>
               <p className="text-sm text-gray-600">
-                Submit your appeal online at{" "}
-                <a
-                  href="https://www.cookcountyassessor.com/online-appeals"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 hover:underline"
-                >
-                  cookcountyassessor.com/online-appeals
-                </a>
-                . Filing is free.
+                Submit through the Cook County Assessor or Board of Review portal before your
+                township window closes. Filing is free.
               </p>
             </div>
           </div>
         </div>
 
-        {/* Official source note */}
         <p className="text-xs text-gray-400 text-center mt-6">
           Deadline dates are approximate. Always verify current open/close dates at the official{" "}
           <a
