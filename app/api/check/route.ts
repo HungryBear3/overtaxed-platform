@@ -17,7 +17,7 @@ const SAMPLE_RESULT = {
   windowDaysRemaining: 27,
   yourAssessed: 42500,
   compsAvg: 35100,
-  equityRatio: 12.1,
+  assessmentLevel: 12.1,
   overpayPerYear: 1420,
   overpay3Year: 4260,
   comps: 3,

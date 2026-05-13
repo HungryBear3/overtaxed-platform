@@ -81,6 +81,7 @@ describe("/api/check", () => {
     expect(json.result.township).toBe("Lyons");
     expect(json.result.windowStatus).toBe("open");
     expect(json.result.windowCloses).toMatch(/Jun 9, 2026/);
-    expect(json.result.windowCloses).not.toMatch(/2028 cycle/);
+    expect(json.result.assessmentLevel).toBe(12.1);
+    expect(json.result.equityRatio).toBeUndefined();
   });
 });

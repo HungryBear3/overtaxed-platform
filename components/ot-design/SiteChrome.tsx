@@ -294,16 +294,21 @@ export function StickyAddressBar() {
     if (loading || !addr.trim()) return;
     setLoading(true);
     try {
-      await fetch("/api/check", {
+      const res = await fetch("/api/check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address: addr }),
+        body: JSON.stringify({ address: addr, mode: "address" }),
       });
+      const data = await res.json().catch(() => null);
+      window.dispatchEvent(new CustomEvent("ot:free-check-result", {
+        detail: { result: data?.result, preview: Boolean(data?.preview ?? true) },
+      }));
     } catch {
-      /* preview stub — ignore */
+      window.dispatchEvent(new CustomEvent("ot:free-check-result", {
+        detail: { preview: true },
+      }));
     }
-    // Scroll to hero-check; the hero form will surface the SAMPLE_RESULT on
-    // its own. For Pass 1 we just trigger a smooth scroll back up.
+    // Scroll to hero-check after surfacing the same preview result as the main form.
     const el = document.getElementById("hero-check");
     if (el) {
       const y = el.getBoundingClientRect().top + window.scrollY - 64;

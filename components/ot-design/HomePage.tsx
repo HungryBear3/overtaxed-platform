@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   RiskReversalBadge,
   StatusChip,
@@ -23,6 +23,29 @@ const SAMPLE_RESULT = {
 };
 
 type Result = typeof SAMPLE_RESULT & { preview?: boolean };
+type RawCheckResult = Partial<Result> & { equityRatio?: number };
+
+function asFiniteNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function normalizeCheckResult(raw?: RawCheckResult | null, preview = true): Result {
+  const r = raw ?? {};
+  return {
+    ...SAMPLE_RESULT,
+    ...r,
+    assessmentLevel: asFiniteNumber(r.assessmentLevel ?? r.equityRatio, SAMPLE_RESULT.assessmentLevel),
+    yourAssessed: asFiniteNumber(r.yourAssessed, SAMPLE_RESULT.yourAssessed),
+    compsAvg: asFiniteNumber(r.compsAvg, SAMPLE_RESULT.compsAvg),
+    overpayPerYear: asFiniteNumber(r.overpayPerYear, SAMPLE_RESULT.overpayPerYear),
+    overpay3Year: asFiniteNumber(r.overpay3Year, SAMPLE_RESULT.overpay3Year),
+    windowDaysRemaining: asFiniteNumber(r.windowDaysRemaining, SAMPLE_RESULT.windowDaysRemaining),
+    comps: asFiniteNumber(r.comps, SAMPLE_RESULT.comps),
+    preview,
+  };
+}
+
+const FREE_CHECK_RESULT_EVENT = "ot:free-check-result";
 
 const fmtUSD = (n: number) =>
   n.toLocaleString("en-US", {
@@ -160,10 +183,10 @@ function HeroCheckCard({
         });
         const data = await res.json().catch(() => null);
         setLoading(false);
-        onResult(data?.result ? { ...data.result, preview: Boolean(data.preview) } : { ...SAMPLE_RESULT, preview: true });
+        onResult(normalizeCheckResult(data?.result, Boolean(data?.preview ?? true)));
       } catch {
         setLoading(false);
-        onResult({ ...SAMPLE_RESULT, preview: true });
+        onResult(normalizeCheckResult(null, true));
       }
     },
     [address, pin, mode, onResult],
@@ -281,7 +304,7 @@ function HeroCheckResult({
   onReset: () => void;
 }) {
   const gap = result.yourAssessed - result.compsAvg;
-  const gapPct = ((gap / result.compsAvg) * 100).toFixed(1);
+  const gapPct = result.compsAvg > 0 ? ((gap / result.compsAvg) * 100).toFixed(1) : "0.0";
   return (
     <div className="ot-check-card ot-check-result">
       <div className="ot-result-head">
@@ -562,7 +585,7 @@ function SampleReportPreview() {
 
 function SampleReportSection() {
   return (
-    <section className="ot-sample-section" aria-labelledby="ot-sample-h">
+    <section id="sample-report" className="ot-sample-section" aria-labelledby="ot-sample-h">
       <div className="ot-sample-section-inner">
         <div className="ot-sample-section-text">
           <div className="ot-sample-section-eyebrow">What you&apos;ll get</div>
@@ -1128,6 +1151,16 @@ function HeroPreviewCard() {
 
 export default function HomePage() {
   const [result, setResult] = useState<Result | null>(null);
+
+  useEffect(() => {
+    function handleStickyResult(event: Event) {
+      const detail = (event as CustomEvent<{ result?: RawCheckResult; preview?: boolean }>).detail;
+      setResult(normalizeCheckResult(detail?.result, Boolean(detail?.preview ?? true)));
+    }
+    window.addEventListener(FREE_CHECK_RESULT_EVENT, handleStickyResult);
+    return () => window.removeEventListener(FREE_CHECK_RESULT_EVENT, handleStickyResult);
+  }, []);
+
   return (
     <>
       <LiveTicker />
