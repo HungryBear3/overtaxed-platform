@@ -168,9 +168,10 @@ export function getTownshipBySlug(slug: string): Township | undefined {
   return TOWNSHIPS_BY_SLUG[slug];
 }
 
-/** Live ticker items derived from the townships dataset. */
+/** Ticker items derived only from verifiable township deadline data. */
 export function buildTickerItems(): string[] {
   const open = TOWNSHIPS.filter((t) => t.status === "open");
+  const openingSoon = TOWNSHIPS.filter((t) => t.status === "opening-soon");
   const items: string[] = [];
 
   if (open.length) {
@@ -181,12 +182,7 @@ export function buildTickerItems(): string[] {
     items.push(
       `${opened.name} window opened ${n} day${n === 1 ? "" : "s"} ago`,
     );
-  }
 
-  const checks = open.length * 4 + REFERENCE_DATE.getUTCDate();
-  items.push(`${checks} checks run in the last hour`);
-
-  if (open.length) {
     const soonest = [...open].sort(
       (a, b) => a.daysUntilClose - b.daysUntilClose,
     )[0];
@@ -195,8 +191,13 @@ export function buildTickerItems(): string[] {
     );
   }
 
-  const cycleCount = open.length * 73 + 184;
-  items.push(`${cycleCount.toLocaleString()} appeals approved this cycle`);
+  if (openingSoon.length) {
+    const next = [...openingSoon].sort((a, b) => a.daysUntilOpen - b.daysUntilOpen)[0];
+    items.push(
+      `${next.name} opens in ${next.daysUntilOpen} day${next.daysUntilOpen === 1 ? "" : "s"}`,
+    );
+  }
 
+  items.push(`${TOWNSHIP_STATUS_COUNTS.total} Cook County townships tracked`);
   return items;
 }

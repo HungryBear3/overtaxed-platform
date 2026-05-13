@@ -68,14 +68,14 @@ export default async function AdminPerformancePage() {
           ← Admin
         </Link>
       </div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-2">Performance Plan</h1>
+      <h1 className="text-2xl font-bold text-gray-900 mb-2">Contingency Fee Review</h1>
       <p className="text-gray-600 mb-8">
-        Users on Performance (4% of 3-year savings). Create invoices when eligible.
+        Users on contingency plans. Verify granted first-year savings and explicit authorization before creating invoices.
       </p>
 
       <div className="space-y-4">
         {userData.length === 0 ? (
-          <p className="text-gray-500">No Performance users.</p>
+          <p className="text-gray-500">No contingency users.</p>
         ) : (
           userData.map((u) => (
             <Card key={u.id}>

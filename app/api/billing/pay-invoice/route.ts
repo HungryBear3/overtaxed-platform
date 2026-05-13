@@ -1,4 +1,4 @@
-// POST /api/billing/pay-invoice - Create Stripe Checkout Session for a Performance Fee invoice
+// POST /api/billing/pay-invoice - Create Stripe Checkout Session for a contingency fee invoice
 // Returns checkout URL for redirect to Stripe-hosted payment page.
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
 
     if (!invoice) {
       return NextResponse.json(
-        { error: "Invoice not found, already paid, or not a Performance Fee invoice" },
+        { error: "Invoice not found, already paid, or not a contingency fee invoice" },
         { status: 404 }
       )
     }
@@ -67,8 +67,8 @@ export async function POST(request: NextRequest) {
           price_data: {
             currency: "usd",
             product_data: {
-              name: `Performance Fee – Invoice ${invoice.invoiceNumber}`,
-              description: "4% of 3-year tax savings (OverTaxed IL)",
+              name: `Contingency Fee – Invoice ${invoice.invoiceNumber}`,
+              description: "22% of first-year granted tax savings (OverTaxed IL)",
             },
             unit_amount: amountCents,
           },

@@ -1,4 +1,4 @@
-// GET /api/billing/invoices - List user's invoices (Performance Fee and subscription)
+// GET /api/billing/invoices - List user's invoices (contingency fee and subscription)
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"

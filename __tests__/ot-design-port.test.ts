@@ -7,7 +7,7 @@
  *  - No fake testimonials slip back in (Maria R., David T., Anita K.).
  *  - No $99 leftover in the design-port body (price is $97 everywhere).
  *  - No unverified savings claims ($1,103/year, $300–$800 attorney rates).
- *  - /api/check echoes the submitted address.
+ *  - /api/check never pretends the preview sample is real submitted-address data.
  */
 import fs from "fs";
 import path from "path";
@@ -55,7 +55,7 @@ describe("OT design port — Pass 2 launch blockers", () => {
 });
 
 describe("/api/check", () => {
-  it("echoes the submitted address back in the preview result", async () => {
+  it("labels the submitted-address flow as preview sample data", async () => {
     const submitted = "1212 W Belmont Ave, Chicago IL 60657";
     const req = new Request("http://localhost/api/check", {
       method: "POST",
@@ -65,10 +65,12 @@ describe("/api/check", () => {
     const res = await checkPOST(req);
     const json = await res.json();
     expect(json.ok).toBe(true);
-    expect(json.result.address).toBe(submitted);
+    expect(json.preview).toBe(true);
+    expect(json.result.address).toMatch(/Sample result/);
+    expect(json.result.address).not.toBe(submitted);
   });
 
-  it("falls back to the sample address when none submitted", async () => {
+  it("does not claim a closed Jefferson preview window is open", async () => {
     const req = new Request("http://localhost/api/check", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -76,6 +78,8 @@ describe("/api/check", () => {
     });
     const res = await checkPOST(req);
     const json = await res.json();
-    expect(json.result.address).toMatch(/Kedvale/);
+    expect(json.result.township).toBe("Jefferson");
+    expect(json.result.windowStatus).toBe("closed");
+    expect(json.result.windowCloses).toMatch(/2028 cycle/);
   });
 });

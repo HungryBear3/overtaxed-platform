@@ -136,7 +136,7 @@ export default async function AccountPage() {
                 {user.subscriptionTier === "STARTER" && "Starter (1–2 properties, $149/property/year)"}
                 {user.subscriptionTier === "GROWTH" && "Growth (3–9 properties, $124/property/year)"}
                 {user.subscriptionTier === "PORTFOLIO" && "Portfolio (10–20 properties, $99/property/year)"}
-                {user.subscriptionTier === "PERFORMANCE" && "Performance (4% of savings, deferred)"}
+                {user.subscriptionTier === "PERFORMANCE" && "Contingency (22% of first-year savings, if granted)"}
               </p>
               {user.subscriptionTier !== "COMPS_ONLY" && user.subscriptionTier !== "PERFORMANCE" && (
                 <p className="text-xs text-gray-500 mt-1">

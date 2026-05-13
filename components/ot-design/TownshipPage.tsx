@@ -122,11 +122,11 @@ function TownshipStats({ t }: { t: Township }) {
       <div className="ot-tp-stats-inner">
         <div className="ot-tp-stats-head">
           <div className="ot-eyebrow">By the numbers</div>
-          <h2 className="ot-h2">What {t.name} homeowners typically see.</h2>
+          <h2 className="ot-h2">Public-record context for {t.name} Township.</h2>
           <p className="ot-tp-stats-sub">
-            From {t.cycleYear === REFERENCE_DATE.getUTCFullYear() ? "the current cycle so far" : "the prior triennial cycle"},
-            for residential parcels in {t.name} Township that filed an appeal.
-            Your property may differ — the only way to know is to{" "}
+            These are rounded public-record benchmarks used for orientation, not verified
+            OverTaxed IL customer outcomes and not a guarantee of savings. Your
+            property may differ — the only way to know is to{" "}
             <Link href="/#hero-check">run a free check</Link>.
           </p>
         </div>
@@ -137,20 +137,20 @@ function TownshipStats({ t }: { t: Township }) {
             <div className="ot-tp-stat-foot">single-family residential</div>
           </div>
           <div className="ot-tp-stat">
-            <div className="ot-tp-stat-key">Typical reduction</div>
+            <div className="ot-tp-stat-key">Illustrative reduction</div>
             <div className="ot-tp-stat-val">−{t.avgReduction.toFixed(1)}%</div>
-            <div className="ot-tp-stat-foot">for successful appeals</div>
+            <div className="ot-tp-stat-foot">scenario for comparing costs</div>
           </div>
           <div className="ot-tp-stat ot-tp-stat-hero">
-            <div className="ot-tp-stat-key">First-year savings</div>
+            <div className="ot-tp-stat-key">Illustrative savings</div>
             <div className="ot-tp-stat-val">{fmt$(t.avgSavings)}</div>
-            <div className="ot-tp-stat-foot">≈ {fmt$(t.avgSavings * 3)} over 3-year cycle</div>
+            <div className="ot-tp-stat-foot">example only · not a promise</div>
           </div>
         </div>
         <div className="ot-tp-stats-note">
-          Source: Cook County Assessor and Board of Review public records.
-          Numbers are medians for {t.name} Township residential parcels and
-          are not a guarantee of outcome.{" "}
+          Source: Cook County public records and internal modeling. These figures are
+          illustrative benchmarks until verified OverTaxed IL outcomes are
+          published.{" "}
           <Link href="/#method">How we calculate this →</Link>
         </div>
       </div>
@@ -169,8 +169,7 @@ function TownshipCheckCta({ t }: { t: Township }) {
         </h2>
         <p className="ot-tp-check-sub">
           Free, takes 30 seconds, no signup. We pull your assessed value from
-          the Cook County Assessor and compare it to recent sales of similar
-          properties in {t.name}.
+          the Cook County Assessor and compare it to public-record comparable properties in {t.name}.
         </p>
         <form
           className="ot-bottom-cta-form"
@@ -268,11 +267,11 @@ function TownshipFaq({ t }: { t: Township }) {
     },
     {
       q: `What does it cost to appeal?`,
-      a: <>The Cook County Board of Review charges no fee. OverTaxed IL files your appeal for $97 (or free if we don&apos;t reduce your bill). You can also file on your own at no cost — see the <Link href="/#offer">pricing details</Link>.</>,
+      a: <>The Cook County Board of Review charges no fee. OverTaxed IL offers a $69 DIY Appeal Packet, $97 Done-For-You filing after explicit authorization, and a 22% contingency option for eligible cases. You can also file on your own at no cost — see the <Link href="/#offer">pricing details</Link>.</>,
     },
     {
       q: `What evidence do I need to appeal in ${t.name}?`,
-      a: <>The Board of Review accepts comparable sales, lack-of-uniformity arguments (your assessment vs. similar properties), and condition-based evidence (recent photos, contractor estimates). We pull comparable sales from {t.name} and surrounding townships automatically when you run a free check.</>,
+      a: <>The Board of Review accepts comparable assessments, relevant sales evidence, lack-of-uniformity arguments (your assessment vs. similar properties), and condition-based evidence (recent photos, contractor estimates). We pull public-record comparable properties from {t.name} and surrounding townships automatically when you run a free check.</>,
     },
     {
       q: `Will appealing increase my taxes?`,

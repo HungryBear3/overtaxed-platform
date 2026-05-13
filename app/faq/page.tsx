@@ -24,19 +24,19 @@ const faqs = [
   },
   {
     q: "DIY packet vs. done-for-you — which should I pick?",
-    a: "DIY ($69 one-time per property): We build the comp packet (comparable sales and supporting evidence). You file the appeal yourself at the Cook County Assessor portal — filing there is free. Done-for-you ($97 one-time per property): We prepare the packet and submit the appeal on your behalf where the county process supports it. Both options include the same comp evidence and equity-ratio analysis.",
+    a: "DIY Appeal Packet ($69 one-time per property): we build the comparable-property packet and filing guide; you file it yourself. Done-for-you ($97 one-time per property): we prepare the same packet and submit the appeal after you provide explicit authorization. Contingency cases are reviewed separately at 22% of first-year savings only if the county grants a reduction.",
   },
   {
     q: "Do you file the appeal for me?",
-    a: "On the Done-for-you tier ($97) we submit on your behalf where the county process supports it. On the DIY tier ($69) you file yourself at the Cook County Assessor portal at cookcountyassessor.com/file-appeal — the packet is formatted so you can submit it in one focused session once your evidence is ready.",
+    a: "On the Done-for-you tier ($97) we submit on your behalf only after you sign explicit filing authorization. On the DIY Appeal Packet tier ($69) you file yourself at the Cook County Assessor or Board of Review portal — the packet is formatted so you can submit it in one focused session once your evidence is ready.",
   },
   {
     q: "How many comparable properties (comps) do I need?",
-    a: "For a strong appeal, Cook County typically expects at least 3 comparable sales (recent sales of similar properties). Our comp packet includes comparable sales from Cook County Open Data. The 'at least 3 comparable sales' guidance comes from Cook County Assessor requirements; Board of Review Rule 15 is a separate document-submission rule (it governs which documents must accompany an appeal, not the comp count).",
+    a: "For a strong residential assessment appeal, comparable assessments are usually more important than raw sales alone: you want similar nearby properties assessed lower than yours. Sales evidence can also help, especially at the Board of Review. Our packet focuses on public-record comparable properties and explains which evidence fits your filing path.",
   },
   {
     q: "What is Board of Review Rule 15?",
-    a: "Board of Review (BOR) Rule 15 governs what documents to file with your appeal (e.g., copies of Assessor submissions, brief, other evidence). It does not specify how many comps you need. The 'at least 3 comparable sales' guidance comes from Cook County Assessor requirements. For class 2 residential (typical single-family homes), BOR Rule 15 exempts you from the brief and Historical Summary Form.",
+    a: "Board of Review (BOR) Rule 15 governs what documents to file with your appeal (for example, copies of Assessor submissions, briefs, and other evidence). It is separate from how many comparable properties are persuasive. For class 2 residential properties, the packet should emphasize uniformity with comparable assessments and include any relevant sales or condition evidence.",
   },
   {
     q: "What happens after I file?",
@@ -48,7 +48,7 @@ const faqs = [
   },
   {
     q: "How do I get a refund?",
-    a: "We offer a procedural money-back guarantee on the DIY and Done-for-you packets: if your township denies the filing on procedural grounds, we refund the packet. Contact us at support@overtaxed-il.com. See our Terms of Service for full details.",
+    a: "We offer a procedural money-back guarantee on the DIY and Done-for-you packets: if your filing is rejected or denied solely because of an OverTaxed IL procedural error in the materials or submission we prepared, we refund the OverTaxed IL service fee. It does not cover county denials on the merits. Contact support@overtaxed-il.com within 30 days of the notice. See our Terms of Service for full details.",
   },
   {
     q: "Are you a law firm?",

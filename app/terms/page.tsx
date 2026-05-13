@@ -12,133 +12,106 @@ export default function TermsPage() {
       <SiteHeader />
       <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12 bg-white">
         <h1 className="text-3xl font-bold text-foreground mb-2">Terms of Service</h1>
-        <p className="text-muted-foreground text-sm mb-8">Last updated: February 2026</p>
+        <p className="text-muted-foreground text-sm mb-8">Last updated: May 2026</p>
 
         <div className="prose max-w-none space-y-8">
           <section>
-            <h2 className="text-xl font-semibold text-foreground mb-3">1. Authorization to File Appeals</h2>
+            <h2 className="text-xl font-semibold text-foreground mb-3">1. Filing Authorization</h2>
             <p className="text-muted-foreground mb-3">
-              By using OverTaxed IL and accepting these Terms, you authorize OverTaxed IL to act as your authorized representative for the purpose of filing property tax assessment appeals on your behalf with the appropriate county assessor&apos;s office, board of review, or other tax authority.
+              Running a free check, viewing pricing, creating an account, or buying a DIY packet does not authorize OverTaxed IL to file an appeal for you.
             </p>
             <p className="text-muted-foreground mb-3">
-              You grant OverTaxed IL authority to file appeals, submit documents and evidence, communicate with tax authorities, and receive and respond to notices and decisions regarding your appeals. This authorization remains in effect for the duration of your active subscription or until you cancel in accordance with these Terms.
+              OverTaxed IL will act as your filing representative only if you choose a filing service that requires representation and separately sign or check an explicit authorization for that property. That authorization will describe what we may submit, which property it covers, and when it expires.
+            </p>
+            <p className="text-muted-foreground">
+              If you choose the DIY Appeal Packet, you remain responsible for filing the appeal yourself unless you later purchase a Done-For-You or contingency filing service and provide separate authorization.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold text-foreground mb-3">2. Relationship to Property</h2>
             <p className="text-muted-foreground">
-              You represent that you are either the legal owner of the property(ies) listed in your account or authorized by the legal owner to file appeals on their behalf. You agree to provide accurate information and to update OverTaxed IL if ownership changes.
+              You represent that you are the property owner, or that you are authorized by the owner to request analysis or appeal support for the property. You agree to provide accurate information and to tell us if ownership or authorization changes.
             </p>
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground mb-3">3. Fee Structure and Payment Terms</h2>
+            <h2 className="text-xl font-semibold text-foreground mb-3">3. Services and Fees</h2>
             <p className="text-muted-foreground mb-3">
-              <strong>3.1 Subscription or package plans.</strong> For any subscription-based or package plan, you agree to pay the fee shown at checkout for the product you select. Recurring fees, if any, are billed on the renewal schedule disclosed at checkout and will automatically renew unless cancelled.
-            </p>
-            <p className="text-muted-foreground mb-3">
-              <strong>3.2 Performance Plan – Percentage-Based Fee.</strong> If you select the Performance Plan, you agree to pay OverTaxed IL a fee equal to four percent (4%) of the total tax savings achieved over a three (3) year period from the date of the first successful appeal reduction.
-            </p>
-            <p className="text-muted-foreground mb-2">
-              <strong>3.2.1 Calculation of Tax Savings.</strong> &quot;Tax Savings&quot; means the total reduction in property tax liability resulting from successful appeals, calculated as follows:
-            </p>
-            <ul className="list-disc pl-6 text-muted-foreground mb-3 space-y-1">
-              <li>Tax Savings = Assessment Reduction × Tax Rate × Equalization Factor</li>
-              <li>Tax Savings are not calculated by comparing prior years&apos; taxes to current years&apos; taxes.</li>
-              <li>Total Tax Savings = Sum of Tax Savings for all tax years within the 3-year period.</li>
-              <li>Partial reductions: Tax Savings are calculated on the actual reduction granted. Denials: no Tax Savings.</li>
-            </ul>
-            <p className="text-muted-foreground mb-2">
-              <strong>3.2.2 Payment Options.</strong> Option A (Upfront): Pay the full 4% fee within 30 days of final determination of the 3-year Tax Savings. Option B (Installments): Pay the 4% fee in three (3) equal annual installments, first due within 30 days of the first successful appeal reduction, then on each anniversary.
+              <strong>3.1 DIY Appeal Packet — $69 one-time.</strong> We prepare comparable-property analysis, an appeal argument draft, and filing instructions. You file the appeal yourself with Cook County.
             </p>
             <p className="text-muted-foreground mb-3">
-              <strong>3.2.3 Invoicing.</strong> OverTaxed IL will send an invoice detailing original and reduced assessments, Tax Savings per year, total Tax Savings, the 4% fee calculation, and payment due date.
+              <strong>3.2 Done-For-You — $97 one-time.</strong> We prepare the packet and submit the appeal for you after you provide explicit filing authorization. County filing availability and requirements may vary by appeal body and cycle.
+            </p>
+            <p className="text-muted-foreground mb-3">
+              <strong>3.3 Contingency — 22% of first-year tax savings.</strong> If you are accepted for contingency filing, you pay no upfront OverTaxed IL service fee. If the county grants a reduction, you agree to pay 22% of the first-year tax savings from that reduction, subject to any minimum shown at checkout or in your signed contingency authorization. If the county grants no reduction, you owe no contingency fee.
             </p>
             <p className="text-muted-foreground">
-              <strong>3.3 Comps-Only Plan.</strong> For the Comps-Only plan, you agree to pay a one-time fee of $69 per property for each comp packet generated.
+              <strong>3.4 County fees.</strong> Cook County currently does not charge homeowners a fee to file a residential assessment appeal. If a government fee or third-party fee applies in the future, we will disclose it before you authorize payment.
             </p>
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground mb-3">4. Collections and Default</h2>
+            <h2 className="text-xl font-semibold text-foreground mb-3">4. Payment, Invoices, and Late Payments</h2>
             <p className="text-muted-foreground mb-3">
-              <strong>4.1 Payment Obligation.</strong> You agree to pay all fees due under your selected plan within the timeframes specified. Fees are due and payable within 30 days of invoice receipt unless otherwise agreed in writing.
+              Flat-fee products are charged at checkout. Contingency fees, if any, are invoiced only after a county reduction is granted and the savings calculation is available.
             </p>
             <p className="text-muted-foreground mb-3">
-              <strong>4.2 Payment Terms.</strong> Any unpaid balance for more than 30 days after billing shall be deemed delinquent. Delinquent amounts shall be subject to a monthly finance charge of 1.5% per month (or the maximum rate permitted by Illinois law, whichever is less) until payment is received. Interest shall accrue at the highest rate permitted by applicable law if 1.5% per month exceeds that limit. OverTaxed IL may send a first collection notice 7 days after the due date. A final notice before legal action may be sent 45 days after the due date.
-            </p>
-            <p className="text-muted-foreground mb-3">
-              <strong>4.3 Late Payment Consequences.</strong> If payment is not received by the due date: OverTaxed IL may suspend your account and all services until payment is received; the monthly finance charge will apply; OverTaxed IL may refer the account to a collections agency or attorney for collection.
-            </p>
-            <p className="text-muted-foreground mb-3">
-              <strong>4.4 Acceleration.</strong> If you fail to pay any Performance Plan fee when due (including any installment), OverTaxed IL may, at its option, accelerate the entire unpaid balance and declare all remaining installments immediately due and payable.
-            </p>
-            <p className="text-muted-foreground mb-3">
-              <strong>4.5 Collections Actions.</strong> If the account remains unpaid 60 days after the due date, OverTaxed IL may refer the account to a collections agency or file suit in a court of competent jurisdiction, including the Circuit Court of Cook County, Illinois, or Small Claims/Claims Court, as appropriate. OverTaxed IL may send collection letters (Notice of Intent to Collect, Final Notice Before Filing Suit), engage a collections agency, and pursue legal action including filing suit, obtaining judgment for the balance plus interest, late fees, court costs, filing fees, and reasonable attorney&apos;s fees, and enforcing the judgment through wage garnishment, bank levies, or property liens. You will be responsible for the full balance owed plus all accrued interest, late fees, court costs, filing fees, and reasonable attorney&apos;s fees as provided in Section 4.6.
-            </p>
-            <p className="text-muted-foreground mb-3">
-              <strong>4.6 Costs of Collection.</strong> If any proceeding is brought to enforce collection, you shall reimburse OverTaxed IL for all reasonable costs of collection, including court costs, filing fees, and reasonable attorney fees.
-            </p>
-            <p className="text-muted-foreground mb-3">
-              <strong>4.7 Waiver of Defenses.</strong> You agree that the amount of any Performance Plan fee set forth in an invoice shall be final and binding upon you unless you dispute the calculation in writing within 30 days of the invoice date, specifying the alleged error. After 30 days, the fee amount may not be disputed except for manifest calculation error. You waive any defense based on statute of limitations, laches, or similar doctrine for amounts due under these Terms, except as required by applicable law.
-            </p>
-            <p className="text-muted-foreground mb-3">
-              <strong>4.8 Credit Reporting.</strong> OverTaxed IL reserves the right to report delinquent accounts to credit bureaus or similar reporting agencies in accordance with applicable law.
-            </p>
-            <p className="text-muted-foreground mb-3">
-              <strong>4.9 Consent to Jurisdiction.</strong> You consent to the personal jurisdiction of the courts of the State of Illinois for any action to collect amounts due hereunder.
+              If you believe an invoice is incorrect, email support@overtaxed-il.com within 30 days with the reason you dispute it. We will review the calculation and provide a written response.
             </p>
             <p className="text-muted-foreground">
-              <strong>4.10 No Refund for Performance Plan Fees.</strong> Once a Performance Plan fee is calculated and invoiced based on actual Tax Savings, the fee is non-refundable, except as required by law.
+              For unpaid invoices, we may pause non-essential services and send reminder notices. Any further payment-resolution step will be handled under applicable consumer-protection law and any separate written agreement you accepted. This section does not waive rights that cannot legally be waived.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold text-foreground mb-3">5. No Guarantee of Results</h2>
             <p className="text-muted-foreground">
-              OverTaxed IL does not guarantee that any appeal will result in a reduction of your property tax assessment. The decision to grant or deny an appeal rests solely with the tax authority. OverTaxed IL has no control over those decisions. County decisions are final and binding subject only to processes provided by law.
+              OverTaxed IL does not guarantee that any appeal will result in a lower assessment or lower tax bill. The Assessor, Board of Review, or other tax authority makes the final decision. Estimates shown on the site are educational projections based on available public records and may differ from final outcomes.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold text-foreground mb-3">6. Technology Platform; Not Legal or Tax Advice</h2>
             <p className="text-muted-foreground">
-              OverTaxed IL is a technology platform that automates the property tax appeal process. OverTaxed IL is not a law firm and does not provide legal advice; not a tax advisor and does not provide tax advice; and not a licensed appraiser. You are not relying on OverTaxed IL for legal, tax, or appraisal advice. Consult qualified professionals if you need such advice.
+              OverTaxed IL is not a law firm, tax advisor, or licensed appraiser. We organize public records and appeal materials; we do not provide legal, tax, or appraisal advice. For legal, tax, valuation, ownership, exemption, or estate questions, consult a qualified professional.
             </p>
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground mb-3">7. Limitation of Liability</h2>
+            <h2 className="text-xl font-semibold text-foreground mb-3">7. Money-Back Guarantee and Refunds</h2>
             <p className="text-muted-foreground mb-3">
-              To the maximum extent permitted by law, OverTaxed IL shall not be liable for any indirect, incidental, special, consequential, or punitive damages; loss of profits, revenue, data, or use; or any damages arising from denial of appeals by tax authorities, errors or delays in filing, technical failures, inaccurate data from third-party sources, or your failure to provide accurate information.
+              Our procedural money-back guarantee applies to the $69 DIY Appeal Packet and $97 Done-For-You service: if your filing is rejected or denied solely because of an OverTaxed IL procedural error in the materials or submission we prepared, we will refund the OverTaxed IL service fee you paid for that filing.
+            </p>
+            <p className="text-muted-foreground mb-3">
+              The guarantee does not apply when the county denies an appeal on the merits, when the property is not eligible, when the appeal window is closed before you provide required information or authorization, or when information you provided is inaccurate or incomplete.
             </p>
             <p className="text-muted-foreground">
-              OverTaxed IL&apos;s total liability shall not exceed the amount of fees you have paid to OverTaxed IL in the twelve (12) months preceding the claim.
+              To request a refund, contact support@overtaxed-il.com within 30 days of the county notice and include the notice or filing status. Contingency customers owe no contingency fee if there is no granted reduction.
             </p>
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground mb-3">8. Cancellation and Changes</h2>
+            <h2 className="text-xl font-semibold text-foreground mb-3">8. Limitation of Liability</h2>
             <p className="text-muted-foreground mb-3">
-              You may cancel your subscription at any time via your account or by contacting OverTaxed IL. Upon cancellation, your subscription will not renew; you will have access until the end of your current billing period. For the Performance Plan, you remain obligated to pay fees for Tax Savings achieved during the 3-year period, even if you cancel.
+              To the maximum extent permitted by law, OverTaxed IL is not liable for indirect, incidental, special, consequential, or punitive damages, or for decisions made by government agencies.
             </p>
             <p className="text-muted-foreground">
-              Refunds: Subscription plans – within 30 days of initial signup (satisfaction guarantee). Performance Plan – no refunds once fees are calculated and invoiced. Comps-Only – no refunds for comp packets already delivered.
+              OverTaxed IL&apos;s total liability for a claim is limited to the amount of fees you paid to OverTaxed IL for the specific property and filing at issue, except where applicable law requires otherwise.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold text-foreground mb-3">9. Modifications</h2>
             <p className="text-muted-foreground">
-              OverTaxed IL reserves the right to modify these Terms at any time. Material changes will be communicated via email or through the platform. Continued use of the service after such modifications constitutes acceptance. Material changes may require your renewed acceptance.
+              We may update these Terms from time to time. Material changes will be posted on the site or communicated by email. Material changes to paid services may require renewed acceptance.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold text-foreground mb-3">10. Governing Law</h2>
             <p className="text-muted-foreground">
-              These Terms shall be governed by the laws of the State of Illinois. Any disputes shall be resolved through binding arbitration in accordance with the rules of the American Arbitration Association, except that OverTaxed IL may seek injunctive relief in any court of competent jurisdiction.
+              These Terms are governed by Illinois law, without regard to conflict-of-law rules. Nothing in these Terms limits rights you may have under consumer-protection laws that cannot be waived.
             </p>
           </section>
 
@@ -155,7 +128,7 @@ export default function TermsPage() {
         </div>
 
         <p className="mt-12 text-sm text-muted-foreground">
-          By signing up and using OverTaxed IL, you acknowledge that you have read, understood, and agree to be bound by these Terms of Service and User Agreement.
+          By purchasing a service or using OverTaxed IL, you acknowledge that you have read and understood these Terms. Filing authorization, where needed, is requested separately and explicitly.
         </p>
       </main>
       <SiteFooter />

@@ -4,17 +4,17 @@
  * Pass 1 PREVIEW STUB. Real CCAO + Board-of-Review wiring lands later.
  * - Accepts { address?, pin?, mode? }.
  * - Logs the request (without echoing back anything beyond SAMPLE_RESULT).
- * - Returns the SAMPLE_RESULT shape used by HeroCheckCard.
+ * - Returns a clearly labeled sample result shape used by HeroCheckCard.
  * - No real backend, no CRM write, no payment.
  */
 import { NextResponse } from "next/server";
 
 const SAMPLE_RESULT = {
-  address: "4218 N Kedvale Ave, Chicago IL 60641",
+  address: "Sample result — not your submitted address",
   township: "Jefferson",
-  windowStatus: "open" as const,
-  windowCloses: "Aug 12, 2026",
-  windowDaysRemaining: 21,
+  windowStatus: "closed" as const,
+  windowCloses: "Jefferson Township is closed until the 2028 cycle",
+  windowDaysRemaining: 0,
   yourAssessed: 38420,
   compsAvg: 31180,
   equityRatio: 12.3,
@@ -36,9 +36,5 @@ export async function POST(req: Request) {
     pinLen: (body.pin || "").length,
     mode: body.mode || "address",
   });
-  const submitted = (body.address || "").trim();
-  const result = submitted
-    ? { ...SAMPLE_RESULT, address: submitted }
-    : SAMPLE_RESULT;
-  return NextResponse.json({ ok: true, preview: true, result });
+  return NextResponse.json({ ok: true, preview: true, result: SAMPLE_RESULT });
 }

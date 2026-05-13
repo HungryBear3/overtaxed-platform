@@ -18,33 +18,15 @@ import "../ot-design.css";
 
 const tiers = [
   {
-    id: "T1",
-    name: "DIY Starter",
-    price: "$37",
-    priceSub: "one-time",
-    description:
-      "PDF packet + instructions. You find comps and file yourself.",
-    features: [
-      "Appeal instructions guide",
-      "Appeal letter template",
-      "Filing checklist",
-      "Deadline calendar",
-      "Email support",
-    ],
-    cta: "Buy Now",
-    href: null,
-    popular: false,
-  },
-  {
     id: "T2",
-    name: "DIY Pro",
+    name: "DIY Appeal Packet",
     price: "$69",
     priceSub: "one-time",
-    description: "We build your comp package. You file yourself.",
+    description: "We build your comparable-property packet. You file it yourself.",
     features: [
-      "Everything in DIY Starter",
       "Comparable property analysis",
       "Ready-to-use comp report",
+      "Appeal argument draft",
       "Step-by-step filing guide",
       "Priority email support",
     ],
@@ -57,12 +39,12 @@ const tiers = [
     name: "Done-For-You",
     price: "$97",
     priceSub: "one-time",
-    description: "We prepare everything + submit your appeal on your behalf.",
+    description: "We prepare the packet and submit the appeal after you sign authorization.",
     features: [
-      "Everything in DIY Pro",
-      "We file the appeal for you",
-      "Professional appeal letter",
-      "Hearing representation guidance",
+      "Everything in DIY Appeal Packet",
+      "Explicit filing authorization at checkout",
+      "We submit the Board of Review forms",
+      "Status tracking through decision",
       "Phone + email support",
     ],
     cta: "Buy Now",
@@ -75,15 +57,15 @@ const tiers = [
     price: "22%",
     priceSub: "of first-year savings · $0 upfront · $50 minimum",
     description:
-      "We handle everything. You pay only if we win your appeal.",
+      "We handle everything. You pay only if the county reduces your assessment.",
     features: [
       "Everything in Done-For-You",
       "No upfront cost",
-      "We win or you pay nothing",
+      "Fee applies only to granted savings",
       "Full appeal management",
       "Dedicated case manager",
     ],
-    cta: "Get Started Free",
+    cta: "Request contingency review",
     href: "/appeal-contingency",
     popular: false,
   },
@@ -129,10 +111,10 @@ export default function PricingPage() {
       {/* Hero */}
       <section className="bg-white border-b border-gray-100 py-16 px-4 text-center">
         <h1 className="text-4xl font-bold text-gray-900 max-w-3xl mx-auto leading-tight">
-          Two ways to file your Cook County appeal — starting at $69
+          Three clear ways to file your Cook County appeal
         </h1>
         <p className="mt-4 text-lg text-gray-500 max-w-xl mx-auto">
-          Build the comp packet yourself ($69) or have us prepare and submit it for you ($97). Both built around Cook County Assessor + Board of Review public records. We don&apos;t guarantee a reduction — county decisions are final.
+          DIY Appeal Packet ($69), Done-For-You filing ($97), or Contingency (22% of first-year savings only if the county grants a reduction). Every option is built around Cook County Assessor + Board of Review public records. We don&apos;t guarantee a reduction — county decisions are final.
         </p>
       </section>
 

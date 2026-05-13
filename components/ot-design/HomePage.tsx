@@ -10,11 +10,11 @@ import {
 
 /* ── Sample result returned by /api/check stub ─────────────────────────── */
 const SAMPLE_RESULT = {
-  address: "4218 N Kedvale Ave, Chicago IL 60641",
+  address: "Sample result — not your submitted address",
   township: "Jefferson",
-  windowStatus: "open" as const,
-  windowCloses: "Aug 12, 2026",
-  windowDaysRemaining: 21,
+  windowStatus: "closed" as const,
+  windowCloses: "Jefferson Township is closed until the 2028 cycle",
+  windowDaysRemaining: 0,
   yourAssessed: 38420,
   compsAvg: 31180,
   equityRatio: 12.3,
@@ -23,7 +23,7 @@ const SAMPLE_RESULT = {
   comps: 3,
 };
 
-type Result = typeof SAMPLE_RESULT;
+type Result = typeof SAMPLE_RESULT & { preview?: boolean };
 
 const fmtUSD = (n: number) =>
   n.toLocaleString("en-US", {
@@ -71,7 +71,7 @@ function HeroNarrative() {
         <li>
           <span className="ot-tick">✓</span>
           <span>
-            Your <strong>equity ratio</strong> vs. Cook County&apos;s 10% target
+            Your assessment level vs. <strong>similar nearby homes</strong> and Cook County&apos;s 10% residential target
           </span>
         </li>
         <li>
@@ -148,19 +148,18 @@ function HeroCheckCard({
       e.preventDefault();
       setLoading(true);
       try {
-        await fetch("/api/check", {
+        const res = await fetch("/api/check", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ address, pin, mode }),
         });
-      } catch {
-        /* preview stub — ignore */
-      }
-      // Match the design's ~900ms latency feel
-      setTimeout(() => {
+        const data = await res.json().catch(() => null);
         setLoading(false);
-        onResult(SAMPLE_RESULT);
-      }, 900);
+        onResult(data?.result ? { ...data.result, preview: Boolean(data.preview) } : { ...SAMPLE_RESULT, preview: true });
+      } catch {
+        setLoading(false);
+        onResult({ ...SAMPLE_RESULT, preview: true });
+      }
     },
     [address, pin, mode, onResult],
   );
@@ -226,12 +225,12 @@ function HeroCheckCard({
 
       <div className="ot-trust-bar" aria-live="polite">
         <span>
-          <strong>2,400+</strong> Cook County homeowners checked this month
+          Preview mode: sample result only until live lookup is enabled
         </span>
         <span className="ot-trust-sep" aria-hidden="true">
           ·
         </span>
-        <span>CCAO + Board of Review data</span>
+        <span>No real Cook County lookup in this preview</span>
       </div>
 
       <button
@@ -288,6 +287,12 @@ function HeroCheckResult({
           Check another →
         </button>
       </div>
+      {result.preview && (
+        <div className="ot-result-altline" role="note">
+          Preview sample — this is not a Cook County lookup for your submitted address.
+          Live public-record results will be enabled before production launch.
+        </div>
+      )}
       <div className="ot-result-savings">
         <div className="ot-result-savings-label">Estimated annual overpayment</div>
         <div className="ot-result-savings-amount">
@@ -318,7 +323,7 @@ function HeroCheckResult({
           <span className="ot-result-row-key">Equity ratio</span>
           <span className="ot-result-row-val">
             {result.equityRatio.toFixed(1)}%
-            <span className="ot-result-tag ot-result-tag-warn">over-assessed</span>
+            <span className="ot-result-tag ot-result-tag-warn">sample only</span>
           </span>
         </div>
       </div>
@@ -330,7 +335,7 @@ function HeroCheckResult({
       />
 
       <a href="/checkout" className="ot-cta ot-cta-block">
-        Start your appeal — DIY Packet $69 <span className="ot-cta-arrow">→</span>
+        Review filing options — DIY Packet $69 <span className="ot-cta-arrow">→</span>
       </a>
       <div className="ot-result-altline">
         Or <a href="#offer">choose Done-For-You at $97</a> · No account to start
@@ -453,12 +458,10 @@ function HeatmapHero() {
         <div className="ot-heatmap-text">
           <div className="ot-heatmap-eyebrow">Cook County · 2024–2026 cycle</div>
           <h2 id="ot-heatmap-h" className="ot-h2 ot-heatmap-h">
-            Most Cook County homes sit <em>past</em> the 10% equity-ratio target.
+            Cook County residential assessments are tested against a 10% level — and uniformity with comparable homes.
           </h2>
           <p className="ot-heatmap-lede">
-            The statutory equity-ratio target is 10%. Anything to the right of
-            the line is over-assessed — and most Cook County properties land
-            there.
+            For class 2 residential property, assessed value is generally targeted at 10% of market value. Appeals also depend on uniformity: whether comparable homes are assessed lower than yours.
           </p>
         </div>
         <div className="ot-heatmap-vis ot-heatmap-vis-hist">
@@ -466,8 +469,7 @@ function HeatmapHero() {
         </div>
       </div>
       <div className="ot-heatmap-caption">
-        Distribution of equity ratios across ~1.8M Cook County parcels (CCAO
-        public records). Properties past 10% are candidates for appeal.
+        Illustrative distribution based on public Cook County assessment records. Treat this as methodology context, not a claim about your property or a guaranteed appeal outcome.
       </div>
     </section>
   );
@@ -780,7 +782,7 @@ const FAQ_ITEMS = [
   {
     id: "diy-vs-dfy",
     q: "DIY Packet vs Done-For-You — which should I pick?",
-    a: "Most homeowners pick DIY at $69 and file in an evening. Done-For-You at $97 is for folks who'd rather not deal with the Board of Review forms themselves.",
+    a: "Most homeowners pick the $69 DIY Appeal Packet when they want us to build the comp package and they are comfortable filing it themselves. Done-For-You at $97 is for homeowners who want us to submit after they sign explicit filing authorization.",
     expanded: false,
   },
   {

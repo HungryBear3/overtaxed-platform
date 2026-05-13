@@ -1,4 +1,4 @@
-// POST /api/admin/create-performance-invoice - Create Performance Fee invoice(s) for a user
+// POST /api/admin/create-performance-invoice - Create contingency fee invoice(s) for a user
 // Admin-only. Use when conditions are met (3-year window ended for upfront, or first reduction for installments).
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"

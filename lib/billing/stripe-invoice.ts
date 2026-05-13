@@ -1,5 +1,5 @@
 /**
- * Create and send Stripe Invoices for Performance Fee.
+ * Create and send Stripe invoices for contingency fees.
  * Uses send_invoice so Stripe emails the customer with a payment link.
  */
 import { stripe } from "@/lib/stripe/client"
@@ -85,7 +85,7 @@ export async function createAndSendStripeInvoice(args: {
       amount: amountCents,
       currency: "usd",
       description:
-        args.description ?? "Performance Fee – 4% of 3-year tax savings (OverTaxed IL)",
+        args.description ?? "Contingency Fee – 22% of first-year granted tax savings (OverTaxed IL)",
     })
 
     const finalized = await stripe.invoices.finalizeInvoice(invoice.id)

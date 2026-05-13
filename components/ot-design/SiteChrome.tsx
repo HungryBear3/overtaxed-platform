@@ -79,8 +79,9 @@ export function SiteFooter() {
               <li><Link href="/#hero-check">Free check</Link></li>
               <li><Link href="/#offer">Pricing</Link></li>
               <li><Link href="/deadlines">All township deadlines</Link></li>
-              <li><Link href="/#method">How it works</Link></li>
+              <li><Link href="/how-it-works">How it works</Link></li>
               <li><Link href="/#faq">FAQ</Link></li>
+              <li><Link href="/contact">Contact</Link></li>
             </ul>
           </div>
 
@@ -93,7 +94,7 @@ export function SiteFooter() {
                 </li>
               ))}
               <li>
-                <Link href="/deadlines" className="ot-footer-link-all">
+                <Link href="/townships" className="ot-footer-link-all">
                   See all 38 →
                 </Link>
               </li>
@@ -113,7 +114,7 @@ export function SiteFooter() {
         <div className="ot-footer-bottom">
           <div className="ot-footer-copy">© 2026 OverTaxed IL · Chicago, IL</div>
           <div className="ot-footer-meta">
-            Data refreshed weekly from Cook County Board of Review records
+            <Link href="/privacy">Privacy</Link> · <Link href="/terms">Terms</Link> · Public-record estimates, not legal advice
           </div>
         </div>
       </div>
