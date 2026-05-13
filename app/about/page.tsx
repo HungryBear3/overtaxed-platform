@@ -2,8 +2,8 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
-import { DollarSign, Search, FileText, Bell } from "lucide-react"
+import { OT_PUBLIC_CONTACT, SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
+import { CalendarDays, DollarSign, Phone, Search, FileText, Bell } from "lucide-react"
 import "../ot-design.css"
 
 export const metadata: Metadata = {
@@ -61,6 +61,39 @@ export default function AboutPage() {
           <p className="text-gray-700 text-lg leading-relaxed">
             OverTaxed IL was built to fix that. We pull your assessment data, generate a comparable sales packet, and give you everything you need to file a strong appeal — built around Cook County Assessor + Board of Review public records.
           </p>
+        </div>
+
+
+        <div className="mb-16 rounded-2xl border border-blue-100 bg-blue-50/70 p-6 md:p-8">
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-blue-700 mb-2">Founder</p>
+              <h2 className="text-2xl font-bold text-gray-900 mb-3">Alexy Kaplun</h2>
+              <p className="text-gray-700 leading-relaxed max-w-2xl">
+                Alexy Kaplun founded OverTaxed IL to make Cook County property-tax appeals easier to understand,
+                prepare, and file. The product is built for homeowners who want clear deadlines, comparable-property
+                evidence, and transparent filing options without exaggerated savings claims.
+              </p>
+              <p className="text-sm text-gray-600 mt-3">
+                Questions before you buy? Call or text our Google Voice line, or schedule a short call.
+              </p>
+            </div>
+            <div className="flex flex-col gap-3 md:min-w-56">
+              <a href={OT_PUBLIC_CONTACT.calendlyUrl} target="_blank" rel="noreferrer">
+                <Button className="w-full justify-center">
+                  <CalendarDays className="h-4 w-4 mr-2" />
+                  Schedule a call
+                </Button>
+              </a>
+              <a href={OT_PUBLIC_CONTACT.phoneHref}>
+                <Button variant="outline" className="w-full justify-center border-blue-600 text-blue-700 hover:bg-blue-100">
+                  <Phone className="h-4 w-4 mr-2" />
+                  {OT_PUBLIC_CONTACT.phoneDisplay}
+                </Button>
+              </a>
+              <p className="text-xs text-gray-500 text-center">9am–5pm CT · response within one business day</p>
+            </div>
+          </div>
         </div>
 
         <div className="mb-16">

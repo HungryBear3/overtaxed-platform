@@ -1,9 +1,9 @@
 import Link from "next/link"
-import { Mail, Clock, MessageSquare } from "lucide-react"
+import { CalendarDays, Mail, Clock, MessageSquare, Phone } from "lucide-react"
 import { ContactForm } from "@/components/contact/ContactForm"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
+import { OT_PUBLIC_CONTACT, SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import "../ot-design.css"
 
 export const metadata = {
@@ -23,9 +23,36 @@ export default function ContactPage() {
           </div>
           <h1 className="text-4xl font-bold text-gray-900 mb-4">Contact Us</h1>
           <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-            Have questions or need help? Fill out the form below or email us and we&apos;ll get back to you within 2-3 business days.
+Have questions or need help? Fill out the form, email us, call or text, or schedule a short call.
           </p>
         </div>
+
+
+        <Card className="border-blue-200 bg-blue-50 mb-8">
+          <CardHeader className="text-center pb-4">
+            <CardTitle className="text-2xl">Talk with OverTaxed IL</CardTitle>
+            <CardDescription className="text-base">
+              Founder-led support for homeowner questions before you buy.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-2 text-center">
+            <a href={OT_PUBLIC_CONTACT.calendlyUrl} target="_blank" rel="noreferrer">
+              <Button className="w-full justify-center">
+                <CalendarDays className="h-5 w-5 mr-2" />
+                Schedule a 30-minute call
+              </Button>
+            </a>
+            <a href={OT_PUBLIC_CONTACT.phoneHref}>
+              <Button variant="outline" className="w-full justify-center border-blue-600 text-blue-700 hover:bg-blue-100">
+                <Phone className="h-5 w-5 mr-2" />
+                Call or text {OT_PUBLIC_CONTACT.phoneDisplay}
+              </Button>
+            </a>
+            <p className="sm:col-span-2 text-sm text-blue-900">
+              9am–5pm CT · response within one business day · OverTaxed IL is not a law firm.
+            </p>
+          </CardContent>
+        </Card>
 
         <div className="mb-8">
           <ContactForm />
@@ -72,7 +99,7 @@ export default function ContactPage() {
               <CardTitle>Response Time</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-gray-700 font-medium">Within 2-3 business days</p>
+              <p className="text-gray-700 font-medium">Within one business day</p>
               <p className="text-sm text-gray-500 mt-3">
                 For refund requests or urgent matters, include &quot;URGENT&quot; in your subject line.
               </p>

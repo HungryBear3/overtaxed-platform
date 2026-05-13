@@ -257,6 +257,23 @@ describe("OT v2 marketing — township deadline source of truth", () => {
   });
 });
 
+describe("OT v2 marketing — public founder/contact", () => {
+  it("publishes founder + Google Voice contact without exposing Alexy's personal cell", () => {
+    const surfaces = [
+      read("components/ot-design/SiteChrome.tsx"),
+      read("app/about/page.tsx"),
+      read("app/contact/page.tsx"),
+      read("app/appeal-contingency/page.tsx"),
+    ].join("\n");
+
+    expect(surfaces).toMatch(/Alexy Kaplun/);
+    expect(surfaces).toMatch(/overtaxed-il-support\/30min/);
+    expect(surfaces).toMatch(/\(847\) 461-3189/);
+    expect(surfaces).toMatch(/tel:\+18474613189/);
+    expect(surfaces).not.toMatch(/312\.593\.1571|312-593-1571|3125931571|tel:\+13125931571/);
+  });
+});
+
 describe("OT v2 marketing — fourth-preview polish", () => {
   it("softens preview hero copy and keeps outcomes compact/deliverable-focused", () => {
     const src = read("components/ot-design/HomePage.tsx");

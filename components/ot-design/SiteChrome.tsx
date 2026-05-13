@@ -3,6 +3,14 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { buildTickerItems, TOWNSHIPS, TOWNSHIP_STATUS_COUNTS } from "@/lib/townships";
 
+export const OT_PUBLIC_CONTACT = {
+  founder: "Alexy Kaplun",
+  phoneDisplay: "(847) 461-3189",
+  phoneHref: "tel:+18474613189",
+  calendlyUrl: "https://calendly.com/overtaxed-il-support/30min",
+  email: "support@overtaxed-il.com",
+} as const;
+
 const FOOTER_TOWNSHIP_GROUPS = [
   {
     label: "South & West",
@@ -58,6 +66,9 @@ export function SiteHeader({
           </Link>
         </nav>
         <div className="ot-header-cta">
+          <a href={OT_PUBLIC_CONTACT.calendlyUrl} className="ot-header-link" target="_blank" rel="noreferrer">
+            Schedule call
+          </a>
           <Link href="/auth/signin" className="ot-header-link">
             Sign in
           </Link>
@@ -83,7 +94,9 @@ export function SiteFooter() {
               Cook County property tax appeals, built for homeowners.
             </div>
             <div className="ot-footer-contact">
-              <a href="mailto:support@overtaxed-il.com">support@overtaxed-il.com</a>
+              <a href={`mailto:${OT_PUBLIC_CONTACT.email}`}>{OT_PUBLIC_CONTACT.email}</a>
+              <a href={OT_PUBLIC_CONTACT.phoneHref}>{OT_PUBLIC_CONTACT.phoneDisplay}</a>
+              <a href={OT_PUBLIC_CONTACT.calendlyUrl} target="_blank" rel="noreferrer">Schedule a call</a>
             </div>
           </div>
 
@@ -124,7 +137,7 @@ export function SiteFooter() {
           <div className="ot-footer-col ot-footer-col-legal">
             <div className="ot-footer-col-head">About</div>
             <p className="ot-footer-disclaimer">
-              OverTaxed IL is not a law firm and does not provide legal advice.
+              Founded by {OT_PUBLIC_CONTACT.founder}. OverTaxed IL is not a law firm and does not provide legal advice.
               Estimates are based on public Cook County Assessor records and may
               vary from final Board of Review outcomes.
             </p>
