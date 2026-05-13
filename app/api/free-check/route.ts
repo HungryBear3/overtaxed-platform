@@ -17,6 +17,7 @@ import {
 import type { PropertyData, SalesRecord, EquityRecord } from "@/lib/cook-county"
 import { rateLimit, getClientIdentifier } from "@/lib/rate-limit"
 import { BOR_APPEAL_WINDOWS } from "@/lib/appeals/bor-appeal-windows"
+import { normalizeFreeCheckSearchInput } from "@/lib/free-check-address"
 import {
   hostFromRequest,
   marketingGateReason,
@@ -171,6 +172,7 @@ Under Illinois law (35 ILCS 200/9-5) and the Cook County Assessor's rules, prope
 We request a reduction in the assessed value to $${Math.round(targetAV).toLocaleString()}, consistent with the ${mvStr} market value and comparable properties in the neighborhood.`
 }
 
+
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -211,8 +213,15 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         )
       }
-    } else if (address.length >= 5) {
-      const search = await searchPropertiesByAddress(address, city || undefined, 5)
+    } else {
+      const searchInput = normalizeFreeCheckSearchInput(address, city)
+      if (searchInput.address.length < 5) {
+        return NextResponse.json(
+          { error: "Enter either a 14-digit Cook County PIN or a street address (at least 5 characters)." },
+          { status: 400 }
+        )
+      }
+      const search = await searchPropertiesByAddress(searchInput.address, searchInput.city || undefined, 5)
       if (!search.success || !search.data?.length) {
         return NextResponse.json(
           { error: "No Cook County property found for this address. Try your 14-digit PIN instead." },
@@ -235,11 +244,6 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         )
       }
-    } else {
-      return NextResponse.json(
-        { error: "Enter either a 14-digit Cook County PIN or a street address (at least 5 characters)." },
-        { status: 400 }
-      )
     }
 
     if (!propertyData) {
