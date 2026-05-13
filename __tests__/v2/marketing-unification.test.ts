@@ -267,7 +267,8 @@ describe("OT v2 marketing — public founder/contact", () => {
     ].join("\n");
 
     expect(surfaces).toMatch(/Alexy Kaplun/);
-    expect(surfaces).toMatch(/overtaxed-il-support\/30min/);
+    expect(surfaces).toMatch(/calendlyUrl: "\/contact"/);
+    expect(surfaces).not.toMatch(/calendly\.com/);
     expect(surfaces).toMatch(/\(847\) 461-3189/);
     expect(surfaces).toMatch(/tel:\+18474613189/);
     expect(surfaces).not.toMatch(/312\.593\.1571|312-593-1571|3125931571|tel:\+13125931571/);

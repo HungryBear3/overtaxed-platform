@@ -79,7 +79,7 @@ export default function AboutPage() {
               </p>
             </div>
             <div className="flex flex-col gap-3 md:min-w-56">
-              <a href={OT_PUBLIC_CONTACT.calendlyUrl} target="_blank" rel="noreferrer">
+              <a href={OT_PUBLIC_CONTACT.calendlyUrl}>
                 <Button className="w-full justify-center">
                   <CalendarDays className="h-4 w-4 mr-2" />
                   Schedule a call

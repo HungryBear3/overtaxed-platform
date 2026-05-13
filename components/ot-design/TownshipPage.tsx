@@ -267,7 +267,7 @@ function TownshipFaq({ t }: { t: Township }) {
     },
     {
       q: `What does it cost to appeal?`,
-      a: <>The Cook County Board of Review charges no fee. OverTaxed IL offers a $69 DIY Appeal Packet, $97 Done-For-You filing after explicit authorization, and a 22% contingency option for eligible cases. You can also file on your own at no cost — see the <Link href="/#offer">pricing details</Link>.</>,
+      a: <>The Cook County Board of Review charges no fee. OverTaxed IL offers a $69 DIY Appeal Packet, $97 Done-For-You filing after explicit authorization, and a 22% contingency option for eligible cases. You can also file on your own at no cost — see the <Link href="/#pricing">pricing details</Link>.</>,
     },
     {
       q: `What evidence do I need to appeal in ${t.name}?`,

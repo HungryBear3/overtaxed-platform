@@ -7,7 +7,7 @@ export const OT_PUBLIC_CONTACT = {
   founder: "Alexy Kaplun",
   phoneDisplay: "(847) 461-3189",
   phoneHref: "tel:+18474613189",
-  calendlyUrl: "https://calendly.com/overtaxed-il-support/30min",
+  calendlyUrl: "/contact",
   email: "support@overtaxed-il.com",
 } as const;
 
@@ -43,6 +43,15 @@ export function SiteHeader({
 }: {
   active?: "home" | "method" | "offer" | "deadlines" | "faq";
 }) {
+  function scrollToPricing(e: React.MouseEvent<HTMLAnchorElement>) {
+    if (typeof window === "undefined" || window.location.pathname !== "/") return;
+    const target = document.getElementById("pricing");
+    if (!target) return;
+    e.preventDefault();
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.history.replaceState(null, "", "#pricing");
+  }
+
   return (
     <header className="ot-header">
       <div className="ot-header-inner">
@@ -55,9 +64,9 @@ export function SiteHeader({
           <Link href="/#method" className={active === "method" ? "is-active" : ""}>
             How it works
           </Link>
-          <Link href="/#offer" className={active === "offer" ? "is-active" : ""}>
+          <a href="/#pricing" className={active === "offer" ? "is-active" : ""} onClick={scrollToPricing}>
             Pricing
-          </Link>
+          </a>
           <Link href="/deadlines" className={active === "deadlines" ? "is-active" : ""}>
             Deadlines
           </Link>
@@ -96,7 +105,7 @@ export function SiteFooter() {
             <div className="ot-footer-contact">
               <a href={`mailto:${OT_PUBLIC_CONTACT.email}`}>{OT_PUBLIC_CONTACT.email}</a>
               <a href={OT_PUBLIC_CONTACT.phoneHref}>{OT_PUBLIC_CONTACT.phoneDisplay}</a>
-              <a href={OT_PUBLIC_CONTACT.calendlyUrl} target="_blank" rel="noreferrer">Schedule a call</a>
+              <a href={OT_PUBLIC_CONTACT.calendlyUrl}>Schedule a call</a>
             </div>
           </div>
 
@@ -104,7 +113,7 @@ export function SiteFooter() {
             <div className="ot-footer-col-head">Quick links</div>
             <ul className="ot-footer-links">
               <li><Link href="/#hero-check">Free check</Link></li>
-              <li><Link href="/#offer">Pricing</Link></li>
+              <li><Link href="/#pricing">Pricing</Link></li>
               <li><Link href="/deadlines">All township deadlines</Link></li>
               <li><Link href="/how-it-works">How it works</Link></li>
               <li><Link href="/#faq">FAQ</Link></li>

@@ -36,7 +36,7 @@ Have questions or need help? Fill out the form, email us, call or text, or sched
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2 text-center">
-            <a href={OT_PUBLIC_CONTACT.calendlyUrl} target="_blank" rel="noreferrer">
+            <a href={OT_PUBLIC_CONTACT.calendlyUrl}>
               <Button className="w-full justify-center">
                 <CalendarDays className="h-5 w-5 mr-2" />
                 Schedule a 30-minute call
