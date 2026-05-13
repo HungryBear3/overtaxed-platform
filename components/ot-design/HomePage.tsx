@@ -315,13 +315,11 @@ function HeroCheckCard({
       )}
 
       <div className="ot-trust-bar" aria-live="polite">
-        <span>
-          Preview mode: sample result only until live lookup is enabled
-        </span>
+        <span>Real Cook County public-record lookup</span>
         <span className="ot-trust-sep" aria-hidden="true">
           ·
         </span>
-        <span>Real Cook County public-record lookup · no signup</span>
+        <span>No signup · no credit card</span>
       </div>
 
       <button
