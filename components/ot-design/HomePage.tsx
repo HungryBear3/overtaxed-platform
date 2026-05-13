@@ -64,9 +64,9 @@ function formatIsoDateLabel(iso?: string | null): string | null {
 }
 
 function daysUntilIso(iso?: string | null): number {
-  if (!iso) return SAMPLE_RESULT.windowDaysRemaining;
+  if (!iso) return 0;
   const close = new Date(`${iso}T23:59:59`);
-  if (Number.isNaN(close.getTime())) return SAMPLE_RESULT.windowDaysRemaining;
+  if (Number.isNaN(close.getTime())) return 0;
   const now = new Date();
   return Math.max(0, Math.ceil((close.getTime() - now.getTime()) / 86_400_000));
 }
@@ -94,8 +94,8 @@ function normalizeCheckResult(
     windowStatus: status,
     windowCloses: closeLabel
       ? `${township} window closes ${closeLabel}`
-      : (r.windowCloses ?? SAMPLE_RESULT.windowCloses),
-    windowDaysRemaining: asFiniteNumber(r.windowDaysRemaining, daysUntilIso(aw?.closeDate)),
+      : (isFreeCheckShape ? "Exact appeal dates unavailable" : (r.windowCloses ?? SAMPLE_RESULT.windowCloses)),
+    windowDaysRemaining: asFiniteNumber(r.windowDaysRemaining, status === "unknown" ? 0 : daysUntilIso(aw?.closeDate)),
     yourAssessed: asFiniteNumber(subject?.assessedTotalValue ?? r.yourAssessed, SAMPLE_RESULT.yourAssessed),
     compsAvg: asFiniteNumber(r.avgComparableAssessedValue ?? r.compsAvg, SAMPLE_RESULT.compsAvg),
     assessmentLevel: asFiniteNumber(r.equityRatio ?? r.assessmentLevel, SAMPLE_RESULT.assessmentLevel),
@@ -204,24 +204,28 @@ function TownshipDeadline({
       </div>
       <div className="ot-deadline-c">
         {status === "closed" ? (
-          <><strong>Closed</strong><span>{closeDate}</span></>
+          <><strong>Closed</strong><span>Appeal window closed</span></>
         ) : status === "unknown" ? (
-          <><strong>Check dates</strong><span>{closeDate}</span></>
+          <><strong>Unknown</strong><span>{closeDate}</span></>
         ) : (
           <><strong>{daysRemaining} days</strong><span>until close</span></>
         )}
       </div>
-      <div className="ot-deadline-r">{closeDate}</div>
+      <div className="ot-deadline-r">{status === "unknown" ? "Check dates →" : closeDate}</div>
     </div>
   );
 }
 
 function HeroCheckCard({
   result,
+  error,
   onResult,
+  onError,
 }: {
   result: Result | null;
+  error: string;
   onResult: (r: Result | null) => void;
+  onError: (message: string) => void;
 }) {
   const [pin, setPin] = useState("");
   const [mode, setMode] = useState<"address" | "pin">("address");
@@ -236,6 +240,7 @@ function HeroCheckCard({
     async (e: React.FormEvent) => {
       e.preventDefault();
       setLoading(true);
+      onError("");
       try {
         const submittedInput = mode === "pin" ? pin : address;
         const res = await fetch("/api/free-check", {
@@ -245,11 +250,17 @@ function HeroCheckCard({
         });
         const data = await res.json().catch(() => null);
         setLoading(false);
+        if (res.ok === false) {
+          onResult(null);
+          onError(data?.error ?? "We couldn't find a Cook County property for that input. Try your 14-digit PIN instead.");
+          return;
+        }
         const isPreview = Boolean(data?.preview || data?.mode === "preview_noop" || data?.source === "preview-noop");
         onResult(normalizeCheckResult(data?.result ?? data, isPreview, submittedInput));
       } catch {
         setLoading(false);
-        onResult(normalizeCheckResult(null, true, mode === "pin" ? pin : address));
+        onResult(null);
+        onError("We couldn't complete the lookup. Please try again, or enter your 14-digit PIN.");
       }
     },
     [address, pin, mode, onResult],
@@ -261,6 +272,7 @@ function HeroCheckCard({
         result={result}
         onReset={() => {
           setPin("");
+          onError("");
           onResult(null);
         }}
       />
@@ -312,6 +324,12 @@ function HeroCheckCard({
             We&apos;ll find your PIN automatically
           </span>
         </label>
+      )}
+
+      {error && (
+        <div className="ot-result-altline" role="alert">
+          {error}
+        </div>
       )}
 
       <div className="ot-trust-bar" aria-live="polite">
@@ -386,7 +404,7 @@ function HeroCheckResult({
       )}
       <div className={`ot-result-savings${result.preview ? " ot-result-savings--sample" : ""}`}>
         <div className="ot-result-savings-label">
-          {resultOpportunity ? "Estimated annual overpayment" : "Estimated annual overpayment found"}
+          {resultOpportunity ? "Estimated annual overpayment found" : "No overpayment flagged"}
         </div>
         <div className="ot-result-savings-amount">
           {fmtUSD(result.overpayPerYear)}
@@ -428,14 +446,22 @@ function HeroCheckResult({
         status={result.windowStatus}
       />
 
-      <div className="ot-result-tier-actions" aria-label="Filing options">
-        <a href="/checkout?plan=diy" className="ot-cta ot-cta-block ot-result-tier-cta">DIY $69</a>
-        <a href="/checkout?plan=done-for-you" className="ot-cta ot-cta-block ot-result-tier-cta">Done-For-You $97</a>
-        <a href="/appeal-contingency" className="ot-cta ot-cta-block ot-result-tier-cta ot-result-tier-cta-secondary">Contingency</a>
-      </div>
-      <div className="ot-result-altline">
-        Pick a filing option if the check shows a real opportunity · no account required to review
-      </div>
+      {resultOpportunity ? (
+        <>
+          <div className="ot-result-tier-actions" aria-label="Filing options">
+            <a href="/checkout?plan=diy" className="ot-cta ot-cta-block ot-result-tier-cta">DIY $69</a>
+            <a href="/checkout?plan=done-for-you" className="ot-cta ot-cta-block ot-result-tier-cta">Done-For-You $97</a>
+            <a href="/appeal-contingency" className="ot-cta ot-cta-block ot-result-tier-cta ot-result-tier-cta-secondary">Contingency</a>
+          </div>
+          <div className="ot-result-altline">
+            Pick a filing option if the check shows a real opportunity · no account required to review
+          </div>
+        </>
+      ) : (
+        <div className="ot-result-altline" role="status">
+          This property does not show a clear over-assessment from the available public-record comps. No filing package is recommended from this free check.
+        </div>
+      )}
     </div>
   );
 }
@@ -1217,10 +1243,17 @@ function HeroPreviewCard() {
 
 export default function HomePage() {
   const [result, setResult] = useState<Result | null>(null);
+  const [checkError, setCheckError] = useState("");
 
   useEffect(() => {
     function handleStickyResult(event: Event) {
-      const detail = (event as CustomEvent<{ result?: RawCheckResult; preview?: boolean; submittedInput?: string }>).detail;
+      const detail = (event as CustomEvent<{ result?: RawCheckResult; preview?: boolean; submittedInput?: string; error?: string }>).detail;
+      if (detail?.error) {
+        setResult(null);
+        setCheckError(detail.error);
+        return;
+      }
+      setCheckError("");
       setResult(normalizeCheckResult(detail?.result, Boolean(detail?.preview ?? true), detail?.submittedInput ?? ""));
     }
     window.addEventListener(FREE_CHECK_RESULT_EVENT, handleStickyResult);
@@ -1239,7 +1272,7 @@ export default function HomePage() {
             <HeroPreviewCard />
           </div>
           <div className="ot-hero-r">
-            <HeroCheckCard result={result} onResult={setResult} />
+            <HeroCheckCard result={result} error={checkError} onResult={setResult} onError={setCheckError} />
           </div>
         </div>
       </section>

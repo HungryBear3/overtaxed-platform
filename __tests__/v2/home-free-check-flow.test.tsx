@@ -104,9 +104,77 @@ describe("OT home free-check flow", () => {
 
     await waitFor(() => expect(screen.getByText(/Your free check · 100 W RANDOLPH ST/i)).toBeTruthy());
     expect(screen.queryByText(/Sample data — not your submitted address/i)).toBeNull();
-    expect(screen.getByText(/Estimated annual overpayment found/i)).toBeTruthy();
+    expect(screen.getByText(/No overpayment flagged/i)).toBeTruthy();
+    expect(screen.queryByText(/Estimated annual overpayment found/i)).toBeNull();
     expect(screen.getByText("-$13,858")).toBeTruthy();
     expect(screen.queryByText(/\+-\$/)).toBeNull();
+    expect(screen.queryByText(/DIY \$69/)).toBeNull();
+    expect(screen.queryByText(/Done-For-You \$97/)).toBeNull();
+    expect(screen.queryByRole("link", { name: /^Contingency$/ })).toBeNull();
+  });
+
+  it("shows API errors instead of falling back to the Lyons sample", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: "No Cook County property found for this address. Try your 14-digit PIN instead." }),
+    });
+    Object.defineProperty(global, "fetch", { value: fetchMock, writable: true });
+
+    render(<HomePage />);
+
+    fireEvent.change(screen.getByPlaceholderText("123 Main St, Chicago, IL 60601"), {
+      target: { value: "asdfqwer not a real address" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }));
+
+    await waitFor(() => expect(screen.getByText(/No Cook County property found/i)).toBeTruthy());
+    expect(screen.queryByText(/Sample data — not your submitted address/i)).toBeNull();
+    expect(screen.queryByText(/Your free check · Sample result/i)).toBeNull();
+    expect(screen.queryByText(/DIY \$69/)).toBeNull();
+  });
+
+  it("does not fabricate a deadline when the API appeal window is unknown", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        source: "Cook County Open Data - Parcel Sales",
+        subject: {
+          pin: "14-08-123-456-0000",
+          address: "5236 N KENMORE AVE",
+          city: "CHICAGO",
+          zipCode: "60640",
+          township: "Lake View",
+          assessedTotalValue: 37500,
+        },
+        compCount: 3,
+        avgComparableAssessedValue: 30692,
+        equityRatio: 12.2,
+        potentialOverpaymentPerYear: 1447,
+        potentialOverpayment3Year: 4341,
+        appealWindowStatus: {
+          township: "Lake View",
+          status: "unknown",
+          openDate: null,
+          closeDate: null,
+          note: "Check the assessor's site for your township's exact appeal dates.",
+        },
+      }),
+    });
+    Object.defineProperty(global, "fetch", { value: fetchMock, writable: true });
+
+    render(<HomePage />);
+
+    fireEvent.change(screen.getByPlaceholderText("123 Main St, Chicago, IL 60601"), {
+      target: { value: "5236 N Kenmore Ave, Chicago IL 60640" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }));
+
+    await waitFor(() => expect(screen.getByText(/Your free check · 5236 N KENMORE AVE/i)).toBeTruthy());
+    expect(screen.getByText(/Check dates/i)).toBeTruthy();
+    expect(screen.getAllByText(/Exact appeal dates unavailable/i)).toHaveLength(1);
+    expect(screen.queryByText(/Window closes Jun 9, 2026/i)).toBeNull();
+    expect(screen.queryByText(/Lake View window closes/i)).toBeNull();
   });
 
 });

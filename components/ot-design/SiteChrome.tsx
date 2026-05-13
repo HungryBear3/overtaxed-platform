@@ -301,16 +301,22 @@ export function StickyAddressBar() {
         body: JSON.stringify({ address: addr, mode: "address" }),
       });
       const data = await res.json().catch(() => null);
-      window.dispatchEvent(new CustomEvent("ot:free-check-result", {
-        detail: {
-          result: data?.result ?? data,
-          preview: Boolean(data?.preview || data?.mode === "preview_noop" || data?.source === "preview-noop"),
-          submittedInput,
-        },
-      }));
+      if (res.ok === false) {
+        window.dispatchEvent(new CustomEvent("ot:free-check-result", {
+          detail: { error: data?.error ?? "We couldn't find a Cook County property for that address. Try your 14-digit PIN instead.", submittedInput },
+        }));
+      } else {
+        window.dispatchEvent(new CustomEvent("ot:free-check-result", {
+          detail: {
+            result: data?.result ?? data,
+            preview: Boolean(data?.preview || data?.mode === "preview_noop" || data?.source === "preview-noop"),
+            submittedInput,
+          },
+        }));
+      }
     } catch {
       window.dispatchEvent(new CustomEvent("ot:free-check-result", {
-        detail: { preview: true, submittedInput: addr.trim() },
+        detail: { error: "We couldn't complete the lookup. Please try again, or enter your 14-digit PIN.", submittedInput: addr.trim() },
       }));
     }
     // Scroll to hero-check after surfacing the same preview result as the main form.

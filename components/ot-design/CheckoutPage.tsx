@@ -57,10 +57,10 @@ const PLANS: Array<{
     price: "$0 upfront",
     priceNote: "22% of first-year savings (only if we win)",
     bullets: [
-      "No upfront cost — we&apos;re paid from your savings",
+      "No upfront cost — we're paid from your savings",
       "Best fit if estimated savings exceed $2,500/year",
       "Same filing quality as Done-For-You",
-      "If we don&apos;t reduce your bill, you pay $0",
+      "If we don't reduce your bill, you pay $0",
     ],
   },
 ];
