@@ -19,7 +19,6 @@ import { rateLimit, getClientIdentifier } from "@/lib/rate-limit"
 import { BOR_APPEAL_WINDOWS } from "@/lib/appeals/bor-appeal-windows"
 import {
   hostFromRequest,
-  isPreviewStubEnabled,
   marketingGateReason,
 } from "@/lib/marketing/preview-gate"
 
@@ -175,13 +174,18 @@ We request a reduction in the assessed value to $${Math.round(targetAV).toLocale
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  // Preview/dev/test: no Cook County lookup, no rate-limit, no DB. Return a
-  // static sample so the FreeCheckResult UI still renders end-to-end.
+  // Dev/test and explicit override: return a static sample without touching
+  // Cook County, rate-limit, or DB. Vercel Preview is production-built and
+  // uses the real read-only Cook County lookup so we can QA the address flow
+  // before promoting to production.
   const host = hostFromRequest(req)
-  if (isPreviewStubEnabled({ host })) {
+  const forcePreviewStub =
+    process.env.OT_FORCE_PREVIEW_STUB === "true" ||
+    process.env.NEXT_PUBLIC_OT_FORCE_PREVIEW_STUB === "true"
+  if (forcePreviewStub || process.env.NODE_ENV !== "production") {
     return NextResponse.json({
       ...PREVIEW_FREE_CHECK_SAMPLE,
-      reason: marketingGateReason({ host }),
+      reason: forcePreviewStub ? "forced-override" : marketingGateReason({ host }),
     })
   }
 
