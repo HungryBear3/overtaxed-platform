@@ -35,12 +35,12 @@ const PREVIEW_FREE_CHECK_SAMPLE = {
   success: true,
   mode: "preview_noop" as const,
   subject: {
-    pin: "14-18-102-034-0000",
+    pin: "18-06-214-011-0000",
     address: "Sample result — not your submitted address",
     city: "Chicago",
-    zipCode: "60618",
-    township: "Jefferson",
-    neighborhoodCode: "70-070",
+    zipCode: "60526",
+    township: "Lyons",
+    neighborhoodCode: "78-120",
     taxYear: 2025,
     assessedTotalValue: 42500,
     marketValue: 425000,
@@ -48,7 +48,7 @@ const PREVIEW_FREE_CHECK_SAMPLE = {
   compCount: 3,
   comps: [
     {
-      pin: "14-18-102-035-0000",
+      pin: "18-06-214-012-0000",
       address: "123 Sample Ave",
       city: "Chicago",
       assessedValue: 36400,
@@ -58,7 +58,7 @@ const PREVIEW_FREE_CHECK_SAMPLE = {
       propertyClass: "2-03",
     },
     {
-      pin: "14-18-102-036-0000",
+      pin: "18-06-214-013-0000",
       address: "127 Sample Ave",
       city: "Chicago",
       assessedValue: 34800,
@@ -68,7 +68,7 @@ const PREVIEW_FREE_CHECK_SAMPLE = {
       propertyClass: "2-03",
     },
     {
-      pin: "14-18-102-037-0000",
+      pin: "18-06-214-014-0000",
       address: "131 Sample Ave",
       city: "Chicago",
       assessedValue: 34100,
@@ -86,14 +86,14 @@ const PREVIEW_FREE_CHECK_SAMPLE = {
   potentialOverpaymentPerYear: 1420,
   potentialOverpayment3Year: 4260,
   appealArgumentText:
-    "[preview sample — illustrative only] The subject property's assessment exceeds comparable Jefferson Township properties.",
+    "[preview sample — illustrative only] The subject property's assessment exceeds comparable Lyons Township properties.",
   appealWindowStatus: {
-    township: "Jefferson",
-    status: "closed" as const,
-    openDate: "2028-05-01",
-    closeDate: "2028-06-05",
+    township: "Lyons",
+    status: "open" as const,
+    openDate: "2026-05-06",
+    closeDate: "2026-06-09",
     filingUrl: "https://www.cookcountyassessor.com/online-appeals",
-    note: "Preview sample — Jefferson Township is closed until the 2028 cycle; verify exact dates at cookcountyassessor.com",
+    note: "Preview sample — Lyons Township is in the 2026 appeal cycle; verify exact dates at cookcountyassessor.com",
   },
   propertyCharacteristics: null,
   source: "preview-noop",
@@ -163,9 +163,9 @@ function buildAppealArgument(
   const townshipStr = township ? `${township} township` : "this neighborhood"
   const nbhdStr = neighborhoodCode ? ` (CCAO neighborhood ${neighborhoodCode})` : ""
 
-  return `The subject property at ${address}, ${city}${nbhdStr} has been assessed at $${subjectAV.toLocaleString()}, resulting in an equity ratio of ${ratioStr} — above Cook County's 10% target.
+  return `The subject property at ${address}, ${city}${nbhdStr} has been assessed at $${subjectAV.toLocaleString()}, resulting in an assessment level of ${ratioStr} — above Cook County's 10% residential target.
 
-Comparable properties in ${townshipStr} average $${Math.round(avgCompAV).toLocaleString()} in assessed value, consistent with a 10% equity ratio.
+Comparable properties in ${townshipStr} average $${Math.round(avgCompAV).toLocaleString()} in assessed value, giving a separate uniformity benchmark for similar homes.
 
 Under Illinois law (35 ILCS 200/9-5) and the Cook County Assessor's rules, property assessments should reflect 10% of fair market value and be uniform with comparable properties. This property's assessment exceeds comparable properties by approximately $${Math.round(gap).toLocaleString()}, resulting in an estimated overpayment of $${potentialOverpaymentPerYear.toLocaleString()}/year.
 

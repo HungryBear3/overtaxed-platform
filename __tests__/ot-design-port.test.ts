@@ -70,7 +70,7 @@ describe("/api/check", () => {
     expect(json.result.address).not.toBe(submitted);
   });
 
-  it("does not claim a closed Jefferson preview window is open", async () => {
+  it("uses an internally consistent open 2026 sample township", async () => {
     const req = new Request("http://localhost/api/check", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -78,8 +78,9 @@ describe("/api/check", () => {
     });
     const res = await checkPOST(req);
     const json = await res.json();
-    expect(json.result.township).toBe("Jefferson");
-    expect(json.result.windowStatus).toBe("closed");
-    expect(json.result.windowCloses).toMatch(/2028 cycle/);
+    expect(json.result.township).toBe("Lyons");
+    expect(json.result.windowStatus).toBe("open");
+    expect(json.result.windowCloses).toMatch(/Jun 9, 2026/);
+    expect(json.result.windowCloses).not.toMatch(/2028 cycle/);
   });
 });

@@ -10,15 +10,15 @@ import {
 /* ── Sample result returned by /api/check stub ─────────────────────────── */
 const SAMPLE_RESULT = {
   address: "Sample result — not your submitted address",
-  township: "Jefferson",
-  windowStatus: "closed" as const,
-  windowCloses: "Jefferson Township is closed until the 2028 cycle",
-  windowDaysRemaining: 0,
-  yourAssessed: 38420,
-  compsAvg: 31180,
-  equityRatio: 12.3,
-  overpayPerYear: 1240,
-  overpay3Year: 3720,
+  township: "Lyons",
+  windowStatus: "open" as const,
+  windowCloses: "Lyons Township appeal window open through Jun 9, 2026",
+  windowDaysRemaining: 27,
+  yourAssessed: 42500,
+  compsAvg: 35100,
+  equityRatio: 12.1,
+  overpayPerYear: 1420,
+  overpay3Year: 4260,
   comps: 3,
 };
 
@@ -88,16 +88,18 @@ function TownshipDeadline({
   township,
   daysRemaining,
   closeDate,
+  status = "open",
   sticky = false,
 }: {
   township: string;
   daysRemaining: number;
   closeDate: string;
+  status?: "open" | "closed";
   sticky?: boolean;
 }) {
   let tier: "info" | "urgent" | "soon" = "info";
-  if (daysRemaining < 7) tier = "urgent";
-  else if (daysRemaining < 30) tier = "soon";
+  if (status === "open" && daysRemaining < 7) tier = "urgent";
+  else if (status === "open" && daysRemaining < 30) tier = "soon";
 
   const stickyClass = sticky && tier === "urgent" ? "is-sticky" : "";
 
@@ -111,7 +113,11 @@ function TownshipDeadline({
         <strong>{township} Township</strong>
       </div>
       <div className="ot-deadline-c">
-        Appeal window closes in <strong>{daysRemaining} days</strong>
+        {status === "closed" ? (
+          <>Appeal window status: <strong>closed</strong></>
+        ) : (
+          <>Appeal window closes in <strong>{daysRemaining} days</strong></>
+        )}
         {tier === "soon" && (
           <span className="ot-deadline-nudge">Don&apos;t miss this window</span>
         )}
@@ -331,13 +337,14 @@ function HeroCheckResult({
         township={result.township}
         daysRemaining={result.windowDaysRemaining}
         closeDate={result.windowCloses}
+        status={result.windowStatus}
       />
 
       <a href="/checkout" className="ot-cta ot-cta-block">
-        Review filing options — DIY Packet $69 <span className="ot-cta-arrow">→</span>
+        Review filing options — DIY $69, Done-For-You $97, or Contingency <span className="ot-cta-arrow">→</span>
       </a>
       <div className="ot-result-altline">
-        Or <a href="#offer">choose Done-For-You at $97</a> · No account to start
+        Flat-fee help or 22% contingency on granted first-year savings · No account to start
         · No credit card to check
       </div>
     </div>
@@ -500,7 +507,7 @@ function SampleReportPreview() {
         <div className="ot-sample-head">
           <div className="ot-sample-eyebrow">Your free check · sample</div>
           <div className="ot-sample-addr">1234 N Sample St, Chicago IL 60618</div>
-          <div className="ot-sample-meta">PIN 14-18-102-034-0000 · Jefferson Township</div>
+          <div className="ot-sample-meta">PIN 18-06-214-011-0000 · Lyons Township</div>
         </div>
         <div className="ot-sample-savings">
           <div className="ot-sample-savings-key">Estimated annual overpayment</div>
@@ -546,7 +553,7 @@ function SampleReportPreview() {
           </div>
         </div>
         <div className="ot-sample-foot">
-          <span className="ot-sample-foot-dot" /> Jefferson Township appeal window open through Aug 12, 2026
+          <span className="ot-sample-foot-dot" /> Lyons Township appeal window open through Jun 9, 2026
         </div>
       </div>
     </div>
@@ -563,14 +570,14 @@ function SampleReportSection() {
             A one-page report — the only thing the Board of Review actually reads.
           </h2>
           <p className="ot-sample-section-lede">
-            Your assessed value, three nearby comps, your equity ratio against
-            Cook County&apos;s 10% target, and the dollar overpayment math. Every
+            Your assessed value, three nearby comps, your assessment level against
+            Cook County&apos;s 10% residential target, and the uniformity gap vs. similar homes. Every
             number is sourced from public CCAO records you can verify yourself.
           </p>
           <ul className="ot-sample-section-list">
             <li><strong>Estimated annual + 3-year overpayment</strong> in dollars</li>
             <li><strong>3 nearby comps</strong>, picked from your neighborhood code</li>
-            <li><strong>Your equity ratio</strong> vs. Cook County&apos;s 10% statutory target</li>
+            <li><strong>Assessment level + uniformity gap</strong> vs. Cook County&apos;s 10% residential target and nearby comps</li>
             <li><strong>Township appeal window</strong> with the close date</li>
           </ul>
         </div>
@@ -596,7 +603,7 @@ function SpecificityBar() {
         <div className="ot-spec">
           <div className="ot-spec-key">Method</div>
           <div className="ot-spec-val">
-            We compare your equity ratio against Cook County&apos;s 10% target
+            We compare residential assessment level and comp uniformity, not black-box averages
           </div>
         </div>
         <div className="ot-spec-divider" />
@@ -615,7 +622,7 @@ function MethodologyCard() {
   const steps = [
     { num: "01", h: "Pull your record", p: "Your PIN returns your assessed value, market value, square footage, year built, and property class — straight from CCAO records." },
     { num: "02", h: "Find three comparables", p: "We search your neighborhood code for properties of similar size, age, and class — the same logic the Board of Review applies to comparable-sales appeals." },
-    { num: "03", h: "Compute your equity ratio", p: "Cook County's statutory target is 10% of market value. We show your ratio vs. the comp average — over 10.5% is a strong appeal candidate, 10–10.5% is borderline." },
+    { num: "03", h: "Check level and uniformity", p: "For class 2 residential property, Cook County targets an assessed value near 10% of market value. We separately compare your assessment level with similar nearby homes so the appeal argument is about both statutory level and uniformity." },
     { num: "04", h: "Estimate the overpayment", p: "Gap × your township's effective tax rate × the 3-year triennial window. The arithmetic is shown on your result page — copy it into your appeal verbatim." },
   ];
   return (
@@ -686,6 +693,8 @@ const PRICING_PLANS = [
     priceNote: "one-time · keep 100% of your savings",
     summary: "Everything you need to file the appeal yourself in your township.",
     tag: "Recommended",
+    href: "/checkout",
+    cta: "Get the DIY Packet",
     features: [
       { label: "Pre-written appeal argument", ok: true, detail: "Tailored to your equity ratio" },
       { label: "3 nearby comparables", ok: true, detail: "Formatted for Board of Review" },
@@ -699,12 +708,29 @@ const PRICING_PLANS = [
     priceNote: "one-time · we file and follow up",
     summary: "We prepare and submit the appeal — you just sign the authorization.",
     tag: null,
+    href: "/checkout",
+    cta: "Choose Done-For-You",
     features: [
       { label: "Pre-written appeal argument", ok: true, detail: "Tailored to your equity ratio" },
       { label: "3 nearby comparables", ok: true, detail: "Formatted for Board of Review" },
       { label: "Step-by-step filing instructions", ok: true, detail: "Or skip — we file for you" },
       { label: "Deadline reminders", ok: true, detail: "2026 window + 2027 second pass" },
       { label: "We submit on your behalf", ok: true, detail: "Tracked through BoR decision" },
+    ],
+  },
+  {
+    id: "contingency", name: "Contingency", price: "22%",
+    priceNote: "of first-year savings · only if granted",
+    summary: "For larger potential reductions: no upfront service fee, reviewed before acceptance.",
+    tag: "No upfront fee",
+    href: "/appeal-contingency",
+    cta: "Request contingency review",
+    features: [
+      { label: "Pre-written appeal argument", ok: true, detail: "Built after case review" },
+      { label: "3 nearby comparables", ok: true, detail: "Formatted for Board of Review" },
+      { label: "Step-by-step filing instructions", ok: false, detail: "We handle accepted cases" },
+      { label: "Deadline reminders", ok: true, detail: "Tracked through decision" },
+      { label: "We submit on your behalf", ok: true, detail: "After explicit authorization" },
     ],
   },
 ];
@@ -714,8 +740,8 @@ function PricingCompare() {
     <section id="pricing" className="ot-pcompare">
       <div className="ot-pcompare-inner">
         <div className="ot-pcompare-head">
-          <div className="ot-eyebrow">Two ways to file</div>
-          <h2 className="ot-h2">Same outcome. Pick how hands-on you want to be.</h2>
+          <div className="ot-eyebrow">Three ways to file</div>
+          <h2 className="ot-h2">Same outcome. Pick flat-fee help or contingency review.</h2>
         </div>
         <div className="ot-pcompare-grid">
           {PRICING_PLANS.map((plan) => (
@@ -738,8 +764,8 @@ function PricingCompare() {
                   </li>
                 ))}
               </ul>
-              <a href="/checkout" className={`ot-cta ot-cta-block${plan.id === "diy" ? "" : " ot-cta-ghost"}`}>
-                {plan.id === "diy" ? "Get the DIY Packet" : "Choose Done-For-You"}
+              <a href={plan.href} className={`ot-cta ot-cta-block${plan.id === "diy" ? "" : " ot-cta-ghost"}`}>
+                {plan.cta}
                 <span className="ot-cta-arrow">→</span>
               </a>
             </div>
@@ -763,7 +789,7 @@ const FAQ_ITEMS = [
   {
     id: "after-check",
     q: "What happens after I submit my free check?",
-    a: "You'll see your full report on the next screen — assessed value vs. comparable properties, equity ratio, estimated annual and 3-year overpayment, and your township's appeal window status. No signup, no credit card. If your check shows over-assessment, you can pick the DIY Appeal Packet ($69) or Done-For-You ($97). If your numbers don't suggest an appeal, we'll tell you that too.",
+    a: "You'll see your full report on the next screen — assessed value vs. comparable properties, equity ratio, estimated annual and 3-year overpayment, and your township's appeal window status. No signup, no credit card. If your check shows over-assessment, you can pick the DIY Appeal Packet ($69), Done-For-You ($97), or request contingency review for larger cases. If your numbers don't suggest an appeal, we'll tell you that too.",
     expanded: true,
   },
   {
@@ -775,7 +801,7 @@ const FAQ_ITEMS = [
   {
     id: "win-rate",
     q: "What if my appeal isn't successful?",
-    a: "Cook County doesn't penalize you for filing — you keep the assessed value on file. The DIY Packet includes a 100% money-back guarantee if your township denies the filing on procedural grounds.",
+    a: "Cook County doesn't penalize you for filing — you keep the assessed value on file. Flat-fee filings include a procedural money-back guarantee if an OverTaxed IL error causes the county to reject the filing.",
     expanded: false,
   },
   {

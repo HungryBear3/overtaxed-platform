@@ -11,15 +11,15 @@ import { NextResponse } from "next/server";
 
 const SAMPLE_RESULT = {
   address: "Sample result — not your submitted address",
-  township: "Jefferson",
-  windowStatus: "closed" as const,
-  windowCloses: "Jefferson Township is closed until the 2028 cycle",
-  windowDaysRemaining: 0,
-  yourAssessed: 38420,
-  compsAvg: 31180,
-  equityRatio: 12.3,
-  overpayPerYear: 1240,
-  overpay3Year: 3720,
+  township: "Lyons",
+  windowStatus: "open" as const,
+  windowCloses: "Lyons Township appeal window open through Jun 9, 2026",
+  windowDaysRemaining: 27,
+  yourAssessed: 42500,
+  compsAvg: 35100,
+  equityRatio: 12.1,
+  overpayPerYear: 1420,
+  overpay3Year: 4260,
   comps: 3,
 };
 

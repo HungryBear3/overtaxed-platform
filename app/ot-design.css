@@ -3034,7 +3034,7 @@ body.ot-stars-on .ot-logo-mark::before {
 .ot-pcompare-head .ot-h2 { margin-top: 8px; }
 .ot-pcompare-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 20px;
   align-items: stretch;
 }
@@ -3180,6 +3180,10 @@ body.ot-stars-on .ot-logo-mark::before {
 .ot-cta-ghost:hover {
   background: var(--muted);
   border-color: var(--ink-soft);
+}
+
+@media (max-width: 1040px) and (min-width: 721px) {
+  .ot-pcompare-grid { grid-template-columns: 1fr; max-width: 640px; margin: 0 auto; }
 }
 
 @media (max-width: 720px) {

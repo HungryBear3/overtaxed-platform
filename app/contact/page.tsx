@@ -100,11 +100,13 @@ export default function ContactPage() {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-gray-700">
-                We offer a 30-day satisfaction guarantee. See our{" "}
+                Use the Refund Request category for billing or procedural-guarantee questions.
+                Our money-back guarantee applies when an OverTaxed IL procedural error causes
+                the county to reject the filing. See our{" "}
                 <Link href="/terms" className="text-blue-600 hover:underline">
                   Terms of Service
                 </Link>{" "}
-                for details.
+                for details. Mark only filing errors or missed-deadline issues as URGENT.
               </p>
             </CardContent>
           </Card>
