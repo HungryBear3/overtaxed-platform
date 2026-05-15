@@ -1,4 +1,4 @@
-// Cron: create Performance Fee invoices for eligible users.
+// Cron: create contingency fee invoices for eligible users.
 // GET /api/cron/performance-invoices - requires CRON_SECRET
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/db"

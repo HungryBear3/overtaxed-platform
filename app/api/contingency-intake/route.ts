@@ -1,8 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { Resend } from "resend";
+import {
+  hostFromRequest,
+  isPreviewStubEnabled,
+  marketingGateReason,
+  previewNoopResponseBody,
+} from "@/lib/marketing/preview-gate";
 
 export async function POST(req: NextRequest) {
+  // Preview/dev/test: no Resend, no DB write — return noop.
+  const host = hostFromRequest(req);
+  if (isPreviewStubEnabled({ host })) {
+    return NextResponse.json(previewNoopResponseBody(marketingGateReason({ host })));
+  }
+
   try {
     const body = await req.json();
     const {

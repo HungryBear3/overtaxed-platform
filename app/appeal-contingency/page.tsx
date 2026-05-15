@@ -6,6 +6,10 @@ import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+const OT_PHONE_DISPLAY = "(847) 461-3189";
+const OT_PHONE_HREF = "tel:+18474613189";
+const OT_CALENDLY_URL = "/contact";
+
 
 export default function ContingencyPage() {
   const router = useRouter();
@@ -55,6 +59,10 @@ export default function ContingencyPage() {
           <p className="text-gray-500 mt-2 text-sm">
             We&apos;ll review your property and handle everything. You only pay if
             we win — 22% of your first-year savings, $50 minimum.
+          </p>
+          <p className="mt-3 text-sm text-gray-600">
+            Prefer to talk first? <a href={OT_CALENDLY_URL} className="text-blue-700 font-semibold hover:underline">Schedule a call</a>
+            {" "}or call/text <a href={OT_PHONE_HREF} className="text-blue-700 font-semibold hover:underline">{OT_PHONE_DISPLAY}</a>.
           </p>
         </div>
 

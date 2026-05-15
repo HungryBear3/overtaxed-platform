@@ -4,7 +4,7 @@ import Link from "next/link"
 export const metadata: Metadata = {
   title: "Illinois Property Tax Appeal Packet — DIY Toolkit | OverTaxed IL",
   description:
-    "Everything you need to file your own Illinois property tax appeal. Cover letter, evidence checklist, filing instructions, deadline calendar, and FAQ. Instant download. $37.",
+    "Everything you need to file your own Illinois property tax appeal. Cover letter, evidence checklist, filing instructions, deadline calendar, and FAQ. Preview the $69 DIY Appeal Packet: comp package, appeal draft, filing instructions, deadline checklist, and FAQ.",
 }
 
 export default function AppealPacketPage() {
@@ -77,18 +77,17 @@ export default function AppealPacketPage() {
 
           {/* Price */}
           <div className="inline-flex items-center gap-3 mb-8">
-            <span className="text-gray-400 line-through text-xl">$67</span>
-            <span className="text-4xl font-bold text-blue-700">$37</span>
+            <span className="text-4xl font-bold text-blue-700">$69</span>
             <span className="text-gray-500">one-time</span>
           </div>
 
           {/* CTA */}
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
             <a
-              href="https://buy.stripe.com/eVqdR8dGngZ53iN66udUY00"
+              href="/pricing"
               className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-8 py-4 rounded-lg text-lg transition-colors w-full sm:w-auto text-center"
             >
-              Get the Appeal Packet — $37
+              Get the Appeal Packet — $69
             </a>
           </div>
 
@@ -128,21 +127,21 @@ export default function AppealPacketPage() {
           </h2>
           <div className="grid sm:grid-cols-3 gap-6 text-center">
             <div>
-              <p className="text-3xl font-bold text-blue-700 mb-1">~65%</p>
+              <p className="text-3xl font-bold text-blue-700 mb-1">3+</p>
               <p className="text-gray-600 text-sm">
-                of Cook County appeals result in a reduction
+                comparable properties organized for review
               </p>
             </div>
             <div>
-              <p className="text-3xl font-bold text-blue-700 mb-1">$1,200+</p>
+              <p className="text-3xl font-bold text-blue-700 mb-1">10%</p>
               <p className="text-gray-600 text-sm">
-                average annual savings for homeowners who appeal
+                class 2 residential assessment level explained clearly
               </p>
             </div>
             <div>
-              <p className="text-3xl font-bold text-blue-700 mb-1">0%</p>
+              <p className="text-3xl font-bold text-blue-700 mb-1">0</p>
               <p className="text-gray-600 text-sm">
-                chance your taxes go up — filing cannot raise your value
+                unsupported savings promises or invented testimonials
               </p>
             </div>
           </div>
@@ -158,10 +157,10 @@ export default function AppealPacketPage() {
             gives you everything you need to change that today.
           </p>
           <a
-            href="https://buy.stripe.com/eVqdR8dGngZ53iN66udUY00"
+            href="/pricing"
             className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-8 py-4 rounded-lg text-lg transition-colors inline-block"
           >
-            Get the Appeal Packet — $37
+            Get the Appeal Packet — $69
           </a>
           <p className="text-gray-400 text-sm mt-4">
             Instant download. Works for all Illinois counties.

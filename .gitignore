@@ -52,3 +52,12 @@ next-env.d.ts
 # graphify
 /graphify-out/
 .graphify_detect.json
+
+# local agent state
+/.claude/
+
+# visual QA artifacts
+/tmp/
+/test-results/
+/playwright-report/
+/playwright/.cache/

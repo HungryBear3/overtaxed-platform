@@ -2,7 +2,7 @@
  * Free assessment check (top-of-funnel). No auth required.
  * POST: { pin?: string, address?: string, city?: string }
  * Returns: subject property, up to 3 comps summary, avg comp value, potential overpayment/year,
- *          equity ratios, comp details, appeal argument, township window status, property characteristics.
+ *          assessment-level metrics, comp details, appeal argument, township window status, property characteristics.
  */
 import { NextRequest, NextResponse } from "next/server"
 import {
@@ -16,32 +16,87 @@ import {
 } from "@/lib/cook-county"
 import type { PropertyData, SalesRecord, EquityRecord } from "@/lib/cook-county"
 import { rateLimit, getClientIdentifier } from "@/lib/rate-limit"
-import { BOR_APPEAL_WINDOWS } from "@/lib/appeals/bor-appeal-windows"
+import { getFreeCheckAppealWindowStatus } from "@/lib/free-check-appeal-window"
+import { normalizeFreeCheckSearchInput } from "@/lib/free-check-address"
+import {
+  hostFromRequest,
+  marketingGateReason,
+} from "@/lib/marketing/preview-gate"
 
 export const maxDuration = 25
 
-function getAppealWindowStatus(township: string | null): {
-  township: string
-  status: "open" | "closed" | "unknown"
-  openDate: string | null
-  closeDate: string | null
-  filingUrl: string
-  note: string | null
-} {
-  const filingUrl = "https://www.cookcountyassessor.com/online-appeals"
-  if (!township) {
-    return { township: "Unknown", status: "unknown", openDate: null, closeDate: null, filingUrl, note: null }
-  }
-  const key = township.toLowerCase().replace(/\s*township$/i, "").trim()
-  const window = BOR_APPEAL_WINDOWS[key]
-  if (!window) {
-    return { township, status: "unknown", openDate: null, closeDate: null, filingUrl, note: `Check ${filingUrl} for your township's exact appeal dates.` }
-  }
-  const today = new Date()
-  const open = new Date(window.open)
-  const close = new Date(window.close)
-  const status: "open" | "closed" = today >= open && today <= close ? "open" : "closed"
-  return { township, status, openDate: window.open, closeDate: window.close, filingUrl, note: "Dates are approximate — verify at cookcountyassessor.com" }
+/**
+ * Static sample returned to clients in preview/dev/test. Shaped to match
+ * the live Result so `<FreeCheckResult>` renders without changes. Numbers
+ * are illustrative — clearly inside the same neighborhood as the homepage
+ * `/api/check` stub.
+ */
+const PREVIEW_FREE_CHECK_SAMPLE = {
+  success: true,
+  mode: "preview_noop" as const,
+  subject: {
+    pin: "18-06-214-011-0000",
+    address: "Sample result — not your submitted address",
+    city: "Chicago",
+    zipCode: "60526",
+    township: "Lyons",
+    neighborhoodCode: "78-120",
+    taxYear: 2025,
+    assessedTotalValue: 42500,
+    marketValue: 425000,
+  },
+  compCount: 3,
+  comps: [
+    {
+      pin: "18-06-214-012-0000",
+      address: "123 Sample Ave",
+      city: "Chicago",
+      assessedValue: 36400,
+      marketValue: 364000,
+      squareFeet: 1200,
+      yearBuilt: 1925,
+      propertyClass: "2-03",
+    },
+    {
+      pin: "18-06-214-013-0000",
+      address: "127 Sample Ave",
+      city: "Chicago",
+      assessedValue: 34800,
+      marketValue: 348000,
+      squareFeet: 1180,
+      yearBuilt: 1923,
+      propertyClass: "2-03",
+    },
+    {
+      pin: "18-06-214-014-0000",
+      address: "131 Sample Ave",
+      city: "Chicago",
+      assessedValue: 34100,
+      marketValue: 341000,
+      squareFeet: 1210,
+      yearBuilt: 1924,
+      propertyClass: "2-03",
+    },
+  ],
+  avgComparableAssessedValue: 35100,
+  equityRatio: 12.1,
+  targetEquityRatio: 10.0,
+  avgCompEquityRatio: 10.0,
+  assessmentGap: 7400,
+  potentialOverpaymentPerYear: 1420,
+  potentialOverpayment3Year: 4260,
+  appealArgumentText:
+    "[preview sample — illustrative only] The subject property's assessment exceeds comparable Lyons Township properties.",
+  appealWindowStatus: {
+    township: "Lyons",
+    status: "open" as const,
+    openDate: "2026-05-06",
+    closeDate: "2026-06-09",
+    filingUrl: "https://www.cookcountyassessor.com/online-appeals",
+    note: "Preview sample — Lyons Township is in the 2026 appeal cycle; verify exact dates at cookcountyassessor.com",
+  },
+  propertyCharacteristics: null,
+  source: "preview-noop",
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -84,18 +139,34 @@ function buildAppealArgument(
   const townshipStr = township ? `${township} township` : "this neighborhood"
   const nbhdStr = neighborhoodCode ? ` (CCAO neighborhood ${neighborhoodCode})` : ""
 
-  return `The subject property at ${address}, ${city}${nbhdStr} has been assessed at $${subjectAV.toLocaleString()}, resulting in an equity ratio of ${ratioStr} — above Cook County's 10% target.
+  return `The subject property at ${address}, ${city}${nbhdStr} has been assessed at $${subjectAV.toLocaleString()}, resulting in an assessment level of ${ratioStr} — above Cook County's 10% residential target.
 
-Comparable properties in ${townshipStr} average $${Math.round(avgCompAV).toLocaleString()} in assessed value, consistent with a 10% equity ratio.
+Comparable properties in ${townshipStr} average $${Math.round(avgCompAV).toLocaleString()} in assessed value, giving a separate uniformity benchmark for similar homes.
 
 Under Illinois law (35 ILCS 200/9-5) and the Cook County Assessor's rules, property assessments should reflect 10% of fair market value and be uniform with comparable properties. This property's assessment exceeds comparable properties by approximately $${Math.round(gap).toLocaleString()}, resulting in an estimated overpayment of $${potentialOverpaymentPerYear.toLocaleString()}/year.
 
 We request a reduction in the assessed value to $${Math.round(targetAV).toLocaleString()}, consistent with the ${mvStr} market value and comparable properties in the neighborhood.`
 }
 
+
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  // Dev/test and explicit override: return a static sample without touching
+  // Cook County, rate-limit, or DB. Vercel Preview is production-built and
+  // uses the real read-only Cook County lookup so we can QA the address flow
+  // before promoting to production.
+  const host = hostFromRequest(req)
+  const forcePreviewStub =
+    process.env.OT_FORCE_PREVIEW_STUB === "true" ||
+    process.env.NEXT_PUBLIC_OT_FORCE_PREVIEW_STUB === "true"
+  if (forcePreviewStub || process.env.NODE_ENV !== "production") {
+    return NextResponse.json({
+      ...PREVIEW_FREE_CHECK_SAMPLE,
+      reason: forcePreviewStub ? "forced-override" : marketingGateReason({ host }),
+    })
+  }
+
   const { allowed } = rateLimit(getClientIdentifier(req), 10, 60_000)
   if (!allowed) {
     return NextResponse.json({ error: "Too many requests" }, { status: 429 })
@@ -118,8 +189,15 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         )
       }
-    } else if (address.length >= 5) {
-      const search = await searchPropertiesByAddress(address, city || undefined, 5)
+    } else {
+      const searchInput = normalizeFreeCheckSearchInput(address, city)
+      if (searchInput.address.length < 5) {
+        return NextResponse.json(
+          { error: "Enter either a 14-digit Cook County PIN or a street address (at least 5 characters)." },
+          { status: 400 }
+        )
+      }
+      const search = await searchPropertiesByAddress(searchInput.address, searchInput.city || undefined, 5)
       if (!search.success || !search.data?.length) {
         return NextResponse.json(
           { error: "No Cook County property found for this address. Try your 14-digit PIN instead." },
@@ -142,11 +220,6 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         )
       }
-    } else {
-      return NextResponse.json(
-        { error: "Enter either a 14-digit Cook County PIN or a street address (at least 5 characters)." },
-        { status: 400 }
-      )
     }
 
     if (!propertyData) {
@@ -201,7 +274,7 @@ export async function POST(req: NextRequest) {
         potentialOverpaymentPerYear: null,
         potentialOverpayment3Year: null,
         appealArgumentText: null,
-        appealWindowStatus: getAppealWindowStatus(propertyData.township),
+        appealWindowStatus: getFreeCheckAppealWindowStatus(propertyData.township),
         propertyCharacteristics,
         noAssessedValue: true,
         message: "We found your property but the Cook County Assessor hasn't published an assessed value for this PIN yet. This can happen with recently transferred properties or during reassessment. Visit cookcountyassessor.com to check your assessment status.",
@@ -279,7 +352,7 @@ export async function POST(req: NextRequest) {
         ? Math.round((subjectAV / subjectMarketValue) * 1000) / 10  // e.g. 10.7
         : null
 
-    // Average comp equity ratio — use comp market values if available
+    // Average comp assessment level — use comp market values if available
     const compEquityRatios: number[] = []
     compDetails.forEach((c) => {
       if (c.marketValue != null && c.marketValue > 0 && c.assessedValue > 0) {
@@ -342,7 +415,7 @@ export async function POST(req: NextRequest) {
       potentialOverpaymentPerYear: potentialOverpaymentPerYear > 0 ? potentialOverpaymentPerYear : null,
       potentialOverpayment3Year: potentialOverpaymentPerYear > 0 ? potentialOverpaymentPerYear * 3 : null,
       appealArgumentText,
-      appealWindowStatus: getAppealWindowStatus(propertyData.township),
+      appealWindowStatus: getFreeCheckAppealWindowStatus(propertyData.township),
       propertyCharacteristics,
       source: salesRes.source ?? "Cook County Open Data",
     })

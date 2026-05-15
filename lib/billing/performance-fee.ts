@@ -1,5 +1,5 @@
 /**
- * Performance Plan: 4% of 3-year tax savings.
+ * Legacy PERFORMANCE enum now represents the contingency plan: 22% of granted first-year tax savings.
  * Aggregation logic for calculating fees and creating invoices.
  */
 
@@ -7,7 +7,7 @@ import type { Prisma } from "@prisma/client"
 import { prisma } from "@/lib/db"
 import { createAndSendStripeInvoice } from "@/lib/billing/stripe-invoice"
 
-const FEE_PERCENTAGE = 0.04
+const FEE_PERCENTAGE = 0.22
 
 export type ThreeYearSavingsResult = {
   totalSavings: number
@@ -46,7 +46,7 @@ export async function getPerformancePlanWindow(userId: string): Promise<Performa
 }
 
 /**
- * Get 3-year tax savings for a Performance Plan user.
+ * Get granted tax savings for a contingency user.
  * Sums taxSavings from appeals with outcome WON or PARTIALLY_WON within the plan window.
  * Excludes denials. Supports multiple properties and multiple appeals per tax year.
  */
@@ -97,7 +97,7 @@ export async function getThreeYearSavings(userId: string): Promise<ThreeYearSavi
 }
 
 /**
- * Check if a Performance Plan user has completed their 3-year window and has savings to invoice.
+ * Check if a contingency user has savings to invoice.
  * For upfront: invoice when window has ended. For installments: first invoice when first reduction occurs.
  */
 export async function shouldCreatePerformanceInvoice(
@@ -177,7 +177,7 @@ function generateInvoiceNumber(): string {
 }
 
 /**
- * Create Performance Fee invoice(s).
+ * Create contingency fee invoice(s).
  * Upfront: one invoice, due 30 days from now (or from final determination).
  * Installments: three invoices (1/3 each), due on anniversaries of first reduction.
  */
@@ -286,7 +286,7 @@ export async function createPerformanceFeeInvoice(
       userId,
       amount,
       invoiceNumber: inv.invoiceNumber,
-      description: `Performance Fee – Installment ${i} of 3 (4% of 3-year tax savings)`,
+      description: `Contingency Fee – Installment ${i} of 3 (22% of granted first-year savings)`,
     })
     if (stripeResult.success) {
       await prisma.invoice.update({

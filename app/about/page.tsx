@@ -2,12 +2,13 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Logo } from "@/components/navigation/Logo"
-import { DollarSign, Search, FileText, Bell } from "lucide-react"
+import { OT_PUBLIC_CONTACT, SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
+import { CalendarDays, DollarSign, Phone, Search, FileText, Bell } from "lucide-react"
+import "../ot-design.css"
 
 export const metadata: Metadata = {
   title: "About OverTaxed IL | Cook County Property Tax Appeals",
-  description: "OverTaxed IL helps Illinois homeowners appeal their property taxes and lower their tax bill. Learn who we are and how we work.",
+  description: "OverTaxed IL helps Illinois homeowners and HOA/condo associations check their Cook County property tax assessment and prepare appeal materials. Not a law firm.",
 }
 
 const howItWorks = [
@@ -31,49 +32,72 @@ const howItWorks = [
   },
   {
     icon: DollarSign,
-    title: "You save money",
+    title: "You file with the right evidence",
     description:
-      "Illinois homeowners who appeal and win save an average of $1,200+ per year. Most appeals take less than 30 minutes to file.",
+      "We give you the comps, assessment-level math, uniformity context, and a ready-to-submit packet. You file at the Cook County Assessor portal — usually in one focused session once your packet is ready. We do not guarantee a reduction.",
   },
 ]
 
 export default function AboutPage() {
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-          <Logo href="/" />
-          <Link href="/" className="text-sm text-blue-600 hover:text-blue-700 font-medium">
-            Back to home
-          </Link>
-        </div>
-      </header>
+    <div className="ot-root">
+      <SiteHeader />
 
-      {/* Hero */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center">
           <h1 className="text-4xl font-bold text-gray-900 mb-4">About OverTaxed IL</h1>
           <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-            We help Cook County homeowners fight back against over-assessed property taxes — with data, not guesswork.
+            We help Cook County homeowners and HOA/condo associations spot over-assessed property tax bills and prepare appeal materials — with public data, not guesswork.
           </p>
         </div>
       </div>
 
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-        {/* Mission */}
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16 bg-white">
         <div className="mb-16">
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">Why We Built This</h2>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">Why we built this</h2>
           <p className="text-gray-700 text-lg leading-relaxed mb-4">
             Most Cook County homeowners don&apos;t know they can appeal their property tax assessment — and those who do often don&apos;t know where to start. The appeal process is time-sensitive, data-heavy, and easy to get wrong without the right tools.
           </p>
           <p className="text-gray-700 text-lg leading-relaxed">
-            OverTaxed IL was built to fix that. We pull your assessment data, generate a comparable sales packet, and give you everything you need to file a strong appeal — in minutes, not weeks.
+            OverTaxed IL was built to fix that. We pull your assessment data, generate a comparable sales packet, and give you everything you need to file a strong appeal — built around Cook County Assessor + Board of Review public records.
           </p>
         </div>
 
-        {/* How it works */}
+
+        <div className="mb-16 rounded-2xl border border-blue-100 bg-blue-50/70 p-6 md:p-8">
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.16em] text-blue-700 mb-2">Founder</p>
+              <h2 className="text-2xl font-bold text-gray-900 mb-3">Alexy Kaplun</h2>
+              <p className="text-gray-700 leading-relaxed max-w-2xl">
+                Alexy Kaplun founded OverTaxed IL to make Cook County property-tax appeals easier to understand,
+                prepare, and file. The product is built for homeowners who want clear deadlines, comparable-property
+                evidence, and transparent filing options without exaggerated savings claims.
+              </p>
+              <p className="text-sm text-gray-600 mt-3">
+                Questions before you buy? Call or text our Google Voice line, or schedule a short call.
+              </p>
+            </div>
+            <div className="flex flex-col gap-3 md:min-w-56">
+              <a href={OT_PUBLIC_CONTACT.calendlyUrl}>
+                <Button className="w-full justify-center">
+                  <CalendarDays className="h-4 w-4 mr-2" />
+                  Schedule a call
+                </Button>
+              </a>
+              <a href={OT_PUBLIC_CONTACT.phoneHref}>
+                <Button variant="outline" className="w-full justify-center border-blue-600 text-blue-700 hover:bg-blue-100">
+                  <Phone className="h-4 w-4 mr-2" />
+                  {OT_PUBLIC_CONTACT.phoneDisplay}
+                </Button>
+              </a>
+              <p className="text-xs text-gray-500 text-center">9am–5pm CT · response within one business day</p>
+            </div>
+          </div>
+        </div>
+
         <div className="mb-16">
-          <h2 className="text-2xl font-bold text-gray-900 mb-8">How It Works</h2>
+          <h2 className="text-2xl font-bold text-gray-900 mb-8">How it works</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {howItWorks.map((item, i) => (
               <Card key={item.title} className="border border-gray-200">
@@ -98,35 +122,29 @@ export default function AboutPage() {
           </div>
         </div>
 
-        {/* Disclaimer */}
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 mb-12">
           <p className="text-sm text-amber-800">
-            <strong>Note:</strong> OverTaxed IL is a document preparation and information tool — not a law firm. We help you prepare your appeal packet and understand the process, but we do not provide legal advice. For complex situations, consult a licensed Illinois attorney or property tax consultant.
+            <strong>Note:</strong> OverTaxed IL is a document preparation and information tool — <strong>not a law firm</strong> and not a tax advisor. We do not provide legal or tax advice and we do not guarantee any reduction in your assessed value. County decisions are final. For complex situations, consult a licensed Illinois attorney or property tax consultant.
           </p>
         </div>
 
-        {/* CTA */}
         <div className="text-center">
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">Start Your Appeal Today</h2>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">Start your free check</h2>
           <p className="text-gray-600 mb-6">
-            Check if your property is over-assessed — free, no account required.
+            See whether your Cook County assessment looks out of line with your neighbors — free, no account required.
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <Link href="/check">
-              <Button size="lg">Check My Property Free</Button>
+              <Button size="lg">Run my free check</Button>
             </Link>
-            <Link href="/appeal-packet">
-              <Button size="lg" variant="outline">Get the DIY Appeal Packet</Button>
+            <Link href="/pricing">
+              <Button size="lg" variant="outline">See pricing</Button>
             </Link>
           </div>
         </div>
       </main>
 
-      <footer className="border-t border-gray-200 bg-white mt-8">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-center">
-          <p className="text-sm text-gray-400">© {new Date().getFullYear()} OverTaxed IL</p>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   )
 }

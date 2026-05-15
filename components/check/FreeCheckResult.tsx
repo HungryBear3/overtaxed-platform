@@ -439,7 +439,7 @@ export function FreeCheckResult({ result }: Props) {
             </button>
           </div>
           <p className="text-xs text-gray-500 mb-3">
-            Generated from your equity ratio
+            Generated from your assessment level and comps
             {result.equityRatio != null ? ` (${result.equityRatio.toFixed(1)}%)` : ""} and{" "}
             {result.compCount} comparable {result.compCount === 1 ? "property" : "properties"}.
             Copy and paste when you file.

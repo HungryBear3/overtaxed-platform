@@ -12,36 +12,21 @@ import {
 } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { Check } from "lucide-react";
+import { isClientPreviewStubMode } from "@/lib/marketing/preview-gate-client";
+import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
+import "../ot-design.css";
 
 const tiers = [
   {
-    id: "T1",
-    name: "DIY Starter",
-    price: "$37",
-    priceSub: "one-time",
-    description:
-      "PDF packet + instructions. You find comps and file yourself.",
-    features: [
-      "Appeal instructions guide",
-      "Appeal letter template",
-      "Filing checklist",
-      "Deadline calendar",
-      "Email support",
-    ],
-    cta: "Buy Now",
-    href: null,
-    popular: false,
-  },
-  {
     id: "T2",
-    name: "DIY Pro",
+    name: "DIY Appeal Packet",
     price: "$69",
     priceSub: "one-time",
-    description: "We build your comp package. You file yourself.",
+    description: "We build your comparable-property packet. You file it yourself.",
     features: [
-      "Everything in DIY Starter",
       "Comparable property analysis",
       "Ready-to-use comp report",
+      "Appeal argument draft",
       "Step-by-step filing guide",
       "Priority email support",
     ],
@@ -54,12 +39,12 @@ const tiers = [
     name: "Done-For-You",
     price: "$97",
     priceSub: "one-time",
-    description: "We prepare everything + submit your appeal on your behalf.",
+    description: "We prepare the packet and submit the appeal after you sign authorization.",
     features: [
-      "Everything in DIY Pro",
-      "We file the appeal for you",
-      "Professional appeal letter",
-      "Hearing representation guidance",
+      "Everything in DIY Appeal Packet",
+      "Explicit filing authorization at checkout",
+      "We submit the Board of Review forms",
+      "Status tracking through decision",
       "Phone + email support",
     ],
     cta: "Buy Now",
@@ -72,15 +57,15 @@ const tiers = [
     price: "22%",
     priceSub: "of first-year savings · $0 upfront · $50 minimum",
     description:
-      "We handle everything. You pay only if we win your appeal.",
+      "We handle everything. You pay only if the county reduces your assessment.",
     features: [
       "Everything in Done-For-You",
       "No upfront cost",
-      "We win or you pay nothing",
+      "Fee applies only to granted savings",
       "Full appeal management",
       "Dedicated case manager",
     ],
-    cta: "Get Started Free",
+    cta: "Request contingency review",
     href: "/appeal-contingency",
     popular: false,
   },
@@ -90,8 +75,15 @@ export default function PricingPage() {
   const router = useRouter();
   const [loadingTier, setLoadingTier] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const previewMode = isClientPreviewStubMode();
 
   async function handleBuyNow(tierId: string) {
+    if (previewMode) {
+      // Belt and suspenders — the button is also disabled in preview, but
+      // refuse to call /api/checkout/session in any case.
+      setError("Preview checkout disabled — Stripe is not called in this environment.");
+      return;
+    }
     setLoadingTier(tierId);
     setError(null);
     try {
@@ -113,15 +105,16 @@ export default function PricingPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-50">
+    <div className="ot-root">
+      <SiteHeader active="offer" />
+      <main className="bg-gray-50">
       {/* Hero */}
       <section className="bg-white border-b border-gray-100 py-16 px-4 text-center">
         <h1 className="text-4xl font-bold text-gray-900 max-w-3xl mx-auto leading-tight">
-          Pay only if we win — or choose a flat rate at a fraction of typical attorney fees
+          Three clear ways to file your Cook County appeal
         </h1>
         <p className="mt-4 text-lg text-gray-500 max-w-xl mx-auto">
-          Illinois homeowners overpay $1B+ in property taxes every year. We fix
-          that — starting at $37.
+          DIY Appeal Packet ($69), Done-For-You filing ($97), or Contingency (22% of first-year savings only if the county grants a reduction). Every option is built around Cook County Assessor + Board of Review public records. We don&apos;t guarantee a reduction — county decisions are final.
         </p>
       </section>
 
@@ -183,9 +176,15 @@ export default function PricingPage() {
                     <button
                       className={buttonVariants({ variant: "primary", size: "md", className: "w-full justify-center" })}
                       onClick={() => handleBuyNow(tier.id)}
-                      disabled={loadingTier === tier.id}
+                      disabled={loadingTier === tier.id || previewMode}
+                      aria-disabled={previewMode}
+                      title={previewMode ? "Preview checkout disabled — Stripe is not called in this environment." : undefined}
                     >
-                      {loadingTier === tier.id ? "Loading..." : tier.cta}
+                      {previewMode
+                        ? "Preview checkout disabled"
+                        : loadingTier === tier.id
+                        ? "Loading..."
+                        : tier.cta}
                     </button>
                   )}
                 </div>
@@ -199,17 +198,17 @@ export default function PricingPage() {
         )}
       </section>
 
-      {/* ROI Comparison */}
+      {/* Illustrative cost comparison */}
       <section className="bg-white border-t border-gray-100 py-12 px-4">
         <div className="max-w-2xl mx-auto text-center">
           <h2 className="text-2xl font-bold text-gray-900 mb-2">
-            How we compare to a tax attorney
+            How a flat packet compares to an attorney contingency
           </h2>
-          <p className="text-gray-500 mb-8 text-sm">
-            Most Illinois property tax attorneys charge 33–40% of savings.
-            We&apos;re 22% — and you can start for as little as $37.
+          <p className="text-gray-500 mb-2 text-sm">
+            Illustrative example only — your actual savings depend on the
+            reduction granted by the county and your township tax rate.
           </p>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto mt-6">
             <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="bg-gray-50">
@@ -220,67 +219,72 @@ export default function PricingPage() {
                     Cost
                   </th>
                   <th className="text-right p-3 font-semibold text-gray-700 border border-gray-200">
-                    You keep (on $2k savings)
+                    You keep on a $2,000 illustrative reduction
                   </th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
                   <td className="p-3 border border-gray-200 text-gray-600">
-                    DIY (no help)
+                    DIY filing (no help)
                   </td>
                   <td className="p-3 border border-gray-200 text-right text-gray-600">
                     $0
                   </td>
                   <td className="p-3 border border-gray-200 text-right text-gray-600">
-                    $2,000 (if you win)
+                    $2,000 if granted
                   </td>
                 </tr>
                 <tr className="bg-blue-50">
                   <td className="p-3 border border-gray-200 font-semibold text-blue-800">
-                    Overtaxed IL — Contingency
+                    OverTaxed IL DIY packet ($69) or DFY ($97)
                   </td>
                   <td className="p-3 border border-gray-200 text-right font-semibold text-blue-800">
-                    22%
+                    Flat $69 or $97
                   </td>
                   <td className="p-3 border border-gray-200 text-right font-semibold text-blue-800">
-                    $1,560
+                    $1,903–$1,931 if granted
                   </td>
                 </tr>
                 <tr>
                   <td className="p-3 border border-gray-200 text-gray-600">
-                    Tax attorney (typical)
+                    Attorney contingency
                   </td>
                   <td className="p-3 border border-gray-200 text-right text-gray-600">
-                    33–40%
+                    Percentage of savings (varies by firm)
                   </td>
                   <td className="p-3 border border-gray-200 text-right text-gray-600">
-                    $1,200–$1,340
+                    Whatever the contingency leaves you with
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
+          <p className="text-xs text-gray-400 mt-4">
+            OverTaxed IL is not a law firm. Attorney fees vary widely — check
+            your attorney&apos;s engagement letter for their actual rate.
+          </p>
         </div>
       </section>
 
-      {/* FAQ / CTA */}
       <section className="py-12 px-4 text-center">
         <p className="text-gray-500 text-sm">
           Questions?{" "}
           <Link
-            href="mailto:hello@overtaxed-il.com"
+            href="mailto:support@overtaxed-il.com"
             className="text-blue-600 underline"
           >
             Email us
           </Link>{" "}
           or{" "}
           <Link href="/check" className="text-blue-600 underline">
-            check your property for free first
+            run a free check first
           </Link>
           .
         </p>
       </section>
-    </main>
+      </main>
+      <SiteFooter />
+    </div>
   );
 }

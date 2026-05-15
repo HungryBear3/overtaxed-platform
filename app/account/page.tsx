@@ -9,6 +9,7 @@ import { RefreshSubscriptionButton } from "@/components/account/RefreshSubscript
 import { ProfileForm } from "@/components/account/ProfileForm"
 import { DeleteAccountSection } from "@/components/account/DeleteAccountSection"
 import { PendingInvoicesSection } from "@/components/account/PendingInvoicesSection"
+import { PacketInvoicesSection, type PacketInvoiceRow } from "@/components/account/PacketInvoicesSection"
 import { SignOutButton } from "@/components/auth/SignOutButton"
 import { getPropertyLimit } from "@/lib/billing/limits"
 import { formatPIN } from "@/lib/cook-county"
@@ -19,7 +20,7 @@ export default async function AccountPage() {
   if (!session?.user) redirect("/auth/signin")
 
   // Fetch fresh user data and properties from DB
-  const [freshUser, properties, invoices] = await Promise.all([
+  const [freshUser, properties, invoices, packetInvoices] = await Promise.all([
     prisma.user.findUnique({
       where: { id: session.user.id },
       select: {
@@ -58,6 +59,18 @@ export default async function AccountPage() {
         invoiceType: true,
         status: true,
         dueDate: true,
+      },
+    }),
+    prisma.invoice.findMany({
+      where: { userId: session.user.id, invoiceType: "COMPS_ONLY" },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        createdAt: true,
+        status: true,
+        packetStatus: true,
+        packetLastError: true,
       },
     }),
   ])
@@ -123,7 +136,7 @@ export default async function AccountPage() {
                 {user.subscriptionTier === "STARTER" && "Starter (1–2 properties, $149/property/year)"}
                 {user.subscriptionTier === "GROWTH" && "Growth (3–9 properties, $124/property/year)"}
                 {user.subscriptionTier === "PORTFOLIO" && "Portfolio (10–20 properties, $99/property/year)"}
-                {user.subscriptionTier === "PERFORMANCE" && "Performance (4% of savings, deferred)"}
+                {user.subscriptionTier === "PERFORMANCE" && "Contingency (22% of first-year savings, if granted)"}
               </p>
               {user.subscriptionTier !== "COMPS_ONLY" && user.subscriptionTier !== "PERFORMANCE" && (
                 <p className="text-xs text-gray-500 mt-1">
@@ -159,6 +172,17 @@ export default async function AccountPage() {
           </div>
         </CardContent>
       </Card>
+
+      <PacketInvoicesSection
+        rows={packetInvoices.map<PacketInvoiceRow>((p) => ({
+          id: p.id,
+          invoiceNumber: p.invoiceNumber,
+          createdAt: p.createdAt,
+          packetStatus: p.packetStatus,
+          packetLastError: p.packetLastError,
+          invoiceStatus: p.status,
+        }))}
+      />
 
       <Card className="mb-6">
         <CardHeader>

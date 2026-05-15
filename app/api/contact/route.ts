@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server"
 import { z } from "zod"
 import { sendContactEmail } from "@/lib/email/send"
 import { rateLimit, getClientIdentifier } from "@/lib/rate-limit"
+import {
+  hostFromRequest,
+  isPreviewStubEnabled,
+  marketingGateReason,
+  previewNoopResponseBody,
+} from "@/lib/marketing/preview-gate"
 
 const contactFormSchema = z.object({
   name: z.string().min(2).max(100),
@@ -12,6 +18,12 @@ const contactFormSchema = z.object({
 })
 
 export async function POST(request: NextRequest) {
+  // Preview/dev/test: no email, no analytics, no rate-limit, no DB.
+  const host = hostFromRequest(request)
+  if (isPreviewStubEnabled({ host })) {
+    return NextResponse.json(previewNoopResponseBody(marketingGateReason({ host })))
+  }
+
   const clientId = getClientIdentifier(request)
   const limit = rateLimit(clientId, 5, 15 * 60 * 1000)
   if (!limit.allowed) {

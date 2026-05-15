@@ -259,13 +259,13 @@ export function invoiceOverdueSecondNoticeTemplate(args: {
 
 This is our second notice. Invoice ${invoiceNumber} (${currency(amount)}) was due on ${dueDate.toLocaleDateString("en-US")} and is ${daysOverdue} days past due.
 
-A 1.5% monthly finance charge may apply per our Terms of Service. Please pay promptly:
+Please pay promptly or contact us if you believe the invoice is incorrect:
 ${accountLink}
 
 – The OverTaxed IL Team`
   const html = `<p>Hi${userName ? ` ${userName}` : ""},</p>
 <p><strong>Second notice:</strong> Invoice ${invoiceNumber} (${currency(amount)}) was due on ${dueDate.toLocaleDateString("en-US")} and is ${daysOverdue} days past due.</p>
-<p>A 1.5% monthly finance charge may apply per our Terms of Service.</p>
+<p>Please pay promptly or contact us if you believe the invoice is incorrect.</p>
 <p><a href="${accountLink}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">Pay Invoice</a></p>
 <p>— The OverTaxed IL Team</p>`
   return { subject, text, html }
@@ -282,18 +282,18 @@ export function invoiceOverdueThirdNoticeTemplate(args: {
   const { userName, invoiceNumber, amount, dueDate, daysOverdue, accountLink } = args
   const currency = (n: number) =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n)
-  const subject = `[OverTaxed IL] Final notice before collections: Invoice ${invoiceNumber}`
+  const subject = `[OverTaxed IL] Final payment reminder: Invoice ${invoiceNumber}`
   const text = `Hi${userName ? ` ${userName}` : ""},
 
-This is our final notice before referring your account for collection. Invoice ${invoiceNumber} (${currency(amount)}) was due on ${dueDate.toLocaleDateString("en-US")} and is ${daysOverdue} days past due.
+This is our final payment reminder. Invoice ${invoiceNumber} (${currency(amount)}) was due on ${dueDate.toLocaleDateString("en-US")} and is ${daysOverdue} days past due.
 
-Pay now to avoid referral to collections or further action:
+Please pay now or contact us if you believe the invoice is incorrect:
 ${accountLink}
 
 – The OverTaxed IL Team`
   const html = `<p>Hi${userName ? ` ${userName}` : ""},</p>
-<p><strong>Final notice before collections:</strong> Invoice ${invoiceNumber} (${currency(amount)}) was due on ${dueDate.toLocaleDateString("en-US")} and is ${daysOverdue} days past due.</p>
-<p>Pay now to avoid referral to collections or further action.</p>
+<p><strong>Final payment reminder:</strong> Invoice ${invoiceNumber} (${currency(amount)}) was due on ${dueDate.toLocaleDateString("en-US")} and is ${daysOverdue} days past due.</p>
+<p>Please pay now or contact us if you believe the invoice is incorrect.</p>
 <p><a href="${accountLink}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">Pay Invoice</a></p>
 <p>— The OverTaxed IL Team</p>`
   return { subject, text, html }
@@ -311,28 +311,26 @@ export function invoiceOverdueFinalNoticeTemplate(args: {
   const { userName, invoiceNumber, amount, dueDate, daysOverdue, accountLink, termsLink } = args
   const currency = (n: number) =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n)
-  const subject = `[OverTaxed IL] URGENT: Pay now or account sent to collections/legal action`
+  const subject = `[OverTaxed IL] Final payment reminder: Invoice ${invoiceNumber}`
   const text = `Hi${userName ? ` ${userName}` : ""},
 
-FINAL NOTICE – Your account will be sent to collections and/or legal action if payment is not received immediately.
+Final payment reminder. Invoice ${invoiceNumber} (${currency(amount)}) was due on ${dueDate.toLocaleDateString("en-US")} and is ${daysOverdue} days past due.
 
-Invoice ${invoiceNumber} (${currency(amount)}) was due on ${dueDate.toLocaleDateString("en-US")} and is ${daysOverdue} days past due.
+Please pay now or contact us if you believe the invoice is incorrect. Terms: ${termsLink}
 
-Per Section 4 of our User Agreement (${termsLink}): If you do not pay, we may refer your account to a collections agency or pursue legal action including filing suit in the Circuit Court of Cook County or Small Claims/Claims Court. You will be responsible for the full balance plus interest, late fees, court costs, filing fees, and reasonable attorney's fees.
-
-Pay immediately to avoid collections and legal action:
+Payment link:
 ${accountLink}
 
 – The OverTaxed IL Team`
   const html = `<p>Hi${userName ? ` ${userName}` : ""},</p>
-<p><strong style="color:#b91c1c">FINAL NOTICE</strong> – Your account will be sent to collections and/or legal action if payment is not received immediately.</p>
+<p><strong style="color:#b91c1c">Final payment reminder</strong></p>
 <table cellpadding="4" style="margin:16px 0">
 <tr><td style="color:#6b7280">Invoice:</td><td><strong>${invoiceNumber}</strong> (${currency(amount)})</td></tr>
 <tr><td style="color:#6b7280">Due date:</td><td>${dueDate.toLocaleDateString("en-US")}</td></tr>
 <tr><td style="color:#6b7280">Days overdue:</td><td><strong>${daysOverdue}</strong></td></tr>
 </table>
-<p>Per <strong>Section 4 of our User Agreement</strong> (<a href="${termsLink}">Terms</a>): If you do not pay, we may refer your account to a collections agency or pursue legal action including filing suit in the Circuit Court of Cook County or Small Claims/Claims Court. You will be responsible for the full balance plus interest, late fees, court costs, filing fees, and reasonable attorney's fees.</p>
-<p><a href="${accountLink}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">Pay Invoice Now</a></p>
+<p>Please pay now or contact us if you believe the invoice is incorrect. See <a href="${termsLink}">Terms</a>.</p>
+<p><a href="${accountLink}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">Pay Invoice</a></p>
 <p>— The OverTaxed IL Team</p>`
   return { subject, text, html }
 }
