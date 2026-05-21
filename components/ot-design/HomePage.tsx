@@ -144,9 +144,9 @@ function HeroNarrative() {
     <div className="ot-hero-narrative">
       <StatusChip />
       <h1 className="ot-h1">
-        Cook County is probably <em>over-assessing</em> your home.
+        Is Cook County <em>over-assessing</em> your home?
       </h1>
-      <p className="ot-hero-subhead">See whether your home is over-assessed — free, no signup.</p>
+      <p className="ot-hero-subhead">See where your assessed value lands against comparable nearby homes.</p>
       <p className="ot-hero-valueprop">
         Plain math on Cook County&apos;s own public records — no signup, no
         credit card. If you&apos;re fairly assessed, we&apos;ll tell you.
@@ -221,7 +221,10 @@ function TownshipDeadline({
         ) : status === "future_cycle" ? (
           <><strong>Future cycle</strong><span>{openDate ?? "Appeal window not open"}</span></>
         ) : (
-          <><strong>{daysRemaining} days</strong><span>until close</span></>
+          <>
+            <strong>{daysRemaining <= 0 ? "Closes today" : `${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`}</strong>
+            <span>{daysRemaining <= 0 ? "appeal window closes" : "until close"}</span>
+          </>
         )}
       </div>
       <div className="ot-deadline-r">{status === "unknown" ? "Check dates →" : closeDate}</div>
@@ -328,7 +331,7 @@ function HeroCheckCard({
           <span className="ot-field-label">Street address</span>
           <input
             type="text"
-            placeholder="123 Main St, Chicago, IL 60601"
+            placeholder="123 S Sample Ave, La Grange IL"
             value={address}
             onChange={(e) => setAddress(e.target.value)}
             className="ot-input"
@@ -641,7 +644,7 @@ function SampleReportPreview() {
         <div className="ot-sample-head">
           <div className="ot-sample-eyebrow">Your free check · sample</div>
           <div className="ot-sample-addr">1234 S Sample Ave, La Grange IL 60526</div>
-          <div className="ot-sample-meta">PIN 18-06-214-011-0000 · Lyons Township</div>
+          <div className="ot-sample-meta">Synthetic sample PIN · Lyons Township</div>
         </div>
         <div className="ot-sample-savings">
           <div className="ot-sample-savings-key">Estimated annual overpayment</div>
@@ -730,7 +733,7 @@ function SpecificityBar() {
         <div className="ot-spec">
           <div className="ot-spec-key">Data</div>
           <div className="ot-spec-val">
-            Cook County Assessor + Board of Review public records, refreshed weekly
+            Cook County Assessor + Board of Review public records, checked regularly
           </div>
         </div>
         <div className="ot-spec-divider" />
@@ -744,7 +747,7 @@ function SpecificityBar() {
         <div className="ot-spec">
           <div className="ot-spec-key">Scope</div>
           <div className="ot-spec-val">
-            All 38 Cook County townships · tracks every 2026 triennial window
+            All 38 Cook County townships · schedule links are public-record backed
           </div>
         </div>
       </div>
@@ -941,13 +944,13 @@ const FAQ_ITEMS = [
   {
     id: "data",
     q: "Where does your data come from? How fresh is it?",
-    a: "Cook County Assessor and Board of Review public records, refreshed every Sunday night. It's the same data the Board of Review uses to decide appeals.",
+    a: "Cook County Assessor and Board of Review public records. We check township schedules regularly and avoid publishing outcome claims until they are verified. It's the same public-record base the Board of Review uses to decide appeals.",
     expanded: true,
   },
   {
     id: "win-rate",
     q: "What if my appeal isn't successful?",
-    a: "Cook County doesn't penalize you for filing — you keep the assessed value on file. Flat-fee filings include a procedural money-back guarantee if an OverTaxed IL error causes the county to reject the filing.",
+    a: "Cook County doesn't penalize you for filing — you keep the assessed value on file. The $69 DIY packet is a flat service fee for preparing your appeal materials and is paid regardless of outcome. A refund applies only if an OverTaxed IL procedural error causes the county to reject the filing.",
     expanded: true,
   },
   {
@@ -1010,15 +1013,15 @@ function HoaSection() {
         <p className="ot-method-lede">
           Condo boards and HOA managers in Cook County can use the same comparable-property +
           assessment-level packet, run across every PIN in the association. No
-          legal-representation claim, no per-unit upsell. Drop your email and we&apos;ll
-          come back with a packet plan once your township is in cycle.
+          legal-representation claim, no per-unit upsell. Drop your email and one
+          OverTaxed IL contact will reply within 2 business days with the next-step plan.
         </p>
 
         {status === "success" ? (
           <div className="ot-rrb ot-rrb-inline" style={{ marginTop: 16 }}>
             <span className="ot-rrb-shield" aria-hidden="true">○</span>
             <span className="ot-rrb-text">
-              <strong>You&apos;re on the list.</strong> We&apos;ll email you with a packet plan once we can support your township.
+              <strong>You&apos;re on the list.</strong> One OverTaxed IL contact will email you within 2 business days with next steps.
             </span>
           </div>
         ) : (
@@ -1207,7 +1210,7 @@ function HeroPreviewCard() {
           marginBottom: 4,
         }}
       >
-        1234 S Sample Ave · Lyons Township
+        1234 S Sample Ave · Lyons Township · synthetic sample
       </div>
       <div
         style={{
@@ -1242,6 +1245,7 @@ function HeroPreviewCard() {
         <Row label="Your assessed value" value="$42,500" />
         <Row label="Avg of 3 nearby comps" value="$35,100" />
         <Row label="Assessment gap" value="+$7,400 (21%)" emph />
+        <Row label="Assessment level" value="12.1% vs. 10% residential target" />
       </div>
 
       <div
@@ -1288,9 +1292,9 @@ export default function HomePage() {
         <div className="ot-hero-inner ot-hero-inner-split">
           <div className="ot-hero-l">
             <HeroNarrative />
-            <HeroPreviewCard />
           </div>
-          <div className="ot-hero-r">
+          <div className="ot-hero-r ot-hero-r-stack">
+            <HeroPreviewCard />
             <HeroCheckCard result={result} error={checkError} onResult={setResult} onError={setCheckError} />
           </div>
         </div>

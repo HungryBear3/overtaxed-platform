@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { buildTickerItems, TOWNSHIPS, TOWNSHIP_STATUS_COUNTS } from "@/lib/townships";
+import { buildTickerItems, TOWNSHIPS } from "@/lib/townships";
 
 // Public-contact constants used by SiteChrome (footer text, contact CTAs).
 // Personal-name attribution is intentionally NOT in this shared chrome
@@ -193,7 +193,7 @@ export function LiveTicker() {
     >
       <div className="ot-ticker-inner">
         <span className="ot-ticker-dot" aria-hidden="true" />
-        <span className="ot-ticker-eyebrow">Live</span>
+        <span className="ot-ticker-eyebrow">Schedule checked regularly</span>
         <span className="ot-ticker-track">
           {items.map((it, i) => (
             <span
@@ -222,7 +222,7 @@ export function RiskReversalBadge({
           ○
         </span>
         <span className="ot-rrb-text">
-          <strong>Money-back</strong> on procedural denial
+          <strong>Procedural refund</strong> if our filing error causes rejection
         </span>
       </span>
     );
@@ -263,12 +263,11 @@ export function StatusChip() {
     <Link href="/deadlines" className="ot-chip ot-chip-link">
       <span className="ot-pill ot-pill-open" aria-hidden="true">
         <span className="ot-pill-dot" />
-        <strong>{TOWNSHIP_STATUS_COUNTS.open}</strong>
-        <span className="ot-pill-of">/ {TOWNSHIP_STATUS_COUNTS.total}</span>
+        <strong>Schedule</strong>
       </span>
       <span className="ot-chip-text">
         <span className="ot-chip-label">
-          township windows open now in Cook County
+          Township schedules checked regularly
         </span>
       </span>
       <span className="ot-chip-arrow" aria-hidden="true">
@@ -361,7 +360,7 @@ export function StickyAddressBar() {
           <input
             type="text"
             className="ot-sticky-bar-input"
-            placeholder="123 N Main St, Chicago IL"
+            placeholder="123 S Sample Ave, La Grange IL"
             value={addr}
             onChange={(e) => setAddr(e.target.value)}
             aria-label="Property address"
@@ -382,8 +381,8 @@ export function StickyAddressBar() {
           title="See all township deadlines"
         >
           <span className="ot-sticky-bar-pill-dot" aria-hidden="true" />
-          <strong>{TOWNSHIP_STATUS_COUNTS.open}</strong>
-          &nbsp;windows open
+          <strong>Schedule</strong>
+          &nbsp;updates
         </Link>
       </div>
     </div>

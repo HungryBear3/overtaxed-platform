@@ -220,9 +220,9 @@ describe("OT v2 marketing — home hero preview card", () => {
     expect(src).toMatch(/do not guarantee/i);
   });
 
-  it("preview card lives in the hero left column above the fold", () => {
-    // Ensures the new card is mounted inside ot-hero-l alongside HeroNarrative.
-    expect(src).toMatch(/<HeroNarrative\s*\/>\s*<HeroPreviewCard\s*\/>/);
+  it("preview card lives in the hero right column above the fold", () => {
+    // Keeps the product sample beside the form above the fold, not below the narrative.
+    expect(src).toMatch(/<div className="ot-hero-r ot-hero-r-stack">\s*<HeroPreviewCard\s*\/>\s*<HeroCheckCard/);
   });
 });
 
@@ -279,7 +279,7 @@ describe("OT v2 marketing — fourth-preview polish", () => {
   it("softens preview hero copy and keeps outcomes compact/deliverable-focused", () => {
     const src = read("components/ot-design/HomePage.tsx");
     expect(src).not.toMatch(/Find out in 60 seconds/);
-    expect(src).toMatch(/See whether your home is over-assessed/);
+    expect(src).toMatch(/See where your assessed value lands/);
     expect(src).toMatch(/See what the packet includes/);
     expect(src).toMatch(/Verified Cook County outcomes will publish after 2026 Board decisions/);
   });
@@ -298,5 +298,30 @@ describe("OT v2 marketing — fourth-preview polish", () => {
     const css = read("app/ot-design.css");
     expect(chrome).not.toMatch(/RiskReversalRail/);
     expect(css).not.toMatch(/ot-risk-rail/);
+  });
+});
+
+
+describe("OT v2 marketing — launch-blocker copy guards", () => {
+  it("homepage avoids assertive over-assessment claims and real-looking sample PINs", () => {
+    const src = read("components/ot-design/HomePage.tsx");
+    expect(src).toMatch(/Is Cook County/);
+    expect(src).not.toMatch(/Cook County is probably/);
+    expect(src).toMatch(/synthetic sample/i);
+    expect(src).not.toMatch(/PIN 18-06-214-011-0000/);
+  });
+
+  it("ticker copy never renders a 0-days deadline state", () => {
+    const src = read("lib/townships.ts");
+    expect(src).toMatch(/closes today/);
+    expect(src).not.toMatch(/closes in \$\{[^}]+\} day/);
+    expect(src).toMatch(/Township schedules checked regularly/);
+  });
+
+  it("flat-fee FAQ states the $69 fee is paid regardless of outcome", () => {
+    const src = read("components/ot-design/HomePage.tsx");
+    expect(src).toMatch(/\$69 DIY packet is a flat service fee/);
+    expect(src).toMatch(/paid regardless of outcome/);
+    expect(src).toMatch(/procedural error causes the county to reject/);
   });
 });

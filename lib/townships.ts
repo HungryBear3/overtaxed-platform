@@ -168,6 +168,27 @@ export function getTownshipBySlug(slug: string): Township | undefined {
   return TOWNSHIPS_BY_SLUG[slug];
 }
 
+
+function pluralizeDay(n: number): string {
+  return `${n} day${n === 1 ? "" : "s"}`;
+}
+
+function openedLabel(n: number): string {
+  if (n <= 0) return "opened today";
+  return `opened ${pluralizeDay(n)} ago`;
+}
+
+function closesLabel(n: number): string {
+  if (n < 0) return "closed";
+  if (n === 0) return "closes today";
+  return `closes in ${pluralizeDay(n)}`;
+}
+
+function opensLabel(n: number): string {
+  if (n <= 0) return "opens today";
+  return `opens in ${pluralizeDay(n)}`;
+}
+
 /** Ticker items derived only from verifiable township deadline data. */
 export function buildTickerItems(): string[] {
   const open = TOWNSHIPS.filter((t) => t.status === "open");
@@ -179,25 +200,19 @@ export function buildTickerItems(): string[] {
       (a, b) => Math.abs(a.daysUntilOpen) - Math.abs(b.daysUntilOpen),
     )[0];
     const n = Math.abs(opened.daysUntilOpen);
-    items.push(
-      `${opened.name} window opened ${n} day${n === 1 ? "" : "s"} ago`,
-    );
+    items.push(`${opened.name} window ${openedLabel(n)}`);
 
     const soonest = [...open].sort(
       (a, b) => a.daysUntilClose - b.daysUntilClose,
     )[0];
-    items.push(
-      `${soonest.name} closes in ${soonest.daysUntilClose} day${soonest.daysUntilClose === 1 ? "" : "s"}`,
-    );
+    items.push(`${soonest.name} ${closesLabel(soonest.daysUntilClose)}`);
   }
 
   if (openingSoon.length) {
     const next = [...openingSoon].sort((a, b) => a.daysUntilOpen - b.daysUntilOpen)[0];
-    items.push(
-      `${next.name} opens in ${next.daysUntilOpen} day${next.daysUntilOpen === 1 ? "" : "s"}`,
-    );
+    items.push(`${next.name} ${opensLabel(next.daysUntilOpen)}`);
   }
 
-  items.push(`${TOWNSHIP_STATUS_COUNTS.open} open / ${TOWNSHIP_STATUS_COUNTS["opening-soon"]} opening soon`);
+  items.push("Township schedules checked regularly · see current schedule →");
   return items;
 }

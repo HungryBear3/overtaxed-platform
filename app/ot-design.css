@@ -323,6 +323,17 @@ body.ot-stars-on .ot-logo-mark::before {
 .ot-hero-l { max-width: 560px; }
 .ot-hero-r { display: flex; justify-content: flex-end; }
 
+.ot-hero-r-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 18px;
+}
+.ot-hero-r-stack .ot-hero-preview {
+  margin-top: 0 !important;
+  max-width: 460px !important;
+}
+
+
 /* Stacked hero variant: narrative on top, then form (left) + sample (right) */
 .ot-hero-inner-stack {
   display: flex;
