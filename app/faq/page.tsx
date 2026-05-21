@@ -12,7 +12,7 @@ export const metadata = {
 const faqs = [
   {
     q: "What is a property tax appeal?",
-    a: "A property tax appeal is a formal request to lower your property's assessed value. In Illinois, your property taxes are based on the assessed value set by the county assessor. If you believe your assessment is too high compared to similar properties, you can file an appeal with the Cook County Assessor or Board of Review. A successful appeal can reduce your assessment and lower your tax bill — though decisions are made by the county and there is no guarantee of a reduction.",
+    a: "A property tax appeal is a formal request to lower your property's assessed value. In Illinois, your property taxes are based on the assessed value set by the county assessor. If you believe your assessment is too high compared to similar properties, you can file an appeal with the Cook County Assessor or Board of Review. An approved appeal can reduce your assessment and lower your tax bill — though decisions are made by the county and there is no guarantee of a reduction.",
   },
   {
     q: "What is a PIN?",
@@ -56,7 +56,7 @@ const faqs = [
   },
   {
     q: "Do you support HOA or condo associations?",
-    a: "We're rolling out HOA / condo board support for the 2026 cycle. If your association manages multiple PINs and wants a bulk packet, use the HOA section on the homepage or email support@overtaxed-il.com — no attorney referral required.",
+    a: "We're rolling out HOA / condo board support for the 2026 cycle. If your association manages multiple PINs and wants a bulk packet, see /hoa, use the HOA section on the homepage, or email support@overtaxed-il.com. OverTaxed IL is not a law firm and does not provide legal representation.",
   },
 ]
 

@@ -1010,7 +1010,7 @@ function HoaSection() {
         <p className="ot-method-lede">
           Condo boards and HOA managers in Cook County can use the same comparable-property +
           assessment-level packet, run across every PIN in the association. No
-          attorney referral, no per-unit upsell. Drop your email and we&apos;ll
+          legal-representation claim, no per-unit upsell. Drop your email and we&apos;ll
           come back with a packet plan once your township is in cycle.
         </p>
 

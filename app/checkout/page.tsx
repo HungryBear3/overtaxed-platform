@@ -15,7 +15,7 @@ export const metadata: Metadata = {
     url: siteUrl + "/checkout",
     title: "Start your Cook County property tax appeal",
     description:
-      "DIY Packet $69, Done-For-You $97, or contingency. 100% money-back on procedural denial.",
+      "DIY Packet $69, Done-For-You $97, or contingency. Procedural refund policy on township procedural denial.",
     siteName: "OverTaxed IL",
     // Checkout inherits og:image from app/opengraph-image.tsx (home OG)
   },

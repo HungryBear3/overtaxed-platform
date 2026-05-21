@@ -3,8 +3,11 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { buildTickerItems, TOWNSHIPS, TOWNSHIP_STATUS_COUNTS } from "@/lib/townships";
 
+// Public-contact constants used by SiteChrome (footer text, contact CTAs).
+// Personal-name attribution is intentionally NOT in this shared chrome
+// export — shared chrome renders on every public page (including /hoa,
+// footer, schema). Personal-name attribution lives on /about only.
 export const OT_PUBLIC_CONTACT = {
-  founder: "Alexy Kaplun",
   phoneDisplay: "(847) 461-3189",
   phoneHref: "tel:+18474613189",
   calendlyUrl: "/contact",
@@ -146,7 +149,7 @@ export function SiteFooter() {
           <div className="ot-footer-col ot-footer-col-legal">
             <div className="ot-footer-col-head">About</div>
             <p className="ot-footer-disclaimer">
-              Founded by {OT_PUBLIC_CONTACT.founder}. OverTaxed IL is not a law firm and does not provide legal advice.
+              OverTaxed IL is not a law firm and does not provide legal advice.
               Estimates are based on public Cook County Assessor records and may
               vary from final Board of Review outcomes.
             </p>
@@ -231,7 +234,7 @@ export function RiskReversalBadge({
           ○
         </span>
         <span className="ot-rrb-text">
-          <strong>100% money-back</strong> if your township denies the filing on
+          <strong>Procedural refund policy</strong> if your township denies the filing on
           procedural grounds
         </span>
       </div>
@@ -244,7 +247,7 @@ export function RiskReversalBadge({
       </div>
       <div className="ot-rrb-body">
         <div className="ot-rrb-head">
-          <strong>100% money-back guarantee</strong>
+          <strong>Procedural refund policy</strong>
         </div>
         <div className="ot-rrb-sub">
           If your township denies the filing on procedural grounds, we refund
