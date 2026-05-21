@@ -31,6 +31,8 @@ export const maxDuration = 25
  * are illustrative — clearly inside the same neighborhood as the homepage
  * `/api/check` stub.
  */
+const PREVIEW_SAMPLE_ADDRESS_PATTERN = /\b123\s+s\s+sample\s+ave\b/i
+
 const PREVIEW_FREE_CHECK_SAMPLE = {
   success: true,
   mode: "preview_noop" as const,
@@ -177,6 +179,13 @@ export async function POST(req: NextRequest) {
     const pinRaw = typeof body.pin === "string" ? body.pin.trim() : ""
     const address = typeof body.address === "string" ? body.address.trim() : ""
     const city = typeof body.city === "string" ? body.city.trim() : ""
+
+    if (PREVIEW_SAMPLE_ADDRESS_PATTERN.test(address)) {
+      return NextResponse.json({
+        ...PREVIEW_FREE_CHECK_SAMPLE,
+        reason: "sample-address",
+      })
+    }
 
     let propertyData: PropertyData | null = null
 

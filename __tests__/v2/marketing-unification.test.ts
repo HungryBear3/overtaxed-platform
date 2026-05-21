@@ -324,4 +324,28 @@ describe("OT v2 marketing — launch-blocker copy guards", () => {
     expect(src).toMatch(/paid regardless of outcome/);
     expect(src).toMatch(/procedural error causes the county to reject/);
   });
+
+  it("legacy packet and contingency pages use OT chrome and Cook County-scoped copy", () => {
+    const packet = read("app/appeal-packet/page.tsx");
+    const contingency = read("app/appeal-contingency/page.tsx");
+
+    for (const src of [packet, contingency]) {
+      expect(src).toMatch(/SiteHeader/);
+      expect(src).toMatch(/SiteFooter/);
+      expect(src).toMatch(/ot-root/);
+      expect(src).toMatch(/Cook County/);
+      expect(src).toMatch(/not legal advice|not a law firm/i);
+    }
+
+    expect(packet).not.toMatch(/Works for all Illinois counties|County Deadline Calendar|Illinois Homeowners|⚡|🏠|🔁/);
+    expect(contingency).not.toMatch(/You only pay if\s+we win|Get My Free Assessment|placeholder="Jane Smith"|propertyPin/);
+    expect(contingency).toMatch(/If the Board of Review grants a reduction/);
+    expect(contingency).toMatch(/22% of first-year tax savings/);
+  });
+
+  it("free-check sample address returns an illustrative sample instead of a silent 400", () => {
+    const src = read("app/api/free-check/route.ts");
+    expect(src).toMatch(/PREVIEW_SAMPLE_ADDRESS_PATTERN/);
+    expect(src).toMatch(/sample-address/);
+  });
 });

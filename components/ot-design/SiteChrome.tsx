@@ -285,6 +285,7 @@ export function StickyAddressBar() {
   const [visible, setVisible] = useState(false);
   const [addr, setAddr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [inlineError, setInlineError] = useState("");
 
   useEffect(() => {
     const target = document.getElementById("hero-check");
@@ -303,6 +304,7 @@ export function StickyAddressBar() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (loading || !addr.trim()) return;
+    setInlineError("");
     setLoading(true);
     try {
       const submittedInput = addr.trim();
@@ -313,8 +315,10 @@ export function StickyAddressBar() {
       });
       const data = await res.json().catch(() => null);
       if (res.ok === false) {
+        const message = data?.error ?? "We couldn't find a Cook County property for that address. Try your 14-digit PIN instead.";
+        setInlineError(message);
         window.dispatchEvent(new CustomEvent("ot:free-check-result", {
-          detail: { error: data?.error ?? "We couldn't find a Cook County property for that address. Try your 14-digit PIN instead.", submittedInput },
+          detail: { error: message, submittedInput },
         }));
       } else {
         window.dispatchEvent(new CustomEvent("ot:free-check-result", {
@@ -326,8 +330,10 @@ export function StickyAddressBar() {
         }));
       }
     } catch {
+      const message = "We couldn't complete the lookup. Please try again, or enter your 14-digit PIN.";
+      setInlineError(message);
       window.dispatchEvent(new CustomEvent("ot:free-check-result", {
-        detail: { error: "We couldn't complete the lookup. Please try again, or enter your 14-digit PIN.", submittedInput: addr.trim() },
+        detail: { error: message, submittedInput: addr.trim() },
       }));
     }
     // Scroll to hero-check after surfacing the same preview result as the main form.
@@ -385,6 +391,11 @@ export function StickyAddressBar() {
           &nbsp;updates
         </Link>
       </div>
+      {inlineError && (
+        <div className="ot-sticky-bar-error" role="alert">
+          {inlineError}
+        </div>
+      )}
     </div>
   );
 }

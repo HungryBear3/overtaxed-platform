@@ -1,173 +1,67 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { buttonVariants } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import Link from "next/link";
+import { SiteHeader, SiteFooter, OT_PUBLIC_CONTACT } from "@/components/ot-design/SiteChrome";
+import "../ot-design.css";
 
-const OT_PHONE_DISPLAY = "(847) 461-3189";
-const OT_PHONE_HREF = "tel:+18474613189";
-const OT_CALENDLY_URL = "/contact";
-
+const reviewSteps = [
+  "Run the free Cook County assessment check first.",
+  "If the numbers suggest a larger case, send only your name, email, phone, and property address for a manual review.",
+  "If the Board of Review grants a reduction under a signed contingency authorization, the fee is 22% of first-year tax savings, with the minimum shown before you sign.",
+];
 
 export default function ContingencyPage() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    const formData = new FormData(e.currentTarget);
-    const data = {
-      fullName: formData.get("fullName") as string,
-      email: formData.get("email") as string,
-      phone: formData.get("phone") as string,
-      propertyPin: formData.get("propertyPin") as string,
-      propertyAddress: formData.get("propertyAddress") as string,
-      estimatedAssessedValue: formData.get("estimatedAssessedValue") as string,
-      hearAboutUs: formData.get("hearAboutUs") as string,
-    };
-
-    try {
-      const res = await fetch("/api/contingency-intake", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Submission failed");
-      }
-      router.push("/appeal-contingency/success");
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
-      setLoading(false);
-    }
-  }
-
   return (
-    <main className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-12">
-      <div className="max-w-lg w-full bg-white rounded-2xl shadow-lg p-8">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">
-            Get Your Free Property Tax Assessment
-          </h1>
-          <p className="text-gray-500 mt-2 text-sm">
-            We&apos;ll review your property and handle everything. You only pay if
-            we win — 22% of your first-year savings, $50 minimum.
+    <div className="ot-root">
+      <SiteHeader active="offer" />
+      <main className="ot-section ot-section-cream ot-legacy-page">
+        <div className="ot-legacy-inner">
+        <div className="ot-section-head" style={{ textAlign: "left", maxWidth: 920 }}>
+          <p className="ot-eyebrow">Contingency review · Larger Cook County cases</p>
+          <h1 className="ot-h2">Want us to review whether a done-for-you contingency appeal makes sense?</h1>
+          <p className="ot-sublead">
+            Start with the same public-record check first. If the property appears materially over-assessed, we can review whether a contingency arrangement is appropriate. No reduction is guaranteed, and nothing is filed without your separate written authorization.
           </p>
-          <p className="mt-3 text-sm text-gray-600">
-            Prefer to talk first? <a href={OT_CALENDLY_URL} className="text-blue-700 font-semibold hover:underline">Schedule a call</a>
-            {" "}or call/text <a href={OT_PHONE_HREF} className="text-blue-700 font-semibold hover:underline">{OT_PHONE_DISPLAY}</a>.
-          </p>
+          <div className="ot-hero-actions">
+            <Link href="/#hero-check" className="ot-cta ot-cta-primary">
+              Start free check <span className="ot-cta-arrow">→</span>
+            </Link>
+            <Link href="/contact" className="ot-cta ot-cta-secondary">
+              Ask about contingency review
+            </Link>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="fullName">Full Name *</Label>
-            <Input
-              id="fullName"
-              name="fullName"
-              required
-              placeholder="Jane Smith"
-            />
-          </div>
+        <section className="ot-feature-strip" aria-label="Contingency review process">
+          {reviewSteps.map((step, idx) => (
+            <div key={step} className="ot-feature">
+              <div className="ot-feature-kicker">Step {idx + 1}</div>
+              <strong>{step}</strong>
+            </div>
+          ))}
+        </section>
 
+        <section className="ot-method-panel" style={{ marginTop: 28 }}>
           <div>
-            <Label htmlFor="email">Email *</Label>
-            <Input
-              id="email"
-              name="email"
-              type="email"
-              required
-              placeholder="jane@example.com"
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="phone">Phone *</Label>
-            <Input
-              id="phone"
-              name="phone"
-              type="tel"
-              required
-              placeholder="(312) 555-0100"
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="propertyPin">Property PIN *</Label>
-            <Input
-              id="propertyPin"
-              name="propertyPin"
-              required
-              placeholder="XX-XX-XXX-XXX-XXXX"
-            />
-            <p className="text-xs text-gray-400 mt-1">
-              Find your PIN on your tax bill or at cookcountyassessor.com
+            <p className="ot-eyebrow">Fee terms</p>
+            <h2 className="ot-h3">Only if the county grants a reduction.</h2>
+            <p>
+              For approved larger cases, contingency pricing is 22% of first-year tax savings if the Board of Review grants a reduction, with any minimum shown in the signed contingency authorization before work begins. If the county grants no reduction, no contingency fee is owed.
             </p>
           </div>
-
-          <div>
-            <Label htmlFor="propertyAddress">Property Address *</Label>
-            <Input
-              id="propertyAddress"
-              name="propertyAddress"
-              required
-              placeholder="123 Main St, Chicago, IL 60601"
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="estimatedAssessedValue">
-              Estimated Current Assessed Value{" "}
-              <span className="text-gray-400 font-normal">(optional)</span>
-            </Label>
-            <Input
-              id="estimatedAssessedValue"
-              name="estimatedAssessedValue"
-              placeholder="$250,000"
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="hearAboutUs">
-              How did you hear about us?{" "}
-              <span className="text-gray-400 font-normal">(optional)</span>
-            </Label>
-            <select
-              id="hearAboutUs"
-              name="hearAboutUs"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 mt-1"
-            >
-              <option value="">Select one...</option>
-              <option value="Google">Google</option>
-              <option value="Referral">Referral</option>
-              <option value="Realtor">Realtor</option>
-              <option value="Property Manager">Property Manager</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
-
-          {error && (
-            <p className="text-red-500 text-sm bg-red-50 p-3 rounded-lg">
-              {error}
+          <div className="ot-method-card">
+            <strong>Privacy and scope</strong>
+            <p>
+              We collect only what is needed for the next review step, do not sell homeowner data, and do not provide legal advice. OverTaxed IL is not a law firm.
             </p>
-          )}
-
-          <button
-            type="submit"
-            className={buttonVariants({ variant: "primary", size: "md", className: "w-full justify-center" })}
-            disabled={loading}
-          >
-            {loading ? "Submitting..." : "Get My Free Assessment"}
-          </button>
-        </form>
-      </div>
-    </main>
+            <p style={{ marginTop: 10 }}>
+              Contact: <a href={`mailto:${OT_PUBLIC_CONTACT.email}`}>{OT_PUBLIC_CONTACT.email}</a> · <a href={OT_PUBLIC_CONTACT.phoneHref}>{OT_PUBLIC_CONTACT.phoneDisplay}</a>
+            </p>
+          </div>
+        </section>
+        </div>
+      </main>
+      <SiteFooter />
+    </div>
   );
 }
