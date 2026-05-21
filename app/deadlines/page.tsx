@@ -14,7 +14,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     url: siteUrl + "/deadlines",
-    title: "Cook County Property Tax Appeal Deadlines — Updated Weekly",
+    title: "Cook County Property Tax Appeal Deadlines — Public Records Tracked",
     description:
       "See which of the 38 Cook County townships have open appeal windows. Free deadline reminders by email.",
     siteName: "OverTaxed IL",
@@ -22,7 +22,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Cook County Property Tax Appeal Deadlines — Updated Weekly",
+    title: "Cook County Property Tax Appeal Deadlines — Public Records Tracked",
     description: `${TOWNSHIP_STATUS_COUNTS.open} of 38 Cook County townships are open for appeals right now. See which one is yours.`,
     // twitter:image auto-wired by app/deadlines/opengraph-image.tsx
   },
