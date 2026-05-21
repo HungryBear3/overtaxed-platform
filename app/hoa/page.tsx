@@ -46,11 +46,11 @@ export default function HoaPage() {
                 Cook County PIN in the association. Built from public records.
                 No legal-representation claim. No per-unit upsell.
               </p>
-              <div className="ot-hero-ctas">
-                <Link href="/contact" className="ot-btn ot-btn-primary">
-                  Request an association packet plan
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 24 }}>
+                <Link href="/contact" className="ot-cta">
+                  Request an association packet plan <span className="ot-cta-arrow">→</span>
                 </Link>
-                <a href={`mailto:${OT_PUBLIC_CONTACT.email}`} className="ot-btn ot-btn-ghost">
+                <a href={`mailto:${OT_PUBLIC_CONTACT.email}`} className="ot-cta ot-cta-ghost">
                   Email {OT_PUBLIC_CONTACT.email}
                 </a>
               </div>
@@ -135,11 +135,11 @@ export default function HoaPage() {
               township window. No legal advice — for legal questions an
               association should consult a licensed Illinois attorney.
             </p>
-            <div className="ot-hero-ctas" style={{ marginTop: 16 }}>
-              <Link href="/contact" className="ot-btn ot-btn-primary">
-                Use the contact form
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 16 }}>
+              <Link href="/contact" className="ot-cta">
+                Use the contact form <span className="ot-cta-arrow">→</span>
               </Link>
-              <a href={`mailto:${OT_PUBLIC_CONTACT.email}`} className="ot-btn ot-btn-ghost">
+              <a href={`mailto:${OT_PUBLIC_CONTACT.email}`} className="ot-cta ot-cta-ghost">
                 Email {OT_PUBLIC_CONTACT.email}
               </a>
             </div>
