@@ -8,22 +8,22 @@ const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://overtaxed-il.com";
 
 export const metadata: Metadata = {
   title:
-    "Cook County Property Tax Appeal Deadlines 2026 — All 38 Townships",
-  description: `See which of the 38 Cook County townships have open appeal windows. ${TOWNSHIP_STATUS_COUNTS.open} open right now, with 2026 South & West Suburbs in active reassessment. Free deadline reminders by email.`,
+    "Cook County Property Tax Appeal Deadlines 2026 — Township Calendar",
+  description: `See which Cook County township appeal windows are open. ${TOWNSHIP_STATUS_COUNTS.open} open right now, with 2026 South & West Suburbs in active reassessment. Free deadline reminders by email.`,
   alternates: { canonical: siteUrl + "/deadlines" },
   openGraph: {
     type: "website",
     url: siteUrl + "/deadlines",
     title: "Cook County Property Tax Appeal Deadlines — Public Records Tracked",
     description:
-      "See which of the 38 Cook County townships have open appeal windows. Free deadline reminders by email.",
+      "See which Cook County township appeal windows are open. Free deadline reminders by email.",
     siteName: "OverTaxed IL",
     // og:image auto-wired by app/deadlines/opengraph-image.tsx
   },
   twitter: {
     card: "summary_large_image",
     title: "Cook County Property Tax Appeal Deadlines — Public Records Tracked",
-    description: `${TOWNSHIP_STATUS_COUNTS.open} of 38 Cook County townships are open for appeals right now. See which one is yours.`,
+    description: `${TOWNSHIP_STATUS_COUNTS.open} Cook County township appeal windows are open right now. See which one is yours.`,
     // twitter:image auto-wired by app/deadlines/opengraph-image.tsx
   },
   robots: { index: true, follow: true },

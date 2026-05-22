@@ -48,7 +48,7 @@ const faqs = [
   },
   {
     q: "How do I get a refund?",
-    a: "We offer a procedural money-back guarantee on the DIY and Done-for-you packets: if your filing is rejected or denied solely because of an OverTaxed IL procedural error in the materials or submission we prepared, we refund the OverTaxed IL service fee. It does not cover county denials on the merits. Contact support@overtaxed-il.com within 30 days of the notice. See our Terms of Service for full details.",
+    a: "If your filing is rejected or denied solely because of an OverTaxed IL procedural error in the materials or submission we prepared, contact support@overtaxed-il.com within 30 days of the notice so we can review the issue under our Terms of Service. This does not cover county denials on the merits.",
   },
   {
     q: "Are you a law firm?",

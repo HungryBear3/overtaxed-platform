@@ -141,7 +141,7 @@ export function SiteFooter() {
                 </div>
               ))}
               <Link href="/townships" className="ot-footer-link-all">
-                See all 38 townships →
+                Browse township deadlines →
               </Link>
             </div>
           </div>

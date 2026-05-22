@@ -2,7 +2,7 @@ import { ImageResponse } from "next/og";
 import { TOWNSHIP_STATUS_COUNTS } from "@/lib/townships";
 
 export const alt =
-  "Cook County property tax appeal deadlines — all 38 townships";
+  "Cook County property tax appeal deadlines — township calendar";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
