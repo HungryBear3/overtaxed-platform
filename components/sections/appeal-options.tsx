@@ -41,7 +41,7 @@ const appealOptions = [
       "Hearing representation (if needed)",
       "Dedicated account manager",
       "Status updates at every step",
-      "100% satisfaction guarantee"
+      "Procedural-error refund review"
     ],
     cta: "Choose Done-For-You",
     ctaVariant: "outline" as const

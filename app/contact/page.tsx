@@ -127,9 +127,9 @@ Have questions or need help? Fill out the form, email us, call or text, or sched
             </CardHeader>
             <CardContent>
               <p className="text-sm text-gray-700">
-                Use the Refund Request category for billing or procedural-guarantee questions.
-                Our money-back guarantee applies when an OverTaxed IL procedural error causes
-                the county to reject the filing. See our{" "}
+                Use the Refund Request category for billing or procedural-error questions.
+                If a filing issue appears to come from an OverTaxed IL procedural error,
+                we will review it under the refund terms. See our{" "}
                 <Link href="/terms" className="text-blue-600 hover:underline">
                   Terms of Service
                 </Link>{" "}

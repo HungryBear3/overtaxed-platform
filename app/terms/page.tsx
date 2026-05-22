@@ -79,12 +79,12 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground mb-3">7. Money-Back Guarantee and Refunds</h2>
+            <h2 className="text-xl font-semibold text-foreground mb-3">7. Procedural Error Review and Refund Requests</h2>
             <p className="text-muted-foreground mb-3">
-              Our procedural money-back guarantee applies to the $69 DIY Appeal Packet and $97 Done-For-You service: if your filing is rejected or denied solely because of an OverTaxed IL procedural error in the materials or submission we prepared, we will refund the OverTaxed IL service fee you paid for that filing.
+              For the $69 DIY Appeal Packet and $97 Done-For-You service, if your filing is rejected or denied solely because of an OverTaxed IL procedural error in the materials or submission we prepared, contact us so we can review the issue and determine whether a refund of the OverTaxed IL service fee is appropriate under these Terms.
             </p>
             <p className="text-muted-foreground mb-3">
-              The guarantee does not apply when the county denies an appeal on the merits, when the property is not eligible, when the appeal window is closed before you provide required information or authorization, or when information you provided is inaccurate or incomplete.
+              Refund review does not apply when the county denies an appeal on the merits, when the property is not eligible, when the appeal window is closed before you provide required information or authorization, or when information you provided is inaccurate or incomplete.
             </p>
             <p className="text-muted-foreground">
               To request a refund, contact support@overtaxed-il.com within 30 days of the county notice and include the notice or filing status. Contingency customers owe no contingency fee if there is no granted reduction.

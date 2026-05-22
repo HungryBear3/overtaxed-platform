@@ -17,7 +17,7 @@ import urllib.request
 from html import unescape
 
 BASE = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "https://www.overtaxed-il.com"
-ROUTES = ["/", "/hoa", "/pricing", "/deadlines", "/faq", "/appeal-packet", "/appeal-contingency"]
+ROUTES = ["/", "/hoa", "/pricing", "/deadlines", "/faq", "/appeal-packet", "/appeal-contingency", "/terms", "/contact"]
 UA = "RexOverTaxedLiveSmoke/1.1"
 
 NEGATIVE_GUARANTEE_DISCLAIMER = re.compile(
@@ -33,6 +33,7 @@ HARD_COPY_PATTERNS = {
         re.I,
     ),
     "guaranteed_savings": re.compile(r"guaranteed\s+(?:savings|reduction|result|outcome)", re.I),
+    "satisfaction_guarantee": re.compile(r"100%\s+satisfaction\s+guarantee", re.I),
     "risk_free": re.compile(r"risk[- ]free", re.I),
     "stale_township_count_marketing": re.compile(
         r"all\s+38\s+townships|see\s+all\s+38\s+townships|\b38\s+townships\b",
