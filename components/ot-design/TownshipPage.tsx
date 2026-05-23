@@ -388,7 +388,7 @@ export default function TownshipPage({ township }: { township: Township }) {
               </p>
             </div>
             <Link href="/deadlines" className="ot-tp-secondary-link">
-              See all 38 townships →
+              Browse township deadlines →
             </Link>
           </div>
         </div>

@@ -43,7 +43,7 @@ describe("OT home free-check flow", () => {
 
     render(<HomePage />);
 
-    fireEvent.change(screen.getByPlaceholderText("123 Main St, Chicago, IL 60601"), {
+    fireEvent.change(screen.getAllByPlaceholderText("123 S Sample Ave, La Grange IL")[1], {
       target: { value: "1234 N State St, Chicago IL 60610" },
     });
     fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }));
@@ -62,7 +62,7 @@ describe("OT home free-check flow", () => {
 
     render(<HomePage />);
 
-    fireEvent.change(screen.getByPlaceholderText("123 N Main St, Chicago IL"), {
+    fireEvent.change(screen.getAllByPlaceholderText("123 S Sample Ave, La Grange IL")[0], {
       target: { value: "1234 N State St, Chicago IL 60610" },
     });
     fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }));
@@ -102,7 +102,7 @@ describe("OT home free-check flow", () => {
 
     render(<HomePage />);
 
-    fireEvent.change(screen.getByPlaceholderText("123 Main St, Chicago, IL 60601"), {
+    fireEvent.change(screen.getAllByPlaceholderText("123 S Sample Ave, La Grange IL")[1], {
       target: { value: "100 W Randolph St, Chicago IL 60601" },
     });
     fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }));
@@ -127,7 +127,7 @@ describe("OT home free-check flow", () => {
 
     render(<HomePage />);
 
-    fireEvent.change(screen.getByPlaceholderText("123 Main St, Chicago, IL 60601"), {
+    fireEvent.change(screen.getAllByPlaceholderText("123 S Sample Ave, La Grange IL")[1], {
       target: { value: "asdfqwer not a real address" },
     });
     fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }));
@@ -170,7 +170,7 @@ describe("OT home free-check flow", () => {
 
     render(<HomePage />);
 
-    fireEvent.change(screen.getByPlaceholderText("123 Main St, Chicago, IL 60601"), {
+    fireEvent.change(screen.getAllByPlaceholderText("123 S Sample Ave, La Grange IL")[1], {
       target: { value: "5236 N Kenmore Ave, Chicago IL 60640" },
     });
     fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }));
@@ -208,7 +208,7 @@ describe("OT home free-check flow", () => {
 
     render(<HomePage />);
 
-    fireEvent.change(screen.getByPlaceholderText("123 Main St, Chicago, IL 60601"), {
+    fireEvent.change(screen.getAllByPlaceholderText("123 S Sample Ave, La Grange IL")[1], {
       target: { value: "5236 N Kenmore Ave, Chicago IL 60640" },
     });
     fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }));

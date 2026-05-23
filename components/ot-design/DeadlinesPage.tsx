@@ -42,7 +42,7 @@ function DeadlinesHero() {
           <span className="ot-page-h1-tail">appeal deadlines.</span>
         </h1>
         <p className="ot-page-sub">
-          All 38 townships, updated weekly from Cook County Board of Review records.
+          Township appeal windows, tracked from public Cook County Board of Review records.
           See whose window is open, who&apos;s up next, and when yours closes.
         </p>
         <div className="ot-status-summary">
@@ -306,7 +306,7 @@ function TownshipGrid() {
       <div className="ot-fullmap-inner">
         <div className="ot-fullmap-head">
           <div>
-            <h2 className="ot-h2">All 38 townships at a glance.</h2>
+            <h2 className="ot-h2">Township deadlines at a glance.</h2>
             <p className="ot-fullmap-sub">
               Click any township to see its window status and a complete deadline
               summary.

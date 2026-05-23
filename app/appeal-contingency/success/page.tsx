@@ -1,36 +1,51 @@
+import type { Metadata } from "next";
 import Link from "next/link";
-import { CheckCircle } from "lucide-react";
+import { SiteHeader, SiteFooter, OT_PUBLIC_CONTACT } from "@/components/ot-design/SiteChrome";
+import "../../ot-design.css";
 
-export const metadata = {
-  title: "Request Received | Overtaxed IL",
-  description: "We received your appeal request and will be in touch soon.",
+export const metadata: Metadata = {
+  title: "Review Request Received | OverTaxed IL",
+  description: "OverTaxed IL received your Cook County contingency review request.",
 };
 
 export default function ContingencySuccessPage() {
   return (
-    <main className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
-      <div className="max-w-md w-full bg-white rounded-2xl shadow-lg p-8 text-center">
-        <div className="flex justify-center mb-4">
-          <CheckCircle className="w-16 h-16 text-green-500" />
+    <div className="ot-root">
+      <SiteHeader active="offer" />
+      <main className="ot-section ot-section-cream ot-legacy-page">
+        <div className="ot-legacy-inner">
+        <section className="ot-method-panel" style={{ maxWidth: 920, margin: "0 auto" }}>
+          <div>
+            <p className="ot-eyebrow">Review request received</p>
+            <h1 className="ot-h2">We received your Cook County contingency review request.</h1>
+            <p className="ot-sublead">
+              We will review the property and reply within 2 business days. Nothing is filed, and no contingency fee applies, unless you separately sign a written authorization.
+            </p>
+            <div className="ot-hero-actions">
+              <Link href="/deadlines" className="ot-cta ot-cta-primary">
+                Check township deadlines <span className="ot-cta-arrow">→</span>
+              </Link>
+              <Link href="/" className="ot-cta ot-cta-secondary">
+                Return home
+              </Link>
+            </div>
+          </div>
+          <div className="ot-method-card">
+            <strong>Bounded follow-up</strong>
+            <p>
+              If the Board of Review grants a reduction under a signed contingency authorization, the public contingency term is 22% of first-year tax savings, with any minimum shown before you sign.
+            </p>
+            <p style={{ marginTop: 12 }}>
+              OverTaxed IL is not a law firm and does not provide legal advice.
+            </p>
+            <p style={{ marginTop: 12 }}>
+              Questions: <a href={`mailto:${OT_PUBLIC_CONTACT.email}`}>{OT_PUBLIC_CONTACT.email}</a> · <a href={OT_PUBLIC_CONTACT.phoneHref}>{OT_PUBLIC_CONTACT.phoneDisplay}</a>
+            </p>
+          </div>
+        </section>
         </div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-3">
-          We&apos;ve Got It!
-        </h1>
-        <p className="text-gray-600 mb-4">
-          We will review your property and be in touch within{" "}
-          <strong>2 business days</strong>.
-        </p>
-        <p className="text-gray-500 text-sm mb-6">
-          A confirmation email is on its way. If you have any questions in the
-          meantime, reply to that email.
-        </p>
-        <Link
-          href="/"
-          className="text-sm text-gray-500 hover:text-gray-700 underline"
-        >
-          Return to home
-        </Link>
-      </div>
-    </main>
+      </main>
+      <SiteFooter />
+    </div>
   );
 }

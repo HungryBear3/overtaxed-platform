@@ -87,7 +87,7 @@ Have questions or need help? Fill out the form, email us, call or text, or sched
           <CardHeader className="pb-2">
             <CardTitle className="text-lg text-blue-900">HOA or condo association?</CardTitle>
             <CardDescription className="text-blue-800">
-              We help associations check bulk PINs for over-assessment. Pick the &quot;HOA/condo&quot; subject in the form above (or email support@overtaxed-il.com) and tell us how many PINs you manage. We&apos;ll respond with a packet plan — no attorney referral, no upsell.
+              We help associations check bulk PINs for over-assessment. Pick the &quot;HOA/condo&quot; subject in the form above (or email support@overtaxed-il.com) and tell us how many PINs you manage. We&apos;ll respond with a packet plan — no legal-representation claim, no per-unit upsell.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -127,9 +127,9 @@ Have questions or need help? Fill out the form, email us, call or text, or sched
             </CardHeader>
             <CardContent>
               <p className="text-sm text-gray-700">
-                Use the Refund Request category for billing or procedural-guarantee questions.
-                Our money-back guarantee applies when an OverTaxed IL procedural error causes
-                the county to reject the filing. See our{" "}
+                Use the Refund Request category for billing or procedural-error questions.
+                If a filing issue appears to come from an OverTaxed IL procedural error,
+                we will review it under the refund terms. See our{" "}
                 <Link href="/terms" className="text-blue-600 hover:underline">
                   Terms of Service
                 </Link>{" "}

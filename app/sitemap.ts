@@ -1,16 +1,16 @@
 import type { MetadataRoute } from "next"
 import fs from "fs"
 import path from "path"
+import { getTownshipSlugs } from "@/lib/townships"
 
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com"
 
-const townshipSlugs = [
-  "bloom", "bremen", "calumet", "rich", "thornton", "worth",
-  "lemont", "lyons", "orland", "palos", "stickney",
-  "barrington", "elk-grove", "evanston", "maine", "niles",
-  "new-trier", "northfield", "palatine", "wheeling",
-  "chicago", "berwyn", "hanover", "oak-park", "river-forest", "schaumburg",
-]
+// Township slugs always come from the canonical data source in
+// `lib/townships.ts` so the sitemap can never drift from the routes the
+// app actually serves. Hardcoding a list here previously produced two
+// SEO bugs: (1) it shipped 26 slugs while the data source held 38, and
+// (2) it included a "chicago" slug that has no corresponding township
+// record (no /township/chicago page exists).
 
 function getBlogSlugs(): string[] {
   try {
@@ -46,8 +46,11 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.8,
   }))
 
-  const townshipPages: MetadataRoute.Sitemap = townshipSlugs.map((slug) => ({
-    url: `${baseUrl}/townships/${slug}`,
+  // Canonical detail route is /township/[slug] (singular). The legacy
+  // /townships/[slug] route exists for back-compat redirects; emitting it
+  // in the sitemap would advertise a redirecting URL to crawlers.
+  const townshipPages: MetadataRoute.Sitemap = getTownshipSlugs().map((slug) => ({
+    url: `${baseUrl}/township/${slug}`,
     lastModified: new Date(),
     changeFrequency: "monthly" as const,
     priority: 0.7,

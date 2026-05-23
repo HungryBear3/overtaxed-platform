@@ -48,7 +48,7 @@ const PLANS: Array<{
       "Everything in DIY plus we prepare + submit the appeal",
       "You sign the authorization — we handle the Board of Review forms",
       "Tracked through BoR decision",
-      "100% money-back on procedural denial",
+      "Procedural refund on township procedural denial",
     ],
   },
   {
@@ -101,7 +101,7 @@ export default function CheckoutPage() {
             </h1>
             <p className="ot-checkout-sub">
               Pick how hands-on you want to be. All three options come with
-              the same 100% money-back guarantee on procedural denial.
+              the same procedural refund policy if the township denies the filing on procedural grounds.
             </p>
 
             <div className="ot-checkout-plans">

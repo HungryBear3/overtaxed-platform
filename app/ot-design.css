@@ -323,6 +323,17 @@ body.ot-stars-on .ot-logo-mark::before {
 .ot-hero-l { max-width: 560px; }
 .ot-hero-r { display: flex; justify-content: flex-end; }
 
+.ot-hero-r-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 18px;
+}
+.ot-hero-r-stack .ot-hero-preview {
+  margin-top: 0 !important;
+  max-width: 460px !important;
+}
+
+
 /* Stacked hero variant: narrative on top, then form (left) + sample (right) */
 .ot-hero-inner-stack {
   display: flex;
@@ -518,6 +529,21 @@ body.ot-stars-on .ot-logo-mark::before {
   border-radius: 50%;
   background: var(--success);
   flex-shrink: 0;
+}
+
+/* ───────────────────────── Generic Sections ───────────────────────── */
+.ot-section {
+  padding: 80px 0;
+  background: var(--background);
+}
+.ot-section-method,
+.ot-section-cream {
+  background: var(--muted);
+}
+@media (max-width: 700px) {
+  .ot-section {
+    padding: 56px 0;
+  }
 }
 
 /* ───────────────────────── FAQ ───────────────────────── */
@@ -3417,6 +3443,78 @@ body.ot-stars-on .ot-logo-mark::before {
   background: oklch(0.62 0.16 150);
   box-shadow: 0 0 0 3px color-mix(in oklab, oklch(0.62 0.16 150) 25%, transparent);
   flex-shrink: 0;
+}
+.ot-sticky-bar-error {
+  max-width: 680px;
+  margin: -2px auto 0;
+  padding: 6px 12px;
+  border: 1px solid oklch(0.72 0.17 35 / 0.45);
+  border-radius: 0 0 10px 10px;
+  background: oklch(0.98 0.03 35);
+  color: oklch(0.42 0.16 35);
+  font-size: 13px;
+  box-shadow: 0 8px 18px -14px rgba(0,0,0,0.24);
+}
+
+/* Legacy route unification shell */
+.ot-legacy-page {
+  padding: 88px 0 96px;
+  background: var(--page-bg, var(--background));
+}
+.ot-legacy-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 32px;
+}
+.ot-legacy-page .ot-section-head {
+  margin-bottom: 32px;
+}
+.ot-legacy-page .ot-feature-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 30px;
+}
+.ot-legacy-page .ot-feature {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: color-mix(in oklab, var(--background) 92%, var(--primary) 8%);
+}
+.ot-legacy-page .ot-feature strong,
+.ot-legacy-page .ot-feature span {
+  display: block;
+}
+.ot-legacy-page .ot-feature-kicker {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+.ot-legacy-page .ot-method-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr);
+  gap: 24px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--background);
+  box-shadow: 0 20px 40px -34px rgba(0,0,0,0.28);
+}
+.ot-legacy-page .ot-method-card {
+  padding: 20px;
+  border-radius: 18px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+}
+@media (max-width: 900px) {
+  .ot-legacy-page { padding: 64px 0 72px; }
+  .ot-legacy-inner { padding: 0 20px; }
+  .ot-legacy-page .ot-feature-strip,
+  .ot-legacy-page .ot-method-panel { grid-template-columns: 1fr; }
 }
 
 /* When the sticky bar is visible, fade the original <header> so they don't both

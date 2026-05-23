@@ -12,7 +12,7 @@ export const metadata = {
 const faqs = [
   {
     q: "What is a property tax appeal?",
-    a: "A property tax appeal is a formal request to lower your property's assessed value. In Illinois, your property taxes are based on the assessed value set by the county assessor. If you believe your assessment is too high compared to similar properties, you can file an appeal with the Cook County Assessor or Board of Review. A successful appeal can reduce your assessment and lower your tax bill — though decisions are made by the county and there is no guarantee of a reduction.",
+    a: "A property tax appeal is a formal request to lower your property's assessed value. In Illinois, your property taxes are based on the assessed value set by the county assessor. If you believe your assessment is too high compared to similar properties, you can file an appeal with the Cook County Assessor or Board of Review. An approved appeal can reduce your assessment and lower your tax bill — though decisions are made by the county and there is no guarantee of a reduction.",
   },
   {
     q: "What is a PIN?",
@@ -48,7 +48,7 @@ const faqs = [
   },
   {
     q: "How do I get a refund?",
-    a: "We offer a procedural money-back guarantee on the DIY and Done-for-you packets: if your filing is rejected or denied solely because of an OverTaxed IL procedural error in the materials or submission we prepared, we refund the OverTaxed IL service fee. It does not cover county denials on the merits. Contact support@overtaxed-il.com within 30 days of the notice. See our Terms of Service for full details.",
+    a: "If your filing is rejected or denied solely because of an OverTaxed IL procedural error in the materials or submission we prepared, contact support@overtaxed-il.com within 30 days of the notice so we can review the issue under our Terms of Service. This does not cover county denials on the merits.",
   },
   {
     q: "Are you a law firm?",
@@ -56,7 +56,7 @@ const faqs = [
   },
   {
     q: "Do you support HOA or condo associations?",
-    a: "We're rolling out HOA / condo board support for the 2026 cycle. If your association manages multiple PINs and wants a bulk packet, use the HOA section on the homepage or email support@overtaxed-il.com — no attorney referral required.",
+    a: "We're rolling out HOA / condo board support for the 2026 cycle. If your association manages multiple PINs and wants a bulk packet, see /hoa, use the HOA section on the homepage, or email support@overtaxed-il.com. OverTaxed IL is not a law firm and does not provide legal representation.",
   },
 ]
 

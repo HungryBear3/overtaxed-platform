@@ -1,10 +1,13 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { buildTickerItems, TOWNSHIPS, TOWNSHIP_STATUS_COUNTS } from "@/lib/townships";
+import { buildTickerItems, TOWNSHIPS } from "@/lib/townships";
 
+// Public-contact constants used by SiteChrome (footer text, contact CTAs).
+// Personal-name attribution is intentionally NOT in this shared chrome
+// export — shared chrome renders on every public page (including /hoa,
+// footer, schema). Personal-name attribution lives on /about only.
 export const OT_PUBLIC_CONTACT = {
-  founder: "Alexy Kaplun",
   phoneDisplay: "(847) 461-3189",
   phoneHref: "tel:+18474613189",
   calendlyUrl: "/contact",
@@ -138,7 +141,7 @@ export function SiteFooter() {
                 </div>
               ))}
               <Link href="/townships" className="ot-footer-link-all">
-                See all 38 townships →
+                Browse township deadlines →
               </Link>
             </div>
           </div>
@@ -146,7 +149,7 @@ export function SiteFooter() {
           <div className="ot-footer-col ot-footer-col-legal">
             <div className="ot-footer-col-head">About</div>
             <p className="ot-footer-disclaimer">
-              Founded by {OT_PUBLIC_CONTACT.founder}. OverTaxed IL is not a law firm and does not provide legal advice.
+              OverTaxed IL is not a law firm and does not provide legal advice.
               Estimates are based on public Cook County Assessor records and may
               vary from final Board of Review outcomes.
             </p>
@@ -190,7 +193,7 @@ export function LiveTicker() {
     >
       <div className="ot-ticker-inner">
         <span className="ot-ticker-dot" aria-hidden="true" />
-        <span className="ot-ticker-eyebrow">Live</span>
+        <span className="ot-ticker-eyebrow">Schedule checked regularly</span>
         <span className="ot-ticker-track">
           {items.map((it, i) => (
             <span
@@ -219,7 +222,7 @@ export function RiskReversalBadge({
           ○
         </span>
         <span className="ot-rrb-text">
-          <strong>Money-back</strong> on procedural denial
+          <strong>Procedural refund</strong> if our filing error causes rejection
         </span>
       </span>
     );
@@ -231,7 +234,7 @@ export function RiskReversalBadge({
           ○
         </span>
         <span className="ot-rrb-text">
-          <strong>100% money-back</strong> if your township denies the filing on
+          <strong>Procedural refund policy</strong> if your township denies the filing on
           procedural grounds
         </span>
       </div>
@@ -244,7 +247,7 @@ export function RiskReversalBadge({
       </div>
       <div className="ot-rrb-body">
         <div className="ot-rrb-head">
-          <strong>100% money-back guarantee</strong>
+          <strong>Procedural refund policy</strong>
         </div>
         <div className="ot-rrb-sub">
           If your township denies the filing on procedural grounds, we refund
@@ -260,12 +263,11 @@ export function StatusChip() {
     <Link href="/deadlines" className="ot-chip ot-chip-link">
       <span className="ot-pill ot-pill-open" aria-hidden="true">
         <span className="ot-pill-dot" />
-        <strong>{TOWNSHIP_STATUS_COUNTS.open}</strong>
-        <span className="ot-pill-of">/ {TOWNSHIP_STATUS_COUNTS.total}</span>
+        <strong>Schedule</strong>
       </span>
       <span className="ot-chip-text">
         <span className="ot-chip-label">
-          township windows open now in Cook County
+          Township schedules checked regularly
         </span>
       </span>
       <span className="ot-chip-arrow" aria-hidden="true">
@@ -283,6 +285,7 @@ export function StickyAddressBar() {
   const [visible, setVisible] = useState(false);
   const [addr, setAddr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [inlineError, setInlineError] = useState("");
 
   useEffect(() => {
     const target = document.getElementById("hero-check");
@@ -301,6 +304,7 @@ export function StickyAddressBar() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (loading || !addr.trim()) return;
+    setInlineError("");
     setLoading(true);
     try {
       const submittedInput = addr.trim();
@@ -311,8 +315,10 @@ export function StickyAddressBar() {
       });
       const data = await res.json().catch(() => null);
       if (res.ok === false) {
+        const message = data?.error ?? "We couldn't find a Cook County property for that address. Try your 14-digit PIN instead.";
+        setInlineError(message);
         window.dispatchEvent(new CustomEvent("ot:free-check-result", {
-          detail: { error: data?.error ?? "We couldn't find a Cook County property for that address. Try your 14-digit PIN instead.", submittedInput },
+          detail: { error: message, submittedInput },
         }));
       } else {
         window.dispatchEvent(new CustomEvent("ot:free-check-result", {
@@ -324,8 +330,10 @@ export function StickyAddressBar() {
         }));
       }
     } catch {
+      const message = "We couldn't complete the lookup. Please try again, or enter your 14-digit PIN.";
+      setInlineError(message);
       window.dispatchEvent(new CustomEvent("ot:free-check-result", {
-        detail: { error: "We couldn't complete the lookup. Please try again, or enter your 14-digit PIN.", submittedInput: addr.trim() },
+        detail: { error: message, submittedInput: addr.trim() },
       }));
     }
     // Scroll to hero-check after surfacing the same preview result as the main form.
@@ -358,7 +366,7 @@ export function StickyAddressBar() {
           <input
             type="text"
             className="ot-sticky-bar-input"
-            placeholder="123 N Main St, Chicago IL"
+            placeholder="123 S Sample Ave, La Grange IL"
             value={addr}
             onChange={(e) => setAddr(e.target.value)}
             aria-label="Property address"
@@ -379,10 +387,15 @@ export function StickyAddressBar() {
           title="See all township deadlines"
         >
           <span className="ot-sticky-bar-pill-dot" aria-hidden="true" />
-          <strong>{TOWNSHIP_STATUS_COUNTS.open}</strong>
-          &nbsp;windows open
+          <strong>Schedule</strong>
+          &nbsp;updates
         </Link>
       </div>
+      {inlineError && (
+        <div className="ot-sticky-bar-error" role="alert">
+          {inlineError}
+        </div>
+      )}
     </div>
   );
 }
