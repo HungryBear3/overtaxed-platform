@@ -5,7 +5,6 @@ app/api/outreach
 app/api/account
 app/account/packets
 app/u
-lib/outreach
 lib/packet
 components/account/PacketInvoicesSection.tsx
 __tests__/outreach
