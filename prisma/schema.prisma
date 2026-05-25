@@ -21,40 +21,44 @@ model User {
   name          String?
   image         String?
   role          UserRole  @default(USER)
-  
+
   // Relationship attestation (owner or authorized)
   relationshipAttestation RelationshipType @default(OWNER)
   attestationDate         DateTime         @default(now())
-  
+
   // Subscription & Billing
-  subscriptionTier SubscriptionTier @default(COMPS_ONLY)
-  subscriptionStatus SubscriptionStatus @default(INACTIVE)
-  subscriptionStartDate DateTime?
-  subscriptionEndDate   DateTime?
+  subscriptionTier            SubscriptionTier   @default(COMPS_ONLY)
+  subscriptionStatus          SubscriptionStatus @default(INACTIVE)
+  subscriptionStartDate       DateTime?
+  subscriptionEndDate         DateTime?
   subscriptionAnniversaryDate DateTime? // For annual renewals
-  /** Paid property count (slots) — caps usage; null = use tier default max */
-  subscriptionQuantity Int?
-  /** Stripe customer/subscription IDs for portal and quantity sync */
-  stripeCustomerId     String?
-  stripeSubscriptionId String?
-  referralCode         String?  // Referral code that brought this user in
+  /**
+   * Paid property count (slots) — caps usage; null = use tier default max
+   */
+  subscriptionQuantity        Int?
+  /**
+   * Stripe customer/subscription IDs for portal and quantity sync
+   */
+  stripeCustomerId            String?
+  stripeSubscriptionId        String?
+  referralCode                String? // Referral code that brought this user in
 
   // Performance Plan tracking
-  performancePlanStartDate DateTime? // When 3-year period starts
+  performancePlanStartDate     DateTime? // When 3-year period starts
   performancePlanPaymentOption PerformancePaymentOption?
-  
+
   // Terms of Service
   termsAcceptances TermsAcceptance[]
-  
+
   // User data
   properties Property[]
   appeals    Appeal[]
   invoices   Invoice[]
-  
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   deletedAt DateTime? // Soft delete for data retention (7 years)
-  
+
   @@index([email])
   @@index([subscriptionTier])
   @@index([subscriptionStatus])
@@ -71,11 +75,11 @@ enum RelationshipType {
 }
 
 enum SubscriptionTier {
-  COMPS_ONLY      // DIY reports only: $69 per property, one-time
-  STARTER         // $149/property/year, full automation
-  GROWTH          // $125/property/year, 3-9 properties (commercial)
-  PORTFOLIO       // $100/property/year, 10-20 properties (commercial)
-  PERFORMANCE     // 4% of 3-year savings, deferred; unlimited. 20+ requires custom pricing.
+  COMPS_ONLY // DIY reports only: $69 per property, one-time
+  STARTER // $149/property/year, full automation
+  GROWTH // $125/property/year, 3-9 properties (commercial)
+  PORTFOLIO // $100/property/year, 10-20 properties (commercial)
+  PERFORMANCE // 4% of 3-year savings, deferred; unlimited. 20+ requires custom pricing.
 }
 
 enum SubscriptionStatus {
@@ -96,23 +100,23 @@ enum PerformancePaymentOption {
 // ============================================
 
 model TermsAcceptance {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  version   String   // Terms version (e.g., "1.0", "2.0")
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  version    String // Terms version (e.g., "1.0", "2.0")
   acceptedAt DateTime @default(now())
-  
+
   // What was accepted
-  termsOfServiceAccepted Boolean @default(false)
-  userAgreementAccepted  Boolean @default(false)
+  termsOfServiceAccepted  Boolean @default(false)
+  userAgreementAccepted   Boolean @default(false)
   relationshipAttestation Boolean @default(false)
-  
+
   ipAddress String?
   userAgent String?
-  
+
   createdAt DateTime @default(now())
-  
+
   @@index([userId])
   @@index([version])
 }
@@ -122,62 +126,62 @@ model TermsAcceptance {
 // ============================================
 
 model Property {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   // Property identification
-  pin       String   // Property Identification Number (Cook County)
-  address   String
+  pin        String // Property Identification Number (Cook County)
+  address    String
   unitNumber String? // e.g. "2B" — for condos when Cook County doesn't include it
-  city      String
-  state     String   @default("IL")
-  zipCode   String
-  county    String   @default("Cook") // MVP: Cook County only
-  township  String?  // For schedule-based monitoring (appeal window by township)
-  
+  city       String
+  state      String  @default("IL")
+  zipCode    String
+  county     String  @default("Cook") // MVP: Cook County only
+  township   String? // For schedule-based monitoring (appeal window by township)
+
   // Property details (from Cook County Open Data)
-  neighborhood    String?
-  subdivision     String?
-  block           String?
-  buildingClass   String? // e.g., "203" for residential
-  cdu             String? // Characteristic Data Unit (e.g., "AV")
-  livingArea      Int?    // Square feet
-  landSize        Int?    // Square feet
-  yearBuilt       Int?
-  bedrooms        Int?
-  bathrooms       Decimal?
-  exteriorWall    String?
-  roofType        String?
-  heatingType     String?
-  
+  neighborhood  String?
+  subdivision   String?
+  block         String?
+  buildingClass String? // e.g., "203" for residential
+  cdu           String? // Characteristic Data Unit (e.g., "AV")
+  livingArea    Int? // Square feet
+  landSize      Int? // Square feet
+  yearBuilt     Int?
+  bedrooms      Int?
+  bathrooms     Decimal?
+  exteriorWall  String?
+  roofType      String?
+  heatingType   String?
+
   // Assessment data
-  currentAssessmentValue Decimal?
-  currentLandValue       Decimal?
+  currentAssessmentValue  Decimal?
+  currentLandValue        Decimal?
   currentImprovementValue Decimal?
-  currentMarketValue     Decimal?
-  
+  currentMarketValue      Decimal?
+
   // Tax information (from Cook County Clerk)
-  taxCode         String?  // Cook County tax code (determines tax rate)
-  taxRate         Decimal? // Total tax rate as decimal (e.g., 0.0756 for 7.56%)
-  stateEqualizer  Decimal? // State equalization factor (e.g., 2.916)
-  
+  taxCode        String? // Cook County tax code (determines tax rate)
+  taxRate        Decimal? // Total tax rate as decimal (e.g., 0.0756 for 7.56%)
+  stateEqualizer Decimal? // State equalization factor (e.g., 2.916)
+
   // Assessment history (for year-over-year comparison)
   assessmentHistory AssessmentHistory[]
-  
+
   // Appeals for this property
   appeals Appeal[]
-  
+
   // Comps used for this property
   comps ComparableProperty[]
-  
+
   // Monitoring
-  lastCheckedAt DateTime?
-  monitoringEnabled Boolean @default(true)
-  
+  lastCheckedAt     DateTime?
+  monitoringEnabled Boolean   @default(true)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   @@unique([userId, pin]) // One property per user (by PIN)
   @@index([userId])
   @@index([pin])
@@ -186,28 +190,28 @@ model Property {
 }
 
 model AssessmentHistory {
-  id          String   @id @default(cuid())
-  propertyId  String
-  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  
-  taxYear     Int      // e.g., 2024, 2025, 2026
-  assessmentValue Decimal
-  landValue    Decimal?
+  id         String   @id @default(cuid())
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  taxYear          Int // e.g., 2024, 2025, 2026
+  assessmentValue  Decimal
+  landValue        Decimal?
   improvementValue Decimal?
-  marketValue  Decimal?
-  
+  marketValue      Decimal?
+
   // Change detection
   previousAssessmentValue Decimal? // For year-over-year comparison
   changeAmount            Decimal?
   changePercent           Decimal?
-  
+
   // Source
-  source      String?  // "Cook County Open Data", "manual", "upload"
-  noticeDate  DateTime? // When reassessment notice was received
+  source         String? // "Cook County Open Data", "manual", "upload"
+  noticeDate     DateTime? // When reassessment notice was received
   noticeDeadline DateTime? // 30 days from notice date
-  
-  createdAt   DateTime @default(now())
-  
+
+  createdAt DateTime @default(now())
+
   @@unique([propertyId, taxYear])
   @@index([propertyId])
   @@index([taxYear])
@@ -223,65 +227,65 @@ model Appeal {
   property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   // Tax year tracking (multi-year support)
-  taxYear    Int      // e.g., 2024
-  
+  taxYear Int // e.g., 2024
+
   // Related appeals (same property, different years) for 3-year savings calculation
   relatedAppeals Appeal[] @relation("RelatedAppeals")
   parentAppealId String?
   parentAppeal   Appeal?  @relation("RelatedAppeals", fields: [parentAppealId], references: [id])
-  
+
   // Status
-  status     AppealStatus @default(DRAFT)
-  
+  status AppealStatus @default(DRAFT)
+
   // Assessment values
-  originalAssessmentValue Decimal
+  originalAssessmentValue  Decimal
   requestedAssessmentValue Decimal?
-  finalAssessmentValue    Decimal? // After appeal decision
-  
+  finalAssessmentValue     Decimal? // After appeal decision
+
   // Appeal details
-  appealType AppealType @default(ASSESSOR) // Assessor's Office or Board of Review
+  appealType   AppealType   @default(ASSESSOR) // Assessor's Office or Board of Review
   filingMethod FilingMethod @default(ELECTRONIC)
-  
+
   // Dates
-  noticeDate      DateTime? // When reassessment notice was received
-  filingDeadline  DateTime  // 30 days from notice or township closing date
-  filedAt         DateTime?
-  decisionDate    DateTime?
-  
+  noticeDate     DateTime? // When reassessment notice was received
+  filingDeadline DateTime // 30 days from notice or township closing date
+  filedAt        DateTime?
+  decisionDate   DateTime?
+
   // Outcome data (for win-rate improvement)
-  outcome         AppealOutcome?
-  reductionAmount Decimal? // Assessment reduction achieved
+  outcome          AppealOutcome?
+  reductionAmount  Decimal? // Assessment reduction achieved
   reductionPercent Decimal?
-  
+
   // Tax savings calculation (for Performance Plan)
-  taxSavings      Decimal? // Calculated: reduction × tax rate × equalization factor
-  taxRate         Decimal? // Most recent ascertainable tax rate
+  taxSavings         Decimal? // Calculated: reduction × tax rate × equalization factor
+  taxRate            Decimal? // Most recent ascertainable tax rate
   equalizationFactor Decimal? // Equalization factor used
-  
+
   // Evidence & comps used
-  compsUsed      ComparableProperty[]
+  compsUsed       ComparableProperty[]
   evidenceSummary String? // Brief summary of evidence submitted
-  
+
   // Documents
-  documents      AppealDocument[]
-  
+  documents AppealDocument[]
+
   // Filing authorization (for staff-assisted filing; Cook County Attorney/Representative form)
   filingAuthorization FilingAuthorization?
-  
+
   // Hearing (if applicable)
-  hearingScheduled Boolean @default(false)
+  hearingScheduled Boolean   @default(false)
   hearingDate      DateTime?
   hearingLocation  String?
-  
+
   // Notes
-  notes          String?
-  adminNotes     String? // Internal notes
-  
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  
+  notes      String?
+  adminNotes String? // Internal notes
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@unique([propertyId, taxYear, appealType]) // One appeal per property per year per type
   @@index([userId])
   @@index([propertyId])
@@ -306,8 +310,8 @@ enum AppealStatus {
 }
 
 enum AppealType {
-  ASSESSOR      // Cook County Assessor's Office
-  BOARD_REVIEW  // Board of Review
+  ASSESSOR // Cook County Assessor's Office
+  BOARD_REVIEW // Board of Review
   CERTIFICATE_ERROR // Certificate of Error (Rule 27)
 }
 
@@ -318,10 +322,10 @@ enum FilingMethod {
 }
 
 enum AppealOutcome {
-  WON              // Full reduction granted
-  PARTIALLY_WON    // Partial reduction
-  DENIED           // No reduction
-  WITHDRAWN        // Appeal withdrawn
+  WON // Full reduction granted
+  PARTIALLY_WON // Partial reduction
+  DENIED // No reduction
+  WITHDRAWN // Appeal withdrawn
 }
 
 // ============================================
@@ -331,43 +335,43 @@ enum AppealOutcome {
 // Matches Cook County Assessor Attorney/Representative Authorization form fields.
 
 model FilingAuthorization {
-  id       String  @id @default(cuid())
-  appealId String  @unique
-  appeal   Appeal  @relation(fields: [appealId], references: [id], onDelete: Cascade)
-  
+  id       String @id @default(cuid())
+  appealId String @unique
+  appeal   Appeal @relation(fields: [appealId], references: [id], onDelete: Cascade)
+
   // Property being appealed (from Property; stored for filing)
   propertyAddress String
   propertyCity    String
-  propertyState  String  @default("IL")
-  propertyZip    String
-  propertyPin    String
-  
+  propertyState   String @default("IL")
+  propertyZip     String
+  propertyPin     String
+
   // Property owner / appellant (as on county form)
-  ownerName       String
-  ownerEmail      String
-  ownerPhone      String?
-  ownerAddress    String  // Mailing address
-  ownerCity       String
-  ownerState      String  @default("IL")
-  ownerZip        String
-  
+  ownerName    String
+  ownerEmail   String
+  ownerPhone   String?
+  ownerAddress String // Mailing address
+  ownerCity    String
+  ownerState   String  @default("IL")
+  ownerZip     String
+
   // E-signature
-  signedAt        DateTime @default(now())
-  ipAddress       String?  // Optional audit
+  signedAt  DateTime @default(now())
+  ipAddress String? // Optional audit
 
   // Cook County form: relationship (owner/lessee/tax buyer/duly authorized) — only one checkbox
   relationshipType String @default("OWNER") // OWNER | LESSEE | TAX_BUYER | DULY_AUTHORIZED
 
   // Cook County form Q3: purchased or refinanced in past 3 years
   purchasedInPast3Years Boolean?
-  purchasedOrRefinanced String?   // PURCHASED | REFINANCED — maps to Check Box 12/13
+  purchasedOrRefinanced String? // PURCHASED | REFINANCED — maps to Check Box 12/13
   purchasePrice         String?
-  dateOfPurchase         DateTime?
-  rateType               String?   // e.g. Fixed, Adjustable
-  interestRate           String?
+  dateOfPurchase        DateTime?
+  rateType              String? // e.g. Fixed, Adjustable
+  interestRate          String?
 
   // Official Cook County form: when user uploads signed official form instead of our custom PDF
-  uploadedPdfUrl  String?  // Vercel Blob or S3 URL of uploaded signed official form
+  uploadedPdfUrl String? // Vercel Blob or S3 URL of uploaded signed official form
 
   // Drawn signature: base64 PNG data URL (data:image/png;base64,...) for embedding in PDF
   signatureImageData String?
@@ -383,73 +387,73 @@ model FilingAuthorization {
 // ============================================
 
 model ComparableProperty {
-  id        String   @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Source property (if used in an appeal)
   propertyId String?
   property   Property? @relation(fields: [propertyId], references: [id], onDelete: SetNull)
-  
+
   // Appeals this comp was used in
-  appeals   Appeal[]
-  
+  appeals Appeal[]
+
   // Comp type
-  compType  CompType // Sales comp or Equity comp
-  
+  compType CompType // Sales comp or Equity comp
+
   // Property identification (from Cook County Open Data)
-  pin       String
-  address   String
-  city      String
-  state     String   @default("IL")
-  zipCode   String
-  county    String   @default("Cook")
-  
+  pin     String
+  address String
+  city    String
+  state   String @default("IL")
+  zipCode String
+  county  String @default("Cook")
+
   // Property details
-  neighborhood    String?
-  subdivision     String?
-  block           String?
-  buildingClass   String?
-  cdu             String?
-  livingArea      Int?
-  landSize        Int?
-  yearBuilt       Int?
-  bedrooms        Int?
-  bathrooms       Decimal?
-  exteriorWall    String?
-  roofType        String?
-  heatingType     String?
-  
+  neighborhood  String?
+  subdivision   String?
+  block         String?
+  buildingClass String?
+  cdu           String?
+  livingArea    Int?
+  landSize      Int?
+  yearBuilt     Int?
+  bedrooms      Int?
+  bathrooms     Decimal?
+  exteriorWall  String?
+  roofType      String?
+  heatingType   String?
+
   // Distance from subject property
   distanceFromSubject Decimal? // Miles
-  
+
   // For Sales Comps
-  salePrice       Decimal?
-  saleDate        DateTime?
-  pricePerSqft    Decimal?
-  
+  salePrice    Decimal?
+  saleDate     DateTime?
+  pricePerSqft Decimal?
+
   // For Equity Comps
-  assessedMarketValue Decimal?
+  assessedMarketValue        Decimal?
   assessedMarketValuePerSqft Decimal?
-  
+
   // Assessment values
-  landValue       Decimal?
+  landValue        Decimal?
   improvementValue Decimal?
-  
+
   // Matching criteria (for Rule 15 compliance)
-  sameNeighborhood Boolean @default(false)
-  sameBuildingClass Boolean @default(false)
-  sameCdu          Boolean @default(false)
+  sameNeighborhood      Boolean @default(false)
+  sameBuildingClass     Boolean @default(false)
+  sameCdu               Boolean @default(false)
   livingAreaWithinRange Boolean @default(false)
-  ageWithinRange   Boolean @default(false)
-  distanceWithinRange Boolean @default(false)
-  
+  ageWithinRange        Boolean @default(false)
+  distanceWithinRange   Boolean @default(false)
+
   // Data source
-  dataSource      String @default("Cook County Open Data")
-  dataSourceUrl   String?
-  fetchedAt       DateTime @default(now())
-  
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  
+  dataSource    String   @default("Cook County Open Data")
+  dataSourceUrl String?
+  fetchedAt     DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([propertyId])
   @@index([pin])
   @@index([compType])
@@ -457,8 +461,8 @@ model ComparableProperty {
 }
 
 enum CompType {
-  SALES   // Sales Analysis comps (3+)
-  EQUITY  // Lack of Uniformity comps (5+)
+  SALES // Sales Analysis comps (3+)
+  EQUITY // Lack of Uniformity comps (5+)
 }
 
 // ============================================
@@ -466,16 +470,20 @@ enum CompType {
 // ============================================
 
 model RealieEnrichmentCache {
-  id         String   @id @default(cuid())
-  /** Normalized PIN (digits only); unique so we only call Realie once per PIN */
-  pin        String   @unique
-  livingArea Int?
-  yearBuilt  Int?
-  bedrooms   Int?
-  bathrooms  Decimal?
-  /** Full API response for subject property (richer data from 1 call); null for comp-only cache */
+  id          String   @id @default(cuid())
+  /**
+   * Normalized PIN (digits only); unique so we only call Realie once per PIN
+   */
+  pin         String   @unique
+  livingArea  Int?
+  yearBuilt   Int?
+  bedrooms    Int?
+  bathrooms   Decimal?
+  /**
+   * Full API response for subject property (richer data from 1 call); null for comp-only cache
+   */
   rawResponse Json?
-  fetchedAt  DateTime @default(now())
+  fetchedAt   DateTime @default(now())
 
   @@index([pin])
 }
@@ -485,22 +493,22 @@ model RealieEnrichmentCache {
 // ============================================
 
 model AppealDocument {
-  id        String   @id @default(cuid())
-  appealId  String
-  appeal    Appeal   @relation(fields: [appealId], references: [id], onDelete: Cascade)
-  
+  id       String @id @default(cuid())
+  appealId String
+  appeal   Appeal @relation(fields: [appealId], references: [id], onDelete: Cascade)
+
   documentType DocumentType
   fileName     String
   fileUrl      String // S3 or storage URL
-  fileSize     Int?   // Bytes
+  fileSize     Int? // Bytes
   mimeType     String?
-  
+
   // For photos (Rule 11-12 compliance)
-  isPhoto      Boolean @default(false)
-  photoDate    DateTime? // Date-stamped within 1 year
-  
-  createdAt    DateTime @default(now())
-  
+  isPhoto   Boolean   @default(false)
+  photoDate DateTime? // Date-stamped within 1 year
+
+  createdAt DateTime @default(now())
+
   @@index([appealId])
   @@index([documentType])
 }
@@ -521,63 +529,63 @@ enum DocumentType {
 // ============================================
 
 model Invoice {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   // Invoice details
-  invoiceNumber String @unique
+  invoiceNumber String  @unique
   amount        Decimal
   currency      String  @default("USD")
-  
+
   // Invoice type
-  invoiceType   InvoiceType
-  
+  invoiceType InvoiceType
+
   // Subscription invoices
-  subscriptionTier SubscriptionTier?
+  subscriptionTier   SubscriptionTier?
   billingPeriodStart DateTime?
   billingPeriodEnd   DateTime?
-  
+
   // Performance Plan invoices
   performancePlanAppealIds String[] // Appeal IDs included in 3-year calculation
   taxSavingsTotal          Decimal? // Total 3-year tax savings
-  taxSavingsBreakdown      Json?   // Per-year breakdown
-  feePercentage            Decimal  @default(0.04) // 4%
+  taxSavingsBreakdown      Json? // Per-year breakdown
+  feePercentage            Decimal                   @default(0.04) // 4%
   feeAmount                Decimal? // 4% of tax savings
   paymentOption            PerformancePaymentOption?
-  installmentNumber        Int?     // For installments (1, 2, or 3)
-  
+  installmentNumber        Int? // For installments (1, 2, or 3)
+
   // Comps-only invoices
-  propertyId    String?
+  propertyId          String?
   compPacketGenerated Boolean @default(false)
 
   // Shared appeal-packet fulfillment (used by COMPS_ONLY today; reusable by T3/T4).
   // The fulfillment lives on Invoice — one row per purchase — to avoid a redundant order model.
-  packetAppealId        String?        // Appeal the packet was generated for
-  packetStatus          PacketStatus   @default(NOT_STARTED)
-  packetPdfUrl          String?        // Vercel Blob URL (primary store)
-  packetPdfPath         String?        // Blob pathname for re-generation
+  packetAppealId        String? // Appeal the packet was generated for
+  packetStatus          PacketStatus @default(NOT_STARTED)
+  packetPdfUrl          String? // Vercel Blob URL (primary store)
+  packetPdfPath         String? // Blob pathname for re-generation
   packetGeneratedAt     DateTime?
-  packetDeliveredAt     DateTime?      // When delivery email sent
-  packetLastError       String?        // Truthful error string on FAILED / MANUAL_REVIEW
-  packetStripeSessionId String? @unique // Idempotency anchor: matched by Stripe webhook
+  packetDeliveredAt     DateTime? // When delivery email sent
+  packetLastError       String? // Truthful error string on FAILED / MANUAL_REVIEW
+  packetStripeSessionId String?      @unique // Idempotency anchor: matched by Stripe webhook
 
   // Payment
-  status        InvoiceStatus @default(PENDING)
-  paidAt        DateTime?
-  paymentMethod String? // "credit_card", "ach"
+  status                InvoiceStatus @default(PENDING)
+  paidAt                DateTime?
+  paymentMethod         String? // "credit_card", "ach"
   stripePaymentIntentId String?
-  stripeInvoiceId String? // Stripe Invoice (for performance fee send_invoice flow)
-  
+  stripeInvoiceId       String? // Stripe Invoice (for performance fee send_invoice flow)
+
   // Collections
-  dueDate       DateTime
-  lateFeeAmount Decimal? // 1.5% per month
-  collectionLettersSent Int @default(0)
+  dueDate                    DateTime
+  lateFeeAmount              Decimal? // 1.5% per month
+  collectionLettersSent      Int       @default(0)
   lastCollectionLetterSentAt DateTime?
-  
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([userId])
   @@index([status])
   @@index([invoiceType])
@@ -585,11 +593,11 @@ model Invoice {
 }
 
 enum InvoiceType {
-  SUBSCRIPTION      // Annual subscription (Starter, Growth, Portfolio)
-  PERFORMANCE_FEE   // 4% of 3-year savings
-  COMPS_ONLY        // $69 per property
-  LATE_FEE          // 1.5% monthly finance charge
-  COLLECTION_FEE    // Collection costs
+  SUBSCRIPTION // Annual subscription (Starter, Growth, Portfolio)
+  PERFORMANCE_FEE // 4% of 3-year savings
+  COMPS_ONLY // $69 per property
+  LATE_FEE // 1.5% monthly finance charge
+  COLLECTION_FEE // Collection costs
 }
 
 enum InvoiceStatus {
@@ -601,12 +609,12 @@ enum InvoiceStatus {
 }
 
 enum PacketStatus {
-  NOT_STARTED        // Invoice created, payment pending
-  GENERATING         // Payment confirmed, packet being built
-  READY              // PDF generated and stored
-  DELIVERED          // Delivery email sent at least once
-  MANUAL_REVIEW      // Weak data (no comps, missing requested value, etc.) — truthful fallback
-  FAILED             // Generation error after payment; ops should intervene
+  NOT_STARTED // Invoice created, payment pending
+  GENERATING // Payment confirmed, packet being built
+  READY // PDF generated and stored
+  DELIVERED // Delivery email sent at least once
+  MANUAL_REVIEW // Weak data (no comps, missing requested value, etc.) — truthful fallback
+  FAILED // Generation error after payment; ops should intervene
 }
 
 // ============================================
@@ -614,35 +622,35 @@ enum PacketStatus {
 // ============================================
 
 model MonitoringJob {
-  id          String   @id @default(cuid())
-  
-  jobType     MonitoringJobType
-  status      JobStatus @default(PENDING)
-  
+  id String @id @default(cuid())
+
+  jobType MonitoringJobType
+  status  JobStatus         @default(PENDING)
+
   // What was checked
   propertiesChecked Int @default(0)
   assessmentsFound  Int @default(0)
   appealsTriggered  Int @default(0)
-  
+
   // Errors
-  errors      String[] // Error messages
-  warnings    String[] // Warning messages
-  
-  startedAt   DateTime @default(now())
+  errors   String[] // Error messages
+  warnings String[] // Warning messages
+
+  startedAt   DateTime  @default(now())
   completedAt DateTime?
-  
-  createdAt   DateTime @default(now())
-  
+
+  createdAt DateTime @default(now())
+
   @@index([jobType])
   @@index([status])
   @@index([startedAt])
 }
 
 enum MonitoringJobType {
-  ASSESSMENT_CHECK    // Check for new assessments
-  APPEAL_FILING       // File pending appeals
-  COMP_GENERATION     // Generate comp packets
-  DEADLINE_REMINDER   // Send deadline reminders
+  ASSESSMENT_CHECK // Check for new assessments
+  APPEAL_FILING // File pending appeals
+  COMP_GENERATION // Generate comp packets
+  DEADLINE_REMINDER // Send deadline reminders
 }
 
 enum JobStatus {
@@ -657,24 +665,24 @@ enum JobStatus {
 // ============================================
 
 model TownshipAlert {
-  id        String   @id @default(cuid())
-  email     String
-  township  String   // e.g. "Worth", "Bremen", "Orland"
-  district  String?  // e.g. "South", "North"
+  id       String  @id @default(cuid())
+  email    String
+  township String // e.g. "Worth", "Bremen", "Orland"
+  district String? // e.g. "South", "North"
 
   // Notification state
-  notifiedOpen  Boolean  @default(false)  // Emailed when window opened
-  notifiedClose Boolean  @default(false)  // Emailed 7 days before close
+  notifiedOpen  Boolean @default(false) // Emailed when window opened
+  notifiedClose Boolean @default(false) // Emailed 7 days before close
 
-  subscribedAt DateTime @default(now())
-  unsubscribedAt DateTime?
-  unsubscribeToken String @unique @default(cuid())
+  subscribedAt     DateTime  @default(now())
+  unsubscribedAt   DateTime?
+  unsubscribeToken String    @unique @default(cuid())
 
+  @@unique([email, township])
   @@index([email])
   @@index([township])
   @@index([notifiedOpen])
   @@index([notifiedClose])
-  @@unique([email, township])
 }
 
 // ============================================
@@ -708,30 +716,30 @@ model SystemConfig {
 // ============================================
 
 model CountyConfig {
-  id        String   @id @default(cuid())
-  
-  county    String   @unique // e.g., "Cook", "DuPage"
-  state     String   @default("IL")
-  
+  id String @id @default(cuid())
+
+  county String @unique // e.g., "Cook", "DuPage"
+  state  String @default("IL")
+
   // Appeal rules
-  appealDeadlineDays Int @default(30) // Days from notice
-  appealTypes         String[] // ["assessor", "board_review"]
-  
+  appealDeadlineDays Int      @default(30) // Days from notice
+  appealTypes        String[] // ["assessor", "board_review"]
+
   // Data sources
-  openDataUrl         String?
-  apiUrl              String?
-  apiKey              String?
-  
+  openDataUrl String?
+  apiUrl      String?
+  apiKey      String?
+
   // Form requirements
-  requiresPhotos      Boolean @default(true)
+  requiresPhotos       Boolean @default(true)
   photoDateRequirement Int? // Days (e.g., within 365 days)
-  minCompsRequired    Int @default(3)
-  
-  isActive            Boolean @default(false) // MVP: Only Cook County active
-  
+  minCompsRequired     Int     @default(3)
+
+  isActive Boolean @default(false) // MVP: Only Cook County active
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   @@index([county])
   @@index([state])
 }
@@ -743,52 +751,53 @@ model OTLead {
   potentialSavings Float
   createdAt        DateTime @default(now())
   followupStep     Int      @default(0)
+
   @@index([email])
   @@index([createdAt])
 }
 
 model Referral {
-  id          String   @id @default(cuid())
-  code        String   @unique
-  name        String?
-  visits      Int      @default(0)
-  conversions Int      @default(0)
+  id             String   @id @default(cuid())
+  code           String   @unique
+  name           String?
+  visits         Int      @default(0)
+  conversions    Int      @default(0)
   revenue        Decimal  @default(0) @db.Decimal(10, 2)
   commissionRate Float    @default(0.20)
   createdAt      DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  updatedAt      DateTime @updatedAt
 }
 
 model DripEmail {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   email        String
-  sequence     String   // "ot-township"
-  step         Int      // 1-5
+  sequence     String // "ot-township"
+  step         Int // 1-5
   scheduledFor DateTime
   sentAt       DateTime?
-  createdAt    DateTime @default(now())
+  createdAt    DateTime  @default(now())
 
   @@index([scheduledFor, sentAt])
   @@index([email, sequence])
 }
 
 model ContingencyLead {
-  id                   String   @id @default(cuid())
-  fullName             String
-  email                String
-  phone                String
-  propertyPin          String
-  propertyAddress      String
+  id                     String   @id @default(cuid())
+  fullName               String
+  email                  String
+  phone                  String
+  propertyPin            String
+  propertyAddress        String
   estimatedAssessedValue String?
-  hearAboutUs          String?
-  createdAt            DateTime @default(now())
+  hearAboutUs            String?
+  createdAt              DateTime @default(now())
 
   @@index([email])
   @@index([createdAt])
 }
 
 model StripeEvent {
-  id        String   @id  // Stripe event ID (evt_...)
+  id        String   @id // Stripe event ID (evt_...)
   type      String
   createdAt DateTime @default(now())
 
@@ -803,24 +812,24 @@ model StripeEvent {
 // ============================================
 
 model OutreachProspect {
-  id                          String   @id @default(cuid())
-  campaignId                  String?  @map("campaign_id")
-  boardName                   String   @map("board_name")
-  buildingName                String?  @map("building_name")
-  buildingAddressRaw          String   @map("building_address_raw")
-  buildingAddressNormalized   String   @map("building_address_normalized")
-  boardEmail                  String   @map("board_email")
-  boardEmailLowercase         String   @map("board_email_lowercase")
-  sourceUrl                   String   @map("source_url")
-  scrapedAt                   DateTime @map("scraped_at")
-  scraperVersion              String   @map("scraper_version")
-  rowStatus                   String   @default("needs_review") @map("row_status") // ok | needs_review | rejected
-  rawPayload                  Json     @map("raw_payload")
-  lastContactedAt             DateTime? @map("last_contacted_at")
-  lastCampaignId              String?  @map("last_campaign_id")
-  contactCount                Int      @default(0) @map("contact_count")
-  createdAt                   DateTime @default(now()) @map("created_at")
-  updatedAt                   DateTime @updatedAt @map("updated_at")
+  id                        String    @id @default(cuid())
+  campaignId                String?   @map("campaign_id")
+  boardName                 String    @map("board_name")
+  buildingName              String?   @map("building_name")
+  buildingAddressRaw        String    @map("building_address_raw")
+  buildingAddressNormalized String    @map("building_address_normalized")
+  boardEmail                String    @map("board_email")
+  boardEmailLowercase       String    @map("board_email_lowercase")
+  sourceUrl                 String    @map("source_url")
+  scrapedAt                 DateTime  @map("scraped_at")
+  scraperVersion            String    @map("scraper_version")
+  rowStatus                 String    @default("needs_review") @map("row_status") // ok | needs_review | rejected
+  rawPayload                Json      @map("raw_payload")
+  lastContactedAt           DateTime? @map("last_contacted_at")
+  lastCampaignId            String?   @map("last_campaign_id")
+  contactCount              Int       @default(0) @map("contact_count")
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
 
   campaign OutreachCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   sends    OutreachSend[]
@@ -835,56 +844,56 @@ model OutreachProspect {
 }
 
 model OutreachCampaign {
-  id           String   @id @default(cuid())
-  name         String
-  status       String   @default("draft") // draft | ready | running | paused | completed | halted
-  utmCampaign  String   @map("utm_campaign")
-  sendLimit    Int      @default(50) @map("send_limit")
-  haltedAt     DateTime? @map("halted_at")
-  haltReason   String?  @map("halt_reason")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id          String    @id @default(cuid())
+  name        String
+  status      String    @default("draft") // draft | ready | running | paused | completed | halted
+  utmCampaign String    @map("utm_campaign")
+  sendLimit   Int       @default(50) @map("send_limit")
+  haltedAt    DateTime? @map("halted_at")
+  haltReason  String?   @map("halt_reason")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
 
   prospects OutreachProspect[]
   sends     OutreachSend[]
   replies   OutreachReply[]
-  leads    OutreachLead[]
+  leads     OutreachLead[]
 
   @@index([status])
   @@map("outreach_campaigns")
 }
 
 model OutreachSend {
-  id                 String   @id @default(cuid())
-  campaignId         String   @map("campaign_id")
-  prospectId         String   @map("prospect_id")
+  id                 String    @id @default(cuid())
+  campaignId         String    @map("campaign_id")
+  prospectId         String    @map("prospect_id")
   email              String
-  messageId          String?  @map("message_id")
-  customId           String   @unique @map("custom_id")
-  provider           String   @default("resend")
-  status             String   @default("queued") // queued | sent | delivered | delivery_delayed | bounced | complained | opened | clicked | suppressed | skipped
-  skippedReason      String?  @map("skipped_reason")
+  messageId          String?   @map("message_id")
+  customId           String    @unique @map("custom_id")
+  provider           String    @default("resend")
+  status             String    @default("queued") // queued | sent | delivered | delivery_delayed | bounced | complained | opened | clicked | suppressed | skipped
+  skippedReason      String?   @map("skipped_reason")
   sentAt             DateTime? @map("sent_at")
   deliveredAt        DateTime? @map("delivered_at")
   openedAt           DateTime? @map("opened_at")
   clickedAt          DateTime? @map("clicked_at")
   bouncedAt          DateTime? @map("bounced_at")
-  bounceType         String?  @map("bounce_type") // hard | soft
-  bounceReason       String?  @map("bounce_reason")
+  bounceType         String?   @map("bounce_type") // hard | soft
+  bounceReason       String?   @map("bounce_reason")
   complainedAt       DateTime? @map("complained_at")
-  replyToAddress     String   @map("reply_to_address")
-  listUnsubscribeUrl String   @map("list_unsubscribe_url")
-  templateVersion    String   @map("template_version")
-  utmSource          String   @map("utm_source")
-  utmMedium          String   @map("utm_medium")
-  utmCampaign        String   @map("utm_campaign")
-  utmContent         String?  @map("utm_content")
-  utmTerm            String   @map("utm_term")
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
+  replyToAddress     String    @map("reply_to_address")
+  listUnsubscribeUrl String    @map("list_unsubscribe_url")
+  templateVersion    String    @map("template_version")
+  utmSource          String    @map("utm_source")
+  utmMedium          String    @map("utm_medium")
+  utmCampaign        String    @map("utm_campaign")
+  utmContent         String?   @map("utm_content")
+  utmTerm            String    @map("utm_term")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  campaign OutreachCampaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  prospect OutreachProspect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  campaign OutreachCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  prospect OutreachProspect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
 
   @@index([campaignId, status])
   @@index([email])
@@ -893,14 +902,14 @@ model OutreachSend {
 }
 
 model OutreachSuppression {
-  id              String   @id @default(cuid())
-  email           String
-  emailLowercase  String   @map("email_lowercase")
-  campaignId      String?  @map("campaign_id")
-  reason          String   // HARD_BOUNCED | SOFT_BOUNCED_REPEATED | COMPLAINED | MANUAL_OPT_OUT | ONE_CLICK_UNSUB | LEGAL_HOLD | ALREADY_CONTACTED_30D | ROLE_ADDRESS | INVALID_SYNTAX | PROPERTY_MANAGER
-  source          String   // webhook | manual | unsubscribe | preflight
-  note            String?
-  createdAt       DateTime @default(now()) @map("created_at")
+  id             String   @id @default(cuid())
+  email          String
+  emailLowercase String   @map("email_lowercase")
+  campaignId     String?  @map("campaign_id")
+  reason         String // HARD_BOUNCED | SOFT_BOUNCED_REPEATED | COMPLAINED | MANUAL_OPT_OUT | ONE_CLICK_UNSUB | LEGAL_HOLD | ALREADY_CONTACTED_30D | ROLE_ADDRESS | INVALID_SYNTAX | PROPERTY_MANAGER
+  source         String // webhook | manual | unsubscribe | preflight
+  note           String?
+  createdAt      DateTime @default(now()) @map("created_at")
 
   @@index([emailLowercase])
   @@index([campaignId])
@@ -908,14 +917,14 @@ model OutreachSuppression {
 }
 
 model OutreachWebhookEvent {
-  id               String   @id @default(cuid())
-  provider         String   @default("resend")
-  providerEventId  String   @map("provider_event_id")
-  messageId        String?  @map("message_id")
-  eventType        String   @map("event_type")
-  payload          Json
-  receivedAt       DateTime @default(now()) @map("received_at")
-  processedAt      DateTime? @map("processed_at")
+  id              String    @id @default(cuid())
+  provider        String    @default("resend")
+  providerEventId String    @map("provider_event_id")
+  messageId       String?   @map("message_id")
+  eventType       String    @map("event_type")
+  payload         Json
+  receivedAt      DateTime  @default(now()) @map("received_at")
+  processedAt     DateTime? @map("processed_at")
 
   @@unique([provider, providerEventId], name: "outreach_webhook_events_provider_eventid_uq")
   @@index([messageId])
@@ -924,17 +933,17 @@ model OutreachWebhookEvent {
 }
 
 model OutreachReply {
-  id          String   @id @default(cuid())
-  campaignId  String?  @map("campaign_id")
-  prospectId  String?  @map("prospect_id")
-  email       String
-  replyType   String   @map("reply_type") // opt_out | neutral | interested | legal | other
-  subject     String?
-  bodyText    String   @map("body_text")
-  handledBy   String?  @map("handled_by")
-  handledAt   DateTime? @map("handled_at")
-  status      String   @default("new") // new | handled | escalated
-  createdAt   DateTime @default(now()) @map("created_at")
+  id         String    @id @default(cuid())
+  campaignId String?   @map("campaign_id")
+  prospectId String?   @map("prospect_id")
+  email      String
+  replyType  String    @map("reply_type") // opt_out | neutral | interested | legal | other
+  subject    String?
+  bodyText   String    @map("body_text")
+  handledBy  String?   @map("handled_by")
+  handledAt  DateTime? @map("handled_at")
+  status     String    @default("new") // new | handled | escalated
+  createdAt  DateTime  @default(now()) @map("created_at")
 
   campaign OutreachCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   prospect OutreachProspect? @relation(fields: [prospectId], references: [id], onDelete: SetNull)
@@ -945,19 +954,19 @@ model OutreachReply {
 }
 
 model OutreachLead {
-  id               String   @id @default(cuid())
-  prospectId       String?  @map("prospect_id")
-  campaignId       String?  @map("campaign_id")
-  email            String
-  source           String   // outreach_email | reply | appeal_bulk | manual
-  utmSource        String   @map("utm_source")
-  utmMedium        String   @map("utm_medium")
-  utmCampaign      String   @map("utm_campaign")
-  utmContent       String?  @map("utm_content")
-  utmTerm          String   @map("utm_term")
-  qualified        Boolean  @default(false)
-  qualifiedReason  String?  @map("qualified_reason")
-  createdAt        DateTime @default(now()) @map("created_at")
+  id              String   @id @default(cuid())
+  prospectId      String?  @map("prospect_id")
+  campaignId      String?  @map("campaign_id")
+  email           String
+  source          String // outreach_email | reply | appeal_bulk | manual
+  utmSource       String   @map("utm_source")
+  utmMedium       String   @map("utm_medium")
+  utmCampaign     String   @map("utm_campaign")
+  utmContent      String?  @map("utm_content")
+  utmTerm         String   @map("utm_term")
+  qualified       Boolean  @default(false)
+  qualifiedReason String?  @map("qualified_reason")
+  createdAt       DateTime @default(now()) @map("created_at")
 
   campaign OutreachCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   prospect OutreachProspect? @relation(fields: [prospectId], references: [id], onDelete: SetNull)
@@ -966,6 +975,51 @@ model OutreachLead {
   @@index([campaignId])
   @@index([createdAt])
   @@map("outreach_leads")
+}
+
+model OutreachApprovalPacket {
+  id             String   @id @default(cuid())
+  externalId     String   @unique @map("external_id")
+  status         String
+  organization   String
+  contact        String
+  role           String
+  township       String
+  units          Int      @default(0)
+  channel        String
+  subject        String
+  summary        String
+  ownerCountNote String   @map("owner_count_note")
+  draftedBy      String   @map("drafted_by")
+  updatedLabel   String   @map("updated_label")
+  risk           String
+  body           Json
+  blockers       Json?
+  replySnippet   String?  @map("reply_snippet")
+  source         String   @default("workspace-docs")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  events OutreachApprovalEvent[]
+
+  @@index([status, updatedAt])
+  @@index([source])
+  @@map("outreach_approval_packets")
+}
+
+model OutreachApprovalEvent {
+  id        String   @id @default(cuid())
+  packetId  String   @map("packet_id")
+  action    String
+  note      String?
+  actor     String   @default("admin")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  packet OutreachApprovalPacket @relation(fields: [packetId], references: [id], onDelete: Cascade)
+
+  @@index([packetId, createdAt])
+  @@index([action, createdAt])
+  @@map("outreach_approval_events")
 }
 
 // cache-bust: 1774495683
