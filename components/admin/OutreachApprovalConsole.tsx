@@ -16,7 +16,7 @@ import {
   XCircle,
 } from "lucide-react";
 
-import type { OutreachApprovalData, OutreachApprovalStatus } from "@/lib/outreach/approval-queue";
+import type { OutreachApprovalData, OutreachApprovalEvent, OutreachApprovalPacket, OutreachApprovalStatus } from "@/lib/outreach/approval-queue";
 
 const statusConfig: Record<OutreachApprovalStatus, { label: string; short: string; tone: string; icon: ElementType }> = {
   needs_review: { label: "Needs review", short: "Draft · not sent", tone: "border-amber-200 bg-amber-50 text-amber-900", icon: FileText },
@@ -51,12 +51,23 @@ type OutreachApprovalConsoleProps = {
 }
 
 export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) {
-  const packets = data.packets;
+  const [packets, setPackets] = useState<OutreachApprovalPacket[]>(data.packets);
+  const counts = useMemo(() => ({
+    needs_review: packets.filter((packet) => packet.status === "needs_review").length,
+    approved_no_send: packets.filter((packet) => packet.status === "approved_no_send").length,
+    sent_monitoring: packets.filter((packet) => packet.status === "sent_monitoring").length,
+    blocked: packets.filter((packet) => packet.status === "blocked").length,
+    bounced: packets.filter((packet) => packet.status === "bounced").length,
+    reply: packets.filter((packet) => packet.status === "reply").length,
+    all: packets.length,
+  }), [packets]);
   const initialFilter: OutreachApprovalStatus | "all" = data.counts.needs_review > 0 ? "needs_review" : "all";
   const [filter, setFilter] = useState<OutreachApprovalStatus | "all">(initialFilter);
   const [selectedId, setSelectedId] = useState(packets[0]?.id ?? "");
   const [showConfirm, setShowConfirm] = useState(false);
   const [reviewLog, setReviewLog] = useState<string[]>([]);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [isSavingAction, setIsSavingAction] = useState(false);
 
   const visiblePackets = useMemo(
     () => packets.filter((packet) => filter === "all" || packet.status === filter),
@@ -65,10 +76,30 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
   const selected = packets.find((packet) => packet.id === selectedId) ?? packets[0] ?? null;
   const SelectedIcon = selected ? statusConfig[selected.status].icon : FileText;
 
-  function handleMockAction(action: string) {
-    const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    setReviewLog((items) => [`${stamp} · Local review note only: ${action} on ${selected.id}. No email sent.`, ...items].slice(0, 5));
-    setShowConfirm(false);
+  async function recordReviewAction(action: string, label: string) {
+    if (!selected) return
+    setIsSavingAction(true)
+    setActionError(null)
+    try {
+      const response = await fetch("/api/admin/outreach-approval/events", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ packetId: selected.id, action, note: `${label}. No email sent.` }),
+      })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.error || "Review action failed")
+      const event = payload.event as OutreachApprovalEvent
+      setPackets((items) => items.map((packet) => packet.id === selected.id
+        ? { ...packet, status: payload.status as OutreachApprovalStatus, auditTrail: [event, ...(packet.auditTrail ?? [])].slice(0, 10) }
+        : packet))
+      const stamp = new Date(event.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      setReviewLog((items) => [`${stamp} · Persisted review event: ${label} on ${selected.id}. No email sent.`, ...items].slice(0, 5))
+      setShowConfirm(false)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Review action failed")
+    } finally {
+      setIsSavingAction(false)
+    }
   }
 
   if (!selected) {
@@ -103,7 +134,7 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
             <ShieldCheck className="h-4 w-4" /> Live database · review-only · no sending
           </div>
           <div className="text-red-100">
-            Real outreach records are loaded read-only. Buttons write local review notes in this browser; no outreach API or sender is called.
+            Real outreach records are loaded read-only. Buttons persist review events only; no outreach API or sender is called.
           </div>
         </div>
       </div>
@@ -120,10 +151,10 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
             </p>
           </div>
           <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-            <Metric label="drafts" value={data.counts.needs_review} />
-            <Metric label="sent/monitoring" value={data.counts.sent_monitoring} />
-            <Metric label="blocked" value={data.counts.blocked + data.counts.bounced} />
-            <Metric label="replies" value={data.counts.reply} />
+            <Metric label="drafts" value={counts.needs_review} />
+            <Metric label="approved" value={counts.approved_no_send} />
+            <Metric label="blocked" value={counts.blocked + counts.bounced} />
+            <Metric label="replies" value={counts.reply} />
           </div>
         </div>
       </header>
@@ -144,7 +175,7 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
                   }`}
                 >
                   <span>{item.label}</span>
-                  <span className={`rounded-full px-2 py-0.5 text-xs ${active ? "bg-white/15" : "bg-white"}`}>{data.counts[item.id]}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs ${active ? "bg-white/15" : "bg-white"}`}>{counts[item.id]}</span>
                 </button>
               );
             })}
@@ -156,8 +187,9 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
               <PauseCircle className="h-4 w-4" /> Disabled on this screen
             </div>
             <p className="mt-2 text-xs leading-5 text-zinc-600">
-              This page reads outreach records from the database. It does not expose a sender, retry, or webhook action.
+              This page reads outreach records from the database. It does not expose a sender, retry, or webhook action. Approved rows can be exported for manual handling only.
             </p>
+            <a href="/api/admin/outreach-approval/export" className="mt-3 inline-flex min-h-10 items-center rounded-full border border-zinc-300 px-3 text-xs font-bold text-zinc-800 hover:bg-white">Export approved CSV</a>
           </div>
         </aside>
 
@@ -228,29 +260,30 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
 
             <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-950">
               <div className="font-bold uppercase tracking-[0.14em]">No outbound action available</div>
-              <p className="mt-1">This route can only simulate review outcomes. It cannot send, resend, retry, or bypass blocked contacts.</p>
+              <p className="mt-1">This route can only record review outcomes. It cannot send, resend, retry, or bypass blocked contacts.</p>
             </div>
 
             <div className="mt-5 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => setShowConfirm(true)}
-                disabled={selected.status === "blocked" || selected.status === "bounced" || selected.status === "reply"}
+                disabled={isSavingAction || selected.status === "blocked" || selected.status === "bounced" || selected.status === "reply"}
                 className="min-h-11 rounded-full bg-zinc-950 px-5 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-600"
               >
                 Approve draft — no send
               </button>
-              <button type="button" onClick={() => handleMockAction("requested edit from Rex")} className="min-h-11 rounded-full border border-zinc-300 px-5 py-2 text-sm font-bold text-zinc-800 hover:bg-zinc-50">
+              <button type="button" onClick={() => recordReviewAction("request_edit", "Requested edit from Rex")} disabled={isSavingAction} className="min-h-11 rounded-full border border-zinc-300 px-5 py-2 text-sm font-bold text-zinc-800 hover:bg-zinc-50">
                 Request edit from Rex
               </button>
-              <button type="button" onClick={() => handleMockAction("held for later")} className="min-h-11 rounded-full border border-zinc-300 px-5 py-2 text-sm font-bold text-zinc-800 hover:bg-zinc-50">
+              <button type="button" onClick={() => recordReviewAction("hold", "Held for later")} disabled={isSavingAction} className="min-h-11 rounded-full border border-zinc-300 px-5 py-2 text-sm font-bold text-zinc-800 hover:bg-zinc-50">
                 Hold for later
               </button>
-              <button type="button" onClick={() => handleMockAction("declined send")} className="min-h-11 rounded-full border border-red-300 px-5 py-2 text-sm font-bold text-red-800 hover:bg-red-50">
+              <button type="button" onClick={() => recordReviewAction("decline_no_send", "Declined — do not send")} disabled={isSavingAction} className="min-h-11 rounded-full border border-red-300 px-5 py-2 text-sm font-bold text-red-800 hover:bg-red-50">
                 Decline — don’t send
               </button>
             </div>
             <p className="mt-2 text-xs font-medium text-zinc-500">Action labels intentionally say “no send.” Approval is separate from any future manual sender.</p>
+            {actionError ? <p className="mt-2 text-sm font-semibold text-red-700">{actionError}</p> : null}
           </div>
 
           <div className="grid gap-0 xl:grid-cols-[1.15fr_0.85fr]">
@@ -302,12 +335,15 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
 
               <div className="mt-5 rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
                 <div className="flex items-center gap-2 text-sm font-bold text-zinc-900">
-                  <Clock3 className="h-4 w-4" /> Local review notes
+                  <Clock3 className="h-4 w-4" /> Audit trail
                 </div>
                 <ul className="mt-3 space-y-2 text-sm text-zinc-600">
-                  <li>Today 9:42 · {selected.draftedBy} created draft from HOA resource template.</li>
-                  <li>Today 9:45 · Copy safety pass removed guarantee/savings language.</li>
-                  <li>Today 9:46 · Sender disabled; awaiting human review.</li>
+                  {selected.auditTrail?.length ? selected.auditTrail.map((event) => (
+                    <li key={event.id}>
+                      {new Date(event.createdAt).toLocaleString()} · {event.actor} · {event.action.replace(/_/g, " ")}
+                      {event.note ? <span className="block text-zinc-500">{event.note}</span> : null}
+                    </li>
+                  )) : <li>No persisted review events yet.</li>}
                   {reviewLog.map((item) => (
                     <li key={item} className="font-semibold text-zinc-900">{item}</li>
                   ))}
@@ -341,11 +377,11 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
             </div>
             <h2 id="review-confirm-title" className="mt-3 text-2xl font-black tracking-[-0.03em]">Approve draft without sending?</h2>
             <p className="mt-2 text-sm leading-6 text-zinc-600">
-              This records a local review note in this browser only. It does not call an API, create an email, or contact {selected.organization}.
+              This records a persisted review event only. It does not call a sender API, create an email, or contact {selected.organization}.
             </p>
             <div className="mt-5 flex flex-col gap-2 sm:flex-row">
-              <button type="button" onClick={() => handleMockAction("approved draft without sending")} className="min-h-11 rounded-full bg-zinc-950 px-5 py-2 text-sm font-bold text-white">
-                Confirm local note
+              <button type="button" onClick={() => recordReviewAction("approve_no_send", "Approved draft without sending")} disabled={isSavingAction} className="min-h-11 rounded-full bg-zinc-950 px-5 py-2 text-sm font-bold text-white">
+                Confirm persisted review
               </button>
               <button type="button" onClick={() => setShowConfirm(false)} className="min-h-11 rounded-full border border-zinc-300 px-5 py-2 text-sm font-bold text-zinc-800">
                 Cancel

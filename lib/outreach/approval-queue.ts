@@ -9,6 +9,14 @@ export type OutreachApprovalStatus =
   | "bounced"
   | "reply"
 
+export type OutreachApprovalEvent = {
+  id: string
+  action: string
+  note: string | null
+  actor: string
+  createdAt: string
+}
+
 export type OutreachApprovalPacket = {
   id: string
   status: OutreachApprovalStatus
@@ -27,6 +35,7 @@ export type OutreachApprovalPacket = {
   body: string[]
   blockers?: string[]
   replySnippet?: string
+  auditTrail?: OutreachApprovalEvent[]
 }
 
 export type OutreachApprovalData = {
@@ -36,6 +45,7 @@ export type OutreachApprovalData = {
   generatedAt: string
 }
 
+type ApprovalPacketRow = Awaited<ReturnType<typeof loadApprovalPacketRows>>[number]
 type ProspectRow = Awaited<ReturnType<typeof loadProspectRows>>[number]
 type SendRow = Awaited<ReturnType<typeof loadSendRows>>[number]
 type ReplyRow = Awaited<ReturnType<typeof loadReplyRows>>[number]
@@ -44,6 +54,57 @@ type SuppressionRow = Awaited<ReturnType<typeof loadSuppressionRows>>[number]
 const READY_STATUSES = new Set(["ok", "needs_review"])
 const MONITORING_STATUSES = new Set(["queued", "sent", "delivered", "delivery_delayed", "opened", "clicked"])
 const BOUNCED_STATUSES = new Set(["bounced", "complained", "suppressed", "skipped"])
+
+function normalizeStatus(status: string): OutreachApprovalStatus {
+  if (["needs_review", "approved_no_send", "sent_monitoring", "blocked", "bounced", "reply"].includes(status)) {
+    return status as OutreachApprovalStatus
+  }
+  return "needs_review"
+}
+
+function normalizeRisk(risk: string): OutreachApprovalPacket["risk"] {
+  if (risk === "low" || risk === "medium" || risk === "blocked") return risk
+  return "medium"
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+}
+
+function bodyArray(value: unknown): string[] {
+  const parsed = stringArray(value)
+  return parsed?.length ? parsed : ["Record imported from the real outreach workspace. No outbound controls are available here."]
+}
+
+function packetFromApprovalRow(row: ApprovalPacketRow): OutreachApprovalPacket {
+  return {
+    id: row.id,
+    status: normalizeStatus(row.status),
+    organization: row.organization,
+    contact: row.contact,
+    role: row.role,
+    township: row.township,
+    units: row.units,
+    channel: row.channel === "Manual call" ? "Manual call" : "Email",
+    subject: row.subject,
+    summary: row.summary,
+    ownerCountNote: row.ownerCountNote,
+    draftedBy: row.draftedBy === "Abigail" ? "Abigail" : "Rex",
+    updated: formatRelativeDate(row.updatedAt),
+    risk: normalizeRisk(row.risk),
+    body: bodyArray(row.body),
+    blockers: stringArray(row.blockers),
+    replySnippet: row.replySnippet ?? undefined,
+    auditTrail: row.events.map((event) => ({
+      id: event.id,
+      action: event.action,
+      note: event.note,
+      actor: event.actor,
+      createdAt: event.createdAt.toISOString(),
+    })),
+  }
+}
 
 function formatRelativeDate(date: Date | null | undefined): string {
   if (!date) return "No timestamp"
@@ -230,6 +291,17 @@ function packetFromSuppression(row: SuppressionRow): OutreachApprovalPacket {
   }
 }
 
+
+async function loadApprovalPacketRows() {
+  return prisma.outreachApprovalPacket.findMany({
+    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+    take: 75,
+    include: {
+      events: { orderBy: { createdAt: "desc" }, take: 10 },
+    },
+  })
+}
+
 async function loadProspectRows() {
   return prisma.outreachProspect.findMany({
     where: { rowStatus: { in: Array.from(READY_STATUSES) } },
@@ -344,6 +416,17 @@ function snapshotData(): OutreachApprovalData {
 }
 
 export async function getOutreachApprovalData(): Promise<OutreachApprovalData> {
+  const approvalPackets = await loadApprovalPacketRows()
+  if (approvalPackets.length > 0) {
+    const packets = approvalPackets.map(packetFromApprovalRow)
+    return {
+      packets,
+      counts: countPackets(packets),
+      source: "database",
+      generatedAt: new Date().toISOString(),
+    }
+  }
+
   const [prospects, sends, replies, suppressions] = await Promise.all([
     loadProspectRows(),
     loadSendRows(),
