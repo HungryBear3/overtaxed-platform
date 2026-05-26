@@ -4,6 +4,7 @@ import snapshot from "@/data/outreach/approval-snapshot.json"
 export type OutreachApprovalStatus =
   | "needs_review"
   | "approved_no_send"
+  | "needs_edit"
   | "sent_monitoring"
   | "blocked"
   | "bounced"
@@ -56,7 +57,7 @@ const MONITORING_STATUSES = new Set(["queued", "sent", "delivered", "delivery_de
 const BOUNCED_STATUSES = new Set(["bounced", "complained", "suppressed", "skipped"])
 
 function normalizeStatus(status: string): OutreachApprovalStatus {
-  if (["needs_review", "approved_no_send", "sent_monitoring", "blocked", "bounced", "reply"].includes(status)) {
+  if (["needs_review", "approved_no_send", "needs_edit", "sent_monitoring", "blocked", "bounced", "reply"].includes(status)) {
     return status as OutreachApprovalStatus
   }
   return "needs_review"
@@ -397,6 +398,7 @@ function countPackets(packets: OutreachApprovalPacket[]): OutreachApprovalData["
   return {
     needs_review: packets.filter((packet) => packet.status === "needs_review").length,
     approved_no_send: packets.filter((packet) => packet.status === "approved_no_send").length,
+    needs_edit: packets.filter((packet) => packet.status === "needs_edit").length,
     sent_monitoring: packets.filter((packet) => packet.status === "sent_monitoring").length,
     blocked: packets.filter((packet) => packet.status === "blocked").length,
     bounced: packets.filter((packet) => packet.status === "bounced").length,

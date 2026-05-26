@@ -1,10 +1,10 @@
 import Link from "next/link"
 import { prisma } from "@/lib/db"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Users, Building2, FileText, AlertCircle, Percent } from "lucide-react"
+import { Users, Building2, FileText, AlertCircle, Percent, MailCheck } from "lucide-react"
 
 export default async function AdminDashboardPage() {
-  const [userCount, propertyCount, appealCount, activeAppeals] = await Promise.all([
+  const [userCount, propertyCount, appealCount, activeAppeals, outreachNeedsReview] = await Promise.all([
     prisma.user.count(),
     prisma.property.count(),
     prisma.appeal.count(),
@@ -13,6 +13,7 @@ export default async function AdminDashboardPage() {
         status: { in: ["DRAFT", "PENDING_FILING", "FILED", "UNDER_REVIEW", "HEARING_SCHEDULED", "DECISION_PENDING"] },
       },
     }),
+    prisma.outreachApprovalPacket.count({ where: { status: { in: ["needs_review", "needs_edit"] } } }),
   ])
 
   return (
@@ -61,6 +62,18 @@ export default async function AdminDashboardPage() {
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold text-blue-600">{activeAppeals}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-gray-500">Outreach Review</CardTitle>
+            <MailCheck className="h-4 w-4 text-gray-400" />
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold text-amber-700">{outreachNeedsReview}</p>
+            <Link href="/admin/outreach-approval" className="text-sm text-blue-600 hover:underline">
+              Review queue
+            </Link>
           </CardContent>
         </Card>
       </div>

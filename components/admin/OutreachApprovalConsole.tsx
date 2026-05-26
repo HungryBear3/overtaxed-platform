@@ -17,10 +17,12 @@ import {
 } from "lucide-react";
 
 import type { OutreachApprovalData, OutreachApprovalEvent, OutreachApprovalPacket, OutreachApprovalStatus } from "@/lib/outreach/approval-queue";
+import { canApproveNoSend } from "@/lib/outreach/approval-actions";
 
 const statusConfig: Record<OutreachApprovalStatus, { label: string; short: string; tone: string; icon: ElementType }> = {
   needs_review: { label: "Needs review", short: "Draft · not sent", tone: "border-amber-200 bg-amber-50 text-amber-900", icon: FileText },
   approved_no_send: { label: "Approved — not sent", short: "Approved · no send", tone: "border-emerald-200 bg-emerald-50 text-emerald-900", icon: CheckCircle2 },
+  needs_edit: { label: "Needs edits", short: "Needs edit", tone: "border-orange-200 bg-orange-50 text-orange-900", icon: MessageSquareText },
   sent_monitoring: { label: "Sent · monitoring", short: "Monitoring", tone: "border-blue-200 bg-blue-50 text-blue-900", icon: Mail },
   blocked: { label: "Blocked — won’t send", short: "Blocked", tone: "border-red-200 bg-red-50 text-red-900", icon: AlertTriangle },
   bounced: { label: "Bounced — never inboxed", short: "Bounced", tone: "border-zinc-300 bg-zinc-100 text-zinc-800", icon: XCircle },
@@ -29,6 +31,7 @@ const statusConfig: Record<OutreachApprovalStatus, { label: string; short: strin
 
 const filterOrder: Array<{ id: OutreachApprovalStatus | "all"; label: string }> = [
   { id: "needs_review", label: "Needs your review" },
+  { id: "needs_edit", label: "Needs edits" },
   { id: "approved_no_send", label: "Approved — not sent" },
   { id: "sent_monitoring", label: "Sent · monitoring" },
   { id: "blocked", label: "Blocked — won’t send" },
@@ -54,6 +57,7 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
   const [packets, setPackets] = useState<OutreachApprovalPacket[]>(data.packets);
   const counts = useMemo(() => ({
     needs_review: packets.filter((packet) => packet.status === "needs_review").length,
+    needs_edit: packets.filter((packet) => packet.status === "needs_edit").length,
     approved_no_send: packets.filter((packet) => packet.status === "approved_no_send").length,
     sent_monitoring: packets.filter((packet) => packet.status === "sent_monitoring").length,
     blocked: packets.filter((packet) => packet.status === "blocked").length,
@@ -66,6 +70,7 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
   const [selectedId, setSelectedId] = useState(packets[0]?.id ?? "");
   const [showConfirm, setShowConfirm] = useState(false);
   const [reviewLog, setReviewLog] = useState<string[]>([]);
+  const [reviewNote, setReviewNote] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [isSavingAction, setIsSavingAction] = useState(false);
 
@@ -73,7 +78,7 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
     () => packets.filter((packet) => filter === "all" || packet.status === filter),
     [filter],
   );
-  const selected = packets.find((packet) => packet.id === selectedId) ?? packets[0] ?? null;
+  const selected = visiblePackets.find((packet) => packet.id === selectedId) ?? visiblePackets[0] ?? packets.find((packet) => packet.id === selectedId) ?? packets[0] ?? null;
   const SelectedIcon = selected ? statusConfig[selected.status].icon : FileText;
 
   async function recordReviewAction(action: string, label: string) {
@@ -81,10 +86,11 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
     setIsSavingAction(true)
     setActionError(null)
     try {
+      const noteText = reviewNote.trim() ? `${label}. ${reviewNote.trim()}. No email sent.` : `${label}. No email sent.`
       const response = await fetch("/api/admin/outreach-approval/events", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ packetId: selected.id, action, note: `${label}. No email sent.` }),
+        body: JSON.stringify({ packetId: selected.id, action, note: noteText }),
       })
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.error || "Review action failed")
@@ -92,8 +98,9 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
       setPackets((items) => items.map((packet) => packet.id === selected.id
         ? { ...packet, status: payload.status as OutreachApprovalStatus, auditTrail: [event, ...(packet.auditTrail ?? [])].slice(0, 10) }
         : packet))
-      const stamp = new Date(event.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      const stamp = formatTimestamp(event.createdAt)
       setReviewLog((items) => [`${stamp} · Persisted review event: ${label} on ${selected.id}. No email sent.`, ...items].slice(0, 5))
+      setReviewNote("")
       setShowConfirm(false)
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Review action failed")
@@ -119,7 +126,7 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
           <div className="mt-6 rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
             <div className="text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">Database connected</div>
             <p className="mt-2 text-zinc-700">No outreach prospects, sends, replies, or suppressions are available for review yet. Mock data has been removed.</p>
-            <p className="mt-3 text-sm text-zinc-500">Generated {new Date(data.generatedAt).toLocaleString()}.</p>
+            <p className="mt-3 text-sm text-zinc-500">Generated {formatTimestamp(data.generatedAt)}.</p>
           </div>
         </main>
       </div>
@@ -152,7 +159,9 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
           </div>
           <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
             <Metric label="drafts" value={counts.needs_review} />
+            <Metric label="needs edit" value={counts.needs_edit} />
             <Metric label="approved" value={counts.approved_no_send} />
+            <Metric label="manual export" value={counts.approved_no_send} />
             <Metric label="blocked" value={counts.blocked + counts.bounced} />
             <Metric label="replies" value={counts.reply} />
           </div>
@@ -248,7 +257,7 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div>
                 <div className="text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">{selected.id} · {selected.channel}</div>
-                <h2 className="mt-1 text-3xl font-black tracking-[-0.04em]">{selected.organization}</h2>
+                <h2 data-testid="selected-packet-heading" className="mt-1 text-3xl font-black tracking-[-0.04em]">{selected.organization}</h2>
                 <p className="mt-2 text-sm text-zinc-600">
                   {selected.township} township · {selected.units} units · {selected.contact} ({selected.role})
                 </p>
@@ -263,11 +272,25 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
               <p className="mt-1">This route can only record review outcomes. It cannot send, resend, retry, or bypass blocked contacts.</p>
             </div>
 
+            <div className="mt-5 rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+              <label htmlFor="outreach-review-note" className="text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">Review note</label>
+              <textarea
+                id="outreach-review-note"
+                value={reviewNote}
+                onChange={(event) => setReviewNote(event.target.value)}
+                rows={3}
+                maxLength={800}
+                placeholder="Optional internal note for Rex/Abigail. Saved to audit only; no email is sent."
+                className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white p-3 text-sm text-zinc-800 outline-none focus:border-zinc-500"
+              />
+              <p className="mt-1 text-xs text-zinc-500">Notes are internal audit context only and never go to recipients.</p>
+            </div>
+
             <div className="mt-5 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => setShowConfirm(true)}
-                disabled={isSavingAction || selected.status === "blocked" || selected.status === "bounced" || selected.status === "reply"}
+                disabled={isSavingAction || !canApproveNoSend(selected.status)}
                 className="min-h-11 rounded-full bg-zinc-950 px-5 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-600"
               >
                 Approve draft — no send
@@ -340,7 +363,7 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
                 <ul className="mt-3 space-y-2 text-sm text-zinc-600">
                   {selected.auditTrail?.length ? selected.auditTrail.map((event) => (
                     <li key={event.id}>
-                      {new Date(event.createdAt).toLocaleString()} · {event.actor} · {event.action.replace(/_/g, " ")}
+                      {formatTimestamp(event.createdAt)} · {event.actor} · {event.action.replace(/_/g, " ")}
                       {event.note ? <span className="block text-zinc-500">{event.note}</span> : null}
                     </li>
                   )) : <li>No persisted review events yet.</li>}
@@ -392,6 +415,20 @@ export function OutreachApprovalConsole({ data }: OutreachApprovalConsoleProps) 
       ) : null}
     </div>
   );
+}
+
+function formatTimestamp(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date) + " UTC"
 }
 
 function Metric({ label, value }: { label: string; value: number }) {
