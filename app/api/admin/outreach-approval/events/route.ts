@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
-
-const ACTION_STATUS: Record<string, string | null> = {
-  approve_no_send: "approved_no_send",
-  request_edit: "needs_review",
-  hold: "blocked",
-  decline_no_send: "blocked",
-}
+import { canApproveNoSend, isReviewAction, nextStatusForAction } from "@/lib/outreach/approval-actions"
 
 async function requireAdmin(request: NextRequest) {
   const session = await getSession(request)
@@ -25,17 +19,17 @@ export async function POST(request: NextRequest) {
     const action = typeof body.action === "string" ? body.action : ""
     const note = typeof body.note === "string" ? body.note.slice(0, 1000) : null
 
-    if (!packetId || !(action in ACTION_STATUS)) {
+    if (!packetId || !isReviewAction(action)) {
       return NextResponse.json({ error: "packetId and valid action are required" }, { status: 400 })
     }
 
     const packet = await prisma.outreachApprovalPacket.findUnique({ where: { id: packetId } })
     if (!packet) return NextResponse.json({ error: "Packet not found" }, { status: 404 })
-    if ((packet.status === "bounced" || packet.status === "reply") && action === "approve_no_send") {
-      return NextResponse.json({ error: "Reply/bounce packets cannot be approved from this queue" }, { status: 409 })
+    if (action === "approve_no_send" && !canApproveNoSend(packet.status as Parameters<typeof canApproveNoSend>[0])) {
+      return NextResponse.json({ error: "Blocked, approved, reply, and bounce packets cannot be approved from this queue" }, { status: 409 })
     }
 
-    const nextStatus = ACTION_STATUS[action]
+    const nextStatus = nextStatusForAction(action)
     const result = await prisma.$transaction(async (tx) => {
       const event = await tx.outreachApprovalEvent.create({
         data: { packetId, action, note, actor },

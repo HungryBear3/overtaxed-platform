@@ -2,8 +2,10 @@
  * @jest-environment jsdom
  */
 import React from "react";
+import { readFileSync } from "fs";
 import { render, screen } from "@testing-library/react";
 import { OutreachApprovalConsole } from "../components/admin/OutreachApprovalConsole";
+import { canApproveNoSend } from "@/lib/outreach/approval-actions";
 import type { OutreachApprovalData } from "@/lib/outreach/approval-queue";
 
 const realDataFixture: OutreachApprovalData = {
@@ -12,6 +14,7 @@ const realDataFixture: OutreachApprovalData = {
   counts: {
     needs_review: 1,
     approved_no_send: 0,
+    needs_edit: 0,
     sent_monitoring: 1,
     blocked: 1,
     bounced: 0,
@@ -104,6 +107,9 @@ describe("OT outreach approval queue", () => {
     expect(screen.getAllByText(/Real Condo Board/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/All packets/i)).toBeTruthy();
     expect(screen.getByText(/No outbound action available/i)).toBeTruthy();
+    expect(screen.getByTestId("selected-packet-heading").textContent).toMatch(/Real Condo Board/i);
+    expect(screen.getByText(/Needs edits/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Review note/i)).toBeTruthy();
 
     const text = bodyText();
     expect(text).not.toMatch(/Prototype · mock data/i);
@@ -146,5 +152,19 @@ describe("OT outreach approval queue", () => {
     for (const pattern of forbidden) {
       expect(text).not.toMatch(pattern);
     }
+  });
+
+  it("rejects approval for blocked, bounced, and reply packets server-side", () => {
+    expect(canApproveNoSend("needs_review")).toBe(true);
+    expect(canApproveNoSend("needs_edit")).toBe(true);
+    expect(canApproveNoSend("approved_no_send")).toBe(false);
+    expect(canApproveNoSend("blocked")).toBe(false);
+    expect(canApproveNoSend("bounced")).toBe(false);
+    expect(canApproveNoSend("reply")).toBe(false);
+  });
+
+  it("keeps SSR date formatting deterministic to avoid hydration drift", () => {
+    const component = readFileSync("components/admin/OutreachApprovalConsole.tsx", "utf8");
+    expect(component).not.toMatch(/\.toLocale(Date|Time)?String\(/);
   });
 });
