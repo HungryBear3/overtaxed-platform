@@ -1,6 +1,6 @@
 /**
  * Cook County township appeal deadlines (from Assessor's Assessment & Appeal Calendar).
- * Source: https://www.cookcountyassessor.com/assessment-calendar-and-deadlines
+ * Source: https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines
  * Updated periodically when the calendar changes.
  *
  * Key: township name (case-insensitive match)
@@ -51,7 +51,47 @@ export const TOWNSHIP_DEADLINES_2025: Record<
   "north chicago": { noticeDate: "2025-10-07", lastFileDate: "2025-11-20" },
 }
 
-const ASSESSOR_CALENDAR_URL = "https://www.cookcountyassessor.com/assessment-calendar-and-deadlines"
+/**
+ * Verified Tax Year 2026 Assessor appeal deadlines.
+ *
+ * Source: Cook County Assessor Assessment & Appeal Calendar
+ *   https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines
+ * Calendar "Last Updated" marker at time of capture: 2026-06-02.
+ *
+ * IMPORTANT — DO NOT INFER OR BACKFILL:
+ * Only townships the Assessor has actually published a 2026 Last File Date for
+ * appear here. The Assessor releases townships progressively through the year,
+ * so most are not yet listed. A township missing from this map is "pending an
+ * official date" — it must NOT fall back to a prior-year (2025) date or to the
+ * indicative design-seed windows in lib/townships.ts.
+ *
+ * Key: township name (lowercase, no "Township" suffix). Dates are ISO (YYYY-MM-DD).
+ */
+export const TOWNSHIP_DEADLINES_2026: Record<
+  string,
+  { noticeDate: string; lastFileDate: string }
+> = {
+  // South & West Suburban Cook County (2026 triennial reassessment cycle)
+  berwyn: { noticeDate: "2026-05-20", lastFileDate: "2026-07-06" },
+  "oak park": { noticeDate: "2026-05-06", lastFileDate: "2026-06-18" },
+  riverside: { noticeDate: "2026-04-24", lastFileDate: "2026-06-08" },
+  "river forest": { noticeDate: "2026-04-20", lastFileDate: "2026-06-02" },
+  // North Suburbs & City of Chicago (annual appeal windows)
+  // NOTE: the official Assessor calendar spells this township "Lakeview" (one
+  // word), but our township roster (lib/townships.ts) uses "Lake View" (two
+  // words). The key here MUST match the roster spelling so getOfficial2026Deadline
+  // resolves it — do not change it to "lakeview". Covered by deadlines-2026 test.
+  "lake view": { noticeDate: "2026-05-28", lastFileDate: "2026-07-13" },
+  "new trier": { noticeDate: "2026-05-07", lastFileDate: "2026-06-22" },
+  evanston: { noticeDate: "2026-04-22", lastFileDate: "2026-06-04" },
+  "norwood park": { noticeDate: "2026-04-13", lastFileDate: "2026-05-26" },
+  "rogers park": { noticeDate: "2026-04-17", lastFileDate: "2026-06-01" },
+}
+
+/** Human-visible "last updated" marker from the official 2026 calendar capture. */
+export const TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED = "2026-06-02"
+
+const ASSESSOR_CALENDAR_URL = "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
 
 export function getTownshipDeadline(township: string | null): {
   noticeDate: string
@@ -62,6 +102,25 @@ export function getTownshipDeadline(township: string | null): {
   // Normalize: lowercase, trim, remove "Township" suffix
   const key = township.trim().toLowerCase().replace(/\s*township\s*$/i, "").trim()
   const dates = TOWNSHIP_DEADLINES_2025[key]
+  if (!dates) return null
+  return { ...dates, calendarUrl: ASSESSOR_CALENDAR_URL }
+}
+
+function normalizeTownshipKey(township: string): string {
+  return township.trim().toLowerCase().replace(/\s*township\s*$/i, "").trim()
+}
+
+/**
+ * Official Tax Year 2026 Assessor deadline for a township, or null when the
+ * Assessor has not yet published one. Never falls back to a prior year.
+ */
+export function getOfficial2026Deadline(township: string | null): {
+  noticeDate: string
+  lastFileDate: string
+  calendarUrl: string
+} | null {
+  if (!township?.trim()) return null
+  const dates = TOWNSHIP_DEADLINES_2026[normalizeTownshipKey(township)]
   if (!dates) return null
   return { ...dates, calendarUrl: ASSESSOR_CALENDAR_URL }
 }
