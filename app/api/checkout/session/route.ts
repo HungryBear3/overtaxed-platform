@@ -24,7 +24,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { tier, propertyPin } = await req.json();
+    const body = await req.json();
+    const { tier, propertyPin, email, name, address } = body as {
+      tier: string;
+      propertyPin?: string;
+      email?: string;
+      name?: string;
+      address?: string;
+    };
     const priceId = PRICE_MAP[tier];
     if (!priceId) {
       return NextResponse.json({ error: "Invalid tier" }, { status: 400 });
@@ -37,9 +44,12 @@ export async function POST(req: NextRequest) {
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${baseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}&tier=${tier}`,
       cancel_url: `${baseUrl}/pricing`,
+      ...(email ? { customer_email: email } : {}),
       metadata: {
         tier,
         propertyPin: propertyPin ?? "",
+        customerName: name ?? "",
+        customerAddress: address ?? "",
       },
     });
 
