@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { stripe } from "@/lib/stripe/client"
 import { prisma } from "@/lib/db"
 import { generatePacketForInvoice } from "@/lib/packet/generate-and-deliver"
+import { sendNewOrderAlert, sendOrderConfirmation } from "@/lib/email/send"
 
 export async function POST(request: NextRequest) {
   console.log("[webhook] Received webhook request")
@@ -145,6 +146,33 @@ export async function POST(request: NextRequest) {
         if (isCompsOnlyTrigger) {
           generatePacketForInvoice(invoiceId).catch((err) =>
             console.error(`[webhook] packet generation trigger failed for ${invoiceId}:`, err),
+          )
+        }
+        break
+      }
+
+      // New billing overhaul path: T1/T2/T3 one-time tier purchases
+      // These sessions come from /api/checkout/session and carry {tier, propertyPin}
+      // without a userId (anonymous checkout). Notify ops; T1 can auto-generate a packet.
+      if (metadata.tier) {
+        const tier = metadata.tier
+        const propertyPin = metadata.propertyPin ?? ""
+        const customerDetails = data.customer_details as Record<string, unknown> | null
+        const customerEmail = (customerDetails?.email as string) ?? ""
+        const customerName = (customerDetails?.name as string) ?? ""
+        const amountPaid = ((data.amount_total as number) ?? 0) / 100
+        const sessionId = (data.id as string) ?? ""
+
+        const customerAddress = metadata.customerAddress ?? ""
+        console.log(`[webhook] New ${tier} order — ${customerEmail} — $${amountPaid} — session ${sessionId}`)
+
+        sendNewOrderAlert({ tier, customerEmail, customerName, propertyPin: propertyPin || customerAddress, amountPaid, sessionId }).catch((err) =>
+          console.error("[webhook] sendNewOrderAlert failed:", err),
+        )
+
+        if (customerEmail) {
+          sendOrderConfirmation({ tier, customerEmail, customerName, address: customerAddress || propertyPin || undefined, amountPaid }).catch((err) =>
+            console.error("[webhook] sendOrderConfirmation failed:", err),
           )
         }
         break

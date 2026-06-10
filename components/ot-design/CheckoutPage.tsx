@@ -1,20 +1,14 @@
 "use client";
 import Link from "next/link";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { RiskReversalBadge } from "@/components/ot-design/SiteChrome";
+import { isClientPreviewStubMode } from "@/lib/marketing/preview-gate-client";
 
-/**
- * OT Checkout — Pass 1.
- *
- * NOTE: the source design's Checkout.html was mocked against a different
- * brand (HeroStoryBooks). For Pass 1 we keep the design's paper/cream
- * visual language and structure but use OverTaxed IL content: the
- * DIY $69 / DFY $97 plan selection, the address-of-record property,
- * and the money-back risk reversal.
- *
- * No real payment is collected here — this is preview-only and the
- * brief explicitly forbids real backend side effects.
- */
+const PLAN_TO_TIER: Record<string, string> = {
+  diy: "T2",
+  dfy: "T3",
+};
 
 type PlanId = "diy" | "dfy" | "contingency";
 
@@ -66,22 +60,53 @@ const PLANS: Array<{
 ];
 
 export default function CheckoutPage() {
+  const router = useRouter();
+  const previewMode = isClientPreviewStubMode();
   const [planId, setPlanId] = useState<PlanId>("diy");
   const [email, setEmail] = useState("");
   const [address, setAddress] = useState("");
   const [first, setFirst] = useState("");
   const [last, setLast] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const plan = PLANS.find((p) => p.id === planId)!;
 
-  function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // Pass 1: no real payment, no real backend. Stub log only.
-    // eslint-disable-next-line no-console
-    console.log("[checkout preview] would submit:", { planId, email, address, first, last });
-    alert(
-      `Preview only: would start your ${plan.name} order. Real payment + appeal-filing wiring lands in a follow-up pass.`,
-    );
+    if (planId === "contingency") {
+      router.push("/appeal-contingency");
+      return;
+    }
+    if (previewMode) {
+      setError("Preview checkout disabled — Stripe is not called in this environment.");
+      return;
+    }
+    const tier = PLAN_TO_TIER[planId];
+    if (!tier) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/checkout/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tier,
+          email,
+          name: `${first} ${last}`.trim(),
+          address,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Checkout failed");
+      }
+      const { url } = await res.json();
+      router.push(url);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+      setLoading(false);
+    }
   }
 
   return (
@@ -201,14 +226,21 @@ export default function CheckoutPage() {
                   <div className="ot-checkout-total-val">{plan.price}</div>
                 </div>
 
-                <button type="submit" className="ot-cta ot-cta-block ot-cta-tall">
-                  Continue to payment <span className="ot-cta-arrow">→</span>
+                <button
+                  type="submit"
+                  className="ot-cta ot-cta-block ot-cta-tall"
+                  disabled={loading || previewMode}
+                >
+                  {loading
+                    ? "Redirecting to payment…"
+                    : planId === "contingency"
+                    ? "Request contingency review →"
+                    : "Continue to payment →"}
                 </button>
 
-                <div className="ot-checkout-fine">
-                  Preview build — real payment + appeal-filing wiring lands in a
-                  follow-up. No charges are made from this page.
-                </div>
+                {error && (
+                  <p style={{ color: "#dc2626", fontSize: 13, marginTop: 8 }}>{error}</p>
+                )}
               </form>
 
               <div className="ot-checkout-rrb">

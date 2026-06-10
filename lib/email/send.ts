@@ -1,6 +1,7 @@
 import { resend, FROM_EMAIL } from "./resend"
 
 const SUPPORT_EMAIL = "support@overtaxed-il.com"
+const OPS_EMAIL = "alexyopenclaw@gmail.com"
 
 export async function sendContactEmail(args: {
   name: string
@@ -168,6 +169,94 @@ export async function sendPacketFailureAlert(
     </div>
   `
   return sendEmail({ to: SUPPORT_EMAIL, subject, text, html })
+}
+
+export async function sendNewOrderAlert(args: {
+  tier: string
+  customerEmail: string
+  customerName?: string
+  propertyPin?: string
+  amountPaid: number
+  sessionId: string
+}): Promise<boolean> {
+  const { tier, customerEmail, customerName, propertyPin, amountPaid, sessionId } = args
+  const tierLabels: Record<string, string> = {
+    T1: "DIY Starter ($37)",
+    T2: "DIY Pro ($69)",
+    T3: "Done-For-You ($97)",
+  }
+  const label = tierLabels[tier] ?? tier
+  const subject = `[NEW ORDER] ${label} — ${customerEmail}`
+  const text = [
+    `New Overtaxed IL order received.`,
+    ``,
+    `Tier: ${label}`,
+    `Customer: ${customerName ?? "(no name)"} <${customerEmail}>`,
+    `Property PIN: ${propertyPin || "(not provided)"}`,
+    `Amount paid: $${amountPaid.toFixed(2)}`,
+    `Stripe session: ${sessionId}`,
+    ``,
+    `Action required for T2/T3: respond to customer within 24 hours.`,
+  ].join("\n")
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;color:#1f2937;">
+      <h2 style="color:#1d4ed8;">New OT Order — ${escapeHtml(label)}</h2>
+      <table style="border-collapse:collapse;width:100%;">
+        <tr><td style="padding:6px 12px;font-weight:bold;">Tier</td><td style="padding:6px 12px;">${escapeHtml(label)}</td></tr>
+        <tr style="background:#f9fafb;"><td style="padding:6px 12px;font-weight:bold;">Customer</td><td style="padding:6px 12px;">${escapeHtml(customerName ?? "(no name)")} &lt;${escapeHtml(customerEmail)}&gt;</td></tr>
+        <tr><td style="padding:6px 12px;font-weight:bold;">Property PIN</td><td style="padding:6px 12px;">${escapeHtml(propertyPin || "(not provided)")}</td></tr>
+        <tr style="background:#f9fafb;"><td style="padding:6px 12px;font-weight:bold;">Amount</td><td style="padding:6px 12px;">$${amountPaid.toFixed(2)}</td></tr>
+        <tr><td style="padding:6px 12px;font-weight:bold;">Session ID</td><td style="padding:6px 12px;font-size:12px;">${escapeHtml(sessionId)}</td></tr>
+      </table>
+      ${tier !== "T1" ? `<p style="margin-top:16px;color:#b45309;font-weight:bold;">⚡ Action required: respond to customer within 24 hours.</p>` : ""}
+    </div>
+  `
+  return sendEmail({ to: OPS_EMAIL, subject, text, html })
+}
+
+export async function sendOrderConfirmation(args: {
+  tier: string
+  customerEmail: string
+  customerName?: string
+  address?: string
+  amountPaid: number
+}): Promise<boolean> {
+  const { tier, customerEmail, customerName, address, amountPaid } = args
+  const tierLabels: Record<string, string> = {
+    T1: "DIY Starter",
+    T2: "DIY Appeal Packet",
+    T3: "Done-For-You",
+  }
+  const label = tierLabels[tier] ?? tier
+  const isT3 = tier === "T3"
+  const subject = `Your OverTaxed IL order — ${label}`
+  const nextStep = isT3
+    ? "We'll email you within 24 hours with an authorization form to sign before we file."
+    : "We'll email you within 24 hours with your completed appeal packet."
+  const text = [
+    `Hi ${customerName || "there"},`,
+    ``,
+    `We received your payment for the ${label} ($${amountPaid.toFixed(2)}).`,
+    ...(address ? [`Property: ${address}`] : []),
+    ``,
+    nextStep,
+    ``,
+    `Questions? Reply to this email or contact support@overtaxed-il.com.`,
+    ``,
+    `— OverTaxed IL`,
+  ].join("\n")
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#1f2937;">
+      <h2 style="color:#1d4ed8;">Your OverTaxed IL Order</h2>
+      <p>Hi ${escapeHtml(customerName || "there")},</p>
+      <p>We received your payment for the <strong>${escapeHtml(label)}</strong> ($${amountPaid.toFixed(2)}).</p>
+      ${address ? `<p><strong>Property:</strong> ${escapeHtml(address)}</p>` : ""}
+      <p style="background:#eff6ff;padding:12px;border-radius:6px;border-left:4px solid #1d4ed8;">${escapeHtml(nextStep)}</p>
+      <p>Questions? Reply to this email or reach us at <a href="mailto:support@overtaxed-il.com">support@overtaxed-il.com</a>.</p>
+      <p style="color:#6b7280;font-size:13px;">— OverTaxed IL</p>
+    </div>
+  `
+  return sendEmail({ to: customerEmail, subject, text, html })
 }
 
 function escapeHtml(v: string): string {
