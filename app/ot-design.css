@@ -824,6 +824,169 @@ body.ot-stars-on .ot-logo-mark::before {
 }
 .ot-source-val { color: var(--ink); }
 
+/* Deadlines verification card source links — content-only list. */
+.ot-deadline-source-list {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.ot-deadline-source-item {
+  display: block;
+  padding: 14px 16px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+}
+.ot-deadline-source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 650;
+  line-height: 1.3;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.ot-deadline-source-link::after {
+  content: "↗";
+  color: var(--primary-strong);
+  font-size: 12px;
+  transform: translateY(-1px);
+}
+.ot-deadline-source-note {
+  display: block;
+  margin-top: 6px;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.45;
+  max-width: 76ch;
+}
+
+/* Deadlines satellite township map. Uses official 2026 status; no inferred dates. */
+.ot-deadline-map-wrap {
+  position: relative;
+  min-height: 620px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: oklch(0.18 0.012 240);
+  border: 1px solid oklch(1 0 0 / 0.12);
+  box-shadow: inset 0 0 0 1px oklch(1 0 0 / 0.08), var(--shadow-md);
+}
+.ot-deadline-map-base,
+.ot-deadline-map-img,
+.ot-deadline-map-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.ot-deadline-map-base {
+  background:
+    linear-gradient(to right, rgba(15, 23, 42, 0.45), transparent 14%, transparent 86%, rgba(15, 23, 42, 0.45)),
+    linear-gradient(to bottom, rgba(15, 23, 42, 0.30), transparent 16%, transparent 84%, rgba(15, 23, 42, 0.30));
+  z-index: 1;
+}
+.ot-deadline-map-img {
+  object-fit: cover;
+  filter: saturate(0.88) brightness(0.82) contrast(1.08);
+  z-index: 0;
+}
+.ot-deadline-map-svg { z-index: 2; overflow: hidden; }
+.ot-deadline-map-shape {
+  cursor: pointer;
+  transition: fill 0.16s ease, stroke-width 0.16s ease, filter 0.16s ease;
+  vector-effect: non-scaling-stroke;
+}
+.ot-deadline-map-shape:hover {
+  filter: drop-shadow(0 0 7px rgba(255,255,255,0.45));
+}
+.ot-deadline-map-lake {
+  fill: rgba(255,255,255,0.48);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  pointer-events: none;
+}
+.ot-deadline-map-card {
+  position: absolute;
+  z-index: 3;
+  top: 24px;
+  right: 24px;
+  width: min(310px, calc(100% - 48px));
+  background: oklch(1 0 0 / 0.94);
+  border: 1px solid oklch(1 0 0 / 0.35);
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 18px 42px -14px oklch(0 0 0 / 0.35);
+  backdrop-filter: blur(10px);
+}
+.ot-deadline-map-card-status { margin: 8px 0 10px; }
+.ot-deadline-map-card-deadline {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink);
+  margin-bottom: 10px;
+}
+.ot-deadline-map-card-note {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+.ot-deadline-map-legend {
+  position: absolute;
+  z-index: 3;
+  left: 18px;
+  bottom: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  background: oklch(0.16 0.02 240 / 0.86);
+  border: 1px solid oklch(1 0 0 / 0.12);
+  color: white;
+  font-size: 12px;
+  backdrop-filter: blur(8px);
+}
+.ot-deadline-map-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.ot-deadline-map-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.ot-map-key-open { background: rgb(34, 197, 94); }
+.ot-map-key-pending { background: rgb(245, 158, 11); }
+.ot-map-key-closed { background: rgb(100, 116, 139); }
+.ot-deadline-map-credit {
+  position: absolute;
+  z-index: 3;
+  right: 12px;
+  bottom: 7px;
+  color: rgba(255,255,255,0.48);
+  font-size: 9px;
+}
+.ot-fullmap-grid-after-map { margin-top: 18px; }
+
+@media (max-width: 760px) {
+  .ot-deadline-map-wrap { min-height: 520px; }
+  .ot-deadline-map-card {
+    left: 14px;
+    right: 14px;
+    top: 14px;
+    width: auto;
+  }
+  .ot-deadline-map-legend {
+    left: 12px;
+    right: 12px;
+    justify-content: center;
+    border-radius: 12px;
+  }
+}
+
 /* ───────────────────────── Check Card (the instrument) ───────────────────────── */
 .ot-check-card {
   width: 100%;

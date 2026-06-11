@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { TOWNSHIPS, TOWNSHIPS_BY_SLUG } from "@/lib/townships";
+import { townships as MAP_TOWNSHIPS, type TownshipData } from "@/lib/cook-county-townships";
 import { OT_PUBLIC_CONTACT } from "@/components/ot-design/SiteChrome";
 import {
   OFFICIAL_DEADLINE_SOURCES,
@@ -168,6 +169,106 @@ const SORTERS: Record<string, (a: Township2026View, b: Township2026View) => numb
   },
   alpha: (a, b) => a.name.localeCompare(b.name),
 };
+
+function normalizeName(name: string) {
+  return name.trim().toLowerCase().replace(/\s+township$/i, "");
+}
+
+const VIEWS_BY_NAME = new Map(VIEWS.map((v) => [normalizeName(v.name), v]));
+
+function viewForMapTownship(township: TownshipData) {
+  return VIEWS_BY_NAME.get(normalizeName(township.name));
+}
+
+function mapFill(status: Deadline2026Status) {
+  if (status === "open") return "rgba(34, 197, 94, 0.52)";
+  if (status === "closed") return "rgba(30, 41, 59, 0.30)";
+  return "rgba(245, 158, 11, 0.34)";
+}
+
+function mapStroke(status: Deadline2026Status) {
+  if (status === "open") return "rgba(34, 197, 94, 0.95)";
+  if (status === "closed") return "rgba(226, 232, 240, 0.75)";
+  return "rgba(245, 158, 11, 0.9)";
+}
+
+function DeadlineSatelliteMap() {
+  const [activeName, setActiveName] = useState<string | null>(null);
+  const activeTownship = activeName
+    ? MAP_TOWNSHIPS.find((t) => t.name === activeName) ?? null
+    : null;
+  const activeView = activeTownship ? viewForMapTownship(activeTownship) : null;
+
+  const activeTitle = activeView?.name ?? activeTownship?.name ?? "Township";
+  const activeDeadline = activeView
+    ? activeView.official
+      ? `Last file: ${activeView.lastFileLabel}`
+      : PENDING_LABEL
+    : PENDING_LABEL;
+
+  return (
+    <div className="ot-deadline-map-wrap">
+      <div className="ot-deadline-map-base" aria-hidden="true" />
+      <img
+        src="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=-88.3,41.45,-87.5,42.15&bboxSR=4326&imageSR=4326&size=900,720&format=png&f=image"
+        alt="Satellite view of Cook County"
+        className="ot-deadline-map-img"
+      />
+      <svg
+        viewBox="0 0 400 500"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        className="ot-deadline-map-svg"
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        aria-label="Cook County township deadline status map"
+      >
+        {MAP_TOWNSHIPS.map((township) => {
+          const view = viewForMapTownship(township);
+          const status = view?.status ?? "pending";
+          const isActive = activeName === township.name;
+          return (
+            <g
+              key={township.name}
+              onMouseEnter={() => setActiveName(township.name)}
+              onFocus={() => setActiveName(township.name)}
+              onMouseLeave={() => setActiveName(null)}
+            >
+              <path
+                d={township.path}
+                fill={mapFill(status)}
+                stroke={mapStroke(status)}
+                strokeWidth={isActive ? 2.5 : 1.25}
+                className="ot-deadline-map-shape"
+              />
+              <title>{`${view?.name ?? township.name}: ${view?.official ? view.lastFileLabel : PENDING_LABEL}`}</title>
+            </g>
+          );
+        })}
+        <text x="392" y="210" textAnchor="end" className="ot-deadline-map-lake">
+          Lake Michigan
+        </text>
+      </svg>
+      <div className="ot-deadline-map-card">
+        <div className="ot-floatcard-cycle">Cook County 2026</div>
+        <div className="ot-floatcard-name">{activeTownship ? activeTitle : "Hover a township"}</div>
+        <div className="ot-deadline-map-card-status">
+          {activeView ? <StatusPill status={activeView.status} /> : <StatusPill status="pending" />}
+        </div>
+        <div className="ot-deadline-map-card-deadline">{activeTownship ? activeDeadline : "Official Assessor dates only"}</div>
+        <div className="ot-deadline-map-card-note">
+          Satellite imagery with township overlay. Pending means the Assessor has not posted a 2026 last-file date yet.
+        </div>
+      </div>
+      <div className="ot-deadline-map-legend" aria-label="Map legend">
+        <span><i className="ot-map-key-open" /> Open</span>
+        <span><i className="ot-map-key-pending" /> Pending</span>
+        <span><i className="ot-map-key-closed" /> Closed</span>
+      </div>
+      <div className="ot-deadline-map-credit">Imagery: Esri, Maxar</div>
+    </div>
+  );
+}
 
 function TownshipsTable() {
   const [filter, setFilter] = useState<"all" | Deadline2026Status>("all");
@@ -346,7 +447,8 @@ function TownshipGrid() {
           </div>
         </div>
         <div className="ot-fullmap-stage" style={{ minHeight: 0 }}>
-          <div className="ot-fullmap-grid">
+          <DeadlineSatelliteMap />
+          <div className="ot-fullmap-grid ot-fullmap-grid-after-map">
             {order.map((status) => (
               <div key={status} className={`ot-fullmap-group ot-fullmap-group-${status}`}>
                 <div className="ot-fullmap-group-head">
@@ -394,13 +496,13 @@ function VerifyAndSources() {
           Verify your deadline before you file.
         </h2>
         <p style={{ maxWidth: "60ch" }}>{DEADLINE_VERIFY_NOTICE}</p>
-        <ul className="ot-source-list" style={{ listStyle: "none", padding: 0, margin: "14px 0 0" }}>
+        <ul className="ot-deadline-source-list">
           {OFFICIAL_DEADLINE_SOURCES.map((s) => (
-            <li key={s.href} style={{ marginBottom: 10 }}>
-              <a href={s.href} target="_blank" rel="noopener noreferrer">
+            <li key={s.href} className="ot-deadline-source-item">
+              <a className="ot-deadline-source-link" href={s.href} target="_blank" rel="noopener noreferrer">
                 {s.label}
               </a>
-              <span style={{ display: "block", color: "var(--ink-soft, #6b6258)", fontSize: 14 }}>
+              <span className="ot-deadline-source-note">
                 {s.note}
               </span>
             </li>

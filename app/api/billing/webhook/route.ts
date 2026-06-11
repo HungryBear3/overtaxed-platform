@@ -166,6 +166,38 @@ export async function POST(request: NextRequest) {
         const customerAddress = metadata.customerAddress ?? ""
         console.log(`[webhook] New ${tier} order — ${customerEmail} — $${amountPaid} — session ${sessionId}`)
 
+        try {
+          await prisma.oTOrder.upsert({
+            where: { stripeSessionId: sessionId },
+            update: {
+              tier,
+              email: customerEmail,
+              name: customerName || null,
+              propertyAddress: customerAddress || null,
+              propertyPin: propertyPin || null,
+              amountPaid,
+              status: "PAID",
+            },
+            create: {
+              stripeSessionId: sessionId,
+              tier,
+              email: customerEmail,
+              name: customerName || null,
+              propertyAddress: customerAddress || null,
+              propertyPin: propertyPin || null,
+              amountPaid,
+              status: "PAID",
+            },
+          })
+        } catch (err) {
+          console.error(
+            `[webhook] CRITICAL: OTOrder persistence failed for session ${sessionId}; releasing claim so Stripe retries:`,
+            err,
+          )
+          await releaseEventClaim()
+          return NextResponse.json({ error: "Database error" }, { status: 500 })
+        }
+
         sendNewOrderAlert({ tier, customerEmail, customerName, propertyPin: propertyPin || customerAddress, amountPaid, sessionId }).catch((err) =>
           console.error("[webhook] sendNewOrderAlert failed:", err),
         )

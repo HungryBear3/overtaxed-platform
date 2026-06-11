@@ -14,10 +14,11 @@ const dbState: {
   invoices: Map<string, Row>
   users: Map<string, Row>
   stripeEvents: Map<string, Row>
-} = { invoices: new Map(), users: new Map(), stripeEvents: new Map() }
+  otOrders: Map<string, Row>
+} = { invoices: new Map(), users: new Map(), stripeEvents: new Map(), otOrders: new Map() }
 
 // Toggleable failure injection — set per test before invoking the route.
-const failures: { invoiceUpdate?: Error; userUpdate?: Error } = {}
+const failures: { invoiceUpdate?: Error; userUpdate?: Error; otOrderUpsert?: Error } = {}
 
 jest.mock("@/lib/db", () => ({
   prisma: {
@@ -66,6 +67,15 @@ jest.mock("@/lib/db", () => ({
       updateMany: jest.fn(async () => ({ count: 0 })),
     },
     referral: { upsert: jest.fn(async () => ({})) },
+    oTOrder: {
+      upsert: jest.fn(async ({ where, update, create }: { where: { stripeSessionId: string }; update: Row; create: Row }) => {
+        if (failures.otOrderUpsert) throw failures.otOrderUpsert
+        const existing = dbState.otOrders.get(where.stripeSessionId)
+        const row = existing ? { ...existing, ...update } : create
+        dbState.otOrders.set(where.stripeSessionId, row)
+        return row
+      }),
+    },
   },
 }))
 
@@ -77,9 +87,16 @@ jest.mock("@/lib/stripe/client", () => ({
   },
 }))
 
-const generatePacketMock = jest.fn(async () => ({ ok: true, status: "DELIVERED", pdfUrl: "x" }))
+const generatePacketMock = jest.fn(async (_invoiceId?: string) => ({ ok: true, status: "DELIVERED", pdfUrl: "x" }))
 jest.mock("@/lib/packet/generate-and-deliver", () => ({
-  generatePacketForInvoice: (...args: unknown[]) => generatePacketMock(...args),
+  generatePacketForInvoice: (invoiceId: string) => generatePacketMock(invoiceId),
+}))
+
+const sendNewOrderAlertMock = jest.fn(async (_args?: unknown) => true)
+const sendOrderConfirmationMock = jest.fn(async (_args?: unknown) => true)
+jest.mock("@/lib/email/send", () => ({
+  sendNewOrderAlert: (args: unknown) => sendNewOrderAlertMock(args),
+  sendOrderConfirmation: (args: unknown) => sendOrderConfirmationMock(args),
 }))
 
 import { POST } from "@/app/api/billing/webhook/route"
@@ -88,9 +105,13 @@ beforeEach(() => {
   dbState.invoices.clear()
   dbState.users.clear()
   dbState.stripeEvents.clear()
+  dbState.otOrders.clear()
   failures.invoiceUpdate = undefined
   failures.userUpdate = undefined
+  failures.otOrderUpsert = undefined
   generatePacketMock.mockClear()
+  sendNewOrderAlertMock.mockClear()
+  sendOrderConfirmationMock.mockClear()
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test"
 })
 
@@ -103,6 +124,34 @@ function makeRequest(eventId: string, invoiceId: string) {
         mode: "payment",
         metadata: { invoiceId },
         customer: "cus_xyz",
+      },
+    },
+  })
+  return new Request("http://test/api/billing/webhook", {
+    method: "POST",
+    headers: { "stripe-signature": "t=1,v1=fake" },
+    body,
+  }) as unknown as import("next/server").NextRequest
+}
+
+function makeTierRequest(eventId: string, sessionId = "cs_test_ot_order") {
+  const body = JSON.stringify({
+    id: eventId,
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: sessionId,
+        mode: "payment",
+        amount_total: 6900,
+        metadata: {
+          tier: "T2",
+          propertyPin: "12-34-567-890-0000",
+          customerAddress: "123 Test Ave, Chicago IL",
+        },
+        customer_details: {
+          email: "buyer@example.com",
+          name: "Buyer Example",
+        },
       },
     },
   })
@@ -207,7 +256,36 @@ describe("Duplicate / concurrent webhook delivery", () => {
   })
 })
 
-describe("releaseEventClaim is idempotent (no double-release misbehavior)", () => {
+describe("anonymous OT tier orders", () => {
+  it("persists OTOrder before async ops/customer emails", async () => {
+    const res = await POST(makeTierRequest("evt_tier_ok", "cs_test_order_1"))
+    expect(res.status).toBe(200)
+    expect(dbState.stripeEvents.has("evt_tier_ok")).toBe(true)
+    expect(dbState.otOrders.get("cs_test_order_1")).toMatchObject({
+      stripeSessionId: "cs_test_order_1",
+      tier: "T2",
+      email: "buyer@example.com",
+      name: "Buyer Example",
+      propertyAddress: "123 Test Ave, Chicago IL",
+      propertyPin: "12-34-567-890-0000",
+      amountPaid: 69,
+      status: "PAID",
+    })
+    expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
+    expect(sendOrderConfirmationMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("returns 500 and releases the StripeEvent claim when OTOrder persistence fails", async () => {
+    failures.otOrderUpsert = new Error("DB connection lost")
+    const res = await POST(makeTierRequest("evt_tier_fail", "cs_test_order_fail"))
+    expect(res.status).toBe(500)
+    expect(dbState.stripeEvents.has("evt_tier_fail")).toBe(false)
+    expect(sendNewOrderAlertMock).not.toHaveBeenCalled()
+    expect(sendOrderConfirmationMock).not.toHaveBeenCalled()
+  })
+})
+
+describe("releaseEventClaim is idempotent (no double-release misbehavior)",  () => {
   it("two failures back-to-back on the same event do not throw", async () => {
     seedUserAndInvoice(null)
     failures.invoiceUpdate = new Error("DB down")
