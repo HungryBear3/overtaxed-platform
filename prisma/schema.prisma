@@ -756,6 +756,25 @@ model OTLead {
   @@index([createdAt])
 }
 
+model OTOrder {
+  id              String   @id @default(cuid())
+  stripeSessionId String   @unique
+  tier            String
+  email           String
+  name            String?
+  phone           String?
+  propertyAddress String?
+  propertyPin     String?
+  amountPaid      Float    @default(0)
+  status          String   @default("PENDING")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([email])
+  @@index([stripeSessionId])
+  @@index([createdAt])
+}
+
 model Referral {
   id             String   @id @default(cuid())
   code           String   @unique

@@ -3,7 +3,7 @@ import { CheckCircle } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 
 interface Props {
-  searchParams: { tier?: string; session_id?: string };
+  searchParams?: Promise<{ tier?: string; session_id?: string }>;
 }
 
 export const metadata = {
@@ -11,8 +11,8 @@ export const metadata = {
   description: "Your payment was received. We'll be in touch soon.",
 };
 
-export default function CheckoutSuccessPage({ searchParams }: Props) {
-  const tier = searchParams.tier;
+export default async function CheckoutSuccessPage({ searchParams }: Props) {
+  const { tier } = (await searchParams) ?? {};
   const isT1 = tier === "T1";
 
   return (
