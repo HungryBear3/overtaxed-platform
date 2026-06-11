@@ -84,6 +84,13 @@ function toDateISO(v: unknown): string | null {
   return null
 }
 
+export function normalizeCookCountyPinFromRealie(pin: string): string | null {
+  const digits = normalizePin(pin)
+  if (digits.length === 14) return digits
+  if (digits.length === 10) return `${digits}0000`
+  return null
+}
+
 function mapOne(c: RealieComparableRaw): MappedRealieComp | null {
   const pin =
     c.parcelId ??
@@ -91,8 +98,8 @@ function mapOne(c: RealieComparableRaw): MappedRealieComp | null {
     c.pin ??
     (typeof c === "object" && (c as Record<string, unknown>).parcelId)
   if (!pin) return null
-  const pinRaw = normalizePin(String(pin))
-  if (pinRaw.length !== 14) return null
+  const pinRaw = normalizeCookCountyPinFromRealie(String(pin))
+  if (!pinRaw) return null
   const salePrice =
     num(c.transferPrice) ??
     num(c.transfer_price) ??
@@ -227,7 +234,7 @@ export async function fetchRealieComparables(
       comparable?: RealieComparableRaw[]
     }
     const raw = json.comparables ?? json.comparable ?? []
-    const normalizedSubject = subjectPin ? normalizePin(subjectPin) : ""
+    const normalizedSubject = subjectPin ? normalizeCookCountyPinFromRealie(subjectPin) : null
 
     const comps = (Array.isArray(raw) ? raw : [])
       .map((c) => mapOne(c as RealieComparableRaw))
