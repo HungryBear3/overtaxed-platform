@@ -4,7 +4,7 @@ import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
 import "../../ot-design.css";
 
 export const metadata: Metadata = {
-  title: "Packet Request Received | OverTaxed IL",
+  title: "Packet Request Received",
   description: "Your Cook County appeal packet request was received by OverTaxed IL.",
 };
 

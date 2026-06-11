@@ -704,7 +704,7 @@ function SampleReportSection() {
         <div className="ot-sample-section-text">
           <div className="ot-sample-section-eyebrow">What you&apos;ll get</div>
           <h2 id="ot-sample-h" className="ot-h2">
-            A one-page report — the only thing the Board of Review actually reads.
+            A one-page report built around the evidence the Board of Review reviews.
           </h2>
           <p className="ot-sample-section-lede">
             Your assessed value, three nearby comps, your assessment level against

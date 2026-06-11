@@ -2,7 +2,7 @@ import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import "../ot-design.css"
 
 export const metadata = {
-  title: "Privacy Policy | OverTaxed IL",
+  title: "Privacy Policy",
   description: "Privacy Policy for OverTaxed IL property tax appeal services.",
 }
 

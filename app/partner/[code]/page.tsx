@@ -8,7 +8,7 @@ interface Props {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
-    title: "Partner Dashboard | OverTaxed IL",
+    title: "Partner Dashboard",
     robots: { index: false, follow: false },
   }
 }

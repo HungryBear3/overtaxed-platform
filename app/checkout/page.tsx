@@ -6,9 +6,9 @@ import "../ot-design.css";
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://overtaxed-il.com";
 
 export const metadata: Metadata = {
-  title: "Checkout — OverTaxed IL",
+  title: "Checkout",
   description:
-    "Start your Cook County property tax appeal. DIY Appeal Packet at $69, Done-For-You at $97, or contingency ($0 upfront, 22% of first-year savings only if we win).",
+    "Start your Cook County property tax appeal. DIY Appeal Packet at $69, Done-For-You at $97, or contingency ($0 upfront, 22% of first-year savings if the county grants a reduction).",
   alternates: { canonical: siteUrl + "/checkout" },
   openGraph: {
     type: "website",
@@ -23,7 +23,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Start your Cook County property tax appeal",
     description:
-      "DIY $69, DFY $97, or contingency. Money-back on procedural denial.",
+      "DIY $69, DFY $97, or contingency. Procedural refund on filing error by OverTaxed IL.",
   },
   robots: { index: true, follow: true },
 };

@@ -49,12 +49,12 @@ const PLANS: Array<{
     id: "contingency",
     name: "Contingency",
     price: "$0 upfront",
-    priceNote: "22% of first-year savings (only if we win)",
+    priceNote: "22% of first-year savings if the county grants a reduction",
     bullets: [
       "No upfront cost — we're paid from your savings",
       "Best fit if estimated savings exceed $2,500/year",
       "Same filing quality as Done-For-You",
-      "If we don't reduce your bill, you pay $0",
+      "No contingency fee if the county grants no reduction",
     ],
   },
 ];

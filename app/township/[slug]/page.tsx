@@ -104,7 +104,7 @@ export async function generateMetadata({
   const { slug } = await params;
   const t = TOWNSHIPS_BY_SLUG[slug];
   if (!t) {
-    return { title: "Township not found | OverTaxed IL" };
+    return { title: "Township not found" };
   }
   const days =
     t.status === "open"
