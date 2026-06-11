@@ -770,6 +770,7 @@ model OTOrder {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  @@map("ot_order")
   @@index([email])
   @@index([stripeSessionId])
   @@index([createdAt])
