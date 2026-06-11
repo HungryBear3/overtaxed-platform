@@ -1,18 +1,5 @@
-# Pass 1 design preview — exclude untracked work-in-progress that
-# references uninstalled deps (svix, etc.). These files remain in the
-# working tree; they're just not shipped to this preview build.
-app/api/outreach
-app/api/account
-app/account/packets
-app/u
-lib/packet
-components/account/PacketInvoicesSection.tsx
+# Production deploys must include live API routes. Keep only non-runtime
+# development artifacts out of Vercel uploads.
 __tests__/outreach
 __tests__/packet
 tools
-# These files were modified to integrate with the outreach/packet WIP
-# above. Excluding their CHANGES from preview means the preview lacks
-# the account-packets UI and the billing webhook — neither is part of
-# the design-port surface and both are WIP not yet on main.
-app/account
-app/api/billing/webhook
