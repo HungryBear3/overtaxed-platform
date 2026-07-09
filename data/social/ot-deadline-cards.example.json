@@ -1,0 +1,57 @@
+{
+  "_note": "Internal demo fixtures for the OT deadline approval surface. Illustrative only — NOT a posting queue and NOT live data. reference_now pins deterministic demo statuses; the loader recomputes verification from the raw fields.",
+  "reference_now": "2026-07-09T15:00:00.000Z",
+  "cards": [
+    {
+      "brand": "ot",
+      "content_id": "ot-deadline-2026-07-09-cook-county",
+      "platform_scope": ["facebook"],
+      "asset_path": "public/social/ot/cook-county-appeal-windows-2026-07.png",
+      "caption": "Cook County appeal windows are open now. File by these last dates: Lakeview Jul 13, Palos Jul 17, Maine Jul 21, Cicero Jul 31, Elk Grove Aug 4, Stickney Aug 12. Confirm your township on the official Assessor calendar before you file.",
+      "source_url": "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+      "source_name": "Cook County Assessor — Assessment & Appeal Calendar",
+      "source_checked_at": "2026-07-09T14:00:00.000Z",
+      "source_last_updated_marker": "Assessor calendar as viewed 2026-07-09",
+      "verified_deadlines": [
+        { "township": "Lakeview", "deadline_date": "2026-07-13", "status": "open" },
+        { "township": "Palos", "deadline_date": "2026-07-17", "status": "open" },
+        { "township": "Maine", "deadline_date": "2026-07-21", "status": "open" },
+        { "township": "Cicero", "deadline_date": "2026-07-31", "status": "open" },
+        { "township": "Elk Grove", "deadline_date": "2026-08-04", "status": "open" },
+        { "township": "Stickney", "deadline_date": "2026-08-12", "status": "open" }
+      ],
+      "closed_townships_mentioned": ["Oak Park", "Riverside", "Berwyn"]
+    },
+    {
+      "brand": "ot",
+      "content_id": "ot-deadline-2026-07-09-closed-as-open",
+      "platform_scope": ["facebook"],
+      "asset_path": "public/social/ot/cook-county-oak-park.png",
+      "caption": "Cook County appeals are open now — Oak Park file by Jul 20, Lakeview Jul 13.",
+      "source_url": "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+      "source_name": "Cook County Assessor — Assessment & Appeal Calendar",
+      "source_checked_at": "2026-07-09T14:00:00.000Z",
+      "source_last_updated_marker": "Assessor calendar as viewed 2026-07-09",
+      "verified_deadlines": [
+        { "township": "Lakeview", "deadline_date": "2026-07-13", "status": "open" }
+      ],
+      "closed_townships_mentioned": ["Oak Park", "Riverside", "Berwyn"]
+    },
+    {
+      "brand": "ot",
+      "content_id": "ot-deadline-2026-07-06-stale",
+      "platform_scope": ["facebook"],
+      "asset_path": "public/social/ot/cook-county-appeal-windows-stale.png",
+      "caption": "Cook County appeal windows: Lakeview Jul 13, Palos Jul 17. Confirm your township on the official Assessor calendar before you file.",
+      "source_url": "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+      "source_name": "Cook County Assessor — Assessment & Appeal Calendar",
+      "source_checked_at": "2026-07-06T14:00:00.000Z",
+      "source_last_updated_marker": "Assessor calendar as viewed 2026-07-06",
+      "verified_deadlines": [
+        { "township": "Lakeview", "deadline_date": "2026-07-13", "status": "open" },
+        { "township": "Palos", "deadline_date": "2026-07-17", "status": "open" }
+      ],
+      "closed_townships_mentioned": ["Oak Park", "Riverside", "Berwyn"]
+    }
+  ]
+}
