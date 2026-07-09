@@ -1,8 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { TOWNSHIPS, TOWNSHIPS_BY_SLUG } from "@/lib/townships";
-import { townships as MAP_TOWNSHIPS, type TownshipData } from "@/lib/cook-county-townships";
+import { TOWNSHIPS, TOWNSHIPS_BY_SLUG, type Township } from "@/lib/townships";
 import { OT_PUBLIC_CONTACT } from "@/components/ot-design/SiteChrome";
 import {
   OFFICIAL_DEADLINE_SOURCES,
@@ -176,7 +175,7 @@ function normalizeName(name: string) {
 
 const VIEWS_BY_NAME = new Map(VIEWS.map((v) => [normalizeName(v.name), v]));
 
-function viewForMapTownship(township: TownshipData) {
+function viewForMapTownship(township: Township) {
   return VIEWS_BY_NAME.get(normalizeName(township.name));
 }
 
@@ -192,10 +191,70 @@ function mapStroke(status: Deadline2026Status) {
   return "rgba(245, 158, 11, 0.9)";
 }
 
+// Esri World Imagery export and transparent SVG overlay share this exact
+// lon/lat bbox and viewBox. Township pins are projected from real approximate
+// centroids, not from the old arbitrary rectangular schematic grid.
+const MAP_BBOX = { west: -88.3, east: -87.5, south: 41.45, north: 42.15 } as const;
+const MAP_WIDTH = 900;
+const MAP_HEIGHT = 720;
+const SATELLITE_URL =
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export" +
+  "?bbox=-88.3,41.45,-87.5,42.15&bboxSR=4326&imageSR=4326&size=900,720&format=png&f=image";
+
+type TownshipCentroid = { lat: number; lon: number };
+
+const TOWNSHIP_CENTROIDS: Record<string, TownshipCentroid> = {
+  barrington: { lat: 42.14, lon: -88.16 },
+  hanover: { lat: 42.01, lon: -88.15 },
+  palatine: { lat: 42.115, lon: -88.045 },
+  wheeling: { lat: 42.135, lon: -87.925 },
+  schaumburg: { lat: 42.03, lon: -88.09 },
+  "elk-grove": { lat: 42.005, lon: -87.985 },
+  maine: { lat: 42.045, lon: -87.87 },
+  northfield: { lat: 42.1, lon: -87.79 },
+  "new-trier": { lat: 42.11, lon: -87.74 },
+  niles: { lat: 42.028, lon: -87.8 },
+  evanston: { lat: 42.045, lon: -87.7 },
+  leyden: { lat: 41.945, lon: -87.88 },
+  "norwood-park": { lat: 42.002, lon: -87.808 },
+  "rogers-park": { lat: 42.008, lon: -87.672 },
+  jefferson: { lat: 41.945, lon: -87.755 },
+  "north-chicago": { lat: 41.918, lon: -87.662 },
+  "lake-view": { lat: 41.945, lon: -87.655 },
+  "west-chicago": { lat: 41.888, lon: -87.712 },
+  lake: { lat: 41.8, lon: -87.628 },
+  "hyde-park": { lat: 41.795, lon: -87.588 },
+  "south-chicago": { lat: 41.735, lon: -87.585 },
+  "river-forest": { lat: 41.895, lon: -87.815 },
+  "oak-park": { lat: 41.885, lon: -87.79 },
+  proviso: { lat: 41.87, lon: -87.882 },
+  cicero: { lat: 41.842, lon: -87.755 },
+  berwyn: { lat: 41.83, lon: -87.792 },
+  stickney: { lat: 41.815, lon: -87.775 },
+  riverside: { lat: 41.83, lon: -87.82 },
+  lyons: { lat: 41.8, lon: -87.855 },
+  lemont: { lat: 41.665, lon: -87.99 },
+  palos: { lat: 41.665, lon: -87.83 },
+  worth: { lat: 41.7, lon: -87.785 },
+  calumet: { lat: 41.662, lon: -87.61 },
+  orland: { lat: 41.61, lon: -87.855 },
+  bremen: { lat: 41.585, lon: -87.755 },
+  thornton: { lat: 41.585, lon: -87.615 },
+  rich: { lat: 41.505, lon: -87.71 },
+  bloom: { lat: 41.49, lon: -87.59 },
+};
+
+function projectTownship({ lat, lon }: TownshipCentroid) {
+  return {
+    x: ((lon - MAP_BBOX.west) / (MAP_BBOX.east - MAP_BBOX.west)) * MAP_WIDTH,
+    y: ((MAP_BBOX.north - lat) / (MAP_BBOX.north - MAP_BBOX.south)) * MAP_HEIGHT,
+  };
+}
+
 function DeadlineSatelliteMap() {
-  const [activeName, setActiveName] = useState<string | null>(null);
-  const activeTownship = activeName
-    ? MAP_TOWNSHIPS.find((t) => t.name === activeName) ?? null
+  const [activeSlug, setActiveSlug] = useState<string | null>(null);
+  const activeTownship = activeSlug
+    ? TOWNSHIPS.find((t) => t.slug === activeSlug) ?? null
     : null;
   const activeView = activeTownship ? viewForMapTownship(activeTownship) : null;
 
@@ -206,16 +265,20 @@ function DeadlineSatelliteMap() {
       : PENDING_LABEL
     : PENDING_LABEL;
 
+  const plottedTownships = TOWNSHIPS.filter((township) => Boolean(TOWNSHIP_CENTROIDS[township.slug]));
+
   return (
     <div className="ot-deadline-map-wrap">
       <div className="ot-deadline-map-base" aria-hidden="true" />
       <img
-        src="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=-88.3,41.45,-87.5,42.15&bboxSR=4326&imageSR=4326&size=900,720&format=png&f=image"
+        src={SATELLITE_URL}
         alt="Satellite view of Cook County"
         className="ot-deadline-map-img"
+        loading="lazy"
+        draggable={false}
       />
       <svg
-        viewBox="0 0 400 500"
+        viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
         className="ot-deadline-map-svg"
@@ -223,31 +286,81 @@ function DeadlineSatelliteMap() {
         role="img"
         aria-label="Cook County township deadline status map"
       >
-        {MAP_TOWNSHIPS.map((township) => {
-          const view = viewForMapTownship(township);
-          const status = view?.status ?? "pending";
-          const isActive = activeName === township.name;
-          return (
-            <g
-              key={township.name}
-              onMouseEnter={() => setActiveName(township.name)}
-              onFocus={() => setActiveName(township.name)}
-              onMouseLeave={() => setActiveName(null)}
-            >
-              <path
-                d={township.path}
-                fill={mapFill(status)}
-                stroke={mapStroke(status)}
-                strokeWidth={isActive ? 2.5 : 1.25}
-                className="ot-deadline-map-shape"
-              />
-              <title>{`${view?.name ?? township.name}: ${view?.official ? view.lastFileLabel : PENDING_LABEL}`}</title>
-            </g>
-          );
-        })}
-        <text x="392" y="210" textAnchor="end" className="ot-deadline-map-lake">
-          Lake Michigan
-        </text>
+        <defs>
+          <clipPath id="ot-deadline-map-clip">
+            <rect x="0" y="0" width={MAP_WIDTH} height={MAP_HEIGHT} rx="12" />
+          </clipPath>
+          <filter id="ot-deadline-pin-shadow" x="-60%" y="-60%" width="220%" height="220%">
+            <feDropShadow dx="0" dy="1" stdDeviation="1.4" floodColor="#000" floodOpacity="0.55" />
+          </filter>
+          <linearGradient id="ot-deadline-map-bottom-scrim" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#0b1220" stopOpacity="0" />
+            <stop offset="1" stopColor="#0b1220" stopOpacity="0.48" />
+          </linearGradient>
+        </defs>
+        <g clipPath="url(#ot-deadline-map-clip)">
+          <rect x="0" y="0" width={MAP_WIDTH} height={MAP_HEIGHT} fill="#0b1220" opacity="0.18" />
+          <rect x="0" y={MAP_HEIGHT - 120} width={MAP_WIDTH} height="120" fill="url(#ot-deadline-map-bottom-scrim)" />
+          <text x="16" y="26" className="ot-deadline-map-caption">
+            COOK COUNTY, IL
+          </text>
+          {plottedTownships.map((township) => {
+            const view = viewForMapTownship(township);
+            const status = view?.status ?? "pending";
+            const isActive = activeSlug === township.slug;
+            const { x, y } = projectTownship(TOWNSHIP_CENTROIDS[township.slug]);
+            const radius = isActive ? 8 : status === "closed" ? 4.5 : 6;
+            const showLabel = status === "open" || isActive;
+            const labelWidth = Math.max(54, township.name.length * 6.6 + 16);
+            return (
+              <g
+                key={township.slug}
+                onMouseEnter={() => setActiveSlug(township.slug)}
+                onFocus={() => setActiveSlug(township.slug)}
+                onMouseLeave={() => setActiveSlug(null)}
+                tabIndex={0}
+                role="button"
+                aria-label={`${view?.name ?? township.name}: ${view?.official ? view.lastFileLabel : PENDING_LABEL}`}
+                className="ot-deadline-map-pin"
+              >
+                {isActive && (
+                  <circle cx={x} cy={y} r={radius + 6} fill={mapStroke(status)} opacity="0.28" />
+                )}
+                <circle
+                  cx={x}
+                  cy={y}
+                  r={radius}
+                  fill={mapFill(status)}
+                  stroke={mapStroke(status)}
+                  strokeWidth={isActive ? 2.4 : 1.6}
+                  filter="url(#ot-deadline-pin-shadow)"
+                  className="ot-deadline-map-marker"
+                />
+                {showLabel ? (
+                  <g pointerEvents="none" transform={`translate(${x + radius + 5}, ${y})`}>
+                    <rect
+                      x="0"
+                      y="-10"
+                      width={labelWidth}
+                      height="20"
+                      rx="5"
+                      fill="#0b1220"
+                      opacity={isActive ? 0.9 : 0.68}
+                    />
+                    <text x="8" y="4" className="ot-deadline-map-label">
+                      {township.name}
+                    </text>
+                  </g>
+                ) : (
+                  <title>{`${view?.name ?? township.name}: ${view?.official ? view.lastFileLabel : PENDING_LABEL}`}</title>
+                )}
+              </g>
+            );
+          })}
+          <text x={MAP_WIDTH - 12} y={MAP_HEIGHT - 14} textAnchor="end" className="ot-deadline-map-credit-svg">
+            IMAGERY: ESRI, MAXAR
+          </text>
+        </g>
       </svg>
       <div className="ot-deadline-map-card">
         <div className="ot-floatcard-cycle">Cook County 2026</div>
@@ -257,7 +370,7 @@ function DeadlineSatelliteMap() {
         </div>
         <div className="ot-deadline-map-card-deadline">{activeTownship ? activeDeadline : "Official Assessor dates only"}</div>
         <div className="ot-deadline-map-card-note">
-          Satellite imagery with township overlay. Pending means the Assessor has not posted a 2026 last-file date yet.
+          Satellite imagery with township pins projected from approximate lat/lon centroids. Pending means the Assessor has not posted a 2026 last-file date yet.
         </div>
       </div>
       <div className="ot-deadline-map-legend" aria-label="Map legend">
@@ -461,7 +574,7 @@ function TownshipGrid() {
                       <Link href={`/township/${t.slug}`} className="ot-fullmap-twp">
                         <span className="ot-fullmap-twp-name">{t.name}</span>
                         <span className="ot-fullmap-twp-dates">
-                          {t.official ? `Last file ${t.lastFileLabelShort}, ${t.cycleYear}` : PENDING_LABEL}
+                          {t.official ? `Last file ${t.lastFileLabel}` : PENDING_LABEL}
                         </span>
                       </Link>
                     </li>
