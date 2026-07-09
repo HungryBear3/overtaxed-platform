@@ -36,10 +36,15 @@ describe("official 2026 deadline data", () => {
     expect(getOfficial2026Deadline("Oak Park")?.lastFileDate).toBe("2026-06-18");
     expect(getOfficial2026Deadline("Riverside")?.lastFileDate).toBe("2026-06-08");
     expect(getOfficial2026Deadline("River Forest")?.lastFileDate).toBe("2026-06-02");
+    expect(getOfficial2026Deadline("Palos")?.lastFileDate).toBe("2026-07-17");
+    expect(getOfficial2026Deadline("Maine")?.lastFileDate).toBe("2026-07-21");
+    expect(getOfficial2026Deadline("Cicero")?.lastFileDate).toBe("2026-07-31");
+    expect(getOfficial2026Deadline("Elk Grove")?.lastFileDate).toBe("2026-08-04");
+    expect(getOfficial2026Deadline("Stickney")?.lastFileDate).toBe("2026-08-12");
     // Source URL is the official Assessor calendar.
     expect(getOfficial2026Deadline("Oak Park")?.calendarUrl).toBe(ASSESSOR_CALENDAR_URL);
     expect(ASSESSOR_CALENDAR_URL).toContain("cookcountyassessoril.gov");
-    expect(TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED).toBe("2026-06-02");
+    expect(TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED).toBe("2026-07-07");
   });
 
   it("normalizes the Township suffix", () => {
@@ -61,8 +66,8 @@ describe("official 2026 deadline data", () => {
   });
 
   it("returns null (pending) for townships with no published 2026 date", () => {
-    expect(getOfficial2026Deadline("Palos")).toBeNull();
-    expect(getOfficial2026Deadline("Cicero")).toBeNull();
+    expect(getOfficial2026Deadline("Bloom")).toBeNull();
+    expect(getOfficial2026Deadline("Lemont")).toBeNull();
     expect(getOfficial2026Deadline("")).toBeNull();
   });
 });
@@ -73,16 +78,16 @@ describe("2026 view model", () => {
 
   it("marks exactly the official townships and leaves the rest pending", () => {
     expect(counts.official).toBe(Object.keys(TOWNSHIP_DEADLINES_2026).length);
-    expect(counts.official).toBe(9);
+    expect(counts.official).toBe(14);
     expect(counts.pending).toBe(counts.total - counts.official);
   });
 
   it("pending townships carry no date fields", () => {
-    const palos = views.find((v) => v.slug === "palos")!;
-    expect(palos.official).toBe(false);
-    expect(palos.status).toBe("pending");
-    expect(palos.lastFileDate).toBeUndefined();
-    expect(palos.lastFileLabel).toBeUndefined();
+    const bloom = views.find((v) => v.slug === "bloom")!;
+    expect(bloom.official).toBe(false);
+    expect(bloom.status).toBe("pending");
+    expect(bloom.lastFileDate).toBeUndefined();
+    expect(bloom.lastFileLabel).toBeUndefined();
   });
 
   it("derives open/closed from the official last-file date vs now", () => {
@@ -105,14 +110,15 @@ describe("/deadlines page render", () => {
 
   it("shows official 2026 dates for published townships", () => {
     expect(html).toContain("June 18, 2026"); // Oak Park official last file date
-    expect(html).toMatch(/9 townships/); // hero count of officially-published townships
+    expect(html).toContain("August 12, 2026"); // Stickney official last file date
+    expect(html).toMatch(/14 townships/); // hero count of officially-published townships
   });
 
   it("shows pending copy and never invents a date", () => {
     expect(html).toContain("Pending official date");
-    // Exactly the 9 official townships render a "Last file:" date in the table.
+    // Exactly the 14 official townships render a "Last file:" date in the table.
     const lastFileMatches = html.match(/Last file:/g) ?? [];
-    expect(lastFileMatches.length).toBe(9);
+    expect(lastFileMatches.length).toBe(14);
   });
 
   it("never surfaces stale 2025 data", () => {
