@@ -49,14 +49,14 @@ export const TOWNSHIP_DEADLINES_2025: Record<
   "south chicago": { noticeDate: "2025-10-15", lastFileDate: "2025-11-28" },
   lake: { noticeDate: "2025-09-22", lastFileDate: "2025-11-04" },
   "north chicago": { noticeDate: "2025-10-07", lastFileDate: "2025-11-20" },
-}
+};
 
 /**
  * Verified Tax Year 2026 Assessor appeal deadlines.
  *
  * Source: Cook County Assessor Assessment & Appeal Calendar
  *   https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines
- * Calendar "Last Updated" marker at time of capture: 2026-07-07.
+ * Calendar "Last Updated" marker at time of capture: 2026-07-14.
  *
  * IMPORTANT — DO NOT INFER OR BACKFILL:
  * Only townships the Assessor has actually published a 2026 Last File Date for
@@ -72,13 +72,13 @@ export const TOWNSHIP_DEADLINES_2026: Record<
   { noticeDate: string; lastFileDate: string }
 > = {
   // South & West Suburban Cook County (2026 triennial reassessment cycle)
+  cicero: { noticeDate: "2026-06-17", lastFileDate: "2026-07-31" },
+  palos: { noticeDate: "2026-06-03", lastFileDate: "2026-07-17" },
+  stickney: { noticeDate: "2026-06-29", lastFileDate: "2026-08-12" },
   berwyn: { noticeDate: "2026-05-20", lastFileDate: "2026-07-06" },
   "oak park": { noticeDate: "2026-05-06", lastFileDate: "2026-06-18" },
   riverside: { noticeDate: "2026-04-24", lastFileDate: "2026-06-08" },
   "river forest": { noticeDate: "2026-04-20", lastFileDate: "2026-06-02" },
-  palos: { noticeDate: "2026-06-03", lastFileDate: "2026-07-17" },
-  stickney: { noticeDate: "2026-06-29", lastFileDate: "2026-08-12" },
-  cicero: { noticeDate: "2026-06-17", lastFileDate: "2026-07-31" },
   // North Suburbs & City of Chicago (annual appeal windows)
   // NOTE: the official Assessor calendar spells this township "Lakeview" (one
   // word), but our township roster (lib/townships.ts) uses "Lake View" (two
@@ -86,33 +86,43 @@ export const TOWNSHIP_DEADLINES_2026: Record<
   // resolves it — do not change it to "lakeview". Covered by deadlines-2026 test.
   "lake view": { noticeDate: "2026-05-28", lastFileDate: "2026-07-13" },
   "new trier": { noticeDate: "2026-05-07", lastFileDate: "2026-06-22" },
+  maine: { noticeDate: "2026-06-05", lastFileDate: "2026-07-21" },
+  "elk grove": { noticeDate: "2026-06-22", lastFileDate: "2026-08-04" },
+  "west chicago": { noticeDate: "2026-07-10", lastFileDate: "2026-08-21" },
   evanston: { noticeDate: "2026-04-22", lastFileDate: "2026-06-04" },
   "norwood park": { noticeDate: "2026-04-13", lastFileDate: "2026-05-26" },
   "rogers park": { noticeDate: "2026-04-17", lastFileDate: "2026-06-01" },
-  maine: { noticeDate: "2026-06-05", lastFileDate: "2026-07-21" },
-  "elk grove": { noticeDate: "2026-06-22", lastFileDate: "2026-08-04" },
-}
+};
 
 /** Human-visible "last updated" marker from the official 2026 calendar capture. */
-export const TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED = "2026-07-07"
+export const TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED = "2026-07-14";
 
-const ASSESSOR_CALENDAR_URL = "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
+const ASSESSOR_CALENDAR_URL =
+  "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines";
 
 export function getTownshipDeadline(township: string | null): {
-  noticeDate: string
-  lastFileDate: string
-  calendarUrl: string
+  noticeDate: string;
+  lastFileDate: string;
+  calendarUrl: string;
 } | null {
-  if (!township?.trim()) return null
+  if (!township?.trim()) return null;
   // Normalize: lowercase, trim, remove "Township" suffix
-  const key = township.trim().toLowerCase().replace(/\s*township\s*$/i, "").trim()
-  const dates = TOWNSHIP_DEADLINES_2025[key]
-  if (!dates) return null
-  return { ...dates, calendarUrl: ASSESSOR_CALENDAR_URL }
+  const key = township
+    .trim()
+    .toLowerCase()
+    .replace(/\s*township\s*$/i, "")
+    .trim();
+  const dates = TOWNSHIP_DEADLINES_2025[key];
+  if (!dates) return null;
+  return { ...dates, calendarUrl: ASSESSOR_CALENDAR_URL };
 }
 
 function normalizeTownshipKey(township: string): string {
-  return township.trim().toLowerCase().replace(/\s*township\s*$/i, "").trim()
+  return township
+    .trim()
+    .toLowerCase()
+    .replace(/\s*township\s*$/i, "")
+    .trim();
 }
 
 /**
@@ -120,14 +130,14 @@ function normalizeTownshipKey(township: string): string {
  * Assessor has not yet published one. Never falls back to a prior year.
  */
 export function getOfficial2026Deadline(township: string | null): {
-  noticeDate: string
-  lastFileDate: string
-  calendarUrl: string
+  noticeDate: string;
+  lastFileDate: string;
+  calendarUrl: string;
 } | null {
-  if (!township?.trim()) return null
-  const dates = TOWNSHIP_DEADLINES_2026[normalizeTownshipKey(township)]
-  if (!dates) return null
-  return { ...dates, calendarUrl: ASSESSOR_CALENDAR_URL }
+  if (!township?.trim()) return null;
+  const dates = TOWNSHIP_DEADLINES_2026[normalizeTownshipKey(township)];
+  if (!dates) return null;
+  return { ...dates, calendarUrl: ASSESSOR_CALENDAR_URL };
 }
 
-export { ASSESSOR_CALENDAR_URL }
+export { ASSESSOR_CALENDAR_URL };

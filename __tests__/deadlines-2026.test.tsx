@@ -36,15 +36,10 @@ describe("official 2026 deadline data", () => {
     expect(getOfficial2026Deadline("Oak Park")?.lastFileDate).toBe("2026-06-18");
     expect(getOfficial2026Deadline("Riverside")?.lastFileDate).toBe("2026-06-08");
     expect(getOfficial2026Deadline("River Forest")?.lastFileDate).toBe("2026-06-02");
-    expect(getOfficial2026Deadline("Palos")?.lastFileDate).toBe("2026-07-17");
-    expect(getOfficial2026Deadline("Maine")?.lastFileDate).toBe("2026-07-21");
-    expect(getOfficial2026Deadline("Cicero")?.lastFileDate).toBe("2026-07-31");
-    expect(getOfficial2026Deadline("Elk Grove")?.lastFileDate).toBe("2026-08-04");
-    expect(getOfficial2026Deadline("Stickney")?.lastFileDate).toBe("2026-08-12");
     // Source URL is the official Assessor calendar.
     expect(getOfficial2026Deadline("Oak Park")?.calendarUrl).toBe(ASSESSOR_CALENDAR_URL);
     expect(ASSESSOR_CALENDAR_URL).toContain("cookcountyassessoril.gov");
-    expect(TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED).toBe("2026-07-07");
+    expect(TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED).toBe("2026-07-14");
   });
 
   it("normalizes the Township suffix", () => {
@@ -65,9 +60,12 @@ describe("official 2026 deadline data", () => {
     expect(lakeView?.official).toBe(true);
   });
 
-  it("returns null (pending) for townships with no published 2026 date", () => {
-    expect(getOfficial2026Deadline("Bloom")).toBeNull();
-    expect(getOfficial2026Deadline("Lemont")).toBeNull();
+  it("resolves newly published townships and keeps blanks pending", () => {
+    expect(getOfficial2026Deadline("Palos")?.lastFileDate).toBe("2026-07-17");
+    expect(getOfficial2026Deadline("Cicero")?.lastFileDate).toBe("2026-07-31");
+    expect(getOfficial2026Deadline("Stickney")?.lastFileDate).toBe("2026-08-12");
+    expect(getOfficial2026Deadline("Elk Grove")?.lastFileDate).toBe("2026-08-04");
+    expect(getOfficial2026Deadline("West Chicago")?.lastFileDate).toBe("2026-08-21");
     expect(getOfficial2026Deadline("")).toBeNull();
   });
 });
@@ -78,16 +76,16 @@ describe("2026 view model", () => {
 
   it("marks exactly the official townships and leaves the rest pending", () => {
     expect(counts.official).toBe(Object.keys(TOWNSHIP_DEADLINES_2026).length);
-    expect(counts.official).toBe(14);
+    expect(counts.official).toBe(15);
     expect(counts.pending).toBe(counts.total - counts.official);
   });
 
   it("pending townships carry no date fields", () => {
-    const bloom = views.find((v) => v.slug === "bloom")!;
-    expect(bloom.official).toBe(false);
-    expect(bloom.status).toBe("pending");
-    expect(bloom.lastFileDate).toBeUndefined();
-    expect(bloom.lastFileLabel).toBeUndefined();
+    const lyons = views.find((v) => v.slug === "lyons")!;
+    expect(lyons.official).toBe(false);
+    expect(lyons.status).toBe("pending");
+    expect(lyons.lastFileDate).toBeUndefined();
+    expect(lyons.lastFileLabel).toBeUndefined();
   });
 
   it("derives open/closed from the official last-file date vs now", () => {
@@ -110,15 +108,33 @@ describe("/deadlines page render", () => {
 
   it("shows official 2026 dates for published townships", () => {
     expect(html).toContain("June 18, 2026"); // Oak Park official last file date
-    expect(html).toContain("August 12, 2026"); // Stickney official last file date
-    expect(html).toMatch(/14 townships/); // hero count of officially-published townships
+    expect(html).toMatch(/15 townships/); // hero count of officially-published townships
   });
 
   it("shows pending copy and never invents a date", () => {
     expect(html).toContain("Pending official date");
-    // Exactly the 14 official townships render a "Last file:" date in the table.
+    // Exactly the 15 official townships render a "Last file:" date in the table.
     const lastFileMatches = html.match(/Last file:/g) ?? [];
-    expect(lastFileMatches.length).toBe(14);
+    expect(lastFileMatches.length).toBe(15);
+  });
+
+  it("uses the official deadline year in map summary cards, not reassessment cycle year", () => {
+    expect(html).toContain("Last file Aug 4, 2026");
+    expect(html).toContain("Last file Jul 21, 2026");
+    expect(html).toContain("Last file Aug 21, 2026");
+    expect(html).not.toContain("Last file Aug 4, 2027");
+    expect(html).not.toContain("Last file Jul 21, 2027");
+    expect(html).not.toContain("Last file Aug 21, 2028");
+  });
+
+  it("renders official township boundaries and one status dot per township", () => {
+    expect(html).toContain("politicalBoundary/MapServer/export");
+    expect(html).toContain("layers=show:3");
+    expect(html).toContain("bbox=-88.45,41.45,-87.2055556,42.15");
+    expect(html).toContain("size=1600,900");
+    expect(html).toContain("Cook County township deadline status dots over official township boundaries");
+    const mapDotMatches = html.match(/class="ot-deadline-map-dot ot-deadline-map-dot-/g) ?? [];
+    expect(mapDotMatches.length).toBe(38);
   });
 
   it("never surfaces stale 2025 data", () => {
