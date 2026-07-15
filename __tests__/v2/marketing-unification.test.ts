@@ -252,7 +252,7 @@ describe("OT v2 marketing — township deadline source of truth", () => {
     const src = read("components/ot-design/HomePage.tsx");
     expect(src).not.toMatch(/Jefferson Twp|Jefferson Township/);
     expect(src).not.toMatch(/equity-ratio|equity ratio/i);
-    expect(src).toMatch(/Lyons Twp/);
+    expect(src).toMatch(/Cicero Twp/);
     expect(src).toMatch(/assessment level/i);
   });
 });

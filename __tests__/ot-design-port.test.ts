@@ -78,9 +78,9 @@ describe("/api/check", () => {
     });
     const res = await checkPOST(req);
     const json = await res.json();
-    expect(json.result.township).toBe("Lyons");
+    expect(json.result.township).toBe("Cicero");
     expect(json.result.windowStatus).toBe("open");
-    expect(json.result.windowCloses).toMatch(/Jun 9, 2026/);
+    expect(json.result.windowCloses).toMatch(/Jul 31, 2026/);
     expect(json.result.assessmentLevel).toBe(12.1);
     expect(json.result.equityRatio).toBeUndefined();
   });

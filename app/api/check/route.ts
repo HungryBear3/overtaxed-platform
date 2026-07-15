@@ -11,10 +11,10 @@ import { NextResponse } from "next/server";
 
 const SAMPLE_RESULT = {
   address: "Sample result — not your submitted address",
-  township: "Lyons",
+  township: "Cicero",
   windowStatus: "open" as const,
-  windowCloses: "Lyons Township appeal window open through Jun 9, 2026",
-  windowDaysRemaining: 27,
+  windowCloses: "Cicero Township appeal window open through Jul 31, 2026",
+  windowDaysRemaining: 17,
   yourAssessed: 42500,
   compsAvg: 35100,
   assessmentLevel: 12.1,
