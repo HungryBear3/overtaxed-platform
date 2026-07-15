@@ -10,10 +10,10 @@ import {
 /* ── Sample result returned by /api/check stub ─────────────────────────── */
 const SAMPLE_RESULT = {
   address: "Sample result — not your submitted address",
-  township: "Lyons",
+  township: "Cicero",
   windowStatus: "open" as const,
-  windowCloses: "Window closes Jun 9, 2026",
-  windowDaysRemaining: 27,
+  windowCloses: "Window closes Jul 31, 2026",
+  windowDaysRemaining: 17,
   yourAssessed: 42500,
   compsAvg: 35100,
   assessmentLevel: 12.1,
@@ -639,12 +639,12 @@ function SampleReportPreview() {
       <div className="ot-sample-doc">
         <div className="ot-sample-stamp">
           <span className="ot-sample-stamp-line ot-sample-stamp-l1">Sample</span>
-          <span className="ot-sample-stamp-line ot-sample-stamp-l2">Lyons Twp</span>
+          <span className="ot-sample-stamp-line ot-sample-stamp-l2">Cicero Twp</span>
         </div>
         <div className="ot-sample-head">
           <div className="ot-sample-eyebrow">Your free check · sample</div>
           <div className="ot-sample-addr">1234 S Sample Ave, La Grange IL 60526</div>
-          <div className="ot-sample-meta">Synthetic sample PIN · Lyons Township</div>
+          <div className="ot-sample-meta">Synthetic sample PIN · Cicero Township</div>
         </div>
         <div className="ot-sample-savings">
           <div className="ot-sample-savings-key">Estimated annual overpayment</div>
@@ -690,7 +690,7 @@ function SampleReportPreview() {
           </div>
         </div>
         <div className="ot-sample-foot">
-          <span className="ot-sample-foot-dot" /> Lyons Township appeal window open through Jun 9, 2026
+          <span className="ot-sample-foot-dot" /> Cicero Township appeal window open through Jul 31, 2026
         </div>
       </div>
     </div>
@@ -1210,7 +1210,7 @@ function HeroPreviewCard() {
           marginBottom: 4,
         }}
       >
-        1234 S Sample Ave · Lyons Township · synthetic sample
+        1234 S Sample Ave · Cicero Township · synthetic sample
       </div>
       <div
         style={{

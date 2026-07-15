@@ -7,9 +7,9 @@ import HomePage from "@/components/ot-design/HomePage";
 
 const apiResultWithLegacyField = {
   address: "Sample result — not your submitted address",
-  township: "Lyons",
+  township: "Cicero",
   windowStatus: "open",
-  windowCloses: "Lyons Township appeal window open through Jun 9, 2026",
+  windowCloses: "Cicero Township appeal window open through July 31, 2026",
   windowDaysRemaining: 27,
   yourAssessed: 42500,
   compsAvg: 35100,
@@ -38,7 +38,7 @@ describe("OT home free-check flow", () => {
     return fetchMock;
   }
 
-  it("submits the hero form and renders the Lyons sample without crashing if API returns legacy equityRatio", async () => {
+  it("submits the hero form and renders the Cicero sample without crashing if API returns legacy equityRatio", async () => {
     const fetchMock = mockPreviewFetch();
 
     render(<HomePage />);
@@ -50,7 +50,7 @@ describe("OT home free-check flow", () => {
 
     await waitFor(() => expect(screen.getByText(/Sample data — not your submitted address · Sample result/i)).toBeTruthy());
     expect(screen.getAllByText(/12\.1%/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Lyons Township/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Cicero Township/).length).toBeGreaterThan(0);
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/free-check",
       expect.objectContaining({ method: "POST" }),
@@ -118,7 +118,7 @@ describe("OT home free-check flow", () => {
     expect(screen.queryByRole("link", { name: /^Contingency$/ })).toBeNull();
   });
 
-  it("shows API errors instead of falling back to the Lyons sample", async () => {
+  it("shows API errors instead of falling back to the sample", async () => {
     const fetchMock = jest.fn().mockResolvedValue({
       ok: false,
       json: async () => ({ error: "No Cook County property found for this address. Try your 14-digit PIN instead." }),
@@ -178,7 +178,7 @@ describe("OT home free-check flow", () => {
     await waitFor(() => expect(screen.getByText(/Your free check · 5236 N KENMORE AVE/i)).toBeTruthy());
     expect(screen.getByText(/Check dates/i)).toBeTruthy();
     expect(screen.getAllByText(/Exact appeal dates unavailable/i)).toHaveLength(1);
-    expect(screen.queryByText(/Window closes Jun 9, 2026/i)).toBeNull();
+    expect(screen.queryByText(/Window closes Jul 31, 2026/i)).toBeNull();
     expect(screen.queryByText(/Lake View window closes/i)).toBeNull();
   });
 

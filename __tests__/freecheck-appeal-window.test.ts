@@ -4,35 +4,46 @@
 import { getFreeCheckAppealWindowStatus } from "@/lib/free-check-appeal-window";
 
 describe("free-check appeal-window township cycle alignment", () => {
-  it("uses the canonical 2028 Chicago cycle for Lake View instead of unknown/sample dates", () => {
-    expect(getFreeCheckAppealWindowStatus("Lake View")).toEqual(
+  it("uses official 2026 Assessor dates for Lake View instead of design-seed 2028 dates", () => {
+    expect(getFreeCheckAppealWindowStatus("Lake View", new Date("2026-07-12T12:00:00Z"))).toEqual(
       expect.objectContaining({
         township: "Lake View",
-        status: "future_cycle",
-        openDate: "2028-05-08",
-        closeDate: "2028-06-12",
+        status: "open",
+        openDate: "2026-05-28",
+        closeDate: "2026-07-13",
       }),
     );
   });
 
-  it("does not mark North Chicago open in 2026", () => {
-    expect(getFreeCheckAppealWindowStatus("North Chicago")).toEqual(
+  it("marks official 2026 windows closed after their last-file date", () => {
+    expect(getFreeCheckAppealWindowStatus("Berwyn", new Date("2026-07-14T12:00:00Z"))).toEqual(
+      expect.objectContaining({
+        township: "Berwyn",
+        status: "closed",
+        openDate: "2026-05-20",
+        closeDate: "2026-07-06",
+      }),
+    );
+  });
+
+  it("keeps townships without a published official date undated instead of using design-seed windows", () => {
+    expect(getFreeCheckAppealWindowStatus("North Chicago", new Date("2026-07-14T12:00:00Z"))).toEqual(
       expect.objectContaining({
         township: "North Chicago",
         status: "future_cycle",
-        openDate: "2028-05-08",
-        closeDate: "2028-06-12",
+        openDate: null,
+        closeDate: null,
       }),
     );
   });
 
-  it("keeps currently-open 2026 south/west townships open", () => {
-    expect(getFreeCheckAppealWindowStatus("Lyons")).toEqual(
+  it("uses newly verified official additions", () => {
+    expect(getFreeCheckAppealWindowStatus("Maine", new Date("2026-07-14T12:00:00Z"))).toEqual(
       expect.objectContaining({
-        township: "Lyons",
+        township: "Maine",
         status: "open",
-        openDate: "2026-05-06",
-        closeDate: "2026-06-09",
+        openDate: "2026-06-05",
+        closeDate: "2026-07-21",
       }),
     );
   });
