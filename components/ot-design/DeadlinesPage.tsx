@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
 import { TOWNSHIPS, TOWNSHIPS_BY_SLUG } from "@/lib/townships";
 import { OT_PUBLIC_CONTACT } from "@/components/ot-design/SiteChrome";
 import {
@@ -8,6 +9,7 @@ import {
   DEADLINE_VERIFY_NOTICE,
   ASSESSOR_CALENDAR_URL,
 } from "@/lib/deadline-sources";
+import { analytics } from "@/lib/analytics/events";
 import { TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED } from "@/lib/appeals/township-deadlines";
 import {
   buildTownship2026Views,
@@ -77,6 +79,23 @@ const MAP_DOTS: MapDot[] = [
   { name: "Worth", x: 56.7, y: 65.7 },
 ];
 
+function trackingPayloadForTownship(t: Township2026View, source: "reminder_dropdown" | "township_grid" | "township_table" | "map_dot") {
+  return {
+    source,
+    townshipSlug: t.slug,
+    townshipName: t.name,
+    status: t.status,
+  } as const;
+}
+
+function trackTownshipSelection(
+  t: Township2026View | undefined,
+  source: "reminder_dropdown" | "township_grid" | "township_table" | "map_dot",
+) {
+  if (!t) return;
+  analytics.deadlineTownshipSelected(trackingPayloadForTownship(t, source));
+}
+
 function StatusPill({
   status,
   size = "sm",
@@ -141,8 +160,14 @@ function PageReminderCapture() {
   const [email, setEmail] = useState("");
   const [slug, setSlug] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const selectedView = VIEWS.find((t) => t.slug === slug);
 
-  async function submit(e: React.FormEvent) {
+  function selectTownship(nextSlug: string) {
+    setSlug(nextSlug);
+    trackTownshipSelection(VIEWS.find((t) => t.slug === nextSlug), "reminder_dropdown");
+  }
+
+  async function submit(e: FormEvent) {
     e.preventDefault();
     if (!email.trim() || !slug) return;
     try {
@@ -153,6 +178,13 @@ function PageReminderCapture() {
       });
     } catch {
       /* preview stub */
+    }
+    if (selectedView) {
+      analytics.deadlineReminderSignup({
+        townshipSlug: selectedView.slug,
+        townshipName: selectedView.name,
+        status: selectedView.status,
+      });
     }
     setSubmitted(true);
   }
@@ -194,7 +226,7 @@ function PageReminderCapture() {
         <select
           required
           value={slug}
-          onChange={(e) => setSlug(e.target.value)}
+          onChange={(e) => selectTownship(e.target.value)}
           className="ot-input"
           aria-label="Township"
         >
@@ -276,10 +308,12 @@ function DeadlineSatelliteMap() {
             const view = viewForMapTownship(township);
             const status = view?.status ?? "pending";
             const isActive = activeName === township.name;
+            const trackingView = view;
             return (
               <button
                 key={township.name}
                 type="button"
+                onClick={() => trackTownshipSelection(trackingView, "map_dot")}
                 onMouseEnter={() => setActiveName(township.name)}
                 onFocus={() => setActiveName(township.name)}
                 onMouseLeave={() => setActiveName(null)}
@@ -402,7 +436,7 @@ function TownshipsTable() {
               {rows.map((t) => (
                 <tr key={t.slug} className={`ot-tbl-row ot-tbl-row-${t.status}`}>
                   <td className="ot-tbl-name">
-                    <Link href={`/township/${t.slug}`}>{t.name}</Link>
+                    <Link href={`/township/${t.slug}`} onClick={() => trackTownshipSelection(t, "township_table")}>{t.name}</Link>
                   </td>
                   <td><StatusPill status={t.status} size="sm" /></td>
                   <td className="ot-tbl-window" style={!t.official ? { color: "var(--ink-soft, #6b6258)" } : undefined}>
@@ -411,7 +445,7 @@ function TownshipsTable() {
                   <td className="ot-tbl-days">{formatDays(t)}</td>
                   <td className="ot-tbl-cycle">{t.cycleYear}</td>
                   <td className="ot-tbl-arrow">
-                    <Link href={`/township/${t.slug}`} aria-label={`See ${t.name} details`}>→</Link>
+                    <Link href={`/township/${t.slug}`} aria-label={`See ${t.name} details`} onClick={() => trackTownshipSelection(t, "township_table")}>→</Link>
                   </td>
                 </tr>
               ))}
@@ -429,6 +463,8 @@ function TownshipsTable() {
 }
 
 function BottomCheckCta() {
+  const [address, setAddress] = useState("");
+
   return (
     <section className="ot-bottom-cta">
       <div className="ot-bottom-cta-inner">
@@ -443,12 +479,18 @@ function BottomCheckCta() {
           className="ot-bottom-cta-form"
           onSubmit={(e) => {
             e.preventDefault();
+            analytics.deadlineFreeCheckStart({
+              source: "deadline_bottom_cta",
+              hasAddressInput: address.trim().length > 0,
+            });
             window.location.href = "/#hero-check";
           }}
         >
           <input
             type="text"
             placeholder="Enter your Cook County address"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
             className="ot-input"
             aria-label="Cook County address"
           />
@@ -504,7 +546,7 @@ function TownshipGrid() {
                 <ul className="ot-fullmap-group-list">
                   {groups[status].map((t) => (
                     <li key={t.slug}>
-                      <Link href={`/township/${t.slug}`} className="ot-fullmap-twp">
+                      <Link href={`/township/${t.slug}`} className="ot-fullmap-twp" onClick={() => trackTownshipSelection(t, "township_grid")}>
                         <span className="ot-fullmap-twp-name">{t.name}</span>
                         <span className="ot-fullmap-twp-dates">
                           {t.official ? `Last file ${t.lastFileLabelShort}, ${t.lastFileDate?.slice(0, 4)}` : PENDING_LABEL}
@@ -567,6 +609,16 @@ function VerifyAndSources() {
 }
 
 export default function DeadlinesPage() {
+  useEffect(() => {
+    analytics.deadlineMapView({
+      officialCount: COUNTS.official,
+      openCount: COUNTS.open,
+      closedCount: COUNTS.closed,
+      pendingCount: COUNTS.pending,
+      sourceUpdated: TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED,
+    });
+  }, []);
+
   return (
     <>
       <DeadlinesHero />
