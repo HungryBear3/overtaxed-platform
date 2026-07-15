@@ -87,6 +87,42 @@ export const analytics = {
     trackEvent("contact_form_submit", { category })
     trackMetaEvent("Lead", { content_name: "contact" })
   },
+
+  deadlineMapView: (params: {
+    officialCount: number
+    openCount: number
+    closedCount: number
+    pendingCount: number
+    sourceUpdated: string
+  }) => {
+    trackEvent("deadline_map_view", params)
+  },
+
+  deadlineTownshipSelected: (params: {
+    source: "reminder_dropdown" | "township_grid" | "township_table" | "map_dot"
+    townshipSlug: string
+    townshipName: string
+    status: "open" | "closed" | "pending"
+  }) => {
+    trackEvent("deadline_township_selected", params)
+  },
+
+  deadlineReminderSignup: (params: {
+    townshipSlug: string
+    townshipName: string
+    status: "open" | "closed" | "pending"
+  }) => {
+    trackEvent("deadline_reminder_signup", params)
+    trackMetaEvent("Lead", { content_name: "deadline_reminder", township: params.townshipSlug })
+  },
+
+  deadlineFreeCheckStart: (params: {
+    source: "deadline_bottom_cta"
+    hasAddressInput: boolean
+  }) => {
+    trackEvent("deadline_free_check_start", params)
+    trackMetaCustomEvent("DeadlineFreeCheckStart", { source: params.source })
+  },
 }
 
 /**
