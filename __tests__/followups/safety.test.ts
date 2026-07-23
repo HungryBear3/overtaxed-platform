@@ -59,6 +59,24 @@ describe("free-check follow-up safety", () => {
     });
     expect(email?.subject).toContain("August 12, 2026");
     expect(email?.text).toContain("Unsubscribe:");
+    expect(email?.text).toContain("opted in to email follow-up");
+    expect(email?.text).toContain("file directly with the Cook County Assessor at no charge");
     expect(email?.text).not.toMatch(/guaranteed savings|keep 100%/i);
+  });
+
+  it("keeps every email single-purpose and avoids unsafe legal or outcome claims", () => {
+    for (const step of ["RESULT", "DAY_1", "DAY_3", "FINAL"]) {
+      const email = buildFollowupEmail({
+        step,
+        township: "Cicero",
+        address: "1234 W Sample St",
+        resultUrl: "https://www.overtaxed-il.com/#hero-check",
+        unsubscribeUrl: "https://www.overtaxed-il.com/api/followups/unsubscribe?token=test",
+      });
+      expect(email).not.toBeNull();
+      expect(email?.text).toContain("Unsubscribe:");
+      expect(email?.text).not.toMatch(/we will file|we provide legal advice|guaranteed reduction|keep 100%/i);
+      expect((email?.html.match(/<a /g) ?? []).length).toBe(2);
+    }
   });
 });
