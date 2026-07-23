@@ -10,7 +10,7 @@
 https://www.overtaxed-il.com/hoa?utm_source=property_manager&utm_medium=email&utm_campaign=hoa_resident_resource_20260723
 ```
 
-**Method:** static code tracing + jsdom regression tests + local production build. No live sends, no production deploy, no production DB / customer records / Stripe / credentials. Abigail's email/SMS follow-up path (`FreeCheckResult` → `/api/township-alert` → `sendFreeCheckFollowup`) was **not** modified.
+**Method:** static code tracing + jsdom regression tests + a clean-worktree local compile/build attempt. No live sends, no production deploy, no production DB / customer records / Stripe / credentials. Abigail's email/SMS follow-up path (`FreeCheckResult` → `/api/township-alert` → `sendFreeCheckFollowup`) was **not** modified.
 
 ---
 
@@ -60,7 +60,7 @@ https://www.overtaxed-il.com/hoa?utm_source=property_manager&utm_medium=email&ut
 
 Goal: preserve `utm_source`/`utm_medium`/`utm_campaign` through the funnel. The mechanism already existed but was unmounted; activating it naively would clobber first-touch. So:
 
-1. `lib/analytics/utm-tracking.ts` — added `captureFirstTouchUTM()`: persists campaign UTM only when nothing valid is already stored, so a later internal-UTM navigation (`utm_source=hoa`) cannot overwrite the original `property_manager` source. `localStorage` only — no cookies, no network, no PII.
+1. `lib/analytics/utm-tracking.ts` — added `captureFirstTouchUTM()`: persists campaign UTM only when nothing valid is already stored, so a later internal-UTM navigation (`utm_source=hoa`) cannot overwrite the original `property_manager` source. `localStorage` only — no cookies or network calls. The implementation does not intentionally collect PII, but UTM query values are stored verbatim and therefore must not contain PII.
 2. `components/analytics/utm-first-touch.tsx` — new null-rendering client component calling it on mount.
 3. `app/layout.tsx` — mounted `<UtmFirstTouchCapture/>` app-wide (ungated, since it has no external side effect). App-wide is required because resident-notice traffic lands directly on `/check` / `/deadlines`, not `/hoa`.
 4. `lib/analytics/index.ts` — re-export the new function.
@@ -90,18 +90,18 @@ Tests:       6 passed, 6 total
 ```
 Covers: exact campaign URL captured on landing; first-touch preserved when a later `/hoa` internal link re-tags traffic; documents that plain `captureUTMParams()` would clobber (why the new fn exists); no-UTM URL stores nothing; component captures on mount and renders nothing.
 
-**Relevant existing suites** (regression, with the layout change) — `hoa-page-stance`, `v2/marketing-unification`, `v2/home-free-check-flow`, `v2/preview-side-effects`, `smoke`, `p0-traffic-safety`:
+**Relevant clean-worktree regression suites** — new attribution suite plus `hoa-page-stance`, `v2/marketing-unification`, `v2/home-free-check-flow`, `v2/preview-side-effects`, and `smoke`:
 ```
 Test Suites: 6 passed, 6 total
-Tests:       161 passed, 161 total
+Tests:       154 passed, 154 total
 ```
+The previously reported `p0-traffic-safety` suite was present only as unrelated untracked WIP in the main dirty worktree and is not part of this commit, so it is not counted here.
 
-**Production build** — `npm run build`:
+**Clean-worktree build attempt** — `next build`:
 ```
-✓ Compiled successfully in 3.0s
-✓ Generating static pages using 9 workers (187/187)
-BUILD EXIT CODE: 0
+✓ Compiled successfully
+Build then stopped during unrelated /admin/appeals prerender: database credentials were intentionally unavailable in the isolated review worktree.
 ```
-(`/hoa` and `/check` build as static pages.) Note: `next.config.mjs` sets `typescript.ignoreBuildErrors: true`; the repo has ~53 pre-existing type errors in unrelated WIP files (missing deps such as `recharts`, `next-themes`, admin pages) — none in the files changed by this branch.
+The clean review did not use production credentials, access the production database, or reproduce the earlier `187/187`/exit-0 claim. The scoped UTM files compile successfully; full prerender remains environment-unverified from the clean commit. `next.config.mjs` also sets `typescript.ignoreBuildErrors: true`, so this is not a standalone type-check claim.
 
-**Preview URL:** none. No existing safe preview workflow was invoked; the marketing preview gate keeps preview/dev noop for cookie/network side-effects. The change was validated via jsdom tests + local build only.
+**Preview URL:** none. No preview deployment was invoked. The change was validated via jsdom tests and the clean-worktree compile/build attempt described above; full credential-free prerender did not complete.
