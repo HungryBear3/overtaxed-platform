@@ -756,6 +756,63 @@ model OTLead {
   @@index([createdAt])
 }
 
+// Consent-based follow-up for the residential free-check flow. This is
+// intentionally separate from TownshipAlert, cold outreach, and legacy drip.
+model FreeCheckFollowupSubscriber {
+  id                  String   @id @default(cuid())
+  email               String
+  emailNormalized     String
+  emailConsentAt      DateTime
+  emailConsentSource  String
+  emailConsentVersion String
+  phoneE164           String?
+  smsConsentAt        DateTime?
+  smsConsentSource    String?
+  smsConsentVersion   String?
+  township            String?
+  propertyAddress     String?
+  potentialSavings    Float?
+  resultUrl           String   @default("/")
+  unsubscribeToken    String   @unique @default(cuid())
+  emailSuppressedAt   DateTime?
+  smsSuppressedAt     DateTime?
+  smsSuppressionReason String?
+  completedAt         DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  messages            FreeCheckFollowupMessage[]
+
+  @@unique([emailNormalized, emailConsentVersion])
+  @@index([emailNormalized])
+  @@index([phoneE164])
+  @@index([createdAt])
+  @@map("free_check_followup_subscriber")
+}
+
+model FreeCheckFollowupMessage {
+  id              String   @id @default(cuid())
+  subscriberId    String
+  subscriber      FreeCheckFollowupSubscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  step            String
+  channel         String
+  idempotencyKey  String   @unique
+  scheduledFor    DateTime
+  status          String   @default("SCHEDULED")
+  leaseUntil      DateTime?
+  attempts        Int      @default(0)
+  lastAttemptAt   DateTime?
+  sentAt          DateTime?
+  providerMessageId String?
+  failureCode     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([subscriberId, step, channel])
+  @@index([status, scheduledFor])
+  @@index([leaseUntil])
+  @@map("free_check_followup_message")
+}
+
 model OTOrder {
   id              String   @id @default(cuid())
   stripeSessionId String   @unique

@@ -494,7 +494,80 @@ function HeroCheckResult({
           This property does not show a clear over-assessment from the available public-record comps. No filing package is recommended from this free check.
         </div>
       )}
+      {!result.preview && (
+        <FollowupSignup result={result} />
+      )}
     </div>
+  );
+}
+
+function FollowupSignup({ result }: { result: Result }) {
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [emailConsent, setEmailConsent] = useState(false);
+  const [smsConsent, setSmsConsent] = useState(false);
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [message, setMessage] = useState("");
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!emailConsent || status === "saving") return;
+    setStatus("saving");
+    setMessage("");
+    const response = await fetch("/api/followups/enroll", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email,
+        phone,
+        emailConsent,
+        smsConsent,
+        township: result.township,
+        propertyAddress: result.address,
+        potentialSavings: result.overpayPerYear,
+      }),
+    }).catch(() => null);
+    const data = await response?.json().catch(() => null);
+    if (!response?.ok) {
+      setStatus("error");
+      setMessage(data?.error ?? "We couldn't save your reminder preference. Please try again.");
+      return;
+    }
+    setStatus("saved");
+    setMessage("You're enrolled. You can unsubscribe from any email.");
+  }
+
+  if (status === "saved") {
+    return <div className="ot-result-altline" role="status">{message}</div>;
+  }
+
+  return (
+    <form onSubmit={submit} className="ot-result-followup" aria-label="Free check follow-up reminders">
+      <strong>Want help remembering what comes next?</strong>
+      <p>Optional reminders about this free check and the current township filing window.</p>
+      <label className="ot-field">
+        <span className="ot-field-label">Email</span>
+        <input className="ot-input" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
+      </label>
+      <label className="ot-followup-consent">
+        <input type="checkbox" checked={emailConsent} onChange={(e) => setEmailConsent(e.target.checked)} />
+        <span>Email me this result and a short follow-up sequence. Consent is optional and not required to use the free check.</span>
+      </label>
+      <label className="ot-followup-consent">
+        <input type="checkbox" checked={smsConsent} onChange={(e) => setSmsConsent(e.target.checked)} />
+        <span>Also text me one deadline reminder. Message and data rates may apply. Reply STOP to opt out.</span>
+      </label>
+      {smsConsent && (
+        <label className="ot-field">
+          <span className="ot-field-label">Mobile number</span>
+          <input className="ot-input" type="tel" required value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" placeholder="(312) 555-0123" />
+        </label>
+      )}
+      {message && <div className="ot-result-altline" role="alert">{message}</div>}
+      <button className="ot-cta ot-cta-block" type="submit" disabled={!emailConsent || status === "saving"}>
+        {status === "saving" ? "Saving…" : "Send my reminders"}
+      </button>
+    </form>
   );
 }
 

@@ -123,3 +123,16 @@
     @apply bg-background text-foreground;
   }
 }
+/* Consent-based free-check follow-up form */
+.ot-result-followup {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid var(--ot-border, #d7dde7);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+.ot-result-followup p { margin: 0; color: #475569; font-size: 14px; }
+.ot-followup-consent { display: flex; align-items: flex-start; gap: 9px; font-size: 13px; line-height: 1.45; color: #334155; }
+.ot-followup-consent input { margin-top: 3px; flex: 0 0 auto; }

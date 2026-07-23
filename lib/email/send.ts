@@ -43,6 +43,7 @@ export async function sendEmail({
   html,
   from = FROM_EMAIL,
   attachments,
+  headers,
 }: {
   to: string
   subject: string
@@ -50,6 +51,7 @@ export async function sendEmail({
   html: string
   from?: string
   attachments?: Array<{ filename: string; content: Buffer }>
+  headers?: Record<string, string>
 }): Promise<boolean> {
   if (!resend) {
     console.warn("[email] Skipping send – RESEND_API_KEY not configured")
@@ -64,15 +66,16 @@ export async function sendEmail({
         content: a.content,
       }))
     }
+    if (headers) payload.headers = headers
     const { error } = await resend.emails.send(payload)
     if (error) {
-      console.error(`[email] Resend error sending to ${to}:`, error)
+      console.error("[email] Resend provider error")
       return false
     }
-    console.log(`[email] Sent to ${to}: "${subject}"`)
+    console.log(`[email] Sent: "${subject}"`)
     return true
-  } catch (error) {
-    console.error("[email] Exception sending:", error)
+  } catch {
+    console.error("[email] Exception sending")
     return false
   }
 }
