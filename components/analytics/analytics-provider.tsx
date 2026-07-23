@@ -25,7 +25,7 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
 
   useEffect(() => {
     captureUTMParams()
-  }, [])
+  }, [pathname, searchParams])
 
   useEffect(() => {
     if (pathname) {

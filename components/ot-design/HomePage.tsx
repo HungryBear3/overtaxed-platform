@@ -6,6 +6,7 @@ import {
   StickyAddressBar,
   LiveTicker,
 } from "@/components/ot-design/SiteChrome";
+import { analytics } from "@/lib/analytics/events";
 
 /* ── Sample result returned by /api/check stub ─────────────────────────── */
 const SAMPLE_RESULT = {
@@ -272,7 +273,16 @@ function HeroCheckCard({
           return;
         }
         const isPreview = Boolean(data?.preview || data?.mode === "preview_noop" || data?.source === "preview-noop");
-        onResult(normalizeCheckResult(data?.result ?? data, isPreview, submittedInput));
+        const normalized = normalizeCheckResult(data?.result ?? data, isPreview, submittedInput);
+        onResult(normalized);
+        if (!normalized.preview && normalized.overpayPerYear > 0) {
+          analytics.freeCheckQualified({
+            township: normalized.township,
+            windowStatus: normalized.windowStatus,
+            estimatedAnnualSavings: normalized.overpayPerYear,
+            preview: false,
+          });
+        }
       } catch {
         setLoading(false);
         onResult(null);
