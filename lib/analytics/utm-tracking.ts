@@ -39,6 +39,25 @@ export function captureUTMParams(): UTMParams {
   return utm
 }
 
+/**
+ * First-touch capture. Persists the campaign UTM the FIRST time they appear and
+ * never lets a later navigation overwrite them. This matters for the funnel:
+ * /hoa's own on-page links re-tag onward traffic as `utm_source=hoa`
+ * (see app/hoa/hoa-client.tsx), so a plain `captureUTMParams()` running on every
+ * page would clobber the original campaign source (e.g. `property_manager`) at
+ * the very next click. First-touch keeps the original attribution readable via
+ * getStoredUTMParams()/getAttributionData() across the whole funnel.
+ *
+ * localStorage only — no cookies, no network, no PII — so it is safe to run in
+ * preview and dev as well as production.
+ */
+export function captureFirstTouchUTM(): UTMParams {
+  if (typeof window === "undefined") return {}
+  const existing = getStoredUTMParams()
+  if (existing && Object.keys(existing).length > 0) return existing
+  return captureUTMParams()
+}
+
 export function getStoredUTMParams(): UTMParams | null {
   if (typeof window === "undefined") return null
 

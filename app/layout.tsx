@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
 import { Suspense } from "react";
 import { ReferralCapture } from "@/components/ReferralCapture";
+import { UtmFirstTouchCapture } from "@/components/analytics/utm-first-touch";
 import { isProductionMarketingRuntime } from "@/lib/marketing/preview-gate";
 import "./globals.css";
 
@@ -48,6 +49,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
+        {/* First-touch UTM capture (localStorage only — no cookies/network/PII),
+            so campaign attribution survives from the landing page through the
+            funnel. Safe in preview/dev, hence not behind the marketing gate. */}
+        <Suspense fallback={null}>
+          <UtmFirstTouchCapture />
+        </Suspense>
         {liveMarketing && (
           <Suspense fallback={null}>
             <ReferralCapture />
