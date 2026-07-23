@@ -123,6 +123,35 @@ export const analytics = {
     trackEvent("deadline_free_check_start", params)
     trackMetaCustomEvent("DeadlineFreeCheckStart", { source: params.source })
   },
+
+  freeCheckQualified: ({
+    township,
+    windowStatus,
+    estimatedAnnualSavings,
+    preview,
+  }: {
+    township: string
+    windowStatus: string
+    estimatedAnnualSavings: number
+    preview: boolean
+  }) => {
+    const utm = getStoredUTMParams() ?? {}
+    const savingsBand =
+      estimatedAnnualSavings >= 2000
+        ? "2000_plus"
+        : estimatedAnnualSavings >= 1000
+          ? "1000_1999"
+          : estimatedAnnualSavings > 0
+            ? "1_999"
+            : "none"
+    trackEvent("free_check_qualified", {
+      township,
+      window_status: windowStatus,
+      savings_band: savingsBand,
+      preview,
+      ...utm,
+    })
+  },
 }
 
 /**

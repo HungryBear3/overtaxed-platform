@@ -2,8 +2,13 @@ import type { MetadataRoute } from "next"
 import fs from "fs"
 import path from "path"
 import { getTownshipSlugs } from "@/lib/townships"
+import {
+  ACTIVE_TOWNSHIP_CAMPAIGN_SLUGS,
+  getActiveTownshipCampaign,
+} from "@/lib/marketing/active-township-campaigns"
 
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com"
+export const revalidate = 43200
 
 // Township slugs always come from the canonical data source in
 // `lib/townships.ts` so the sitemap can never drift from the routes the
@@ -56,5 +61,22 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.7,
   }))
 
-  return [...staticPages, ...blogPages, ...townshipPages]
+  const townshipCampaignPages: MetadataRoute.Sitemap =
+    ACTIVE_TOWNSHIP_CAMPAIGN_SLUGS.map((slug) =>
+      getActiveTownshipCampaign(slug),
+    )
+      .filter((campaign) => campaign?.phase === "active")
+      .map((campaign) => ({
+        url: `${baseUrl}/appeal-deadline/${campaign!.slug}`,
+        lastModified: new Date(),
+        changeFrequency: "daily" as const,
+        priority: 0.95,
+      }))
+
+  return [
+    ...staticPages,
+    ...blogPages,
+    ...townshipPages,
+    ...townshipCampaignPages,
+  ]
 }
