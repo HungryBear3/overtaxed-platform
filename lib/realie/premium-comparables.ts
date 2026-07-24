@@ -84,6 +84,24 @@ function toDateISO(v: unknown): string | null {
   return null
 }
 
+/**
+ * Normalize a Realie parcel identifier to a 14-digit Cook County PIN.
+ *
+ * - A 14-digit value (dashes/whitespace stripped) is returned unchanged.
+ * - A 10-digit Realie base parcel ID is expanded deterministically to 14 digits
+ *   by appending the four trailing Cook County property digits ("0000"): Cook
+ *   County PINs are AA-TT-SSS-PPP-UUUU where the base parcel is the first 10
+ *   digits and UUUU is 0000 for a standard single parcel.
+ * - Any other length (or non-numeric input) returns null; the caller drops the
+ *   comp (Rule 15 requires a valid Cook County PIN).
+ */
+export function normalizeCookCountyPinFromRealie(raw: string): string | null {
+  const digits = String(raw ?? "").replace(/\D/g, "")
+  if (digits.length === 14) return digits
+  if (digits.length === 10) return `${digits}0000`
+  return null
+}
+
 function mapOne(c: RealieComparableRaw): MappedRealieComp | null {
   const pin =
     c.parcelId ??
@@ -91,8 +109,8 @@ function mapOne(c: RealieComparableRaw): MappedRealieComp | null {
     c.pin ??
     (typeof c === "object" && (c as Record<string, unknown>).parcelId)
   if (!pin) return null
-  const pinRaw = normalizePin(String(pin))
-  if (pinRaw.length !== 14) return null
+  const pinRaw = normalizeCookCountyPinFromRealie(String(pin))
+  if (!pinRaw) return null
   const salePrice =
     num(c.transferPrice) ??
     num(c.transfer_price) ??
