@@ -3,6 +3,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import Link from "next/link"
 import { formatPIN } from "@/lib/cook-county"
 
+export const dynamic = "force-dynamic"
+
 export default async function AdminAppealsPage() {
   const appeals = await prisma.appeal.findMany({
     orderBy: [{ taxYear: "desc" }, { createdAt: "desc" }],

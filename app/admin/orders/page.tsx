@@ -2,6 +2,8 @@ import { prisma } from "@/lib/db"
 import { getSession } from "@/lib/auth/session"
 import { OTNoticeReviewActions } from "@/components/admin/OTNoticeReviewActions"
 
+export const dynamic = "force-dynamic"
+
 function money(amount: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",

@@ -3,6 +3,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ClipboardCheck } from "lucide-react"
 import { FilingQueueRow } from "./FilingQueueRow"
 
+export const dynamic = "force-dynamic"
+
 export default async function AdminFilingQueuePage() {
   const appealsWithAuth = await prisma.appeal.findMany({
     where: {

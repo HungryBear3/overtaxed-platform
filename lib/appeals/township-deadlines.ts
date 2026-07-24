@@ -75,6 +75,7 @@ export const TOWNSHIP_DEADLINES_2026: Record<
   cicero: { noticeDate: "2026-06-17", lastFileDate: "2026-07-31" },
   palos: { noticeDate: "2026-06-03", lastFileDate: "2026-07-17" },
   stickney: { noticeDate: "2026-06-29", lastFileDate: "2026-08-12" },
+  lyons: { noticeDate: "2026-07-23", lastFileDate: "2026-09-03" },
   berwyn: { noticeDate: "2026-05-20", lastFileDate: "2026-07-06" },
   "oak park": { noticeDate: "2026-05-06", lastFileDate: "2026-06-18" },
   riverside: { noticeDate: "2026-04-24", lastFileDate: "2026-06-08" },

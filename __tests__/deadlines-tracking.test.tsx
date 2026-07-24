@@ -25,10 +25,10 @@ describe("/deadlines lead tracking", () => {
     render(<DeadlinesPage />);
 
     expect(analytics.deadlineMapView).toHaveBeenCalledWith({
-      officialCount: 15,
-      openCount: 4,
+      officialCount: 16,
+      openCount: 5,
       closedCount: 11,
-      pendingCount: 23,
+      pendingCount: 22,
       sourceUpdated: "2026-07-23",
     });
   });
