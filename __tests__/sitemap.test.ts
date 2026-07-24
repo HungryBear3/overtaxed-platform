@@ -52,4 +52,10 @@ describe("app/sitemap.ts — township URLs", () => {
   test("bogus 'chicago' slug is not advertised (no /township/chicago page)", () => {
     expect(sitemapSlugs).not.toContain("chicago");
   });
+
+  test("includes the public HOA resource landing page", () => {
+    expect(entries.map((entry) => entry.url)).toContain(
+      "https://www.overtaxed-il.com/hoa",
+    );
+  });
 });
