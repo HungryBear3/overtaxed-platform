@@ -39,7 +39,7 @@ describe("official 2026 deadline data", () => {
     // Source URL is the official Assessor calendar.
     expect(getOfficial2026Deadline("Oak Park")?.calendarUrl).toBe(ASSESSOR_CALENDAR_URL);
     expect(ASSESSOR_CALENDAR_URL).toContain("cookcountyassessoril.gov");
-    expect(TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED).toBe("2026-07-14");
+    expect(TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED).toBe("2026-07-23");
   });
 
   it("normalizes the Township suffix", () => {

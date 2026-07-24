@@ -26,10 +26,10 @@ describe("/deadlines lead tracking", () => {
 
     expect(analytics.deadlineMapView).toHaveBeenCalledWith({
       officialCount: 15,
-      openCount: 6,
-      closedCount: 9,
+      openCount: 4,
+      closedCount: 11,
       pendingCount: 23,
-      sourceUpdated: "2026-07-14",
+      sourceUpdated: "2026-07-23",
     });
   });
 
@@ -57,7 +57,7 @@ describe("/deadlines lead tracking", () => {
     expect(analytics.deadlineReminderSignup).toHaveBeenCalledWith({
       townshipSlug: "palos",
       townshipName: "Palos",
-      status: "open",
+      status: "closed",
     });
     expect(JSON.stringify((analytics.deadlineReminderSignup as jest.Mock).mock.calls)).not.toContain("owner@example.com");
   });

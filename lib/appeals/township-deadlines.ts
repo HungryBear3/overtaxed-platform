@@ -56,7 +56,7 @@ export const TOWNSHIP_DEADLINES_2025: Record<
  *
  * Source: Cook County Assessor Assessment & Appeal Calendar
  *   https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines
- * Calendar "Last Updated" marker at time of capture: 2026-07-14.
+ * Calendar "Last Updated" marker at time of capture: 2026-07-23.
  *
  * IMPORTANT — DO NOT INFER OR BACKFILL:
  * Only townships the Assessor has actually published a 2026 Last File Date for
@@ -95,7 +95,7 @@ export const TOWNSHIP_DEADLINES_2026: Record<
 };
 
 /** Human-visible "last updated" marker from the official 2026 calendar capture. */
-export const TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED = "2026-07-14";
+export const TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED = "2026-07-23";
 
 const ASSESSOR_CALENDAR_URL =
   "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines";

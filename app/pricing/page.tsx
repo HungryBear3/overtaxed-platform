@@ -79,29 +79,11 @@ export default function PricingPage() {
 
   async function handleBuyNow(tierId: string) {
     if (previewMode) {
-      // Belt and suspenders — the button is also disabled in preview, but
-      // refuse to call /api/checkout/session in any case.
       setError("Preview checkout disabled — Stripe is not called in this environment.");
       return;
     }
-    setLoadingTier(tierId);
     setError(null);
-    try {
-      const res = await fetch("/api/checkout/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tier: tierId }),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Checkout failed");
-      }
-      const { url } = await res.json();
-      router.push(url);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
-      setLoadingTier(null);
-    }
+    router.push(tierId === "T3" ? "/checkout?plan=done-for-you" : "/checkout?plan=diy");
   }
 
   return (

@@ -814,23 +814,50 @@ model FreeCheckFollowupMessage {
 }
 
 model OTOrder {
-  id              String   @id @default(cuid())
-  stripeSessionId String   @unique
-  tier            String
-  email           String
-  name            String?
-  phone           String?
-  propertyAddress String?
-  propertyPin     String?
-  amountPaid      Float    @default(0)
-  status          String   @default("PENDING")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                        String    @id @default(cuid())
+  stripeSessionId           String?   @unique
+  checkoutKey               String?   @unique
+  tier                      String
+  email                     String
+  name                      String?
+  phone                     String?
+  propertyAddress           String?
+  propertyPin               String?
+  township                  String?
+  windowStatus              String?
+  windowOpenDate            DateTime?
+  windowCloseDate           DateTime?
+  windowSourceUpdated       String?
+  windowVerifiedAt          DateTime?
+  eligibilitySnapshot       Json?
+  analysisAcknowledgedAt    DateTime?
+  acknowledgmentVersion     String?
+  acknowledgmentEvidence    Json?
+  reassessmentNoticeDate    DateTime?
+  reassessmentNoticeAddress String?
+  noticeEvidence            Json?
+  noticeReviewStatus        String?
+  noticeReviewActionAt      DateTime?
+  noticeReviewActionBy      String?
+  contractKey               String?   @unique
+  attempt                   Int       @default(0)
+  checkoutSessionExpiresAt  DateTime?
+  checkoutPriceId           String?
+  checkoutProductId         String?
+  checkoutAmountCents       Int?
+  checkoutCurrency          String?
+  settledAmountCents        Int?
+  settledCurrency           String?
+  recoveryReason            String?
+  amountPaid                Float     @default(0)
+  status                    String    @default("PENDING")
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
 
-  @@map("ot_order")
   @@index([email])
   @@index([stripeSessionId])
   @@index([createdAt])
+  @@map("ot_order")
 }
 
 model Referral {

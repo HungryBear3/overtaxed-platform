@@ -1,50 +1,41 @@
 # Database Migrations
 
-## Automatic migrations on deploy
+## Deploy truth
 
-The build runs `prisma migrate deploy` before `next build`, so migrations are applied automatically on each Vercel deploy.
+Vercel build runs `prisma generate` and `next build`. It does **not** run `prisma migrate deploy`, and it does **not** apply schema changes for you.
 
-## One-time baseline (existing production database)
+Any controlled operator must:
 
-If your Supabase database was created before Prisma Migrate (e.g. via `db push` or manual SQL), you must **baseline** it once before `prisma migrate deploy` will succeed. Otherwise you get error P3005: "The database schema is not empty."
+1. Apply the intended migration to the target database first.
+2. Verify the migration completed and the schema matches the checked-in migration.
+3. Deploy the application code only after that verification succeeds.
 
-**Run this once** with your production `DATABASE_URL` (from Vercel → Project → Settings → Environment Variables, or Supabase → Settings → Database → Connection string):
+Do not assume the schema is safe or current until the migration has actually been applied and verified in the target environment.
 
-```powershell
-# PowerShell (set env, then run)
-$env:DATABASE_URL = "postgresql://postgres.[ref]:[password]@aws-1-us-east-2.pooler.supabase.com:5432/postgres"
-npm run db:baseline
-```
+## Normal workflow
 
-Or in one line:
-```powershell
-$env:DATABASE_URL = "postgresql://..."; npm run db:baseline
-```
-
-This marks the baseline migration as applied without running it, since your tables already exist. After this, `prisma migrate deploy` on Vercel will succeed and only apply new migrations.
-
-## Workflow for schema changes
-
-1. **Edit schema:** Update `prisma/schema.prisma`
-2. **Create migration locally:**
+1. Edit `prisma/schema.prisma`.
+2. Create or update the additive migration under `prisma/migrations/`.
+3. Run local verification:
    ```bash
-   npx prisma migrate dev --name add_your_change
+   pnpm prisma format
+   pnpm prisma validate
+   pnpm prisma generate
    ```
-   This creates a new folder under `prisma/migrations/` with the SQL.
-3. **Commit and push:** The migration is applied on next deploy.
-
-## If you add columns manually (Supabase Table Editor)
-
-If you added a column manually and want to keep migrations in sync:
-
-1. Create a migration folder: `prisma/migrations/YYYYMMDDHHMMSS_descriptive_name/`
-2. Add `migration.sql` with idempotent SQL, e.g.:
-   ```sql
-   ALTER TABLE "YourTable" ADD COLUMN IF NOT EXISTS "yourColumn" TEXT;
+4. Have the controlled operator run:
+   ```bash
+   prisma migrate status
+   prisma migrate deploy
+   prisma migrate status
    ```
-3. Run `prisma migrate resolve --applied YYYYMMDDHHMMSS_descriptive_name` against production (or let deploy run it; `IF NOT EXISTS` makes it safe).
+5. Verify the target schema/indexes, then deploy code.
 
-## Migrate deploy requirements
+## Baseline note
 
-- `DATABASE_URL` must be set in Vercel (it is for Supabase).
-- `prisma` must be in `dependencies` (not devDependencies) so it runs during Vercel build.
+If a target database predates Prisma Migrate, baseline it explicitly before relying on `prisma migrate deploy`. The existing helper remains:
+
+```bash
+pnpm db:baseline
+```
+
+Run that only in a controlled environment against the intended database, and only when the baseline procedure is actually required.

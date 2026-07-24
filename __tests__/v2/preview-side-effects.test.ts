@@ -258,13 +258,12 @@ describe("source-level guards", () => {
     expect(earlyReturnIdx).toBeLessThan(fetchIdx);
   });
 
-  it("/pricing client disables Buy Now in preview and refuses to POST /api/checkout/session", () => {
+  it("/pricing routes Buy Now into gated intake and never POSTs directly to checkout", () => {
     const src = readSrc("app/pricing/page.tsx");
     expect(src).toMatch(/preview-gate-client/);
     expect(src).toMatch(/Preview checkout disabled/);
-    const guardIdx = src.indexOf("if (previewMode)");
-    const fetchIdx = src.indexOf('fetch("/api/checkout/session"');
-    expect(guardIdx).toBeGreaterThan(0);
-    expect(guardIdx).toBeLessThan(fetchIdx);
+    expect(src).toContain('"/checkout?plan=done-for-you"');
+    expect(src).toContain('"/checkout?plan=diy"');
+    expect(src).not.toContain('fetch("/api/checkout/session"');
   });
 });
