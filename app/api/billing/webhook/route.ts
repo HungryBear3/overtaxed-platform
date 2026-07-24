@@ -4,6 +4,12 @@ import { stripe } from "@/lib/stripe/client"
 import { prisma } from "@/lib/db"
 import { generatePacketForInvoice } from "@/lib/packet/generate-and-deliver"
 import { sendNewOrderAlert, sendOrderConfirmation } from "@/lib/email/send"
+import {
+  type OtSettlementOrder,
+  validateApprovedNoticeSettlement,
+  validateCurrentT3Settlement,
+  validateT2Acknowledgment,
+} from "@/lib/checkout/ot-settlement"
 
 export async function POST(request: NextRequest) {
   console.log("[webhook] Received webhook request")
@@ -151,61 +157,176 @@ export async function POST(request: NextRequest) {
         break
       }
 
-      // New billing overhaul path: T1/T2/T3 one-time tier purchases
-      // These sessions come from /api/checkout/session and carry {tier, propertyPin}
-      // without a userId (anonymous checkout). Notify ops; T1 can auto-generate a packet.
+      // OT T2/T3 purchases must settle against the durable server-created
+      // order and exact provider/window contract. Paid mismatches are held for
+      // manual recovery and never receive normal fulfillment notifications.
       if (metadata.tier) {
         const tier = metadata.tier
-        const propertyPin = metadata.propertyPin ?? ""
+        const sessionId = String(data.id ?? "")
+        const orderId = metadata.orderId ?? ""
+        const paymentStatus = String(data.payment_status ?? "")
+        const currency = String(data.currency ?? "").toLowerCase()
+        const amountCents = Number(data.amount_total)
         const customerDetails = data.customer_details as Record<string, unknown> | null
-        const customerEmail = (customerDetails?.email as string) ?? ""
-        const customerName = (customerDetails?.name as string) ?? ""
-        const amountPaid = ((data.amount_total as number) ?? 0) / 100
-        const sessionId = (data.id as string) ?? ""
+        const customerEmail = String(customerDetails?.email ?? "").trim().toLowerCase()
+        const customerName = String(customerDetails?.name ?? "")
+        const amountPaid = Number.isSafeInteger(amountCents) ? amountCents / 100 : 0
 
-        const customerAddress = metadata.customerAddress ?? ""
-        console.log(`[webhook] New ${tier} order — ${customerEmail} — $${amountPaid} — session ${sessionId}`)
+        if (paymentStatus !== "paid") {
+          console.error(`[webhook] Ignoring unsettled OT checkout ${sessionId}`)
+          break
+        }
 
-        try {
-          await prisma.oTOrder.upsert({
+        const recover = async (reason: string, existing: OtSettlementOrder | null = null) => {
+          if (existing) {
+            const terminal = ["CANCELLED", "REFUNDED"].includes(existing.status)
+            await prisma.oTOrder.updateMany({
+              where: terminal
+                ? { id: existing.id, stripeSessionId: sessionId, status: existing.status }
+                : { id: existing.id, stripeSessionId: sessionId, status: { notIn: ["PAID", "PAID_RECOVERY_REQUIRED", "CANCELLED", "REFUNDED"] } },
+              data: {
+                settledAmountCents: Number.isSafeInteger(amountCents) ? amountCents : 0,
+                settledCurrency: currency || "unknown",
+                amountPaid,
+                recoveryReason: reason,
+                ...(terminal ? {} : { status: "PAID_RECOVERY_REQUIRED" }),
+              },
+            })
+            return (await prisma.oTOrder.findUnique({ where: { id: existing.id } })) ?? existing
+          }
+          return prisma.oTOrder.upsert({
             where: { stripeSessionId: sessionId },
-            update: {
-              tier,
-              email: customerEmail,
-              name: customerName || null,
-              propertyAddress: customerAddress || null,
-              propertyPin: propertyPin || null,
-              amountPaid,
-              status: "PAID",
-            },
+            update: {},
             create: {
               stripeSessionId: sessionId,
               tier,
               email: customerEmail,
               name: customerName || null,
-              propertyAddress: customerAddress || null,
-              propertyPin: propertyPin || null,
+              settledAmountCents: Number.isSafeInteger(amountCents) ? amountCents : 0,
+              settledCurrency: currency || "unknown",
               amountPaid,
-              status: "PAID",
+              recoveryReason: reason,
+              status: "PAID_RECOVERY_REQUIRED",
             },
           })
-        } catch (err) {
-          console.error(
-            `[webhook] CRITICAL: OTOrder persistence failed for session ${sessionId}; releasing claim so Stripe retries:`,
-            err,
-          )
-          await releaseEventClaim()
-          return NextResponse.json({ error: "Database error" }, { status: 500 })
         }
 
-        sendNewOrderAlert({ tier, customerEmail, customerName, propertyPin: propertyPin || customerAddress, amountPaid, sessionId }).catch((err) =>
-          console.error("[webhook] sendNewOrderAlert failed:", err),
-        )
+        let persistedOrder: OtSettlementOrder | null = null
+        let alreadyPaid = false
+        try {
+          if (!orderId || !["T2", "T3"].includes(tier) || !sessionId || !currency || !Number.isSafeInteger(amountCents)) {
+            const reason = !orderId
+              ? "MISSING_PRECREATED_ORDER_ID"
+              : !["T2", "T3"].includes(tier)
+                ? "UNSUPPORTED_TIER"
+                : !currency || !Number.isSafeInteger(amountCents)
+                  ? "INVALID_SETTLEMENT_AMOUNT_OR_CURRENCY"
+                  : "INVALID_SESSION_ID"
+            persistedOrder = await recover(reason) as unknown as OtSettlementOrder
+          } else {
+            const current = await prisma.oTOrder.findUnique({ where: { id: orderId } }) as unknown as OtSettlementOrder | null
+            const exactBinding = Boolean(
+              current &&
+              current.tier === tier &&
+              current.email.trim().toLowerCase() === customerEmail &&
+              current.stripeSessionId === sessionId &&
+              current.checkoutAmountCents === amountCents &&
+              current.checkoutCurrency === currency,
+            )
+            if (!current || !exactBinding) {
+              persistedOrder = await recover(current ? "DURABLE_CONTRACT_MISMATCH" : "MISSING_DURABLE_ORDER", current) as unknown as OtSettlementOrder
+            } else {
+              const lineItems = await stripe.checkout.sessions.listLineItems(sessionId, {
+                limit: 2,
+                expand: ["data.price.product"],
+              })
+              const line = lineItems.data[0]
+              const product = line?.price?.product
+              const productId = typeof product === "string" ? product : product?.id
+              let recoveryReason = !(
+                lineItems.data.length === 1 &&
+                line?.quantity === 1 &&
+                line?.price?.id === current.checkoutPriceId &&
+                productId === current.checkoutProductId &&
+                line?.price?.unit_amount === current.checkoutAmountCents &&
+                line?.price?.currency?.toLowerCase() === current.checkoutCurrency &&
+                line?.amount_total === amountCents
+              ) ? "Stripe OT checkout line item differs from the durable order contract" : null
 
+              if (!recoveryReason && tier === "T2") recoveryReason = validateT2Acknowledgment(current)
+              if (!recoveryReason && tier === "T3") {
+                recoveryReason = current.noticeEvidence
+                  ? validateApprovedNoticeSettlement(current, sessionId)
+                  : validateCurrentT3Settlement(current)
+              }
+
+              alreadyPaid = current.status === "PAID"
+              if (alreadyPaid || current.status === "PAID_RECOVERY_REQUIRED") {
+                persistedOrder = current
+              } else if (["CANCELLED", "REFUNDED"].includes(current.status) || recoveryReason) {
+                persistedOrder = await recover(
+                  recoveryReason ?? `Settled Checkout Session arrived for terminal OTOrder status ${current.status}`,
+                  current,
+                ) as unknown as OtSettlementOrder
+              } else {
+                const snapshot = current.eligibilitySnapshot
+                const paid = await prisma.oTOrder.updateMany({
+                  where: {
+                    id: current.id,
+                    checkoutKey: current.checkoutKey,
+                    stripeSessionId: sessionId,
+                    tier: current.tier,
+                    email: current.email,
+                    propertyAddress: current.propertyAddress,
+                    propertyPin: current.propertyPin,
+                    township: current.township,
+                    windowStatus: current.windowStatus,
+                    windowOpenDate: current.windowOpenDate,
+                    windowCloseDate: current.windowCloseDate,
+                    windowSourceUpdated: current.windowSourceUpdated,
+                    eligibilitySnapshot: { equals: snapshot as never },
+                    analysisAcknowledgedAt: current.analysisAcknowledgedAt,
+                    acknowledgmentVersion: current.acknowledgmentVersion,
+                    reassessmentNoticeDate: current.reassessmentNoticeDate,
+                    reassessmentNoticeAddress: current.reassessmentNoticeAddress,
+                    checkoutAmountCents: amountCents,
+                    checkoutCurrency: currency,
+                    status: "CHECKOUT_CREATED",
+                  },
+                  data: { settledAmountCents: amountCents, settledCurrency: currency, amountPaid, status: "PAID" },
+                })
+                if (paid.count !== 1) throw new Error(`OTOrder ${current.id} payment contract changed`)
+                persistedOrder = await prisma.oTOrder.findUnique({ where: { id: current.id } }) as unknown as OtSettlementOrder
+              }
+            }
+          }
+        } catch (err) {
+          console.error(`[webhook] OT settlement failed for ${sessionId}; releasing claim so Stripe retries:`, err)
+          await releaseEventClaim()
+          return NextResponse.json({ error: "OT settlement error" }, { status: 500 })
+        }
+
+        if (!persistedOrder || persistedOrder.status !== "PAID" || alreadyPaid) {
+          return NextResponse.json({ received: true, recovery: persistedOrder?.status !== "PAID" })
+        }
+
+        const resolvedAddress = persistedOrder.propertyAddress ?? ""
+        sendNewOrderAlert({
+          tier,
+          customerEmail,
+          customerName,
+          propertyPin: persistedOrder.propertyPin || resolvedAddress,
+          amountPaid,
+          sessionId,
+        }).catch((err) => console.error("[webhook] sendNewOrderAlert failed:", err))
         if (customerEmail) {
-          sendOrderConfirmation({ tier, customerEmail, customerName, address: customerAddress || propertyPin || undefined, amountPaid }).catch((err) =>
-            console.error("[webhook] sendOrderConfirmation failed:", err),
-          )
+          sendOrderConfirmation({
+            tier,
+            customerEmail,
+            customerName,
+            address: resolvedAddress || persistedOrder.propertyPin || undefined,
+            amountPaid,
+          }).catch((err) => console.error("[webhook] sendOrderConfirmation failed:", err))
         }
         break
       }

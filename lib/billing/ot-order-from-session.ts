@@ -34,7 +34,7 @@ export function otOrderFromPaidSession(session: CheckoutSessionLike): RecoveredO
   }
 
   const tier = session.metadata?.tier?.trim()
-  if (!tier || !["T1", "T2", "T3"].includes(tier)) {
+  if (!tier || !["T2", "T3"].includes(tier)) {
     throw new Error("Checkout Session has no supported OT tier")
   }
 
