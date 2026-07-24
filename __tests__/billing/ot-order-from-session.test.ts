@@ -41,4 +41,11 @@ describe("otOrderFromPaidSession", () => {
   ])("rejects unsafe recovery input", (session, message) => {
     expect(() => otOrderFromPaidSession(session)).toThrow(message)
   })
+
+  it("rejects stale T1 recovery input", () => {
+    expect(() => otOrderFromPaidSession({
+      ...paidSession,
+      metadata: { ...paidSession.metadata, tier: "T1" },
+    })).toThrow("supported OT tier")
+  })
 })

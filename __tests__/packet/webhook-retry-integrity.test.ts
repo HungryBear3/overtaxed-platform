@@ -68,13 +68,24 @@ jest.mock("@/lib/db", () => ({
     },
     referral: { upsert: jest.fn(async () => ({})) },
     oTOrder: {
-      upsert: jest.fn(async ({ where, update, create }: { where: { stripeSessionId: string }; update: Row; create: Row }) => {
+      findUnique: jest.fn(async ({ where }: { where: { id?: string; stripeSessionId?: string } }) => {
+        if (where.stripeSessionId) return dbState.otOrders.get(where.stripeSessionId) ?? null
+        if (where.id) return Array.from(dbState.otOrders.values()).find((row) => row.id === where.id) ?? null
+        return null
+      }),
+      create: jest.fn(async ({ data }: { data: Row }) => {
         if (failures.otOrderUpsert) throw failures.otOrderUpsert
-        const existing = dbState.otOrders.get(where.stripeSessionId)
-        const row = existing ? { ...existing, ...update } : create
-        dbState.otOrders.set(where.stripeSessionId, row)
+        const sessionId = String(data.stripeSessionId)
+        if (dbState.otOrders.has(sessionId)) {
+          const err = new Error("unique constraint") as Error & { code?: string }
+          err.code = "P2002"
+          throw err
+        }
+        const row = { id: `ord_${dbState.otOrders.size + 1}`, ...data }
+        dbState.otOrders.set(sessionId, row)
         return row
       }),
+      updateMany: jest.fn(async () => ({ count: 0 })),
     },
   },
 }))
@@ -142,6 +153,8 @@ function makeTierRequest(eventId: string, sessionId = "cs_test_ot_order") {
       object: {
         id: sessionId,
         mode: "payment",
+        payment_status: "paid",
+        currency: "usd",
         amount_total: 6900,
         metadata: {
           tier: "T2",
@@ -257,7 +270,7 @@ describe("Duplicate / concurrent webhook delivery", () => {
 })
 
 describe("anonymous OT tier orders", () => {
-  it("persists OTOrder before async ops/customer emails", async () => {
+  it("holds a legacy paid session without a durable orderId and suppresses fulfillment", async () => {
     const res = await POST(makeTierRequest("evt_tier_ok", "cs_test_order_1"))
     expect(res.status).toBe(200)
     expect(dbState.stripeEvents.has("evt_tier_ok")).toBe(true)
@@ -266,16 +279,15 @@ describe("anonymous OT tier orders", () => {
       tier: "T2",
       email: "buyer@example.com",
       name: "Buyer Example",
-      propertyAddress: "123 Test Ave, Chicago IL",
-      propertyPin: "12-34-567-890-0000",
       amountPaid: 69,
-      status: "PAID",
+      status: "PAID_RECOVERY_REQUIRED",
+      recoveryReason: "MISSING_PRECREATED_ORDER_ID",
     })
-    expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
-    expect(sendOrderConfirmationMock).toHaveBeenCalledTimes(1)
+    expect(sendNewOrderAlertMock).not.toHaveBeenCalled()
+    expect(sendOrderConfirmationMock).not.toHaveBeenCalled()
   })
 
-  it("returns 500 and releases the StripeEvent claim when OTOrder persistence fails", async () => {
+  it("returns 500 and releases the StripeEvent claim when recovery persistence fails", async () => {
     failures.otOrderUpsert = new Error("DB connection lost")
     const res = await POST(makeTierRequest("evt_tier_fail", "cs_test_order_fail"))
     expect(res.status).toBe(500)

@@ -8,6 +8,8 @@ import {
   shouldCreatePerformanceInvoice,
 } from "@/lib/billing/performance-fee"
 
+export const dynamic = "force-dynamic"
+
 export default async function AdminPerformancePage() {
   const performanceUsers = await prisma.user.findMany({
     where: { subscriptionTier: "PERFORMANCE" },
