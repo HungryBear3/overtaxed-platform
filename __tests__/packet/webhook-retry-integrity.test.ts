@@ -68,13 +68,24 @@ jest.mock("@/lib/db", () => ({
     },
     referral: { upsert: jest.fn(async () => ({})) },
     oTOrder: {
-      upsert: jest.fn(async ({ where, update, create }: { where: { stripeSessionId: string }; update: Row; create: Row }) => {
+      findUnique: jest.fn(async ({ where }: { where: { id?: string; stripeSessionId?: string } }) => {
+        if (where.stripeSessionId) return dbState.otOrders.get(where.stripeSessionId) ?? null
+        if (where.id) return Array.from(dbState.otOrders.values()).find((row) => row.id === where.id) ?? null
+        return null
+      }),
+      create: jest.fn(async ({ data }: { data: Row }) => {
         if (failures.otOrderUpsert) throw failures.otOrderUpsert
-        const existing = dbState.otOrders.get(where.stripeSessionId)
-        const row = existing ? { ...existing, ...update } : create
-        dbState.otOrders.set(where.stripeSessionId, row)
+        const sessionId = String(data.stripeSessionId)
+        if (dbState.otOrders.has(sessionId)) {
+          const err = new Error("unique constraint") as Error & { code?: string }
+          err.code = "P2002"
+          throw err
+        }
+        const row = { id: `ord_${dbState.otOrders.size + 1}`, ...data }
+        dbState.otOrders.set(sessionId, row)
         return row
       }),
+      updateMany: jest.fn(async () => ({ count: 0 })),
     },
   },
 }))

@@ -177,38 +177,56 @@ export async function POST(request: NextRequest) {
           break
         }
 
-        const recover = async (reason: string, existing: OtSettlementOrder | null = null) => {
+        const recover = async (reason: string, existing: OtSettlementOrder | null = null): Promise<OtSettlementOrder> => {
+          const recoveryData = {
+            settledAmountCents: Number.isSafeInteger(amountCents) ? amountCents : 0,
+            settledCurrency: currency || "unknown",
+            amountPaid,
+            recoveryStripeSessionId: sessionId,
+            recoveryStripeEventId: String(event.id),
+            recoveryReason: reason,
+          }
+
           if (existing) {
             const terminal = ["CANCELLED", "REFUNDED"].includes(existing.status)
-            await prisma.oTOrder.updateMany({
-              where: terminal
-                ? { id: existing.id, stripeSessionId: sessionId, status: existing.status }
-                : { id: existing.id, stripeSessionId: sessionId, status: { notIn: ["PAID", "PAID_RECOVERY_REQUIRED", "CANCELLED", "REFUNDED"] } },
+            const recovered = await prisma.oTOrder.updateMany({
+              where: {
+                id: existing.id,
+                stripeSessionId: existing.stripeSessionId,
+                checkoutKey: existing.checkoutKey,
+                contractKey: existing.contractKey,
+                attempt: existing.attempt,
+                status: existing.status,
+              },
               data: {
-                settledAmountCents: Number.isSafeInteger(amountCents) ? amountCents : 0,
-                settledCurrency: currency || "unknown",
-                amountPaid,
-                recoveryReason: reason,
+                ...recoveryData,
                 ...(terminal ? {} : { status: "PAID_RECOVERY_REQUIRED" }),
               },
             })
-            return (await prisma.oTOrder.findUnique({ where: { id: existing.id } })) ?? existing
+            if (recovered.count !== 1) {
+              throw new Error(`OTOrder ${existing.id} recovery contract changed`)
+            }
+            const persisted = await prisma.oTOrder.findUnique({ where: { id: existing.id } })
+            if (!persisted) throw new Error(`OTOrder ${existing.id} disappeared after recovery persistence`)
+            return persisted as unknown as OtSettlementOrder
           }
-          return prisma.oTOrder.upsert({
-            where: { stripeSessionId: sessionId },
-            update: {},
-            create: {
+
+          const existingBySession = await prisma.oTOrder.findUnique({ where: { stripeSessionId: sessionId } })
+          if (existingBySession) {
+            return recover(reason, existingBySession as unknown as OtSettlementOrder)
+          }
+
+          const created = await prisma.oTOrder.create({
+            data: {
               stripeSessionId: sessionId,
               tier,
               email: customerEmail,
               name: customerName || null,
-              settledAmountCents: Number.isSafeInteger(amountCents) ? amountCents : 0,
-              settledCurrency: currency || "unknown",
-              amountPaid,
-              recoveryReason: reason,
+              ...recoveryData,
               status: "PAID_RECOVERY_REQUIRED",
             },
           })
+          return created as unknown as OtSettlementOrder
         }
 
         let persistedOrder: OtSettlementOrder | null = null
@@ -260,8 +278,8 @@ export async function POST(request: NextRequest) {
                   : validateCurrentT3Settlement(current)
               }
 
-              alreadyPaid = current.status === "PAID"
-              if (alreadyPaid || current.status === "PAID_RECOVERY_REQUIRED") {
+              alreadyPaid = current.status === "PAID" && !recoveryReason
+              if (alreadyPaid || (current.status === "PAID_RECOVERY_REQUIRED" && !recoveryReason)) {
                 persistedOrder = current
               } else if (["CANCELLED", "REFUNDED"].includes(current.status) || recoveryReason) {
                 persistedOrder = await recover(

@@ -21,7 +21,7 @@ Do not deploy application code until all gates pass:
 3. Refresh or explicitly verify the authoritative township snapshot. The checked-in source marker is `2026-07-23` and the route fails closed after its configured freshness TTL.
 4. Obtain and verify a production database backup.
 5. Run `prisma migrate status` against the intended migration datasource.
-6. Apply `20260723220000_add_ot_checkout_window_snapshot` **before** activating the code.
+6. Apply `20260723220000_add_ot_checkout_window_snapshot` and then `20260724143500_add_ot_recovery_payment_binding` **before** activating the code.
 7. Run `prisma migrate status` again.
 8. Verify the `ot_order` columns, nullability, and indexes listed below.
 9. Run a schema drift comparison and classify every difference. Do not treat historical baseline drift as harmless without an explicit review.
@@ -75,7 +75,8 @@ WHERE table_schema = 'public'
     'windowStatus', 'windowVerifiedAt',
     'analysisAcknowledgedAt', 'noticeEvidence',
     'checkoutAmountCents', 'checkoutCurrency',
-    'settledAmountCents', 'settledCurrency', 'recoveryReason'
+    'settledAmountCents', 'settledCurrency', 'recoveryReason',
+    'recoveryStripeSessionId', 'recoveryStripeEventId'
   )
 ORDER BY column_name;
 
@@ -83,7 +84,11 @@ SELECT indexname, indexdef
 FROM pg_indexes
 WHERE schemaname = 'public'
   AND tablename = 'ot_order'
-  AND indexname IN ('ot_order_checkoutKey_key', 'ot_order_contractKey_key')
+  AND indexname IN (
+    'ot_order_checkoutKey_key',
+    'ot_order_contractKey_key',
+    'ot_order_recoveryStripeSessionId_idx'
+  )
 ORDER BY indexname;
 ```
 

@@ -17,6 +17,7 @@ const sendOrderConfirmationMock = jest.fn(async (_args?: unknown) => true)
 const sendPaidOrderRecoveryAlertMock = jest.fn(async (_args?: unknown) => true)
 const sendPaymentRecoveryAcknowledgmentMock = jest.fn(async (_args?: unknown) => true)
 const sendBillingPaymentRecoveryAlertMock = jest.fn(async (_args?: unknown) => true)
+let forceOtOrderUpdateMiss = false
 
 jest.mock("@/lib/db", () => ({
   prisma: {
@@ -31,6 +32,11 @@ jest.mock("@/lib/db", () => ({
         return data
       }),
       findUnique: jest.fn(async ({ where }: { where: { id: string } }) => dbState.stripeEvents.get(where.id) ?? null),
+      delete: jest.fn(async ({ where }: { where: { id: string } }) => {
+        const row = dbState.stripeEvents.get(where.id)
+        dbState.stripeEvents.delete(where.id)
+        return row ?? null
+      }),
       updateMany: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
         const row = dbState.stripeEvents.get(String(where.id))
         if (!row) return { count: 0 }
@@ -54,13 +60,17 @@ jest.mock("@/lib/db", () => ({
       updateMany: jest.fn(async () => ({ count: 1 })),
     },
     oTOrder: {
-      findUnique: jest.fn(async ({ where }: { where: { id?: string } }) => {
+      findUnique: jest.fn(async ({ where }: { where: { id?: string; stripeSessionId?: string } }) => {
         if (where.id) {
           return Array.from(dbState.otOrders.values()).find((row) => row.id === where.id) ?? null
+        }
+        if (where.stripeSessionId) {
+          return Array.from(dbState.otOrders.values()).find((row) => row.stripeSessionId === where.stripeSessionId) ?? null
         }
         return null
       }),
       updateMany: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
+        if (forceOtOrderUpdateMiss) return { count: 0 }
         const row = Array.from(dbState.otOrders.values()).find((candidate) => {
           return Object.entries(where).every(([key, value]) => {
             if (value === undefined) return true
@@ -77,9 +87,14 @@ jest.mock("@/lib/db", () => ({
         Object.assign(row, data)
         return { count: 1 }
       }),
-      upsert: jest.fn(async ({ where, create }: { where: { stripeSessionId: string }; create: Row }) => {
-        const row = dbState.otOrders.get(where.stripeSessionId) ?? { id: "ord_recovery", ...create }
-        dbState.otOrders.set(where.stripeSessionId, row)
+      create: jest.fn(async ({ data }: { data: Row }) => {
+        if (Array.from(dbState.otOrders.values()).some((row) => row.stripeSessionId === data.stripeSessionId)) {
+          const err = new Error("unique") as Error & { code?: string }
+          err.code = "P2002"
+          throw err
+        }
+        const row = { id: "ord_recovery", ...data }
+        dbState.otOrders.set(String(data.stripeSessionId), row)
         return row
       }),
     },
@@ -132,6 +147,7 @@ beforeEach(() => {
   dbState.stripeEvents.clear()
   dbState.otOrders.clear()
   dbState.recoveries.clear()
+  forceOtOrderUpdateMiss = false
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test"
   listLineItemsMock.mockResolvedValue({
     data: [{
@@ -180,6 +196,8 @@ function seedOrder(overrides: Row = {}) {
   dbState.otOrders.set("cs_notice_paid", {
     id: "ord_notice",
     checkoutKey: "checkout-key",
+    contractKey: "contract-key",
+    attempt: 1,
     stripeSessionId: "cs_notice_paid",
     tier: "T3",
     email: "buyer@example.com",
@@ -326,6 +344,35 @@ describe("billing webhook approved notice settlement", () => {
     })
     expect(sendNewOrderAlertMock).not.toHaveBeenCalled()
     expect(sendOrderConfirmationMock).not.toHaveBeenCalled()
+  })
+
+  it("durably records the incoming paid session when it differs from the bound session", async () => {
+    seedOrder({ stripeSessionId: "cs_original" })
+    const response = await POST(request("evt_binding_mismatch", "ord_notice"))
+
+    expect(response.status).toBe(200)
+    expect(dbState.otOrders.get("cs_notice_paid")).toMatchObject({
+      stripeSessionId: "cs_original",
+      status: "PAID_RECOVERY_REQUIRED",
+      recoveryStripeSessionId: "cs_notice_paid",
+      recoveryStripeEventId: "evt_binding_mismatch",
+      recoveryReason: "DURABLE_CONTRACT_MISMATCH",
+    })
+    expect(sendNewOrderAlertMock).not.toHaveBeenCalled()
+    expect(sendOrderConfirmationMock).not.toHaveBeenCalled()
+  })
+
+  it("returns 500 and releases the event claim when recovery CAS loses", async () => {
+    seedOrder({ stripeSessionId: "cs_original" })
+    forceOtOrderUpdateMiss = true
+    const response = await POST(request("evt_recovery_cas_miss", "ord_notice"))
+
+    expect(response.status).toBe(500)
+    expect(dbState.stripeEvents.has("evt_recovery_cas_miss")).toBe(false)
+    expect(dbState.otOrders.get("cs_notice_paid")).toMatchObject({
+      stripeSessionId: "cs_original",
+      status: "CHECKOUT_CREATED",
+    })
   })
 })
 

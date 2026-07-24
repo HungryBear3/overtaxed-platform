@@ -848,6 +848,8 @@ model OTOrder {
   checkoutCurrency          String?
   settledAmountCents        Int?
   settledCurrency           String?
+  recoveryStripeSessionId   String?
+  recoveryStripeEventId     String?
   recoveryReason            String?
   amountPaid                Float     @default(0)
   status                    String    @default("PENDING")
@@ -856,6 +858,7 @@ model OTOrder {
 
   @@index([email])
   @@index([stripeSessionId])
+  @@index([recoveryStripeSessionId])
   @@index([createdAt])
   @@map("ot_order")
 }
