@@ -2,7 +2,7 @@ import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import "../ot-design.css"
 
 export const metadata = {
-  title: "Disclaimer | OverTaxed IL",
+  title: "Disclaimer",
   description: "Legal disclaimer for OverTaxed IL property tax appeal services.",
 }
 

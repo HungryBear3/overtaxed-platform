@@ -5,7 +5,7 @@ import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import "../ot-design.css"
 
 export const metadata = {
-  title: "FAQ | OverTaxed IL",
+  title: "FAQ",
   description: "Frequently asked questions about Cook County property tax appeals, DIY comp packets, and OverTaxed IL services.",
 }
 

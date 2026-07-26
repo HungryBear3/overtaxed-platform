@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { getAllPosts } from '@/lib/blog'
 
 export const metadata = {
-  title: 'Blog | Overtaxed IL',
+  title: 'Blog',
   description: 'Guides and resources for appealing your property tax assessment in Illinois.',
 }
 

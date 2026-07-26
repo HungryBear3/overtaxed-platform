@@ -3,7 +3,7 @@ import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import "../ot-design.css"
 
 export const metadata = {
-  title: "Free Property Tax Assessment Check | OverTaxed IL",
+  title: "Free Property Tax Assessment Check",
   description:
     "See how your Cook County assessed value compares to nearby properties. Free check — no signup. Built around Cook County Assessor and Board of Review public records.",
 }

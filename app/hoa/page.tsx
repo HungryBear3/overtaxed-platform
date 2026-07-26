@@ -6,7 +6,7 @@ import "../ot-design.css";
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://overtaxed-il.com";
 
 export const metadata: Metadata = {
-  title: "HOA & Condo Resident Property Tax Resource | OverTaxed IL",
+  title: "HOA & Condo Resident Property Tax Resource",
   description:
     "A no-cost Cook County property tax deadline and assessment-check resource HOA boards and property managers can share with residents. No vendor agreement, referral fees, or board commitment.",
   alternates: { canonical: siteUrl + "/hoa" },

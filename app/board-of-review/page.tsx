@@ -4,7 +4,7 @@ import { BoardOfReviewWaitlist } from "@/components/board-of-review/BoardOfRevie
 import "../ot-design.css"
 
 export const metadata = {
-  title: "Cook County Board of Review Appeals | OverTaxed IL",
+  title: "Cook County Board of Review Appeals",
   description:
     "The Board of Review is the second level of Cook County property tax appeals. OverTaxed IL is building homeowner-friendly support for it. Join the waitlist.",
 }

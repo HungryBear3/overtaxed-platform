@@ -9,7 +9,7 @@ export async function generateStaticParams() {
 export async function generateMetadata({ params }: { params: { slug: string } }) {
   const post = await getPostBySlug(params.slug)
   if (!post) return {}
-  return { title: `${post.title} | Overtaxed IL`, description: post.description }
+  return { title: post.title, description: post.description }
 }
 
 export default async function BlogPostPage({ params }: { params: { slug: string } }) {

@@ -7,7 +7,7 @@ import { OT_PUBLIC_CONTACT, SiteHeader, SiteFooter } from "@/components/ot-desig
 import "../ot-design.css"
 
 export const metadata = {
-  title: "Contact Us | OverTaxed IL",
+  title: "Contact Us",
   description: "Contact OverTaxed IL for support, questions about property tax appeals, or billing.",
 }
 
