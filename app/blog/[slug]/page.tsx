@@ -6,14 +6,22 @@ export async function generateStaticParams() {
   return posts.map((post) => ({ slug: post.slug }))
 }
 
-export async function generateMetadata({ params }: { params: { slug: string } }) {
-  const post = await getPostBySlug(params.slug)
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params
+  const post = await getPostBySlug(slug)
   if (!post) return {}
-  return { title: `${post.title} | Overtaxed IL`, description: post.description }
+  return {
+    title: `${post.title} | Overtaxed IL`,
+    description: post.description,
+    alternates: {
+      canonical: `https://www.overtaxed-il.com/blog/${post.slug}`,
+    },
+  }
 }
 
-export default async function BlogPostPage({ params }: { params: { slug: string } }) {
-  const post = await getPostBySlug(params.slug)
+export default async function BlogPostPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params
+  const post = await getPostBySlug(slug)
   if (!post) notFound()
 
   const jsonLd = {

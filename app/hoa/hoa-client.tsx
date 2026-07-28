@@ -152,7 +152,7 @@ export function ResourceDownloadGroup({
 // the public NEXT_PUBLIC_APP_URL env so dev/staging notices don't
 // hardcode production. Falls back to the production host.
 
-const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || "https://overtaxed-il.com").replace(/\/$/, "");
+const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com").replace(/\/$/, "");
 
 function noticeUrl(target: HoaLinkTarget): string {
   const params = new URLSearchParams({

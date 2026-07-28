@@ -4,6 +4,7 @@ import "../ot-design.css"
 export const metadata = {
   title: "Disclaimer | OverTaxed IL",
   description: "Legal disclaimer for OverTaxed IL property tax appeal services.",
+  alternates: { canonical: "https://www.overtaxed-il.com/disclaimer" },
 }
 
 export default function DisclaimerPage() {

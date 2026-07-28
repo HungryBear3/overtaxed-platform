@@ -4,6 +4,7 @@ import "../ot-design.css"
 export const metadata = {
   title: "Terms of Service | OverTaxed IL",
   description: "Terms of Service and User Agreement for OverTaxed IL property tax appeal services.",
+  alternates: { canonical: "https://www.overtaxed-il.com/terms" },
 }
 
 export default function TermsPage() {

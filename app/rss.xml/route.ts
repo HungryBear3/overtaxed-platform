@@ -4,7 +4,7 @@ export const dynamic = 'force-static'
 
 export function GET() {
   const posts = getAllPosts()
-  const siteUrl = 'https://overtaxed-il.com'
+  const siteUrl = 'https://www.overtaxed-il.com'
 
   const items = posts
     .map(

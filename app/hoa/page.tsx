@@ -3,7 +3,7 @@ import Link from "next/link";
 import { HoaNoticeTemplates, ResourceDownloadGroup, TrackedHoaLink } from "./hoa-client";
 import "../ot-design.css";
 
-const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://overtaxed-il.com";
+const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
 
 export const metadata: Metadata = {
   title: "HOA & Condo Resident Property Tax Resource | OverTaxed IL",

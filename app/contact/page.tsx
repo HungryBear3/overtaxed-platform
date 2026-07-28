@@ -9,6 +9,7 @@ import "../ot-design.css"
 export const metadata = {
   title: "Contact Us | OverTaxed IL",
   description: "Contact OverTaxed IL for support, questions about property tax appeals, or billing.",
+  alternates: { canonical: "https://www.overtaxed-il.com/contact" },
 }
 
 export default function ContactPage() {

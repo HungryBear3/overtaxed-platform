@@ -31,23 +31,22 @@ function getBlogSlugs(): string[] {
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const staticPages: MetadataRoute.Sitemap = [
-    { url: baseUrl, lastModified: new Date(), changeFrequency: "weekly", priority: 1 },
-    { url: `${baseUrl}/pricing`, lastModified: new Date(), changeFrequency: "monthly", priority: 0.9 },
-    { url: `${baseUrl}/check`, lastModified: new Date(), changeFrequency: "monthly", priority: 0.95 },
-    { url: `${baseUrl}/blog`, lastModified: new Date(), changeFrequency: "weekly", priority: 0.8 },
-    { url: `${baseUrl}/townships`, lastModified: new Date(), changeFrequency: "weekly", priority: 0.85 },
-    { url: `${baseUrl}/hoa`, lastModified: new Date(), changeFrequency: "monthly", priority: 0.85 },
-    { url: `${baseUrl}/faq`, lastModified: new Date(), changeFrequency: "monthly", priority: 0.8 },
-    { url: `${baseUrl}/contact`, lastModified: new Date(), changeFrequency: "monthly", priority: 0.7 },
-    { url: `${baseUrl}/terms`, lastModified: new Date(), changeFrequency: "yearly", priority: 0.5 },
-    { url: `${baseUrl}/privacy`, lastModified: new Date(), changeFrequency: "yearly", priority: 0.5 },
-    { url: `${baseUrl}/disclaimer`, lastModified: new Date(), changeFrequency: "yearly", priority: 0.5 },
+    { url: baseUrl, changeFrequency: "weekly", priority: 1 },
+    { url: `${baseUrl}/pricing`, changeFrequency: "monthly", priority: 0.9 },
+    { url: `${baseUrl}/check`, changeFrequency: "monthly", priority: 0.95 },
+    { url: `${baseUrl}/blog`, changeFrequency: "weekly", priority: 0.8 },
+    { url: `${baseUrl}/townships`, changeFrequency: "weekly", priority: 0.85 },
+    { url: `${baseUrl}/hoa`, changeFrequency: "monthly", priority: 0.85 },
+    { url: `${baseUrl}/faq`, changeFrequency: "monthly", priority: 0.8 },
+    { url: `${baseUrl}/contact`, changeFrequency: "monthly", priority: 0.7 },
+    { url: `${baseUrl}/terms`, changeFrequency: "yearly", priority: 0.5 },
+    { url: `${baseUrl}/privacy`, changeFrequency: "yearly", priority: 0.5 },
+    { url: `${baseUrl}/disclaimer`, changeFrequency: "yearly", priority: 0.5 },
   ]
 
   const blogSlugs = getBlogSlugs()
   const blogPages: MetadataRoute.Sitemap = blogSlugs.map((slug) => ({
     url: `${baseUrl}/blog/${slug}`,
-    lastModified: new Date(),
     changeFrequency: "monthly" as const,
     priority: 0.8,
   }))
@@ -57,7 +56,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
   // in the sitemap would advertise a redirecting URL to crawlers.
   const townshipPages: MetadataRoute.Sitemap = getTownshipSlugs().map((slug) => ({
     url: `${baseUrl}/township/${slug}`,
-    lastModified: new Date(),
     changeFrequency: "monthly" as const,
     priority: 0.7,
   }))
@@ -69,7 +67,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
       .filter((campaign) => campaign?.phase === "active")
       .map((campaign) => ({
         url: `${baseUrl}/appeal-deadline/${campaign!.slug}`,
-        lastModified: new Date(),
         changeFrequency: "daily" as const,
         priority: 0.95,
       }))
