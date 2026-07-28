@@ -14,6 +14,7 @@ export const metadata = {
   title: "Cook County Township Appeal Deadlines 2026 | OverTaxed IL",
   description:
     "Check appeal windows for all 38 Cook County townships using the same deadline data as OverTaxed IL's deadlines page. See open, opening-soon, and future-cycle townships.",
+  alternates: { canonical: "https://www.overtaxed-il.com/townships" },
 }
 
 const statusConfig: Record<

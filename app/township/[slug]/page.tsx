@@ -10,7 +10,7 @@ import {
 } from "@/lib/townships";
 import "../../ot-design.css";
 
-const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://overtaxed-il.com";
+const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
 
 /**
  * Plain-text mirror of the visible FAQ in TownshipPage.tsx for FAQPage

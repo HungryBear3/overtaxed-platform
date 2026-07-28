@@ -3,7 +3,7 @@ import HomePage from "@/components/ot-design/HomePage";
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
 import "./ot-design.css";
 
-const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://overtaxed-il.com";
+const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
 
 export const metadata: Metadata = {
   title:

@@ -4,6 +4,7 @@ import { getAllPosts } from '@/lib/blog'
 export const metadata = {
   title: 'Blog | Overtaxed IL',
   description: 'Guides and resources for appealing your property tax assessment in Illinois.',
+  alternates: { canonical: 'https://www.overtaxed-il.com/blog' },
 }
 
 export default function BlogPage() {

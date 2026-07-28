@@ -6,6 +6,7 @@ export const metadata = {
   title: "Free Property Tax Assessment Check | OverTaxed IL",
   description:
     "See how your Cook County assessed value compares to nearby properties. Free check — no signup. Built around Cook County Assessor and Board of Review public records.",
+  alternates: { canonical: "https://www.overtaxed-il.com/check" },
 }
 
 export default function CheckPage() {

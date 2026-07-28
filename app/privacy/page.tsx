@@ -4,6 +4,7 @@ import "../ot-design.css"
 export const metadata = {
   title: "Privacy Policy | OverTaxed IL",
   description: "Privacy Policy for OverTaxed IL property tax appeal services.",
+  alternates: { canonical: "https://www.overtaxed-il.com/privacy" },
 }
 
 export default function PrivacyPage() {

@@ -7,6 +7,7 @@ import "../ot-design.css"
 export const metadata = {
   title: "FAQ | OverTaxed IL",
   description: "Frequently asked questions about Cook County property tax appeals, DIY comp packets, and OverTaxed IL services.",
+  alternates: { canonical: "https://www.overtaxed-il.com/faq" },
 }
 
 const faqs = [
