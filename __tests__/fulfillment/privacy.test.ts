@@ -148,6 +148,15 @@ function staticStringValue(node: ts.Expression | undefined): string | null {
   if (ts.isParenthesizedExpression(node)) {
     return staticStringValue(node.expression);
   }
+  if (ts.isTemplateExpression(node)) {
+    let value = node.head.text;
+    for (const span of node.templateSpans) {
+      const expression = staticStringValue(span.expression);
+      if (expression === null) return null;
+      value += expression + span.literal.text;
+    }
+    return value;
+  }
   if (
     ts.isBinaryExpression(node) &&
     node.operatorToken.kind === ts.SyntaxKind.PlusToken
@@ -426,6 +435,10 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
     [
       "no-substitution template constructor",
       `(() => {})[${tick}constructor${tick}]("return process")()`,
+    ],
+    [
+      "substitution template constructor",
+      '(() => {})[`${"con"}structor`]("return process")()',
     ],
     [
       "concatenated constructor element",
