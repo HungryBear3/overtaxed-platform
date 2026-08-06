@@ -534,3 +534,143 @@ describe("deliveryEventKey / signature are text-safe and collision-free", () => 
     ).not.toBe(deliveryEventKey({ provider: "1", providerEventId: "xy" }));
   });
 });
+
+// ---- Remediation-3: incremental stale events must reserve their local sequence ----
+
+describe("incremental fold reserves a stale sequence (SEQUENCE_CONFLICT parity)", () => {
+  // Authoritative state after an applied ACCEPTED at sequence 2.
+  const accepted = ev({
+    providerEventId: "seq2",
+    eventType: "ACCEPTED",
+    sequence: 2,
+  });
+  const staleA = ev({
+    providerEventId: "stale-a",
+    eventType: "DELIVERED",
+    sequence: 1,
+  });
+  const staleB = ev({
+    providerEventId: "stale-b",
+    eventType: "BOUNCED",
+    sequence: 1,
+  });
+
+  function afterAccepted() {
+    const s0 = initialFoldState("DELIVERY_PENDING");
+    return foldDeliveryEvent(s0, accepted).state; // PROVIDER_ACCEPTED, rev 1, lastSequence 2
+  }
+
+  it("a valid first-seen out-of-order event returns OUT_OF_ORDER, reserves its sequence once, and moves no authoritative pointer", () => {
+    const s1 = afterAccepted();
+    const r = foldDeliveryEvent(s1, staleA);
+    expect(r.applied).toBe(false);
+    expect(r.reason).toBe("OUT_OF_ORDER");
+    expect(r.state.seen.map((s) => s.key)).toContain(deliveryEventKey(staleA));
+    expect(r.state.seenSequences.filter((x) => x === 1)).toHaveLength(1); // reserved exactly once
+    expect(r.state.conflicted).toBe(false);
+    // no authoritative movement
+    expect(r.state.status).toBe(s1.status);
+    expect(r.state.statusRevision).toBe(s1.statusRevision);
+    expect(r.state.lastSequence).toBe(s1.lastSequence);
+    expect(r.state.lastOccurredAt).toBe(s1.lastOccurredAt);
+  });
+
+  it("exact replay of the stale event stays EXACT_REPLAY, adds no duplicate identity or sequence, and changes nothing", () => {
+    const s2 = foldDeliveryEvent(afterAccepted(), staleA).state;
+    const r = foldDeliveryEvent(s2, { ...staleA });
+    expect(r.applied).toBe(false);
+    expect(r.reason).toBe("EXACT_REPLAY");
+    expect(r.state.seen).toHaveLength(s2.seen.length);
+    expect(r.state.seenSequences).toEqual(s2.seenSequences);
+    expect(r.state.status).toBe(s2.status);
+    expect(r.state.statusRevision).toBe(s2.statusRevision);
+    expect(r.state.lastSequence).toBe(s2.lastSequence);
+    expect(r.state.conflicted).toBe(false);
+  });
+
+  it("a distinct identity reusing the stale sequence returns SEQUENCE_CONFLICT and freezes without moving pointers", () => {
+    const s1 = afterAccepted();
+    const s2 = foldDeliveryEvent(s1, staleA).state;
+    const r = foldDeliveryEvent(s2, staleB);
+    expect(r.applied).toBe(false);
+    expect(r.reason).toBe("SEQUENCE_CONFLICT");
+    expect(r.state.conflicted).toBe(true);
+    expect(r.state.reason).toBe("SEQUENCE_CONFLICT");
+    // authoritative status/pointers preserved (never regressed by conflicting stale evidence)
+    expect(r.state.status).toBe(s1.status);
+    expect(r.state.statusRevision).toBe(s1.statusRevision);
+    expect(r.state.lastSequence).toBe(s1.lastSequence);
+    expect(r.state.lastOccurredAt).toBe(s1.lastOccurredAt);
+  });
+
+  it("reversing which distinct stale identity arrives first yields the same conflict verdict and authoritative state", () => {
+    const s1 = afterAccepted();
+    const fold = (events: (typeof staleA)[]) => {
+      let st = s1;
+      for (const e of events) st = foldDeliveryEvent(st, e).state;
+      return st;
+    };
+    const forward = fold([staleA, staleB]);
+    const reversed = fold([staleB, staleA]);
+    for (const st of [forward, reversed]) {
+      expect(st.conflicted).toBe(true);
+      expect(st.reason).toBe("SEQUENCE_CONFLICT");
+    }
+    expect(reversed.status).toBe(forward.status);
+    expect(reversed.statusRevision).toBe(forward.statusRevision);
+    expect(reversed.lastSequence).toBe(forward.lastSequence);
+    expect(reversed.lastOccurredAt).toBe(forward.lastOccurredAt);
+  });
+
+  it("canonical and incremental folds AGREE on the conflict verdict for the hostile set", () => {
+    const hostile = [accepted, staleA, staleB];
+    const canonical = foldDeliveryEvents(
+      initialFoldState("DELIVERY_PENDING"),
+      hostile,
+    );
+    let incremental = initialFoldState("DELIVERY_PENDING");
+    for (const e of hostile)
+      incremental = foldDeliveryEvent(incremental, e).state;
+    expect(canonical.conflicted).toBe(true);
+    expect(incremental.conflicted).toBe(true);
+    expect(incremental.reason).toBe("SEQUENCE_CONFLICT");
+    expect(canonical.reason).toBe("SEQUENCE_CONFLICT");
+  });
+
+  it("preserves existing behavior: malformed reserves nothing; normal replay idempotent; higher sequence advances; terminal never resurrects", () => {
+    const s1 = afterAccepted();
+    // malformed event reserves nothing
+    const bad = {
+      provider: "resend",
+      providerEventId: "x",
+      eventType: "FORGED",
+      sequence: 1,
+      occurredAt: "2026-08-06T10:00:00.000Z",
+    } as unknown as DeliveryEvent;
+    const rBad = foldDeliveryEvent(s1, bad);
+    expect(rBad.state.seen).toEqual(s1.seen);
+    expect(rBad.state.seenSequences).toEqual(s1.seenSequences);
+    // exact normal replay of the applied event remains idempotent
+    const rReplay = foldDeliveryEvent(s1, { ...accepted });
+    expect(rReplay.reason).toBe("EXACT_REPLAY");
+    // a valid higher sequence advances normally
+    const rHi = foldDeliveryEvent(
+      s1,
+      ev({ providerEventId: "seq3", eventType: "DELIVERED", sequence: 3 }),
+    );
+    expect(rHi.applied).toBe(true);
+    expect(rHi.state.status).toBe("DELIVERED");
+    expect(rHi.state.lastSequence).toBe(3);
+    // terminal states never resurrect after a reserved stale conflict
+    const frozenState = foldDeliveryEvent(
+      foldDeliveryEvent(s1, staleA).state,
+      staleB,
+    ).state;
+    const afterFreeze = foldDeliveryEvent(
+      frozenState,
+      ev({ providerEventId: "seq9", eventType: "DELIVERED", sequence: 9 }),
+    );
+    expect(afterFreeze.reason).toBe("CONFLICTED");
+    expect(afterFreeze.state.status).toBe(s1.status);
+  });
+});

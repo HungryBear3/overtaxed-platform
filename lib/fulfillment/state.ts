@@ -335,9 +335,16 @@ export function foldDeliveryEvent(
 
   const seen = [...state.seen, { key, signature }];
   if (state.lastSequence !== null && event.sequence <= state.lastSequence) {
-    // Stale / out-of-order: record that we saw it, but never regress.
+    // Stale / out-of-order: record that we saw it AND reserve its local sequence
+    // (so a later distinct event reusing this stale sequence is a SEQUENCE_CONFLICT,
+    // matching the schema's @@unique([fulfillmentId, sequence]) and the canonical
+    // fold) — but never regress status / revision / lastSequence / lastOccurredAt.
     return {
-      state: { ...state, seen },
+      state: {
+        ...state,
+        seen,
+        seenSequences: [...state.seenSequences, event.sequence],
+      },
       applied: false,
       reason: "OUT_OF_ORDER",
     };
