@@ -32,16 +32,42 @@ function isForbiddenStatic(specifier: string): boolean {
   );
 }
 
+// Loader identifiers that a pure data helper must never reference in ANY form
+// (as a callee, a value, an alias RHS, or inside a comma/parenthesized callee).
+const LOADER_IDENTIFIERS = new Set([
+  "require",
+  "createRequire",
+  "eval",
+  "Function",
+  "Reflect",
+]);
+// Global objects whose dynamic member access can reach a loader (e.g. globalThis["require"]).
+const GLOBAL_OBJECTS = new Set([
+  "globalThis",
+  "window",
+  "self",
+  "global",
+  "module",
+]);
+
 /**
  * AST purity check (TypeScript compiler API — node kinds, not regex). Returns a
- * list of impurity findings for a source. It FAILS CLOSED:
- *   - a static import/export of a forbidden module/subpath is a finding;
- *   - ANY dynamic `import(...)` is a finding, regardless of the argument form
- *     (string, no-substitution template, identifier, concatenation, conditional);
- *   - direct or property/element-form `require(...)` is a finding, any argument;
- *   - `createRequire(...)` (identifier or property form) is a finding.
+ * list of impurity findings for a source. It is a conservative FIRST-PARTY tripwire
+ * over pure helper files (which reference none of these constructs) and FAILS
+ * CLOSED on direct AND indirect module loading:
+ *   - a static import/export of a forbidden module/subpath;
+ *   - ANY dynamic `import(...)`, regardless of the argument form;
+ *   - ANY reference to a loader identifier (`require`, `createRequire`, `eval`,
+ *     `Function`, `Reflect`) as a value or callee — so `require(...)`,
+ *     `(0, require)(...)`, `const r = require`, `Function("…")`, `Reflect.get(…)`
+ *     are all caught, not merely a bare `require(...)` callee;
+ *   - a `.require` / `.createRequire` member access (e.g. `module.require`);
+ *   - element access on a global object (e.g. `globalThis[k](...)`), any argument;
+ *   - a string-literal `"require"`/`"createRequire"` call/reflection argument.
  * Comments and ordinary strings that merely mention a module name are ignored
- * because only AST import/export/call nodes are inspected.
+ * because only AST nodes (not raw text) are inspected. Catching every conceivable
+ * indirect load is undecidable; this decidably rejects every syntactic loader form
+ * while leaving pure, loader-free source (all real lib files) with zero findings.
  */
 function findImpurities(source: string): string[] {
   const sf = ts.createSourceFile(
@@ -66,27 +92,41 @@ function findImpurities(source: string): string[] {
     ) {
       if (isForbiddenStatic(node.moduleSpecifier.text))
         findings.push(`static-export:${node.moduleSpecifier.text}`);
+    } else if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      findings.push("dynamic-import"); // any dynamic import, any argument
+    } else if (ts.isIdentifier(node) && LOADER_IDENTIFIERS.has(node.text)) {
+      // Any reference to a loader identifier (callee, value, alias, comma-expr).
+      findings.push(`loader-identifier:${node.text}`);
+    } else if (
+      ts.isPropertyAccessExpression(node) &&
+      (node.name.text === "require" || node.name.text === "createRequire")
+    ) {
+      findings.push(`member-loader:${node.name.text}`);
+    } else if (ts.isElementAccessExpression(node)) {
+      const obj = node.expression;
+      const arg = node.argumentExpression;
+      const argIsLiteral = arg !== undefined && ts.isStringLiteral(arg);
+      if (
+        ts.isIdentifier(obj) &&
+        GLOBAL_OBJECTS.has(obj.text) &&
+        !argIsLiteral
+      ) {
+        // A dynamic (non-literal) key on a global object could resolve to a loader.
+        findings.push("global-dynamic-element-access");
+      }
+      if (arg && ts.isStringLiteral(arg) && LOADER_IDENTIFIERS.has(arg.text))
+        findings.push(`element-loader-string:${arg.text}`);
     } else if (ts.isCallExpression(node)) {
-      const callee = node.expression;
-      if (callee.kind === ts.SyntaxKind.ImportKeyword) {
-        findings.push("dynamic-import"); // any dynamic import, any argument
-      } else if (ts.isIdentifier(callee)) {
-        if (callee.text === "require") findings.push("require-call");
-        if (callee.text === "createRequire")
-          findings.push("createRequire-call");
-      } else if (ts.isPropertyAccessExpression(callee)) {
-        if (callee.name.text === "require")
-          findings.push("require-property-call");
-        if (callee.name.text === "createRequire")
-          findings.push("createRequire-property-call");
-      } else if (ts.isElementAccessExpression(callee)) {
-        const arg = callee.argumentExpression;
+      // A string-literal loader name passed to a call (e.g. Reflect.get(globalThis, "require")).
+      for (const a of node.arguments) {
         if (
-          arg &&
-          ts.isStringLiteral(arg) &&
-          (arg.text === "require" || arg.text === "createRequire")
+          ts.isStringLiteral(a) &&
+          (a.text === "require" || a.text === "createRequire")
         ) {
-          findings.push("require-element-call");
+          findings.push(`loader-string-arg:${a.text}`);
         }
       }
     }
@@ -201,6 +241,20 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
     ["side-effect-only import", `import "resend"`],
     ["export-from", `export { send } from "resend"`],
     ["forbidden subpath", `import x from "resend/webhooks"`],
+    // Indirect loader forms (reviewer-found evasions of the prior guard):
+    ["comma-expression require callee", `(0, require)("resend")`],
+    ["require aliased to a value", `const r = require; r("resend")`],
+    [
+      "identifier-keyed global element access",
+      `const k = "require"; globalThis[k]("resend")`,
+    ],
+    ["Function constructor loader", `Function("return require")()("resend")`],
+    ["eval loader", `eval("require")("resend")`],
+    ["Reflect.get loader", `Reflect.get(globalThis, "require")("resend")`],
+    [
+      "destructured require from module call",
+      `const { createRequire } = require("module")`,
+    ],
   ])("detects %s", (_label, src) => {
     expect(findImpurities(src).length).toBeGreaterThan(0);
   });
@@ -229,6 +283,21 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
     [
       "a local function literally named requireSomething",
       `function requireApproval() { return 1 }\nrequireApproval()`,
+    ],
+    // Ordinary indirect calls must NOT false-positive:
+    ["an IIFE", `const v = (function () { return 1 })()`],
+    [
+      "a comma-expression call to a safe callee",
+      `const v = (0, Math.max)(1, 2)`,
+    ],
+    ["a member call like arr.map", `const v = [1, 2].map((x) => x + 1)`],
+    [
+      "a global element access to a non-loader key",
+      `const v = globalThis["JSON"]`,
+    ],
+    [
+      "a string that merely equals a loader name in non-call position",
+      `export const name = "require"`,
     ],
   ])("ignores %s (no false positive)", (_label, src) => {
     expect(findImpurities(src)).toEqual([]);
