@@ -51,18 +51,24 @@ export function isValidByteSize(
   );
 }
 
+// Any Unicode "Other" (control/format/surrogate/private-use/unassigned) code
+// point, or any Unicode whitespace/separator. `\p{Cs}` matches lone surrogate
+// code units under the `u` flag, so malformed UTF-16 is rejected too.
+const CONTROL_OR_SEPARATOR = /[\p{C}\p{Z}]/u;
+
 /**
- * A bounded, single-line, non-empty opaque string: no whitespace anywhere, no C0
- * control characters, no DEL. Used for provider ids, lease owners/tokens, etc.
+ * A bounded, single-line, non-empty opaque string. Rejects — across the whole of
+ * Unicode, not merely C0/DEL — every control/format/surrogate/other code point and
+ * every whitespace/separator (space, tab, CR/LF, U+0085 NEL, U+00A0 NBSP, U+2028
+ * LINE / U+2029 PARAGRAPH SEPARATOR, U+200B ZWSP, U+FEFF, …), and lone surrogates.
+ * Never trims/normalizes malformed input into validity. Used for provider ids and
+ * lease owners/tokens. Ordinary ASCII and ordinary non-control Unicode identifiers
+ * remain accepted.
  */
 export function isBoundedOpaqueString(value: unknown, max = 255): boolean {
   if (typeof value !== "string") return false;
   if (value.length < 1 || value.length > max) return false;
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i);
-    if (code <= 0x20 || code === 0x7f) return false;
-  }
-  return true;
+  return !CONTROL_OR_SEPARATOR.test(value);
 }
 
 /** Opaque provider message id (e.g. a Resend id). Bounded, single-line, non-empty. */

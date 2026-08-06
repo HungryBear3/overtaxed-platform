@@ -195,13 +195,19 @@ export const DELIVERY_EVENT_TYPES: ReadonlySet<OTDeliveryEventType> = new Set([
   "FAILED",
 ]);
 
-// Textual length-prefixed encoder: `<len>~<value>`. Because the length prefix is
-// read by count, the value may contain any character (including `~`) with no
-// ambiguity, and no literal NUL is ever emitted. Concatenating several encoded
-// fields is itself unambiguous — each field's length tells the reader where it
-// ends — so the results are collision-free.
+// Text-safe, total, collision-free field encoder: `<codeUnitLen>~<hex>`, where
+// <hex> is the value's UTF-16 code units as fixed-width 4-digit lowercase hex.
+// Because the output alphabet is only [0-9a-f~] plus decimal digits, the exported
+// key/signature can NEVER contain a raw NUL, C0/C1 control, Unicode separator, or
+// (lone) surrogate — `charCodeAt` reads code units, so it never throws on unpaired
+// surrogates. The code-unit length prefix keeps concatenated fields unambiguous,
+// and fixed-width hex makes the whole encoding an injection from strings to text.
 function lengthPrefixed(value: string): string {
-  return `${value.length}~${value}`;
+  let hex = "";
+  for (let i = 0; i < value.length; i++) {
+    hex += value.charCodeAt(i).toString(16).padStart(4, "0");
+  }
+  return `${value.length}~${hex}`;
 }
 
 /**

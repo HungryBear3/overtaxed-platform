@@ -11,49 +11,89 @@ import * as ts from "typescript";
 
 const ROOT = process.cwd();
 
+// Modules that are forbidden as STATIC import/export specifiers.
+const FORBIDDEN_STATIC = [
+  "@/lib/db",
+  "@prisma/client",
+  "next/server",
+  "stripe",
+  "resend",
+  "nodemailer",
+  "@vercel/blob",
+  // Loader-construction sources: importing these enables createRequire etc.
+  "module",
+  "node:module",
+];
+
+/** True if `specifier` is exactly a forbidden module or a subpath of one. */
+function isForbiddenStatic(specifier: string): boolean {
+  return FORBIDDEN_STATIC.some(
+    (m) => specifier === m || specifier.startsWith(`${m}/`),
+  );
+}
+
 /**
- * Collect every module specifier a source file imports, using the TypeScript AST
- * (so comments and ordinary strings that merely mention a module name are ignored).
- * Detects: `import x from "m"`, side-effect-only `import "m"`, `export … from "m"`,
- * dynamic `import("m")` (any whitespace), and `require("m")` (any whitespace).
+ * AST purity check (TypeScript compiler API — node kinds, not regex). Returns a
+ * list of impurity findings for a source. It FAILS CLOSED:
+ *   - a static import/export of a forbidden module/subpath is a finding;
+ *   - ANY dynamic `import(...)` is a finding, regardless of the argument form
+ *     (string, no-substitution template, identifier, concatenation, conditional);
+ *   - direct or property/element-form `require(...)` is a finding, any argument;
+ *   - `createRequire(...)` (identifier or property form) is a finding.
+ * Comments and ordinary strings that merely mention a module name are ignored
+ * because only AST import/export/call nodes are inspected.
  */
-function collectModuleSpecifiers(source: string): string[] {
+function findImpurities(source: string): string[] {
   const sf = ts.createSourceFile(
     "probe.ts",
     source,
     ts.ScriptTarget.Latest,
     true,
+    ts.ScriptKind.TS,
   );
-  const specifiers: string[] = [];
+  const findings: string[] = [];
   const visit = (node: ts.Node): void => {
     if (
       ts.isImportDeclaration(node) &&
       ts.isStringLiteral(node.moduleSpecifier)
     ) {
-      specifiers.push(node.moduleSpecifier.text);
+      if (isForbiddenStatic(node.moduleSpecifier.text))
+        findings.push(`static-import:${node.moduleSpecifier.text}`);
     } else if (
       ts.isExportDeclaration(node) &&
       node.moduleSpecifier &&
       ts.isStringLiteral(node.moduleSpecifier)
     ) {
-      specifiers.push(node.moduleSpecifier.text);
+      if (isForbiddenStatic(node.moduleSpecifier.text))
+        findings.push(`static-export:${node.moduleSpecifier.text}`);
     } else if (ts.isCallExpression(node)) {
-      const isImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
-      const isRequire =
-        ts.isIdentifier(node.expression) && node.expression.text === "require";
-      const arg = node.arguments[0];
-      if ((isImport || isRequire) && arg && ts.isStringLiteral(arg))
-        specifiers.push(arg.text);
+      const callee = node.expression;
+      if (callee.kind === ts.SyntaxKind.ImportKeyword) {
+        findings.push("dynamic-import"); // any dynamic import, any argument
+      } else if (ts.isIdentifier(callee)) {
+        if (callee.text === "require") findings.push("require-call");
+        if (callee.text === "createRequire")
+          findings.push("createRequire-call");
+      } else if (ts.isPropertyAccessExpression(callee)) {
+        if (callee.name.text === "require")
+          findings.push("require-property-call");
+        if (callee.name.text === "createRequire")
+          findings.push("createRequire-property-call");
+      } else if (ts.isElementAccessExpression(callee)) {
+        const arg = callee.argumentExpression;
+        if (
+          arg &&
+          ts.isStringLiteral(arg) &&
+          (arg.text === "require" || arg.text === "createRequire")
+        ) {
+          findings.push("require-element-call");
+        }
+      }
     }
     ts.forEachChild(node, visit);
   };
   visit(sf);
-  return specifiers;
-}
-
-/** True if `specifier` is exactly `mod` or a subpath `mod/...`. */
-function matchesModule(specifier: string, mod: string): boolean {
-  return specifier === mod || specifier.startsWith(`${mod}/`);
+  return findings;
 }
 const SCHEMA = readFileSync(join(ROOT, "prisma/schema.prisma"), "utf8");
 const MARKER = "OT T2 DELIVERY-EVIDENCE";
@@ -115,68 +155,82 @@ describe("new evidence schema carries no PII / secrets / payloads / public URLs"
   });
 });
 
-describe("fulfillment library is pure — no side-effecting imports", () => {
+describe("fulfillment library is pure — no side-effecting or dynamic imports", () => {
   const dir = join(ROOT, "lib/fulfillment");
   const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
-  const sideEffectImports = [
-    "@/lib/db",
-    "@prisma/client",
-    "next/server",
-    "stripe",
-    "resend",
-    "nodemailer",
-    "@vercel/blob",
-  ];
 
   it("has source files", () => {
     expect(files.length).toBeGreaterThan(0);
   });
 
-  it.each(sideEffectImports)(
-    "no fulfillment source imports %s (AST-checked)",
-    (mod) => {
-      for (const f of files) {
-        const specifiers = collectModuleSpecifiers(
-          readFileSync(join(dir, f), "utf8"),
-        );
-        expect(specifiers.some((s) => matchesModule(s, mod))).toBe(false);
-      }
-    },
-  );
+  it.each(
+    readdirSync(join(ROOT, "lib/fulfillment")).filter((f) => f.endsWith(".ts")),
+  )("%s has zero AST impurities", (file) => {
+    const impurities = findImpurities(readFileSync(join(dir, file), "utf8"));
+    expect(impurities).toEqual([]);
+  });
 });
 
-describe("AST import guard is behaviorally sound (correction I fixtures)", () => {
-  const forbidden = "resend";
+describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2)", () => {
+  const tick = "`"; // avoid nesting a template literal inside these fixtures
   it.each([
-    ["static default import", `import x from "resend"\n`],
-    ["side-effect-only import", `import "resend"\n`],
-    ["named import", `import { send } from "resend"\n`],
-    ["export-from", `export { send } from "resend"\n`],
-    ["dynamic import", `const m = import("resend")\n`],
-    ["dynamic import spaced", `const m = import (\n  "resend"\n)\n`],
-    ["require", `const m = require("resend")\n`],
-    ["require spaced", `const m = require (  "resend"  )\n`],
-    ["subpath import", `import x from "resend/webhooks"\n`],
+    ["no-substitution template dynamic import", `import(${tick}resend${tick})`],
+    ["no-substitution template require", `require(${tick}resend${tick})`],
+    ["module.require property form", `module.require("resend")`],
+    ["globalThis.require property form", `globalThis.require("resend")`],
+    ["element-access require", `globalThis["require"]("resend")`],
+    ["dynamic import with identifier arg", `const m = "resend"; import(m)`],
+    ["dynamic import with concatenation", `import("re" + "send")`],
+    ["dynamic import with conditional", `import(true ? "resend" : "x")`],
+    ["dynamic import of any path", `import("./whatever")`],
+    ["direct require string", `require("resend")`],
+    ["require with identifier arg", `const m = "resend"; require(m)`],
+    [
+      "createRequire call",
+      `const r = createRequire(import.meta.url); r("resend")`,
+    ],
+    [
+      "createRequire from node:module",
+      `import { createRequire } from "node:module"`,
+    ],
+    [
+      "createRequire aliased from module",
+      `import { createRequire as cr } from "module"`,
+    ],
+    ["static default import", `import x from "resend"`],
+    ["side-effect-only import", `import "resend"`],
+    ["export-from", `export { send } from "resend"`],
+    ["forbidden subpath", `import x from "resend/webhooks"`],
   ])("detects %s", (_label, src) => {
-    const specifiers = collectModuleSpecifiers(src);
-    expect(specifiers.some((s) => matchesModule(s, forbidden))).toBe(true);
+    expect(findImpurities(src).length).toBeGreaterThan(0);
   });
 
   it.each([
     [
       "a comment mentioning the module",
-      `// we deliberately never import "resend" here\nexport const x = 1\n`,
+      `// never import "resend" here\nexport const x = 1`,
     ],
     [
       "a plain string mentioning the module",
-      `export const note = "do not use resend or nodemailer"\n`,
+      `export const note = "do not use resend or nodemailer"`,
     ],
     [
-      "a similarly-named but different module",
-      `import x from "resender-safe"\n`,
+      "a similarly-named but different static module",
+      `import x from "resender-safe"`,
     ],
-  ])("ignores %s", (_label, src) => {
-    const specifiers = collectModuleSpecifiers(src);
-    expect(specifiers.some((s) => matchesModule(s, forbidden))).toBe(false);
+    [
+      "a normal internal static import",
+      `import { foo } from "@/lib/fulfillment/types"`,
+    ],
+    [
+      "a normal export-from internal",
+      `export { foo } from "@/lib/fulfillment/types"`,
+    ],
+    [
+      "a local function literally named requireSomething",
+      `function requireApproval() { return 1 }\nrequireApproval()`,
+    ],
+  ])("ignores %s (no false positive)", (_label, src) => {
+    expect(findImpurities(src)).toEqual([]);
   });
 });

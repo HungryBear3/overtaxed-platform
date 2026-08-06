@@ -201,6 +201,45 @@ describe("isBoundedOpaqueString", () => {
       expect(isBoundedOpaqueString(bad)).toBe(false);
     }
   });
+
+  // ---- Remediation-4 blocker 1: Unicode/C1 control & separator rejection ----
+  // Build hostile values via char codes so the test source stays pure ASCII.
+  const withCp = (cp: number) => "tok" + String.fromCharCode(cp) + "x";
+  it.each([
+    ["U+0085 NEXT LINE", 0x0085],
+    ["U+00A0 NO-BREAK SPACE", 0x00a0],
+    ["U+2028 LINE SEPARATOR", 0x2028],
+    ["U+2029 PARAGRAPH SEPARATOR", 0x2029],
+    ["U+200B ZERO WIDTH SPACE", 0x200b],
+    ["U+FEFF BOM/ZWNBSP", 0xfeff],
+    ["U+0000 NUL (C0)", 0x0000],
+    ["U+001F (C0)", 0x001f],
+    ["U+007F DEL", 0x007f],
+    ["U+0009 TAB", 0x0009],
+    ["U+000A LF", 0x000a],
+    ["U+000D CR", 0x000d],
+    ["U+0020 SPACE", 0x0020],
+    ["U+D800 lone high surrogate", 0xd800],
+    ["U+DFFF lone low surrogate", 0xdfff],
+  ])("rejects %s", (_label, cp) => {
+    expect(isBoundedOpaqueString(withCp(cp))).toBe(false);
+  });
+
+  it("rejects leading and internal ASCII spaces without trimming into validity", () => {
+    expect(isBoundedOpaqueString(" abc")).toBe(false);
+    expect(isBoundedOpaqueString("abc ")).toBe(false);
+    expect(isBoundedOpaqueString("a b c")).toBe(false);
+  });
+
+  it("still accepts ordinary ASCII and ordinary non-control Unicode identifiers", () => {
+    expect(isBoundedOpaqueString("tok_ABC.123")).toBe(true);
+    expect(isBoundedOpaqueString("caf" + String.fromCharCode(0x00e9))).toBe(
+      true,
+    ); // café
+    expect(isBoundedOpaqueString(String.fromCodePoint(0x65e5, 0x672c))).toBe(
+      true,
+    ); // 日本
+  });
 });
 
 // ---- Remediation-2 H: private storage locator contract ----

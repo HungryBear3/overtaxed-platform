@@ -11,6 +11,7 @@ import {
   foldDeliveryEvent,
   foldDeliveryEvents,
   deliveryEventKey,
+  deliveryEventSignature,
   validateDeliveryEvent,
   nextDeliveryAttemptNumber,
 } from "@/lib/fulfillment/state";
@@ -672,5 +673,108 @@ describe("incremental fold reserves a stale sequence (SEQUENCE_CONFLICT parity)"
     );
     expect(afterFreeze.reason).toBe("CONFLICTED");
     expect(afterFreeze.state.status).toBe(s1.status);
+  });
+});
+
+// ---- Remediation-4 blocker 3: exported encoders are text-safe for ANY string ----
+
+describe("deliveryEventKey / deliveryEventSignature emit no control/separator/surrogate text", () => {
+  const CONTROL_OR_SEP = /[\p{C}\p{Z}]/u;
+  const cp = (n: number) => String.fromCharCode(n);
+  // Adversarial values built from char codes so this test source stays pure ASCII.
+  const hostile = [
+    "",
+    "a" + cp(0x0000) + "b", // NUL
+    "a" + cp(0x001f) + "b", // C0
+    "a" + cp(0x007f) + "b", // DEL
+    "a" + cp(0x0085) + "b", // C1 NEL
+    "a" + cp(0x2028) + "b", // line separator
+    "a" + cp(0x2029) + "b", // paragraph separator
+    "a" + cp(0x00a0) + "b", // no-break space
+    "a~b",
+    "a.b",
+    "a:b",
+    "3~abc", // length-frame-like
+    String.fromCodePoint(0x1f600), // astral
+    "a" + cp(0xd800) + "b", // lone high surrogate
+    "a" + cp(0xdc00) + "b", // lone low surrogate
+    "x".repeat(64),
+  ];
+
+  it("output of both helpers contains no raw C0/C1, Unicode separator, or surrogate", () => {
+    for (const provider of hostile) {
+      for (const providerEventId of hostile) {
+        const key = deliveryEventKey({ provider, providerEventId });
+        expect(CONTROL_OR_SEP.test(key)).toBe(false);
+        expect(key.includes(String.fromCharCode(0))).toBe(false);
+        const sig = deliveryEventSignature({
+          provider,
+          providerEventId,
+          eventType: "DELIVERED",
+          sequence: 1,
+          occurredAt: "2026-08-06T10:00:00.000Z",
+        });
+        expect(CONTROL_OR_SEP.test(sig)).toBe(false);
+      }
+    }
+  });
+
+  it("is deterministic for identical inputs", () => {
+    const a = deliveryEventKey({
+      provider: "a" + cp(0x2028) + "b",
+      providerEventId: "e",
+    });
+    const b = deliveryEventKey({
+      provider: "a" + cp(0x2028) + "b",
+      providerEventId: "e",
+    });
+    expect(a).toBe(b);
+  });
+
+  it("distinct input tuples never alias across the hostile matrix", () => {
+    const keys = new Set<string>();
+    const tuples: Array<[string, string]> = [];
+    for (const p of hostile) for (const e of hostile) tuples.push([p, e]);
+    for (const [p, e] of tuples)
+      keys.add(deliveryEventKey({ provider: p, providerEventId: e }));
+    expect(keys.size).toBe(tuples.length);
+  });
+
+  it("classic delimiter-injection pairs stay distinct", () => {
+    expect(deliveryEventKey({ provider: "a", providerEventId: "bc" })).not.toBe(
+      deliveryEventKey({ provider: "ab", providerEventId: "c" }),
+    );
+    expect(
+      deliveryEventKey({ provider: "1~x", providerEventId: "y" }),
+    ).not.toBe(deliveryEventKey({ provider: "1", providerEventId: "xy" }));
+  });
+
+  it("key and signature domains stay distinct (prefix separation)", () => {
+    const e: DeliveryEvent = {
+      provider: "resend",
+      providerEventId: "evt-1",
+      eventType: "DELIVERED",
+      sequence: 1,
+      occurredAt: "2026-08-06T10:00:00.000Z",
+    };
+    expect(deliveryEventKey(e)).not.toBe(deliveryEventSignature(e));
+    expect(deliveryEventKey(e).startsWith("k1.")).toBe(true);
+    expect(deliveryEventSignature(e).startsWith("s1")).toBe(true);
+  });
+
+  it("normal validated events preserve exact-replay and identity-conflict behavior", () => {
+    const s0 = initialFoldState("DELIVERY_PENDING");
+    const base = ev({
+      providerEventId: "e",
+      eventType: "DELIVERED",
+      sequence: 1,
+    });
+    const s1 = foldDeliveryEvent(s0, base);
+    expect(foldDeliveryEvent(s1.state, { ...base }).reason).toBe(
+      "EXACT_REPLAY",
+    );
+    expect(
+      foldDeliveryEvent(s1.state, { ...base, eventType: "BOUNCED" }).reason,
+    ).toBe("EVENT_IDENTITY_CONFLICT");
   });
 });

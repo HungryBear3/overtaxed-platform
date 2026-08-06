@@ -242,3 +242,55 @@ describe("evaluateLease — strict instant + opaque identity hardening", () => {
     ).toBe("INVALID");
   });
 });
+
+// ---- Remediation-4 blocker 1: Unicode/C1 controls cannot authorize a lease ----
+
+describe("evaluateLease — Unicode/C1 control identities fail closed", () => {
+  const now = "2026-08-06T12:00:00.000Z";
+  const active = "2026-08-06T13:00:00.000Z";
+  const withCp = (cp: number) => "tok" + String.fromCharCode(cp) + "x";
+
+  it.each([
+    ["U+2028 LINE SEPARATOR", 0x2028],
+    ["U+2029 PARAGRAPH SEPARATOR", 0x2029],
+    ["U+0085 NEXT LINE", 0x0085],
+    ["U+00A0 NO-BREAK SPACE", 0x00a0],
+    ["U+200B ZERO WIDTH SPACE", 0x200b],
+    ["U+D800 lone surrogate", 0xd800],
+  ])(
+    "a matching owner+token containing %s cannot RENEW (fails closed)",
+    (_label, cp) => {
+      const bad = withCp(cp);
+      const r = evaluateLease({
+        lease: { owner: bad, token: bad, expiresAt: active },
+        now,
+        requester: bad,
+        requesterToken: bad,
+      });
+      expect(r.decision).not.toBe("RENEWABLE");
+      expect(r.decision).not.toBe("CLAIMABLE");
+      expect(r.decision).not.toBe("EXPIRED_RECLAIMABLE");
+      expect(r.decision).toBe("INVALID");
+    },
+  );
+
+  it("a valid owner but a requester token bearing U+2028 cannot renew", () => {
+    const r = evaluateLease({
+      lease: { owner: "worker-1", token: "tok", expiresAt: active },
+      now,
+      requester: "worker-1",
+      requesterToken: "to" + String.fromCharCode(0x2028) + "k",
+    });
+    expect(r.decision).toBe("HELD_BY_OTHER");
+  });
+
+  it("does not echo the raw rejected identity in the reason", () => {
+    const bad = withCp(0x2028);
+    const r = evaluateLease({
+      lease: { owner: bad, token: bad, expiresAt: active },
+      now,
+      requester: bad,
+    });
+    expect(r.reason ?? "").not.toContain(String.fromCharCode(0x2028));
+  });
+});
