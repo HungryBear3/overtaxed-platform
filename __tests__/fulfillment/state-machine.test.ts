@@ -10,12 +10,22 @@ import {
   initialFoldState,
   foldDeliveryEvent,
   foldDeliveryEvents,
+  deliveryEventKey,
+  validateDeliveryEvent,
   nextDeliveryAttemptNumber,
 } from "@/lib/fulfillment/state"
 import type { DeliveryEvent } from "@/lib/fulfillment/state"
 
-function ev(overrides: Partial<DeliveryEvent> & { providerEventId: string; eventType: DeliveryEvent["eventType"]; sequence: number }): DeliveryEvent {
-  return { occurredAt: new Date(1000 * overrides.sequence).toISOString(), ...overrides }
+function ev(
+  overrides: Partial<DeliveryEvent> & { providerEventId: string; eventType: DeliveryEvent["eventType"]; sequence: number }
+): DeliveryEvent {
+  // Derive a stable timestamp; fall back for non-finite sequences (invalid fixtures).
+  const seq = Number.isFinite(overrides.sequence) ? overrides.sequence : 1
+  return {
+    provider: "resend",
+    occurredAt: new Date(1000 * seq).toISOString(),
+    ...overrides,
+  }
 }
 
 describe("allowed monotonic transitions", () => {
@@ -109,5 +119,87 @@ describe("nextDeliveryAttemptNumber", () => {
     expect(nextDeliveryAttemptNumber(0)).toBe(1)
     expect(nextDeliveryAttemptNumber(1)).toBe(2)
     expect(nextDeliveryAttemptNumber(4)).toBe(5)
+  })
+})
+
+// ---- Remediation blocker C: schema-aligned, deterministic, fail-closed folding ----
+
+describe("dedupe identity is the (provider, providerEventId) tuple", () => {
+  it("the same event id from two providers does NOT alias", () => {
+    const s0 = initialFoldState("DELIVERY_PENDING")
+    const s1 = foldDeliveryEvent(s0, ev({ provider: "resend", providerEventId: "shared", eventType: "ACCEPTED", sequence: 1 }))
+    const s2 = foldDeliveryEvent(s1.state, ev({ provider: "postmark", providerEventId: "shared", eventType: "DELIVERED", sequence: 2 }))
+    expect(s1.applied).toBe(true)
+    expect(s2.applied).toBe(true) // distinct composite key → processed, not collapsed
+    expect(s2.state.status).toBe("DELIVERED")
+  })
+
+  it("an exact provider+id duplicate is idempotent", () => {
+    const s0 = initialFoldState("DELIVERY_PENDING")
+    const s1 = foldDeliveryEvent(s0, ev({ provider: "resend", providerEventId: "dup", eventType: "DELIVERED", sequence: 1 }))
+    const s2 = foldDeliveryEvent(s1.state, ev({ provider: "resend", providerEventId: "dup", eventType: "DELIVERED", sequence: 1 }))
+    expect(s2.applied).toBe(false)
+    expect(s2.reason).toBe("DUPLICATE_EVENT")
+    expect(s2.state.statusRevision).toBe(s1.state.statusRevision)
+  })
+
+  it("deliveryEventKey combines provider and event id", () => {
+    expect(deliveryEventKey({ provider: "resend", providerEventId: "e1" })).not.toBe(
+      deliveryEventKey({ provider: "postmark", providerEventId: "e1" })
+    )
+  })
+})
+
+describe("invalid events fail closed without advancing pointers", () => {
+  it.each([
+    ["INVALID_PROVIDER", ev({ providerEventId: "e", eventType: "DELIVERED", sequence: 1, provider: "" })],
+    ["INVALID_PROVIDER_EVENT_ID", ev({ providerEventId: "", eventType: "DELIVERED", sequence: 1 })],
+    ["INVALID_SEQUENCE", ev({ providerEventId: "e", eventType: "DELIVERED", sequence: Number.NaN })],
+    ["INVALID_SEQUENCE", ev({ providerEventId: "e", eventType: "DELIVERED", sequence: 0 })],
+    ["INVALID_SEQUENCE", ev({ providerEventId: "e", eventType: "DELIVERED", sequence: -1 })],
+    ["INVALID_SEQUENCE", ev({ providerEventId: "e", eventType: "DELIVERED", sequence: 1.5 })],
+    ["INVALID_TIMESTAMP", { provider: "resend", providerEventId: "e", eventType: "DELIVERED" as const, sequence: 1, occurredAt: "not-a-date" }],
+  ])("rejects %s without changing status or pointers", (reason, event) => {
+    expect(validateDeliveryEvent(event as DeliveryEvent)).toBe(reason)
+    const s0 = initialFoldState("DELIVERY_PENDING")
+    const r = foldDeliveryEvent(s0, event as DeliveryEvent)
+    expect(r.applied).toBe(false)
+    expect(r.reason).toBe(reason)
+    expect(r.state.status).toBe("DELIVERY_PENDING")
+    expect(r.state.lastSequence).toBeNull()
+    expect(r.state.seenKeys).toHaveLength(0)
+  })
+})
+
+describe("conflicting duplicate local sequences fail closed deterministically", () => {
+  const conflict = [
+    ev({ providerEventId: "d", eventType: "DELIVERED", sequence: 1 }),
+    ev({ providerEventId: "b", eventType: "BOUNCED", sequence: 1 }),
+  ]
+  it("canonical fold yields the same fail-closed result in both input orders", () => {
+    const forward = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), conflict)
+    const reversed = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), [...conflict].reverse())
+    expect(forward.conflicted).toBe(true)
+    expect(forward.reason).toBe("SEQUENCE_CONFLICT")
+    expect(forward.status).toBe("DELIVERY_PENDING") // never advanced from initial
+    expect(reversed).toEqual(forward) // acceptance verdict + status are order-independent
+  })
+
+  it("a later delivered event cannot resurrect an earlier terminal bounce", () => {
+    const final = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), [
+      ev({ providerEventId: "b", eventType: "BOUNCED", sequence: 2 }),
+      ev({ providerEventId: "d", eventType: "DELIVERED", sequence: 5 }),
+    ])
+    expect(final.status).toBe("BOUNCED")
+  })
+
+  it("invalid events are dropped from the canonical fold rather than poisoning it", () => {
+    const final = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), [
+      ev({ providerEventId: "a", eventType: "ACCEPTED", sequence: 1 }),
+      { provider: "resend", providerEventId: "bad", eventType: "DELIVERED", sequence: Number.NaN, occurredAt: "x" } as DeliveryEvent,
+      ev({ providerEventId: "d", eventType: "DELIVERED", sequence: 2 }),
+    ])
+    expect(final.status).toBe("DELIVERED")
+    expect(final.conflicted).toBe(false)
   })
 })

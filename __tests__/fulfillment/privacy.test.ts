@@ -85,9 +85,15 @@ describe("fulfillment library is pure — no side-effecting imports", () => {
   })
 
   it.each(sideEffectImports)("no fulfillment source imports %s", (mod) => {
+    // Match real static/dynamic import + require forms (including `export … from`
+    // and submodule paths like "resend/x"), so a module name mentioned in a comment
+    // (e.g. an "e.g. resend" example) is not a false positive but a genuine
+    // side-effecting import in any form is caught.
+    const escaped = mod.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    const importRe = new RegExp(`(?:from|import\\(|require\\()\\s*["']${escaped}(?:/[^"']*)?["']`)
     for (const f of files) {
       const src = readFileSync(join(dir, f), "utf8")
-      expect(src.includes(`"${mod}"`)).toBe(false)
+      expect(importRe.test(src)).toBe(false)
     }
   })
 })

@@ -1186,23 +1186,24 @@ enum OTDeliveryEventType {
 /// monotonically from the append-only event log; artifact/attempt detail lives in
 /// the child tables. Lease fields are bounded worker metadata, not auth tokens.
 model OTFulfillment {
-  id                     String              @id @default(cuid())
-  orderId                String              @map("order_id")
-  kind                   OTFulfillmentKind
-  status                 OTFulfillmentStatus @default(NOT_STARTED)
-  statusRevision         Int                 @default(0) @map("status_revision")
-  attemptCount           Int                 @default(0) @map("attempt_count")
-  // Denormalized pointer to the current artifact version (identity only).
-  currentArtifactVersion Int?                @map("current_artifact_version")
-  currentArtifactSha256  String?             @map("current_artifact_sha256")
+  id             String              @id @default(cuid())
+  orderId        String              @map("order_id")
+  kind           OTFulfillmentKind
+  status         OTFulfillmentStatus @default(NOT_STARTED)
+  statusRevision Int                 @default(0) @map("status_revision")
+  attemptCount   Int                 @default(0) @map("attempt_count")
+  // Current-artifact identity is DERIVED, not stored: it is the highest-`version`
+  // OTFulfillmentArtifact for this fulfillment. An unenforceable denormalized
+  // version/SHA pair was removed so the summary can never disagree with the
+  // immutable append-only artifact log.
   // Bounded worker lease metadata (no DB claim performed in Phase 1).
-  leaseOwner             String?             @map("lease_owner")
-  leaseToken             String?             @map("lease_token")
-  leaseExpiresAt         DateTime?           @map("lease_expires_at")
+  leaseOwner     String?             @map("lease_owner")
+  leaseToken     String?             @map("lease_token")
+  leaseExpiresAt DateTime?           @map("lease_expires_at")
   // Bounded non-PII reason/error code (from a closed allowlist).
-  lastReasonCode         String?             @map("last_reason_code")
-  createdAt              DateTime            @default(now()) @map("created_at")
-  updatedAt              DateTime            @updatedAt @map("updated_at")
+  lastReasonCode String?             @map("last_reason_code")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
 
   order     OTOrder                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
   artifacts OTFulfillmentArtifact[]
@@ -1230,7 +1231,9 @@ model OTFulfillmentArtifact {
   templateVersion  String?  @map("template_version")
   createdAt        DateTime @default(now()) @map("created_at")
 
-  fulfillment OTFulfillment @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+  fulfillment OTFulfillment       @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+  // Delivery attempts that sent THIS immutable artifact version (same fulfillment).
+  attempts    OTDeliveryAttempt[]
 
   @@unique([fulfillmentId, version])
   @@unique([fulfillmentId, artifactSha256])
@@ -1239,16 +1242,20 @@ model OTFulfillmentArtifact {
 }
 
 /// Append-only delivery-attempt records. `idempotencyKey` is globally unique and
-/// `(provider, providerMessageId)` is unique when present, so a resend cannot
-/// duplicate a delivery. An attempt references the artifact version it sent; a
-/// delivery retry reuses an existing version rather than regenerating.
+/// `(provider, providerMessageId)` is unique whenever a message ID exists. Because
+/// `provider` is REQUIRED, the composite unique has no NULL-provider hole: two
+/// pending attempts (provider set, message ID still NULL) stay distinct, but two
+/// resolved attempts can never share a provider message ID. `artifactVersion` is
+/// relationally bound to an immutable artifact of the SAME fulfillment via the
+/// composite FK below, so an attempt can never reference a nonexistent or
+/// foreign-fulfillment artifact; a delivery retry reuses that version (no regen).
 model OTDeliveryAttempt {
   id                 String    @id @default(cuid())
   fulfillmentId      String    @map("fulfillment_id")
   attemptNumber      Int       @map("attempt_number")
   artifactVersion    Int       @map("artifact_version")
   idempotencyKey     String    @unique @map("idempotency_key")
-  provider           String?
+  provider           String
   providerMessageId  String?   @map("provider_message_id")
   requestedAt        DateTime  @default(now()) @map("requested_at")
   providerAcceptedAt DateTime? @map("provider_accepted_at")
@@ -1258,21 +1265,27 @@ model OTDeliveryAttempt {
   reasonCode         String?   @map("reason_code")
   createdAt          DateTime  @default(now()) @map("created_at")
 
-  fulfillment OTFulfillment @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+  fulfillment OTFulfillment         @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+  artifact    OTFulfillmentArtifact @relation(fields: [fulfillmentId, artifactVersion], references: [fulfillmentId, version], onDelete: Cascade, onUpdate: Cascade)
+  events      OTDeliveryEvent[]
 
   @@unique([fulfillmentId, attemptNumber])
   @@unique([provider, providerMessageId])
   @@index([fulfillmentId])
+  @@index([fulfillmentId, artifactVersion])
   @@map("ot_delivery_attempt")
 }
 
-/// Immutable append-only provider-event log. `(provider, providerEventId)` is
-/// unique so duplicate webhooks are idempotent; `sequence` gives a monotonic fold
-/// order. Stores a bounded event type + reason code only — never a raw payload.
+/// Immutable append-only provider-event log. `(provider, providerEventId)` is the
+/// dedup identity, unique so duplicate webhooks are idempotent. Every event is
+/// relationally bound to a real attempt of the SAME fulfillment via the composite
+/// FK below. `(fulfillmentId, sequence)` is UNIQUE — sequence is a locally assigned
+/// monotonic fold order, so two conflicting events can never claim one slot.
+/// Stores a bounded event type + reason code only — never a raw payload.
 model OTDeliveryEvent {
   id              String              @id @default(cuid())
   fulfillmentId   String              @map("fulfillment_id")
-  attemptNumber   Int?                @map("attempt_number")
+  attemptNumber   Int                 @map("attempt_number")
   provider        String
   providerEventId String              @map("provider_event_id")
   eventType       OTDeliveryEventType @map("event_type")
@@ -1281,9 +1294,10 @@ model OTDeliveryEvent {
   reasonCode      String?             @map("reason_code")
   receivedAt      DateTime            @default(now()) @map("received_at")
 
-  fulfillment OTFulfillment @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+  fulfillment OTFulfillment     @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+  attempt     OTDeliveryAttempt @relation(fields: [fulfillmentId, attemptNumber], references: [fulfillmentId, attemptNumber], onDelete: Cascade, onUpdate: Cascade)
 
   @@unique([provider, providerEventId])
-  @@index([fulfillmentId, sequence])
+  @@unique([fulfillmentId, sequence])
   @@map("ot_delivery_event")
 }

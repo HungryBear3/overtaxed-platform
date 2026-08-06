@@ -30,10 +30,9 @@ describe("buildFulfillmentIdempotencyKey", () => {
     expect(keyOf(base)).toBe(keyOf({ ...base }))
   })
 
-  it("changing any contract dimension changes the key (no aliasing)", () => {
+  it("changing any material contract dimension changes the key (no aliasing)", () => {
     const variants: FulfillmentIdempotencyContract[] = [
       { ...base, orderId: "ord_xyz" },
-      { ...base, kind: "T2_APPEAL_EVIDENCE", tier: "T3" },
       { ...base, artifactSha256: "b".repeat(64) },
       { ...base, templateVersion: "tpl_v2" },
       { ...base, attemptNumber: 2 },
@@ -42,6 +41,32 @@ describe("buildFulfillmentIdempotencyKey", () => {
     ]
     const keys = new Set([keyOf(base), ...variants.map(keyOf)])
     expect(keys.size).toBe(variants.length + 1)
+  })
+
+  // ---- Remediation blocker G: sentinel collision + T2-only tier ----
+  it("an omitted templateVersion and an explicit literal \"none\" produce different keys", () => {
+    const { templateVersion: _omit, ...withoutTemplate } = base
+    const omitted = keyOf(withoutTemplate as FulfillmentIdempotencyContract)
+    const literalNone = keyOf({ ...base, templateVersion: "none" })
+    expect(omitted).not.toBe(literalNone)
+  })
+
+  it("distinguishes absent from present for every literal, and empty stays invalid", () => {
+    const { templateVersion: _omit, ...withoutTemplate } = base
+    const absent = keyOf(withoutTemplate as FulfillmentIdempotencyContract)
+    for (const literal of ["none", "n", "absent", "present"]) {
+      expect(keyOf({ ...base, templateVersion: literal })).not.toBe(absent)
+    }
+    // Absence must be expressed by omission — an explicit empty string is invalid.
+    expect(buildFulfillmentIdempotencyKey({ ...base, templateVersion: "" }).ok).toBe(false)
+  })
+
+  it("accepts exactly tier T2 and rejects every other tier", () => {
+    expect(buildFulfillmentIdempotencyKey({ ...base, tier: "T2" }).ok).toBe(true)
+    for (const tier of ["T1", "T3", "T4", "t2", "T2 ", "COMPS_ONLY", ""]) {
+      const r = buildFulfillmentIdempotencyKey({ ...base, tier })
+      expect(r.ok).toBe(false)
+    }
   })
 
   it("cannot be aliased by delimiter injection across fields (regression)", () => {

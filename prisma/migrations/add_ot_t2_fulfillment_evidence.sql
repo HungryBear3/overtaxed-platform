@@ -21,8 +21,6 @@ CREATE TABLE "ot_fulfillment" (
     "status" "OTFulfillmentStatus" NOT NULL DEFAULT 'NOT_STARTED',
     "status_revision" INTEGER NOT NULL DEFAULT 0,
     "attempt_count" INTEGER NOT NULL DEFAULT 0,
-    "current_artifact_version" INTEGER,
-    "current_artifact_sha256" TEXT,
     "lease_owner" TEXT,
     "lease_token" TEXT,
     "lease_expires_at" TIMESTAMP(3),
@@ -55,7 +53,7 @@ CREATE TABLE "ot_delivery_attempt" (
     "attempt_number" INTEGER NOT NULL,
     "artifact_version" INTEGER NOT NULL,
     "idempotency_key" TEXT NOT NULL,
-    "provider" TEXT,
+    "provider" TEXT NOT NULL,
     "provider_message_id" TEXT,
     "requested_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "provider_accepted_at" TIMESTAMP(3),
@@ -72,7 +70,7 @@ CREATE TABLE "ot_delivery_attempt" (
 CREATE TABLE "ot_delivery_event" (
     "id" TEXT NOT NULL,
     "fulfillment_id" TEXT NOT NULL,
-    "attempt_number" INTEGER,
+    "attempt_number" INTEGER NOT NULL,
     "provider" TEXT NOT NULL,
     "provider_event_id" TEXT NOT NULL,
     "event_type" "OTDeliveryEventType" NOT NULL,
@@ -109,16 +107,19 @@ CREATE UNIQUE INDEX "ot_delivery_attempt_idempotency_key_key" ON "ot_delivery_at
 CREATE INDEX "ot_delivery_attempt_fulfillment_id_idx" ON "ot_delivery_attempt"("fulfillment_id");
 
 -- CreateIndex
+CREATE INDEX "ot_delivery_attempt_fulfillment_id_artifact_version_idx" ON "ot_delivery_attempt"("fulfillment_id", "artifact_version");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "ot_delivery_attempt_fulfillment_id_attempt_number_key" ON "ot_delivery_attempt"("fulfillment_id", "attempt_number");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "ot_delivery_attempt_provider_provider_message_id_key" ON "ot_delivery_attempt"("provider", "provider_message_id");
 
 -- CreateIndex
-CREATE INDEX "ot_delivery_event_fulfillment_id_sequence_idx" ON "ot_delivery_event"("fulfillment_id", "sequence");
+CREATE UNIQUE INDEX "ot_delivery_event_provider_provider_event_id_key" ON "ot_delivery_event"("provider", "provider_event_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "ot_delivery_event_provider_provider_event_id_key" ON "ot_delivery_event"("provider", "provider_event_id");
+CREATE UNIQUE INDEX "ot_delivery_event_fulfillment_id_sequence_key" ON "ot_delivery_event"("fulfillment_id", "sequence");
 
 -- AddForeignKey
 ALTER TABLE "ot_fulfillment" ADD CONSTRAINT "ot_fulfillment_order_id_fkey" FOREIGN KEY ("order_id") REFERENCES "ot_order"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -130,4 +131,10 @@ ALTER TABLE "ot_fulfillment_artifact" ADD CONSTRAINT "ot_fulfillment_artifact_fu
 ALTER TABLE "ot_delivery_attempt" ADD CONSTRAINT "ot_delivery_attempt_fulfillment_id_fkey" FOREIGN KEY ("fulfillment_id") REFERENCES "ot_fulfillment"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "ot_delivery_attempt" ADD CONSTRAINT "ot_delivery_attempt_fulfillment_id_artifact_version_fkey" FOREIGN KEY ("fulfillment_id", "artifact_version") REFERENCES "ot_fulfillment_artifact"("fulfillment_id", "version") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "ot_delivery_event" ADD CONSTRAINT "ot_delivery_event_fulfillment_id_fkey" FOREIGN KEY ("fulfillment_id") REFERENCES "ot_fulfillment"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ot_delivery_event" ADD CONSTRAINT "ot_delivery_event_fulfillment_id_attempt_number_fkey" FOREIGN KEY ("fulfillment_id", "attempt_number") REFERENCES "ot_delivery_attempt"("fulfillment_id", "attempt_number") ON DELETE CASCADE ON UPDATE CASCADE;

@@ -25,29 +25,40 @@ export type FulfillmentIdempotencyContract = {
 
 export type IdempotencyKeyResult = { ok: true; key: string } | { ok: false; reason: string }
 
-// Deliberately excludes the ":" join delimiter and "=" label separator so that
-// no free-text segment (orderId, tier, generator/template version) can forge a
-// field boundary and alias a different logical contract to the same key.
+// Deliberately excludes the ":" join delimiter, "=" label separator, and "~"
+// length separator so that no free-text segment can forge a field boundary and
+// alias a different logical contract to the same key.
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/
 
 function segmentOk(value: string): boolean {
   return value.length > 0 && value.length <= 128 && SAFE_SEGMENT.test(value)
 }
 
+// Length-prefixed, tagged encoding of a present value. Because the length prefix
+// and the delimiter-free charset are both enforced, no two distinct values can
+// produce the same encoding, and a present value can never look like the absence
+// sentinel.
+function present(value: string): string {
+  return `present.${value.length}~${value}`
+}
+
+const ABSENT = "absent"
+
 /**
  * Build a deterministic idempotency key, or fail closed with a reason. The key is
- * a single-line, delimiter-joined string of only ids / hashes / versions /
- * numbers — never PII.
+ * a single-line, canonically-encoded string of only ids / hashes / versions /
+ * numbers — never PII. Optional fields use a tagged present/absent encoding so an
+ * omitted value and any explicit literal (e.g. "none") never collide.
  */
 export function buildFulfillmentIdempotencyKey(contract: FulfillmentIdempotencyContract): IdempotencyKeyResult {
   const orderId = String(contract.orderId ?? "")
-  const tier = String(contract.tier ?? "")
   const generatorVersion = String(contract.generatorVersion ?? "")
-  const templateVersion = contract.templateVersion === undefined ? "none" : String(contract.templateVersion)
 
   if (!segmentOk(orderId)) return { ok: false, reason: "INVALID_ORDER_ID" }
   if (contract.kind !== "T2_APPEAL_EVIDENCE") return { ok: false, reason: "INVALID_KIND" }
-  if (!segmentOk(tier)) return { ok: false, reason: "INVALID_TIER" }
+  // T2-only kind: reject any tier other than exact "T2" rather than encoding an
+  // impossible T2-kind/non-T2-tier key.
+  if (contract.tier !== "T2") return { ok: false, reason: "INVALID_TIER" }
   if (contract.purpose !== "DELIVERY" && contract.purpose !== "REGENERATION") {
     return { ok: false, reason: "INVALID_PURPOSE" }
   }
@@ -56,19 +67,26 @@ export function buildFulfillmentIdempotencyKey(contract: FulfillmentIdempotencyC
   }
   if (!isValidArtifactSha256(contract.artifactSha256)) return { ok: false, reason: "INVALID_ARTIFACT_SHA256" }
   if (!segmentOk(generatorVersion)) return { ok: false, reason: "INVALID_GENERATOR_VERSION" }
-  if (!segmentOk(templateVersion)) return { ok: false, reason: "INVALID_TEMPLATE_VERSION" }
+  // Absent is distinct from any present value; an explicit empty/invalid string is
+  // still rejected (absence must be expressed by omission, not "").
+  let templateSegment = ABSENT
+  if (contract.templateVersion !== undefined) {
+    const templateVersion = String(contract.templateVersion)
+    if (!segmentOk(templateVersion)) return { ok: false, reason: "INVALID_TEMPLATE_VERSION" }
+    templateSegment = present(templateVersion)
+  }
 
   const key = [
     "otf",
     "v1",
-    contract.purpose,
-    contract.kind,
-    orderId,
-    `tier=${tier}`,
+    `purpose=${contract.purpose}`,
+    `kind=${contract.kind}`,
+    `order=${present(orderId)}`,
+    "tier=T2",
     `attempt=${contract.attemptNumber}`,
     `sha=${contract.artifactSha256}`,
-    `gen=${generatorVersion}`,
-    `tpl=${templateVersion}`,
+    `gen=${present(generatorVersion)}`,
+    `tpl=${templateSegment}`,
   ].join(":")
 
   return { ok: true, key }

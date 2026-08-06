@@ -50,19 +50,33 @@ describe("decideDeliverySend — a retry never regenerates (row 7)", () => {
     })
   })
 
-  it("fails closed on a malformed attempt ceiling rather than sending", () => {
-    expect(decideDeliverySend({ status: "DELAYED", attemptCount: 0, maxAttempts: Number.NaN })).toEqual({
-      send: false,
-      reason: "MAX_ATTEMPTS",
-    })
-    expect(
-      decideDeliverySend({ status: "DELAYED", attemptCount: 0, maxAttempts: undefined as unknown as number })
-    ).toEqual({ send: false, reason: "MAX_ATTEMPTS" })
-    expect(decideDeliverySend({ status: "DELAYED", attemptCount: 0, maxAttempts: 0 })).toEqual({
+  it("stops at the attempt ceiling", () => {
+    expect(decideDeliverySend({ status: "DELAYED", attemptCount: 3, maxAttempts: 3 })).toEqual({
       send: false,
       reason: "MAX_ATTEMPTS",
     })
   })
+
+  // ---- Remediation blocker E: malformed counters fail closed ----
+  it.each([Number.NaN, -1, 1.5, undefined as unknown as number])(
+    "malformed attemptCount %p returns send:false (never authorizes attempt 1)",
+    (attemptCount) => {
+      expect(decideDeliverySend({ status: "ARTIFACT_READY", attemptCount, maxAttempts: 3 })).toEqual({
+        send: false,
+        reason: "INVALID_ATTEMPT_COUNT",
+      })
+    }
+  )
+
+  it.each([Number.NaN, 0, -1, 1.5, undefined as unknown as number])(
+    "malformed maxAttempts %p returns send:false",
+    (maxAttempts) => {
+      expect(decideDeliverySend({ status: "ARTIFACT_READY", attemptCount: 0, maxAttempts })).toEqual({
+        send: false,
+        reason: "INVALID_MAX_ATTEMPTS",
+      })
+    }
+  )
 })
 
 describe("decideRegeneration — regeneration never sends (row 8)", () => {
@@ -92,5 +106,41 @@ describe("decideRegeneration — regeneration never sends (row 8)", () => {
       const d = decideRegeneration({ status, hasArtifact: false, artifactValid: false, currentArtifactVersion: 0, explicitRequest: true })
       expect(d.regenerate).toBe(false)
     }
+  })
+
+  // ---- Remediation blocker F: fail-closed versioning + status allowlist ----
+  it("does not silently regenerate from DELIVERED", () => {
+    const d = decideRegeneration({ status: "DELIVERED", hasArtifact: true, artifactValid: true, currentArtifactVersion: 2, explicitRequest: true })
+    expect(d).toEqual({ regenerate: false, reason: "STATUS_NOT_REGENERABLE" })
+  })
+
+  it("rejects mid-send / not-yet-started statuses", () => {
+    for (const status of ["DELIVERY_PENDING", "PROVIDER_ACCEPTED", "NOT_STARTED"] as const) {
+      expect(
+        decideRegeneration({ status, hasArtifact: false, artifactValid: false, currentArtifactVersion: 0, explicitRequest: true }).regenerate
+      ).toBe(false)
+    }
+  })
+
+  it.each([Number.NaN, -1, 1.5])("malformed current version %p fails closed", (currentArtifactVersion) => {
+    expect(
+      decideRegeneration({ status: "ARTIFACT_READY", hasArtifact: true, artifactValid: false, currentArtifactVersion, explicitRequest: false })
+    ).toEqual({ regenerate: false, reason: "INVALID_ARTIFACT_VERSION" })
+  })
+
+  it("rejects inconsistent artifact-presence/version combinations", () => {
+    // hasArtifact but no positive version
+    expect(
+      decideRegeneration({ status: "ARTIFACT_READY", hasArtifact: true, artifactValid: false, currentArtifactVersion: 0, explicitRequest: true }).regenerate
+    ).toBe(false)
+    // no artifact but version claims > 0
+    expect(
+      decideRegeneration({ status: "ARTIFACT_PENDING", hasArtifact: false, artifactValid: false, currentArtifactVersion: 2, explicitRequest: true }).regenerate
+    ).toBe(false)
+  })
+
+  it("regeneration issues strictly the next version, never an existing/lower one", () => {
+    const d = decideRegeneration({ status: "ARTIFACT_READY", hasArtifact: true, artifactValid: false, currentArtifactVersion: 5, explicitRequest: false })
+    expect(d).toEqual({ regenerate: true, nextArtifactVersion: 6, createsDeliveryAttempt: false })
   })
 })

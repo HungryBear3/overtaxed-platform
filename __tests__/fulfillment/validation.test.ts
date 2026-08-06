@@ -9,6 +9,7 @@ import {
   isValidByteSize,
   isValidProviderMessageId,
   isValidProviderEventId,
+  isValidProviderName,
   isValidReasonCode,
   validateTimestampChain,
   MAX_ARTIFACT_BYTES,
@@ -56,6 +57,20 @@ describe("isValidProviderMessageId / isValidProviderEventId — bounded opaque t
     expect(isValidProviderMessageId("x".repeat(256))).toBe(false)
     expect(isValidProviderMessageId(null as unknown as string)).toBe(false)
     expect(isValidProviderEventId("")).toBe(false)
+  })
+})
+
+describe("isValidProviderName — bounded, single-line, delimiter-free", () => {
+  it("accepts a normal provider name", () => {
+    expect(isValidProviderName("resend")).toBe(true)
+    expect(isValidProviderName("postmark-eu")).toBe(true)
+  })
+  it("rejects empty, whitespace, over-long and non-strings", () => {
+    expect(isValidProviderName("")).toBe(false)
+    expect(isValidProviderName("  ")).toBe(false)
+    expect(isValidProviderName("has space")).toBe(false)
+    expect(isValidProviderName("x".repeat(65))).toBe(false)
+    expect(isValidProviderName(null as unknown as string)).toBe(false)
   })
 })
 

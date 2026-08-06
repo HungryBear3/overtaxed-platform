@@ -12,7 +12,6 @@
  */
 import type { OTFulfillmentStatus } from "@/lib/fulfillment/types"
 import { TERMINAL_LOCK_STATUSES } from "@/lib/fulfillment/types"
-import { nextDeliveryAttemptNumber } from "@/lib/fulfillment/state"
 
 export type DeliverySendInput = {
   status: OTFulfillmentStatus
@@ -37,13 +36,17 @@ export function decideDeliverySend(input: DeliverySendInput): DeliverySendDecisi
   if (UNRESOLVED_STATUSES.has(status)) return { send: false, reason: "UNRESOLVED_SEND" }
   if (!SENDABLE_STATUSES.has(status)) return { send: false, reason: "NOT_SENDABLE" }
 
-  const attemptCount = Number.isInteger(input.attemptCount) && input.attemptCount > 0 ? input.attemptCount : 0
-  // Fail closed on a malformed ceiling (NaN/undefined/<1) rather than sending.
-  if (!Number.isInteger(input.maxAttempts) || input.maxAttempts < 1 || attemptCount >= input.maxAttempts) {
-    return { send: false, reason: "MAX_ATTEMPTS" }
+  // Counters must be well-formed BEFORE any attempt number is issued. A malformed
+  // attempt count no longer normalizes to zero and authorizes attempt 1.
+  if (!Number.isInteger(input.attemptCount) || input.attemptCount < 0) {
+    return { send: false, reason: "INVALID_ATTEMPT_COUNT" }
   }
+  if (!Number.isInteger(input.maxAttempts) || input.maxAttempts < 1) {
+    return { send: false, reason: "INVALID_MAX_ATTEMPTS" }
+  }
+  if (input.attemptCount >= input.maxAttempts) return { send: false, reason: "MAX_ATTEMPTS" }
 
-  return { send: true, attemptNumber: nextDeliveryAttemptNumber(attemptCount), regenerate: false }
+  return { send: true, attemptNumber: input.attemptCount + 1, regenerate: false }
 }
 
 export type RegenerationInput = {
@@ -58,15 +61,35 @@ export type RegenerationDecision =
   | { regenerate: true; nextArtifactVersion: number; createsDeliveryAttempt: false }
   | { regenerate: false; reason: string }
 
+/**
+ * Statuses from which (re)generation is explicitly valid. DELIVERED, the unresolved
+ * send states, NOT_STARTED, and every terminal-lock state are excluded, so a
+ * regeneration can never be authorized from a state whose transition contract does
+ * not support it.
+ */
+const REGENERABLE_STATUSES: ReadonlySet<OTFulfillmentStatus> = new Set([
+  "NEEDS_RECONCILIATION",
+  "INCOMPLETE_INPUT",
+  "MANUAL_REVIEW",
+  "ARTIFACT_PENDING",
+  "ARTIFACT_READY",
+  "DELAYED",
+])
+
 export function decideRegeneration(input: RegenerationInput): RegenerationDecision {
   if (TERMINAL_LOCK_STATUSES.has(input.status)) return { regenerate: false, reason: `TERMINAL_${input.status}` }
+  if (!REGENERABLE_STATUSES.has(input.status)) return { regenerate: false, reason: "STATUS_NOT_REGENERABLE" }
 
-  const current = Number.isInteger(input.currentArtifactVersion) && input.currentArtifactVersion > 0
-    ? input.currentArtifactVersion
-    : 0
+  // Version must be a non-negative integer AND consistent with artifact presence.
+  const version = input.currentArtifactVersion
+  if (!Number.isInteger(version) || version < 0) return { regenerate: false, reason: "INVALID_ARTIFACT_VERSION" }
+  if (input.hasArtifact && version < 1) return { regenerate: false, reason: "INCONSISTENT_ARTIFACT_STATE" }
+  if (!input.hasArtifact && version !== 0) return { regenerate: false, reason: "INCONSISTENT_ARTIFACT_STATE" }
+
   const needsArtifact = !input.hasArtifact || !input.artifactValid
   if (needsArtifact || input.explicitRequest) {
-    return { regenerate: true, nextArtifactVersion: current + 1, createsDeliveryAttempt: false }
+    // Strictly greater than the current version — never an existing/lower version.
+    return { regenerate: true, nextArtifactVersion: version + 1, createsDeliveryAttempt: false }
   }
   return { regenerate: false, reason: "NOT_NEEDED" }
 }

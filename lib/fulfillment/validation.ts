@@ -40,6 +40,13 @@ export function isValidProviderEventId(value: unknown): boolean {
   return isBoundedOpaqueId(value)
 }
 
+/** Provider name (e.g. "resend"). Bounded, single-line, non-empty, delimiter-free. */
+export function isValidProviderName(value: unknown): boolean {
+  if (typeof value !== "string") return false
+  if (value.trim().length < 1 || value.length > 64) return false
+  return /^[A-Za-z0-9._-]+$/.test(value)
+}
+
 /** Reason code must be a member of the bounded non-PII allowlist. */
 export function isValidReasonCode(value: unknown): boolean {
   return typeof value === "string" && REASON_CODES.has(value)
