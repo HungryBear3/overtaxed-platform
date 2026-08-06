@@ -147,18 +147,26 @@ type SyntaxStringValues = {
 };
 const MAX_SYNTAX_STRING_VALUES = 64;
 
+function addBoundedSyntaxValue(values: Set<string>, value: string): boolean {
+  if (values.has(value)) return false;
+  if (values.size >= MAX_SYNTAX_STRING_VALUES) return true;
+  values.add(value);
+  return false;
+}
+
 function mergeSyntaxValues(
   left: SyntaxStringValues,
   right: SyntaxStringValues,
 ): SyntaxStringValues {
-  const values = new Set([...left.values, ...right.values]);
+  const values = new Set<string>();
+  let overflowed = left.overflowed || right.overflowed;
+  for (const value of [...left.values, ...right.values]) {
+    overflowed = addBoundedSyntaxValue(values, value) || overflowed;
+  }
   return {
     values,
     complete: left.complete && right.complete,
-    overflowed:
-      left.overflowed ||
-      right.overflowed ||
-      values.size > MAX_SYNTAX_STRING_VALUES,
+    overflowed,
   };
 }
 
@@ -187,8 +195,9 @@ function possibleStaticStringValues(
       const next = new Set<string>();
       for (const prefix of values) {
         for (const value of part.values) {
-          next.add(prefix + value + span.literal.text);
-          if (next.size > MAX_SYNTAX_STRING_VALUES) overflowed = true;
+          overflowed =
+            addBoundedSyntaxValue(next, prefix + value + span.literal.text) ||
+            overflowed;
         }
       }
       values = next;
@@ -214,8 +223,7 @@ function possibleStaticStringValues(
       let overflowed = left.overflowed || right.overflowed;
       for (const a of left.values) {
         for (const b of right.values) {
-          values.add(a + b);
-          if (values.size > MAX_SYNTAX_STRING_VALUES) overflowed = true;
+          overflowed = addBoundedSyntaxValue(values, a + b) || overflowed;
         }
       }
       return {
@@ -616,6 +624,14 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
     ["member indirect eval on a value", `const g = globalThis; g.eval("x")`],
   ])("detects %s", (_label, src) => {
     expect(findImpurities(src).length).toBeGreaterThan(0);
+  });
+
+  it("fails closed without materializing excessive syntax-value branches", () => {
+    const branch = (index: number) => `(f${index} ? "a" : "b")`;
+    const key = Array.from({ length: 7 }, (_, index) => branch(index)).join(
+      " + ",
+    );
+    expect(findImpurities(`(() => {})[${key}]("x")`).length).toBeGreaterThan(0);
   });
 
   it.each([
