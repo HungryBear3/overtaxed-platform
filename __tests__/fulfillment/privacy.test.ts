@@ -174,6 +174,29 @@ function staticStringValue(node: ts.Expression | undefined): string | null {
   return null;
 }
 
+/** For non-foldable key expressions, reject an explicitly embedded dangerous
+ * member literal (for example `flag ? "constructor" : "name"`). Opaque
+ * identifier keys remain outside this syntax-only tripwire by design. */
+function containsLoaderRecoveryLiteral(
+  node: ts.Expression | undefined,
+): boolean {
+  if (!node) return false;
+  let found = false;
+  const visit = (child: ts.Node): void => {
+    if (
+      (ts.isStringLiteral(child) ||
+        ts.isNoSubstitutionTemplateLiteral(child)) &&
+      LOADER_RECOVERY_MEMBERS.has(child.text)
+    ) {
+      found = true;
+      return;
+    }
+    if (!found) ts.forEachChild(child, visit);
+  };
+  visit(node);
+  return found;
+}
+
 /**
  * AST purity check (TypeScript compiler API — node kinds, not regex). Returns a
  * list of impurity findings for a source.
@@ -271,7 +294,10 @@ function findImpurities(source: string): string[] {
       findings.push(`member-loader:${node.name.text}`);
     } else if (ts.isElementAccessExpression(node)) {
       const key = staticStringValue(node.argumentExpression);
-      if (key !== null && LOADER_RECOVERY_MEMBERS.has(key))
+      if (
+        (key !== null && LOADER_RECOVERY_MEMBERS.has(key)) ||
+        containsLoaderRecoveryLiteral(node.argumentExpression)
+      )
         findings.push(`element-loader:${key}`);
     } else if (ts.isCallExpression(node)) {
       // A string-literal loader name passed to a call (e.g. Reflect.get(globalThis, "require")).
@@ -461,6 +487,14 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
     [
       "non-null-wrapped constructor element",
       '(() => {})["constructor"!]("return process")()',
+    ],
+    [
+      "conditional constructor element",
+      '(() => {})[flag ? "constructor" : "name"]("return process")()',
+    ],
+    [
+      "comma constructor element",
+      '(() => {})[(0, "constructor")]("return process")()',
     ],
     [
       "process aliased to a value",
