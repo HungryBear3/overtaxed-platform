@@ -12,64 +12,76 @@ import type {
   OTDeliveryEventType,
   OTFulfillmentKind,
   OTFulfillmentStatus,
-} from "@/lib/fulfillment/types"
-import type { FulfillmentIdempotencyPurpose } from "@/lib/fulfillment/idempotency"
+} from "@/lib/fulfillment/types";
+import type { FulfillmentIdempotencyPurpose } from "@/lib/fulfillment/idempotency";
+import type { PrivateStorageLocator } from "@/lib/fulfillment/validation";
 
 /** Result of generating an artifact — identity only, never the raw bytes. */
 export interface ArtifactGeneratorResult {
-  ok: boolean
-  artifactSha256?: string
-  byteSize?: number
-  generatorVersion?: string
-  templateVersion?: string
-  reasonCode?: string
+  ok: boolean;
+  artifactSha256?: string;
+  byteSize?: number;
+  generatorVersion?: string;
+  templateVersion?: string;
+  reasonCode?: string;
 }
 
-/** Result of persisting an artifact to private storage — a private locator only. */
+/**
+ * Result of persisting an artifact to private storage — a validated private,
+ * opaque, relative locator only (branded via isValidPrivateStorageLocator). The
+ * brand makes a public/signed/bearer URL unassignable here at the type level, and
+ * the runtime validator enforces the same contract behaviorally.
+ */
 export interface PrivateArtifactStorageResult {
-  ok: boolean
-  storageLocator?: string
-  reasonCode?: string
+  ok: boolean;
+  storageLocator?: PrivateStorageLocator;
+  reasonCode?: string;
 }
 
 /** Result of a transactional delivery send — opaque provider identity only. */
 export interface TransactionalDeliveryAdapterResult {
-  ok: boolean
-  provider?: string
-  providerMessageId?: string
-  reasonCode?: string
+  ok: boolean;
+  provider?: string;
+  providerMessageId?: string;
+  reasonCode?: string;
 }
 
 /** A provider webhook normalized to the payload-free event vocabulary. */
 export interface ProviderEventNormalization {
-  provider: string
-  providerEventId: string
-  eventType: OTDeliveryEventType
-  sequence: number
-  occurredAt: string
-  reasonCode?: string
+  provider: string;
+  providerEventId: string;
+  eventType: OTDeliveryEventType;
+  sequence: number;
+  occurredAt: string;
+  reasonCode?: string;
 }
 
 /** A bounded worker claim over a fulfillment lease. */
 export interface LeasedWorkerClaim {
-  fulfillmentId: string
-  kind: OTFulfillmentKind
-  leaseOwner: string
-  leaseToken: string
-  leaseExpiresAt: string
+  fulfillmentId: string;
+  kind: OTFulfillmentKind;
+  leaseOwner: string;
+  leaseToken: string;
+  leaseExpiresAt: string;
 }
 
 /** A modeled admin retry/regenerate command (not executed in Phase 1). */
 export interface AdminRetryCommand {
-  fulfillmentId: string
-  action: "RETRY_DELIVERY" | "REGENERATE_ARTIFACT"
-  purpose: FulfillmentIdempotencyPurpose
-  requestedBy: string
-  expectedStatus: OTFulfillmentStatus
+  fulfillmentId: string;
+  action: "RETRY_DELIVERY" | "REGENERATE_ARTIFACT";
+  purpose: FulfillmentIdempotencyPurpose;
+  requestedBy: string;
+  expectedStatus: OTFulfillmentStatus;
 }
 
 /** A private, time-bounded download token service (interface only). */
 export interface PrivateDownloadTokenService {
-  issue(input: { fulfillmentId: string; artifactSha256: string; ttlSeconds: number }): Promise<{ token: string; expiresAt: string }>
-  verify(token: string): Promise<{ ok: boolean; fulfillmentId?: string; artifactSha256?: string }>
+  issue(input: {
+    fulfillmentId: string;
+    artifactSha256: string;
+    ttlSeconds: number;
+  }): Promise<{ token: string; expiresAt: string }>;
+  verify(
+    token: string,
+  ): Promise<{ ok: boolean; fulfillmentId?: string; artifactSha256?: string }>;
 }

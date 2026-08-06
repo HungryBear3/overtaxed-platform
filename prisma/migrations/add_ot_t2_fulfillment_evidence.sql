@@ -131,10 +131,10 @@ ALTER TABLE "ot_fulfillment_artifact" ADD CONSTRAINT "ot_fulfillment_artifact_fu
 ALTER TABLE "ot_delivery_attempt" ADD CONSTRAINT "ot_delivery_attempt_fulfillment_id_fkey" FOREIGN KEY ("fulfillment_id") REFERENCES "ot_fulfillment"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ot_delivery_attempt" ADD CONSTRAINT "ot_delivery_attempt_fulfillment_id_artifact_version_fkey" FOREIGN KEY ("fulfillment_id", "artifact_version") REFERENCES "ot_fulfillment_artifact"("fulfillment_id", "version") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ot_delivery_attempt" ADD CONSTRAINT "ot_delivery_attempt_fulfillment_id_artifact_version_fkey" FOREIGN KEY ("fulfillment_id", "artifact_version") REFERENCES "ot_fulfillment_artifact"("fulfillment_id", "version") ON DELETE NO ACTION ON UPDATE NO ACTION;
 
 -- AddForeignKey
 ALTER TABLE "ot_delivery_event" ADD CONSTRAINT "ot_delivery_event_fulfillment_id_fkey" FOREIGN KEY ("fulfillment_id") REFERENCES "ot_fulfillment"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ot_delivery_event" ADD CONSTRAINT "ot_delivery_event_fulfillment_id_attempt_number_fkey" FOREIGN KEY ("fulfillment_id", "attempt_number") REFERENCES "ot_delivery_attempt"("fulfillment_id", "attempt_number") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ot_delivery_event" ADD CONSTRAINT "ot_delivery_event_fulfillment_id_attempt_number_fkey" FOREIGN KEY ("fulfillment_id", "attempt_number") REFERENCES "ot_delivery_attempt"("fulfillment_id", "attempt_number") ON DELETE NO ACTION ON UPDATE NO ACTION;

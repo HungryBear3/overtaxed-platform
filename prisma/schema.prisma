@@ -1266,7 +1266,11 @@ model OTDeliveryAttempt {
   createdAt          DateTime  @default(now()) @map("created_at")
 
   fulfillment OTFulfillment         @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
-  artifact    OTFulfillmentArtifact @relation(fields: [fulfillmentId, artifactVersion], references: [fulfillmentId, version], onDelete: Cascade, onUpdate: Cascade)
+  // Intra-evidence identity FK: NoAction (non-destructive). Deleting an artifact
+  // must never silently erase attempts, and an artifact-version change must never
+  // rewrite this downstream identity. Parent teardown removes attempts via the
+  // fulfillment Cascade above; NoAction's end-of-statement check then passes.
+  artifact    OTFulfillmentArtifact @relation(fields: [fulfillmentId, artifactVersion], references: [fulfillmentId, version], onDelete: NoAction, onUpdate: NoAction)
   events      OTDeliveryEvent[]
 
   @@unique([fulfillmentId, attemptNumber])
@@ -1295,7 +1299,11 @@ model OTDeliveryEvent {
   receivedAt      DateTime            @default(now()) @map("received_at")
 
   fulfillment OTFulfillment     @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
-  attempt     OTDeliveryAttempt @relation(fields: [fulfillmentId, attemptNumber], references: [fulfillmentId, attemptNumber], onDelete: Cascade, onUpdate: Cascade)
+  // Intra-evidence identity FK: NoAction (non-destructive). Deleting an attempt
+  // must never silently erase events, and an attempt-number change must never
+  // rewrite this downstream identity. Parent teardown removes events via the
+  // fulfillment Cascade above; NoAction's end-of-statement check then passes.
+  attempt     OTDeliveryAttempt @relation(fields: [fulfillmentId, attemptNumber], references: [fulfillmentId, attemptNumber], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([provider, providerEventId])
   @@unique([fulfillmentId, sequence])

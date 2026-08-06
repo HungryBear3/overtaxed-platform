@@ -13,193 +13,524 @@ import {
   deliveryEventKey,
   validateDeliveryEvent,
   nextDeliveryAttemptNumber,
-} from "@/lib/fulfillment/state"
-import type { DeliveryEvent } from "@/lib/fulfillment/state"
+} from "@/lib/fulfillment/state";
+import type { DeliveryEvent } from "@/lib/fulfillment/state";
 
 function ev(
-  overrides: Partial<DeliveryEvent> & { providerEventId: string; eventType: DeliveryEvent["eventType"]; sequence: number }
+  overrides: Partial<DeliveryEvent> & {
+    providerEventId: string;
+    eventType: DeliveryEvent["eventType"];
+    sequence: number;
+  },
 ): DeliveryEvent {
-  // Derive a stable timestamp; fall back for non-finite sequences (invalid fixtures).
-  const seq = Number.isFinite(overrides.sequence) ? overrides.sequence : 1
+  // Derive a stable timestamp; fall back for non-finite / out-of-Date-range
+  // sequences (invalid fixtures) so the factory never throws.
+  const seq =
+    Number.isFinite(overrides.sequence) && Math.abs(overrides.sequence) < 1e11
+      ? overrides.sequence
+      : 1;
   return {
     provider: "resend",
     occurredAt: new Date(1000 * seq).toISOString(),
     ...overrides,
-  }
+  };
 }
 
 describe("allowed monotonic transitions", () => {
   it("ARTIFACT_READY may begin delivery but cannot jump straight to DELIVERED", () => {
-    expect(canTransition("ARTIFACT_READY", "DELIVERY_PENDING")).toBe(true)
-    expect(canTransition("ARTIFACT_READY", "DELIVERED")).toBe(false)
-  })
+    expect(canTransition("ARTIFACT_READY", "DELIVERY_PENDING")).toBe(true);
+    expect(canTransition("ARTIFACT_READY", "DELIVERED")).toBe(false);
+  });
 
   it("terminal states cannot transition anywhere", () => {
-    for (const t of ["BOUNCED", "COMPLAINED", "CANCELLED", "FAILED", "INELIGIBLE"] as const) {
-      expect(canTransition(t, "DELIVERED")).toBe(false)
-      expect(canTransition(t, "ARTIFACT_PENDING")).toBe(false)
+    for (const t of [
+      "BOUNCED",
+      "COMPLAINED",
+      "CANCELLED",
+      "FAILED",
+      "INELIGIBLE",
+    ] as const) {
+      expect(canTransition(t, "DELIVERED")).toBe(false);
+      expect(canTransition(t, "ARTIFACT_PENDING")).toBe(false);
     }
-  })
+  });
 
   it("provider acceptance and delivery are distinct adjacent states", () => {
-    expect(canTransition("DELIVERY_PENDING", "PROVIDER_ACCEPTED")).toBe(true)
-    expect(canTransition("PROVIDER_ACCEPTED", "DELIVERED")).toBe(true)
-  })
-})
+    expect(canTransition("DELIVERY_PENDING", "PROVIDER_ACCEPTED")).toBe(true);
+    expect(canTransition("PROVIDER_ACCEPTED", "DELIVERED")).toBe(true);
+  });
+});
 
 describe("foldDeliveryEvent — provider accepted is NOT delivered", () => {
   it("ACCEPTED yields PROVIDER_ACCEPTED, not DELIVERED", () => {
-    const s0 = initialFoldState("DELIVERY_PENDING")
-    const s1 = foldDeliveryEvent(s0, ev({ providerEventId: "e1", eventType: "ACCEPTED", sequence: 1 }))
-    expect(s1.applied).toBe(true)
-    expect(s1.state.status).toBe("PROVIDER_ACCEPTED")
-    expect(s1.state.status).not.toBe("DELIVERED")
-    const s2 = foldDeliveryEvent(s1.state, ev({ providerEventId: "e2", eventType: "DELIVERED", sequence: 2 }))
-    expect(s2.state.status).toBe("DELIVERED")
-    expect(s2.state.statusRevision).toBe(2)
-  })
-})
+    const s0 = initialFoldState("DELIVERY_PENDING");
+    const s1 = foldDeliveryEvent(
+      s0,
+      ev({ providerEventId: "e1", eventType: "ACCEPTED", sequence: 1 }),
+    );
+    expect(s1.applied).toBe(true);
+    expect(s1.state.status).toBe("PROVIDER_ACCEPTED");
+    expect(s1.state.status).not.toBe("DELIVERED");
+    const s2 = foldDeliveryEvent(
+      s1.state,
+      ev({ providerEventId: "e2", eventType: "DELIVERED", sequence: 2 }),
+    );
+    expect(s2.state.status).toBe("DELIVERED");
+    expect(s2.state.statusRevision).toBe(2);
+  });
+});
 
-describe("foldDeliveryEvent — duplicate events are idempotent (row 5)", () => {
-  it("replaying the same providerEventId does not advance status or revision", () => {
-    const s0 = initialFoldState("DELIVERY_PENDING")
-    const s1 = foldDeliveryEvent(s0, ev({ providerEventId: "dup", eventType: "DELIVERED", sequence: 1 }))
-    const s2 = foldDeliveryEvent(s1.state, ev({ providerEventId: "dup", eventType: "DELIVERED", sequence: 1 }))
-    expect(s2.applied).toBe(false)
-    expect(s2.reason).toBe("DUPLICATE_EVENT")
-    expect(s2.state.statusRevision).toBe(s1.state.statusRevision)
-  })
-})
+describe("foldDeliveryEvent — exact replays are idempotent (row 5)", () => {
+  it("replaying the same event (identical content) does not advance status or revision", () => {
+    const s0 = initialFoldState("DELIVERY_PENDING");
+    const s1 = foldDeliveryEvent(
+      s0,
+      ev({ providerEventId: "dup", eventType: "DELIVERED", sequence: 1 }),
+    );
+    const s2 = foldDeliveryEvent(
+      s1.state,
+      ev({ providerEventId: "dup", eventType: "DELIVERED", sequence: 1 }),
+    );
+    expect(s2.applied).toBe(false);
+    expect(s2.reason).toBe("EXACT_REPLAY");
+    expect(s2.state.statusRevision).toBe(s1.state.statusRevision);
+  });
+});
 
 describe("foldDeliveryEvents — out-of-order safety (row 6)", () => {
   it("a delayed event arriving after delivered does not regress the status", () => {
     const final = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), [
       ev({ providerEventId: "d", eventType: "DELIVERED", sequence: 2 }),
       ev({ providerEventId: "l", eventType: "DELAYED", sequence: 1 }),
-    ])
-    expect(final.status).toBe("DELIVERED")
-  })
+    ]);
+    expect(final.status).toBe("DELIVERED");
+  });
 
   it("folding is order-independent for the final status", () => {
     const events = [
       ev({ providerEventId: "a", eventType: "ACCEPTED", sequence: 1 }),
       ev({ providerEventId: "b", eventType: "DELIVERED", sequence: 2 }),
-    ]
-    const forward = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), events)
-    const reversed = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), [...events].reverse())
-    expect(forward.status).toBe("DELIVERED")
-    expect(reversed.status).toBe("DELIVERED")
-  })
+    ];
+    const forward = foldDeliveryEvents(
+      initialFoldState("DELIVERY_PENDING"),
+      events,
+    );
+    const reversed = foldDeliveryEvents(
+      initialFoldState("DELIVERY_PENDING"),
+      [...events].reverse(),
+    );
+    expect(forward.status).toBe("DELIVERED");
+    expect(reversed.status).toBe("DELIVERED");
+  });
 
   it("a terminal bounce cannot be resurrected by a later delivered event", () => {
     const final = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), [
       ev({ providerEventId: "b", eventType: "BOUNCED", sequence: 1 }),
       ev({ providerEventId: "d", eventType: "DELIVERED", sequence: 2 }),
-    ])
-    expect(final.status).toBe("BOUNCED")
-  })
+    ]);
+    expect(final.status).toBe("BOUNCED");
+  });
 
   it("a complaint may follow a delivered success, but a delayed cannot regress it", () => {
-    const complained = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), [
-      ev({ providerEventId: "d", eventType: "DELIVERED", sequence: 1 }),
-      ev({ providerEventId: "c", eventType: "COMPLAINED", sequence: 2 }),
-    ])
-    expect(complained.status).toBe("COMPLAINED")
-  })
+    const complained = foldDeliveryEvents(
+      initialFoldState("DELIVERY_PENDING"),
+      [
+        ev({ providerEventId: "d", eventType: "DELIVERED", sequence: 1 }),
+        ev({ providerEventId: "c", eventType: "COMPLAINED", sequence: 2 }),
+      ],
+    );
+    expect(complained.status).toBe("COMPLAINED");
+  });
 
   it("provider events never apply to a fulfillment that has not started delivery", () => {
-    const s = foldDeliveryEvent(initialFoldState("NEEDS_RECONCILIATION"), ev({ providerEventId: "x", eventType: "DELIVERED", sequence: 1 }))
-    expect(s.applied).toBe(false)
-    expect(s.state.status).toBe("NEEDS_RECONCILIATION")
-  })
-})
+    const s = foldDeliveryEvent(
+      initialFoldState("NEEDS_RECONCILIATION"),
+      ev({ providerEventId: "x", eventType: "DELIVERED", sequence: 1 }),
+    );
+    expect(s.applied).toBe(false);
+    expect(s.state.status).toBe("NEEDS_RECONCILIATION");
+  });
+});
 
-describe("nextDeliveryAttemptNumber", () => {
-  it("is monotonic starting at 1", () => {
-    expect(nextDeliveryAttemptNumber(0)).toBe(1)
-    expect(nextDeliveryAttemptNumber(1)).toBe(2)
-    expect(nextDeliveryAttemptNumber(4)).toBe(5)
-  })
-})
+describe("nextDeliveryAttemptNumber — discriminated, fail-closed", () => {
+  it("is monotonic starting at 1 for valid counts", () => {
+    expect(nextDeliveryAttemptNumber(0)).toEqual({ ok: true, value: 1 });
+    expect(nextDeliveryAttemptNumber(1)).toEqual({ ok: true, value: 2 });
+    expect(nextDeliveryAttemptNumber(4)).toEqual({ ok: true, value: 5 });
+  });
+
+  it("fails closed on malformed / out-of-range counts (never normalizes to 1)", () => {
+    for (const bad of [
+      Number.NaN,
+      -1,
+      1.5,
+      Number.MAX_SAFE_INTEGER,
+      2147483647,
+      undefined as unknown as number,
+    ]) {
+      expect(nextDeliveryAttemptNumber(bad)).toEqual({
+        ok: false,
+        reason: "INVALID_ATTEMPT_COUNT",
+      });
+    }
+  });
+});
 
 // ---- Remediation blocker C: schema-aligned, deterministic, fail-closed folding ----
 
 describe("dedupe identity is the (provider, providerEventId) tuple", () => {
   it("the same event id from two providers does NOT alias", () => {
-    const s0 = initialFoldState("DELIVERY_PENDING")
-    const s1 = foldDeliveryEvent(s0, ev({ provider: "resend", providerEventId: "shared", eventType: "ACCEPTED", sequence: 1 }))
-    const s2 = foldDeliveryEvent(s1.state, ev({ provider: "postmark", providerEventId: "shared", eventType: "DELIVERED", sequence: 2 }))
-    expect(s1.applied).toBe(true)
-    expect(s2.applied).toBe(true) // distinct composite key → processed, not collapsed
-    expect(s2.state.status).toBe("DELIVERED")
-  })
+    const s0 = initialFoldState("DELIVERY_PENDING");
+    const s1 = foldDeliveryEvent(
+      s0,
+      ev({
+        provider: "resend",
+        providerEventId: "shared",
+        eventType: "ACCEPTED",
+        sequence: 1,
+      }),
+    );
+    const s2 = foldDeliveryEvent(
+      s1.state,
+      ev({
+        provider: "postmark",
+        providerEventId: "shared",
+        eventType: "DELIVERED",
+        sequence: 2,
+      }),
+    );
+    expect(s1.applied).toBe(true);
+    expect(s2.applied).toBe(true); // distinct composite key → processed, not collapsed
+    expect(s2.state.status).toBe("DELIVERED");
+  });
 
-  it("an exact provider+id duplicate is idempotent", () => {
-    const s0 = initialFoldState("DELIVERY_PENDING")
-    const s1 = foldDeliveryEvent(s0, ev({ provider: "resend", providerEventId: "dup", eventType: "DELIVERED", sequence: 1 }))
-    const s2 = foldDeliveryEvent(s1.state, ev({ provider: "resend", providerEventId: "dup", eventType: "DELIVERED", sequence: 1 }))
-    expect(s2.applied).toBe(false)
-    expect(s2.reason).toBe("DUPLICATE_EVENT")
-    expect(s2.state.statusRevision).toBe(s1.state.statusRevision)
-  })
+  it("an exact provider+id replay (identical content) is idempotent", () => {
+    const s0 = initialFoldState("DELIVERY_PENDING");
+    const s1 = foldDeliveryEvent(
+      s0,
+      ev({
+        provider: "resend",
+        providerEventId: "dup",
+        eventType: "DELIVERED",
+        sequence: 1,
+      }),
+    );
+    const s2 = foldDeliveryEvent(
+      s1.state,
+      ev({
+        provider: "resend",
+        providerEventId: "dup",
+        eventType: "DELIVERED",
+        sequence: 1,
+      }),
+    );
+    expect(s2.applied).toBe(false);
+    expect(s2.reason).toBe("EXACT_REPLAY");
+    expect(s2.state.statusRevision).toBe(s1.state.statusRevision);
+    expect(s2.state.conflicted).toBe(false);
+  });
 
   it("deliveryEventKey combines provider and event id", () => {
-    expect(deliveryEventKey({ provider: "resend", providerEventId: "e1" })).not.toBe(
-      deliveryEventKey({ provider: "postmark", providerEventId: "e1" })
-    )
-  })
-})
+    expect(
+      deliveryEventKey({ provider: "resend", providerEventId: "e1" }),
+    ).not.toBe(
+      deliveryEventKey({ provider: "postmark", providerEventId: "e1" }),
+    );
+  });
+});
 
 describe("invalid events fail closed without advancing pointers", () => {
   it.each([
-    ["INVALID_PROVIDER", ev({ providerEventId: "e", eventType: "DELIVERED", sequence: 1, provider: "" })],
-    ["INVALID_PROVIDER_EVENT_ID", ev({ providerEventId: "", eventType: "DELIVERED", sequence: 1 })],
-    ["INVALID_SEQUENCE", ev({ providerEventId: "e", eventType: "DELIVERED", sequence: Number.NaN })],
-    ["INVALID_SEQUENCE", ev({ providerEventId: "e", eventType: "DELIVERED", sequence: 0 })],
-    ["INVALID_SEQUENCE", ev({ providerEventId: "e", eventType: "DELIVERED", sequence: -1 })],
-    ["INVALID_SEQUENCE", ev({ providerEventId: "e", eventType: "DELIVERED", sequence: 1.5 })],
-    ["INVALID_TIMESTAMP", { provider: "resend", providerEventId: "e", eventType: "DELIVERED" as const, sequence: 1, occurredAt: "not-a-date" }],
+    [
+      "INVALID_PROVIDER",
+      ev({
+        providerEventId: "e",
+        eventType: "DELIVERED",
+        sequence: 1,
+        provider: "",
+      }),
+    ],
+    [
+      "INVALID_PROVIDER_EVENT_ID",
+      ev({ providerEventId: "", eventType: "DELIVERED", sequence: 1 }),
+    ],
+    [
+      "INVALID_SEQUENCE",
+      ev({
+        providerEventId: "e",
+        eventType: "DELIVERED",
+        sequence: Number.NaN,
+      }),
+    ],
+    [
+      "INVALID_SEQUENCE",
+      ev({ providerEventId: "e", eventType: "DELIVERED", sequence: 0 }),
+    ],
+    [
+      "INVALID_SEQUENCE",
+      ev({ providerEventId: "e", eventType: "DELIVERED", sequence: -1 }),
+    ],
+    [
+      "INVALID_SEQUENCE",
+      ev({ providerEventId: "e", eventType: "DELIVERED", sequence: 1.5 }),
+    ],
+    [
+      "INVALID_TIMESTAMP",
+      {
+        provider: "resend",
+        providerEventId: "e",
+        eventType: "DELIVERED" as const,
+        sequence: 1,
+        occurredAt: "not-a-date",
+      },
+    ],
   ])("rejects %s without changing status or pointers", (reason, event) => {
-    expect(validateDeliveryEvent(event as DeliveryEvent)).toBe(reason)
-    const s0 = initialFoldState("DELIVERY_PENDING")
-    const r = foldDeliveryEvent(s0, event as DeliveryEvent)
-    expect(r.applied).toBe(false)
-    expect(r.reason).toBe(reason)
-    expect(r.state.status).toBe("DELIVERY_PENDING")
-    expect(r.state.lastSequence).toBeNull()
-    expect(r.state.seenKeys).toHaveLength(0)
-  })
-})
+    expect(validateDeliveryEvent(event as DeliveryEvent)).toBe(reason);
+    const s0 = initialFoldState("DELIVERY_PENDING");
+    const r = foldDeliveryEvent(s0, event as DeliveryEvent);
+    expect(r.applied).toBe(false);
+    expect(r.reason).toBe(reason);
+    expect(r.state.status).toBe("DELIVERY_PENDING");
+    expect(r.state.lastSequence).toBeNull();
+    expect(r.state.seen).toHaveLength(0);
+    expect(r.state.conflicted).toBe(false);
+  });
+});
 
 describe("conflicting duplicate local sequences fail closed deterministically", () => {
   const conflict = [
     ev({ providerEventId: "d", eventType: "DELIVERED", sequence: 1 }),
     ev({ providerEventId: "b", eventType: "BOUNCED", sequence: 1 }),
-  ]
+  ];
   it("canonical fold yields the same fail-closed result in both input orders", () => {
-    const forward = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), conflict)
-    const reversed = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), [...conflict].reverse())
-    expect(forward.conflicted).toBe(true)
-    expect(forward.reason).toBe("SEQUENCE_CONFLICT")
-    expect(forward.status).toBe("DELIVERY_PENDING") // never advanced from initial
-    expect(reversed).toEqual(forward) // acceptance verdict + status are order-independent
-  })
+    const forward = foldDeliveryEvents(
+      initialFoldState("DELIVERY_PENDING"),
+      conflict,
+    );
+    const reversed = foldDeliveryEvents(
+      initialFoldState("DELIVERY_PENDING"),
+      [...conflict].reverse(),
+    );
+    expect(forward.conflicted).toBe(true);
+    expect(forward.reason).toBe("SEQUENCE_CONFLICT");
+    expect(forward.status).toBe("DELIVERY_PENDING"); // never advanced from initial
+    expect(reversed).toEqual(forward); // acceptance verdict + status are order-independent
+  });
 
   it("a later delivered event cannot resurrect an earlier terminal bounce", () => {
     const final = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), [
       ev({ providerEventId: "b", eventType: "BOUNCED", sequence: 2 }),
       ev({ providerEventId: "d", eventType: "DELIVERED", sequence: 5 }),
-    ])
-    expect(final.status).toBe("BOUNCED")
-  })
+    ]);
+    expect(final.status).toBe("BOUNCED");
+  });
 
-  it("invalid events are dropped from the canonical fold rather than poisoning it", () => {
-    const final = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), [
+  it("canonical fold fails closed (not silently) when ANY event is malformed", () => {
+    const mixed = [
       ev({ providerEventId: "a", eventType: "ACCEPTED", sequence: 1 }),
-      { provider: "resend", providerEventId: "bad", eventType: "DELIVERED", sequence: Number.NaN, occurredAt: "x" } as DeliveryEvent,
+      {
+        provider: "resend",
+        providerEventId: "bad",
+        eventType: "DELIVERED",
+        sequence: Number.NaN,
+        occurredAt: "x",
+      } as DeliveryEvent,
       ev({ providerEventId: "d", eventType: "DELIVERED", sequence: 2 }),
-    ])
-    expect(final.status).toBe("DELIVERED")
-    expect(final.conflicted).toBe(false)
-  })
-})
+    ];
+    const forward = foldDeliveryEvents(
+      initialFoldState("DELIVERY_PENDING"),
+      mixed,
+    );
+    const reversed = foldDeliveryEvents(
+      initialFoldState("DELIVERY_PENDING"),
+      [...mixed].reverse(),
+    );
+    expect(forward.conflicted).toBe(true);
+    expect(forward.reason).toBe("INVALID_EVENT");
+    expect(forward.status).toBe("DELIVERY_PENDING"); // never advanced to DELIVERED
+    expect(reversed).toEqual(forward);
+  });
+});
+
+// ---- Remediation-2 A: exact-replay vs conflicting-reuse; deterministic fail-closed ----
+
+describe("same identity with conflicting content fails closed deterministically", () => {
+  const idA = { provider: "resend", providerEventId: "evt-1" };
+  it.each([
+    [
+      "different event type",
+      {
+        ...idA,
+        eventType: "DELIVERED" as const,
+        sequence: 1,
+        occurredAt: "2026-08-06T10:00:00.000Z",
+      },
+      {
+        ...idA,
+        eventType: "BOUNCED" as const,
+        sequence: 1,
+        occurredAt: "2026-08-06T10:00:00.000Z",
+      },
+    ],
+    [
+      "different sequence",
+      {
+        ...idA,
+        eventType: "DELIVERED" as const,
+        sequence: 1,
+        occurredAt: "2026-08-06T10:00:00.000Z",
+      },
+      {
+        ...idA,
+        eventType: "DELIVERED" as const,
+        sequence: 2,
+        occurredAt: "2026-08-06T10:00:00.000Z",
+      },
+    ],
+    [
+      "different occurredAt",
+      {
+        ...idA,
+        eventType: "DELIVERED" as const,
+        sequence: 1,
+        occurredAt: "2026-08-06T10:00:00.000Z",
+      },
+      {
+        ...idA,
+        eventType: "DELIVERED" as const,
+        sequence: 1,
+        occurredAt: "2026-08-06T11:00:00.000Z",
+      },
+    ],
+  ])("%s → EVENT_IDENTITY_CONFLICT in both input orders", (_label, a, b) => {
+    const forward = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), [
+      a as DeliveryEvent,
+      b as DeliveryEvent,
+    ]);
+    const reversed = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), [
+      b as DeliveryEvent,
+      a as DeliveryEvent,
+    ]);
+    expect(forward.conflicted).toBe(true);
+    expect(forward.reason).toBe("EVENT_IDENTITY_CONFLICT");
+    expect(forward.status).toBe("DELIVERY_PENDING");
+    expect(reversed).toEqual(forward);
+  });
+
+  it("single-step distinguishes exact replay from conflicting reuse via content signature", () => {
+    const base = ev({
+      providerEventId: "e",
+      eventType: "DELIVERED",
+      sequence: 1,
+    });
+    const s1 = foldDeliveryEvent(initialFoldState("DELIVERY_PENDING"), base);
+    const replay = foldDeliveryEvent(s1.state, { ...base });
+    expect(replay.reason).toBe("EXACT_REPLAY");
+    const conflict = foldDeliveryEvent(s1.state, {
+      ...base,
+      eventType: "BOUNCED",
+    });
+    expect(conflict.reason).toBe("EVENT_IDENTITY_CONFLICT");
+    expect(conflict.state.conflicted).toBe(true);
+  });
+
+  it("three-event permutations yield an identical final state", () => {
+    const evs: DeliveryEvent[] = [
+      ev({ providerEventId: "a", eventType: "ACCEPTED", sequence: 1 }),
+      ev({ providerEventId: "b", eventType: "DELIVERED", sequence: 2 }),
+      ev({ providerEventId: "c", eventType: "COMPLAINED", sequence: 3 }),
+    ];
+    const perms = [
+      [0, 1, 2],
+      [2, 1, 0],
+      [1, 0, 2],
+      [0, 2, 1],
+      [2, 0, 1],
+      [1, 2, 0],
+    ];
+    const results = perms.map((p) =>
+      foldDeliveryEvents(
+        initialFoldState("DELIVERY_PENDING"),
+        p.map((i) => evs[i]!),
+      ),
+    );
+    for (const r of results) expect(r).toEqual(results[0]);
+    expect(results[0]!.status).toBe("COMPLAINED");
+  });
+});
+
+// ---- Remediation-2 B: runtime field validation before any pointer advance ----
+
+describe("runtime event-field validation is fail-closed", () => {
+  it("a forged event type is rejected and advances nothing", () => {
+    const forged = {
+      provider: "resend",
+      providerEventId: "e",
+      eventType: "FORGED",
+      sequence: 1,
+      occurredAt: "2026-08-06T10:00:00.000Z",
+    } as unknown as DeliveryEvent;
+    expect(validateDeliveryEvent(forged)).toBe("INVALID_EVENT_TYPE");
+    const r = foldDeliveryEvent(initialFoldState("DELIVERY_PENDING"), forged);
+    expect(r.applied).toBe(false);
+    expect(r.state.lastSequence).toBeNull();
+    expect(r.state.seen).toHaveLength(0);
+    expect(r.state.seenSequences).toHaveLength(0);
+  });
+
+  it("an unsafe / out-of-range integer sequence is rejected", () => {
+    for (const sequence of [
+      9007199254740992,
+      Number.MAX_SAFE_INTEGER,
+      2147483648,
+      Number.POSITIVE_INFINITY,
+    ]) {
+      expect(
+        validateDeliveryEvent(
+          ev({ providerEventId: "e", eventType: "DELIVERED", sequence }),
+        ),
+      ).toBe("INVALID_SEQUENCE");
+    }
+  });
+
+  it("naive/date-only/impossible timestamps are rejected", () => {
+    for (const occurredAt of [
+      "2026-08-06T10:00:00",
+      "2026-08-06",
+      "2026-02-30T10:00:00.000Z",
+      "0",
+      " 2026-08-06T10:00:00.000Z",
+    ]) {
+      const e = {
+        provider: "resend",
+        providerEventId: "e",
+        eventType: "DELIVERED" as const,
+        sequence: 1,
+        occurredAt,
+      };
+      expect(validateDeliveryEvent(e)).toBe("INVALID_TIMESTAMP");
+    }
+  });
+});
+
+// ---- Remediation-2 F: text-safe, NUL-free, collision-free identity encoding ----
+
+describe("deliveryEventKey / signature are text-safe and collision-free", () => {
+  it("contains no NUL byte", () => {
+    expect(
+      deliveryEventKey({ provider: "resend", providerEventId: "e1" }).includes(
+        String.fromCharCode(0),
+      ),
+    ).toBe(false);
+  });
+  it("distinguishes adversarial delimiter-like values via length prefixing", () => {
+    // "a" + "bc" vs "ab" + "c" must not collide.
+    expect(deliveryEventKey({ provider: "a", providerEventId: "bc" })).not.toBe(
+      deliveryEventKey({ provider: "ab", providerEventId: "c" }),
+    );
+    // A "~"-bearing value cannot forge the length frame.
+    expect(
+      deliveryEventKey({ provider: "1~x", providerEventId: "y" }),
+    ).not.toBe(deliveryEventKey({ provider: "1", providerEventId: "xy" }));
+  });
+});
