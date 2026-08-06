@@ -138,12 +138,36 @@ function isDeclarationOrPropertyName(node: ts.Identifier): boolean {
   return false;
 }
 
-/** Resolve only syntax-local string constants. This intentionally does not follow
- * identifiers, so the guard's documented multi-hop alias limitation is unchanged. */
-function staticStringValue(node: ts.Expression | undefined): string | null {
-  if (!node) return null;
+/** Syntax-only possible string values. Identifier/dataflow resolution is
+ * intentionally excluded, preserving the documented multi-hop alias limitation. */
+type SyntaxStringValues = {
+  values: Set<string>;
+  complete: boolean;
+  overflowed: boolean;
+};
+const MAX_SYNTAX_STRING_VALUES = 64;
+
+function mergeSyntaxValues(
+  left: SyntaxStringValues,
+  right: SyntaxStringValues,
+): SyntaxStringValues {
+  const values = new Set([...left.values, ...right.values]);
+  return {
+    values,
+    complete: left.complete && right.complete,
+    overflowed:
+      left.overflowed ||
+      right.overflowed ||
+      values.size > MAX_SYNTAX_STRING_VALUES,
+  };
+}
+
+function possibleStaticStringValues(
+  node: ts.Expression | undefined,
+): SyntaxStringValues {
+  if (!node) return { values: new Set(), complete: false, overflowed: false };
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-    return node.text;
+    return { values: new Set([node.text]), complete: true, overflowed: false };
   }
   if (
     ts.isParenthesizedExpression(node) ||
@@ -152,34 +176,84 @@ function staticStringValue(node: ts.Expression | undefined): string | null {
     ts.isSatisfiesExpression(node) ||
     ts.isNonNullExpression(node)
   ) {
-    return staticStringValue(node.expression);
+    return possibleStaticStringValues(node.expression);
   }
   if (ts.isTemplateExpression(node)) {
-    let value = node.head.text;
+    let values = new Set([node.head.text]);
+    let complete = true;
+    let overflowed = false;
     for (const span of node.templateSpans) {
-      const expression = staticStringValue(span.expression);
-      if (expression === null) return null;
-      value += expression + span.literal.text;
+      const part = possibleStaticStringValues(span.expression);
+      const next = new Set<string>();
+      for (const prefix of values) {
+        for (const value of part.values) {
+          next.add(prefix + value + span.literal.text);
+          if (next.size > MAX_SYNTAX_STRING_VALUES) overflowed = true;
+        }
+      }
+      values = next;
+      complete = complete && part.complete;
+      overflowed = overflowed || part.overflowed;
     }
-    return value;
+    return { values, complete, overflowed };
   }
-  if (
-    ts.isBinaryExpression(node) &&
-    node.operatorToken.kind === ts.SyntaxKind.PlusToken
-  ) {
-    const left = staticStringValue(node.left);
-    const right = staticStringValue(node.right);
-    return left !== null && right !== null ? left + right : null;
+  if (ts.isConditionalExpression(node)) {
+    return mergeSyntaxValues(
+      possibleStaticStringValues(node.whenTrue),
+      possibleStaticStringValues(node.whenFalse),
+    );
   }
-  return null;
+  if (ts.isBinaryExpression(node)) {
+    if (node.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+      return possibleStaticStringValues(node.right);
+    }
+    const left = possibleStaticStringValues(node.left);
+    const right = possibleStaticStringValues(node.right);
+    if (node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      const values = new Set<string>();
+      let overflowed = left.overflowed || right.overflowed;
+      for (const a of left.values) {
+        for (const b of right.values) {
+          values.add(a + b);
+          if (values.size > MAX_SYNTAX_STRING_VALUES) overflowed = true;
+        }
+      }
+      return {
+        values,
+        complete: left.complete && right.complete,
+        overflowed,
+      };
+    }
+    if (
+      node.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+      node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+      node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken
+    ) {
+      return mergeSyntaxValues(left, right);
+    }
+  }
+  return { values: new Set(), complete: false, overflowed: false };
 }
 
-/** For non-foldable key expressions, reject an explicitly embedded dangerous
- * member literal (for example `flag ? "constructor" : "name"`). Opaque
- * identifier keys remain outside this syntax-only tripwire by design. */
+function staticStringValue(node: ts.Expression | undefined): string | null {
+  const possible = possibleStaticStringValues(node);
+  return possible.complete && !possible.overflowed && possible.values.size === 1
+    ? [...possible.values][0]
+    : null;
+}
+
+/** Reject every syntax-visible dangerous possible value. An excessive branch
+ * expansion fails closed; opaque identifier keys remain the accepted limitation. */
 function containsLoaderRecoveryLiteral(
   node: ts.Expression | undefined,
 ): boolean {
+  const possible = possibleStaticStringValues(node);
+  if (
+    possible.overflowed ||
+    [...possible.values].some((value) => LOADER_RECOVERY_MEMBERS.has(value))
+  ) {
+    return true;
+  }
   if (!node) return false;
   let found = false;
   const visit = (child: ts.Node): void => {
@@ -493,8 +567,16 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
       '(() => {})[flag ? "constructor" : "name"]("return process")()',
     ],
     [
+      "conditional composed constructor element",
+      '(() => {})[flag ? "con" + "structor" : "safe"]("return process")()',
+    ],
+    [
       "comma constructor element",
       '(() => {})[(0, "constructor")]("return process")()',
+    ],
+    [
+      "comma composed constructor element",
+      '(() => {})[(0, "con" + "structor")]("return process")()',
     ],
     [
       "process aliased to a value",
