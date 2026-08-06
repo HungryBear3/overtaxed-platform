@@ -109,7 +109,8 @@ const PROCESS_BENIGN_MEMBERS = new Set([
  * True when an identifier occupies a NAME position (a declaration binding, a member
  * name like `foo.process`, or an object-literal/property key `{ process: 1 }`) —
  * i.e. it is not a value read of the global. Such positions are never a runtime
- * escape and must not false-positive.
+ * escape and must not false-positive. Object shorthand `{ process }` is deliberately
+ * NOT a name-only position: it reads and captures the value.
  */
 function isDeclarationOrPropertyName(node: ts.Identifier): boolean {
   const p = node.parent;
@@ -117,7 +118,7 @@ function isDeclarationOrPropertyName(node: ts.Identifier): boolean {
   if (ts.isPropertyAccessExpression(p) && p.name === node) return true;
   if (ts.isQualifiedName(p) && p.right === node) return true;
   if (ts.isPropertyAssignment(p) && p.name === node) return true;
-  if (ts.isShorthandPropertyAssignment(p) && p.name === node) return true;
+
   if (ts.isBindingElement(p) && p.propertyName === node) return true;
   if (
     (ts.isVariableDeclaration(p) ||
@@ -585,6 +586,14 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
     [
       "comma composed constructor element",
       '(() => {})[(0, "con" + "structor")]("return process")()',
+    ],
+    [
+      "process captured by object shorthand",
+      `const box = { process }; const p = box.process; const k = "getBuiltinModule"; p[k]("fs")`,
+    ],
+    [
+      "globalThis captured by object shorthand",
+      `const box = { globalThis }; const g = box.globalThis; const k = "eval"; g[k]("return process")()`,
     ],
     [
       "process aliased to a value",
