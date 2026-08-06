@@ -759,28 +759,28 @@ model OTLead {
 // Consent-based follow-up for the residential free-check flow. This is
 // intentionally separate from TownshipAlert, cold outreach, and legacy drip.
 model FreeCheckFollowupSubscriber {
-  id                  String   @id @default(cuid())
-  email               String
-  emailNormalized     String
-  emailConsentAt      DateTime
-  emailConsentSource  String
-  emailConsentVersion String
-  phoneE164           String?
-  smsConsentAt        DateTime?
-  smsConsentSource    String?
-  smsConsentVersion   String?
-  township            String?
-  propertyAddress     String?
-  potentialSavings    Float?
-  resultUrl           String   @default("/")
-  unsubscribeToken    String   @unique @default(cuid())
-  emailSuppressedAt   DateTime?
-  smsSuppressedAt     DateTime?
+  id                   String                     @id @default(cuid())
+  email                String
+  emailNormalized      String
+  emailConsentAt       DateTime
+  emailConsentSource   String
+  emailConsentVersion  String
+  phoneE164            String?
+  smsConsentAt         DateTime?
+  smsConsentSource     String?
+  smsConsentVersion    String?
+  township             String?
+  propertyAddress      String?
+  potentialSavings     Float?
+  resultUrl            String                     @default("/")
+  unsubscribeToken     String                     @unique @default(cuid())
+  emailSuppressedAt    DateTime?
+  smsSuppressedAt      DateTime?
   smsSuppressionReason String?
-  completedAt         DateTime?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-  messages            FreeCheckFollowupMessage[]
+  completedAt          DateTime?
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+  messages             FreeCheckFollowupMessage[]
 
   @@unique([emailNormalized, emailConsentVersion])
   @@index([emailNormalized])
@@ -790,22 +790,22 @@ model FreeCheckFollowupSubscriber {
 }
 
 model FreeCheckFollowupMessage {
-  id              String   @id @default(cuid())
-  subscriberId    String
-  subscriber      FreeCheckFollowupSubscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
-  step            String
-  channel         String
-  idempotencyKey  String   @unique
-  scheduledFor    DateTime
-  status          String   @default("SCHEDULED")
-  leaseUntil      DateTime?
-  attempts        Int      @default(0)
-  lastAttemptAt   DateTime?
-  sentAt          DateTime?
+  id                String                      @id @default(cuid())
+  subscriberId      String
+  subscriber        FreeCheckFollowupSubscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  step              String
+  channel           String
+  idempotencyKey    String                      @unique
+  scheduledFor      DateTime
+  status            String                      @default("SCHEDULED")
+  leaseUntil        DateTime?
+  attempts          Int                         @default(0)
+  lastAttemptAt     DateTime?
+  sentAt            DateTime?
   providerMessageId String?
-  failureCode     String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  failureCode       String?
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @updatedAt
 
   @@unique([subscriberId, step, channel])
   @@index([status, scheduledFor])
@@ -855,6 +855,10 @@ model OTOrder {
   status                    String    @default("PENDING")
   createdAt                 DateTime  @default(now())
   updatedAt                 DateTime  @updatedAt
+
+  // Additive back-relation for the T2 delivery-evidence foundation (Phase 1).
+  // Virtual only — the foreign key lives on ot_fulfillment; ot_order is unchanged.
+  fulfillments OTFulfillment[]
 
   @@index([email])
   @@index([stripeSessionId])
@@ -1130,3 +1134,156 @@ model OutreachApprovalEvent {
 }
 
 // cache-bust: 1774495683
+
+// ============================================
+// OT T2 DELIVERY-EVIDENCE FOUNDATION (Phase 1, additive, default-off)
+// ============================================
+// Durable fulfillment-evidence for anonymous paid T2 OTOrder rows. This is a
+// SCHEMA + PURE-HELPER foundation only: no settlement/webhook/admin/worker path
+// writes these tables in Phase 1 (gated by OT_T2_FULFILLMENT_EVIDENCE_ENABLED,
+// default-off, and not wired). All state language mirrors lib/fulfillment/*.
+//
+// Privacy invariants (enforced by __tests__/fulfillment/privacy.test.ts):
+//   - no public bearer URLs, raw artifact bytes, raw provider payloads;
+//   - no customer email/name/address/PIN, no auth/download/review tokens;
+//   - private internal locators only; content identity is immutable/versioned.
+// Historical orders are never classified delivered — they surface as
+// NOT_STARTED or NEEDS_RECONCILIATION via lib/fulfillment/eligibility.ts.
+
+enum OTFulfillmentKind {
+  T2_APPEAL_EVIDENCE
+}
+
+enum OTFulfillmentStatus {
+  NOT_STARTED
+  NEEDS_RECONCILIATION
+  INELIGIBLE
+  INCOMPLETE_INPUT
+  MANUAL_REVIEW
+  ARTIFACT_PENDING
+  ARTIFACT_READY
+  DELIVERY_PENDING
+  PROVIDER_ACCEPTED
+  DELIVERED
+  DELAYED
+  BOUNCED
+  COMPLAINED
+  FAILED
+  CANCELLED
+}
+
+enum OTDeliveryEventType {
+  REQUESTED
+  ACCEPTED
+  DELIVERED
+  DELAYED
+  BOUNCED
+  COMPLAINED
+  FAILED
+}
+
+/// One compact fulfillment summary per logical order/kind. The status is folded
+/// monotonically from the append-only event log; artifact/attempt detail lives in
+/// the child tables. Lease fields are bounded worker metadata, not auth tokens.
+model OTFulfillment {
+  id                     String              @id @default(cuid())
+  orderId                String              @map("order_id")
+  kind                   OTFulfillmentKind
+  status                 OTFulfillmentStatus @default(NOT_STARTED)
+  statusRevision         Int                 @default(0) @map("status_revision")
+  attemptCount           Int                 @default(0) @map("attempt_count")
+  // Denormalized pointer to the current artifact version (identity only).
+  currentArtifactVersion Int?                @map("current_artifact_version")
+  currentArtifactSha256  String?             @map("current_artifact_sha256")
+  // Bounded worker lease metadata (no DB claim performed in Phase 1).
+  leaseOwner             String?             @map("lease_owner")
+  leaseToken             String?             @map("lease_token")
+  leaseExpiresAt         DateTime?           @map("lease_expires_at")
+  // Bounded non-PII reason/error code (from a closed allowlist).
+  lastReasonCode         String?             @map("last_reason_code")
+  createdAt              DateTime            @default(now()) @map("created_at")
+  updatedAt              DateTime            @updatedAt @map("updated_at")
+
+  order     OTOrder                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  artifacts OTFulfillmentArtifact[]
+  attempts  OTDeliveryAttempt[]
+  events    OTDeliveryEvent[]
+
+  @@unique([orderId, kind])
+  @@index([status])
+  @@index([leaseExpiresAt])
+  @@map("ot_fulfillment")
+}
+
+/// Append-only artifact-version records. Content identity is immutable: a given
+/// (fulfillment, sha256) pair and a given (fulfillment, version) are unique, so a
+/// different accepted artifact can never silently overwrite an existing one.
+model OTFulfillmentArtifact {
+  id               String   @id @default(cuid())
+  fulfillmentId    String   @map("fulfillment_id")
+  version          Int
+  artifactSha256   String   @map("artifact_sha256")
+  byteSize         Int      @map("byte_size")
+  // PRIVATE internal locator (storage path/key) — never a public bearer URL.
+  storageLocator   String   @map("storage_locator")
+  generatorVersion String   @map("generator_version")
+  templateVersion  String?  @map("template_version")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  fulfillment OTFulfillment @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+
+  @@unique([fulfillmentId, version])
+  @@unique([fulfillmentId, artifactSha256])
+  @@index([artifactSha256])
+  @@map("ot_fulfillment_artifact")
+}
+
+/// Append-only delivery-attempt records. `idempotencyKey` is globally unique and
+/// `(provider, providerMessageId)` is unique when present, so a resend cannot
+/// duplicate a delivery. An attempt references the artifact version it sent; a
+/// delivery retry reuses an existing version rather than regenerating.
+model OTDeliveryAttempt {
+  id                 String    @id @default(cuid())
+  fulfillmentId      String    @map("fulfillment_id")
+  attemptNumber      Int       @map("attempt_number")
+  artifactVersion    Int       @map("artifact_version")
+  idempotencyKey     String    @unique @map("idempotency_key")
+  provider           String?
+  providerMessageId  String?   @map("provider_message_id")
+  requestedAt        DateTime  @default(now()) @map("requested_at")
+  providerAcceptedAt DateTime? @map("provider_accepted_at")
+  deliveredAt        DateTime? @map("delivered_at")
+  delayedAt          DateTime? @map("delayed_at")
+  failedAt           DateTime? @map("failed_at")
+  reasonCode         String?   @map("reason_code")
+  createdAt          DateTime  @default(now()) @map("created_at")
+
+  fulfillment OTFulfillment @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+
+  @@unique([fulfillmentId, attemptNumber])
+  @@unique([provider, providerMessageId])
+  @@index([fulfillmentId])
+  @@map("ot_delivery_attempt")
+}
+
+/// Immutable append-only provider-event log. `(provider, providerEventId)` is
+/// unique so duplicate webhooks are idempotent; `sequence` gives a monotonic fold
+/// order. Stores a bounded event type + reason code only — never a raw payload.
+model OTDeliveryEvent {
+  id              String              @id @default(cuid())
+  fulfillmentId   String              @map("fulfillment_id")
+  attemptNumber   Int?                @map("attempt_number")
+  provider        String
+  providerEventId String              @map("provider_event_id")
+  eventType       OTDeliveryEventType @map("event_type")
+  sequence        Int
+  occurredAt      DateTime            @map("occurred_at")
+  reasonCode      String?             @map("reason_code")
+  receivedAt      DateTime            @default(now()) @map("received_at")
+
+  fulfillment OTFulfillment @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerEventId])
+  @@index([fulfillmentId, sequence])
+  @@map("ot_delivery_event")
+}
