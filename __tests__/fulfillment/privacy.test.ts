@@ -56,10 +56,16 @@ const ESCAPE_ROOTS = new Set([
   "Deno",
 ]);
 // Member/element spellings that recover a loader from an object or a function.
+// Includes the direct Node process loader APIs (`getBuiltinModule`, `dlopen` for
+// native addons, legacy `binding`) alongside the reflection primitives — a benign
+// member such as `process.env`/`process.platform` is NOT in this set and stays
+// allowed.
 const LOADER_RECOVERY_MEMBERS = new Set([
   "require",
   "createRequire",
   "getBuiltinModule",
+  "dlopen",
+  "binding",
   "_load",
   "constructor",
 ]);
@@ -354,6 +360,16 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
       "module aliased to a value",
       `const m = module; m.constructor._load("fs")`,
     ],
+    [
+      "process.dlopen native addon loader",
+      `process.dlopen({ exports: {} }, "./x.node")`,
+    ],
+    ["process.binding legacy loader", `const b = process.binding("fs")`],
+    [
+      "process element dlopen",
+      `process["dlopen"]({ exports: {} }, "./x.node")`,
+    ],
+    ["aliased process.binding", `const p = process; p.binding("fs")`],
   ])("detects %s", (_label, src) => {
     expect(findImpurities(src).length).toBeGreaterThan(0);
   });
@@ -410,6 +426,10 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
     [
       "an identifier used as a property NAME equal to a root",
       `const o = { process: 1 }; const v = o.process`,
+    ],
+    [
+      "a benign non-loader process member (platform)",
+      `export const isWin = process.platform === "win32"`,
     ],
   ])("ignores %s (no false positive)", (_label, src) => {
     expect(findImpurities(src)).toEqual([]);
