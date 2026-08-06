@@ -183,7 +183,8 @@ function possibleStaticStringValues(
     ts.isAsExpression(node) ||
     ts.isTypeAssertionExpression(node) ||
     ts.isSatisfiesExpression(node) ||
-    ts.isNonNullExpression(node)
+    ts.isNonNullExpression(node) ||
+    ts.isAwaitExpression(node)
   ) {
     return possibleStaticStringValues(node.expression);
   }
@@ -217,6 +218,10 @@ function possibleStaticStringValues(
     if (node.operatorToken.kind === ts.SyntaxKind.CommaToken) {
       return possibleStaticStringValues(node.right);
     }
+    if (node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      // A simple assignment expression evaluates to its RHS.
+      return possibleStaticStringValues(node.right);
+    }
     const left = possibleStaticStringValues(node.left);
     const right = possibleStaticStringValues(node.right);
     if (node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
@@ -236,7 +241,10 @@ function possibleStaticStringValues(
     if (
       node.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
       node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
-      node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken
+      node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+      node.operatorToken.kind === ts.SyntaxKind.BarBarEqualsToken ||
+      node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandEqualsToken ||
+      node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionEqualsToken
     ) {
       return mergeSyntaxValues(left, right);
     }
@@ -578,6 +586,14 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
     [
       "conditional composed constructor element",
       '(() => {})[flag ? "con" + "structor" : "safe"]("return process")()',
+    ],
+    [
+      "assignment-composed constructor element",
+      'let k: string; (() => {})[flag ? (k = "con" + "structor") : "safe"]("return process")()',
+    ],
+    [
+      "await-composed constructor element",
+      '(async () => (() => {})[await ("con" + "structor")]("return process")())()',
     ],
     [
       "comma constructor element",
