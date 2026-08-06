@@ -63,7 +63,10 @@ const ESCAPE_ROOTS = new Set([
 ]);
 // Member/element spellings that recover a loader from an object or a function
 // (on ANY object, including an aliased root). Reflection + the direct Node loader
-// primitives.
+// primitives. `constructor` is included intentionally (a `.constructor` reaches the
+// Function constructor, i.e. an eval-equivalent) even though this is a loud tripwire
+// that would also flag an ordinary `value.constructor === Object` check — a pure
+// data helper has no need for either, and no real file uses it.
 const LOADER_RECOVERY_MEMBERS = new Set([
   "require",
   "createRequire",
@@ -74,6 +77,8 @@ const LOADER_RECOVERY_MEMBERS = new Set([
   "_load",
   "_compile",
   "constructor",
+  "eval",
+  "Function",
 ]);
 // Roots whose members are ALL treated as escapes for a pure helper: it never uses
 // `module.*`, `Bun.*`, or `Deno.*`, so any member is flagged (closes the whole
@@ -426,6 +431,12 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
     ["vm static import", `import vm from "vm"`],
     ["worker_threads static import", `import { Worker } from "worker_threads"`],
     ["child_process static import", `import { execSync } from "child_process"`],
+    ["element-access indirect eval", `globalThis["eval"]("return process")()`],
+    [
+      "element-access indirect Function",
+      `self["Function"]("return process")()`,
+    ],
+    ["member indirect eval on a value", `const g = globalThis; g.eval("x")`],
   ])("detects %s", (_label, src) => {
     expect(findImpurities(src).length).toBeGreaterThan(0);
   });
