@@ -208,6 +208,66 @@ function possibleStaticStringValues(
     }
     return { values, complete, overflowed };
   }
+  if (ts.isArrayLiteralExpression(node)) {
+    let values = new Set([""]);
+    let complete = true;
+    let overflowed = false;
+    node.elements.forEach((element, index) => {
+      const part = ts.isOmittedExpression(element)
+        ? { values: new Set([""]), complete: true, overflowed: false }
+        : ts.isSpreadElement(element)
+          ? { values: new Set<string>(), complete: false, overflowed: false }
+          : possibleStaticStringValues(element);
+      const next = new Set<string>();
+      for (const prefix of values) {
+        for (const value of part.values) {
+          overflowed =
+            addBoundedSyntaxValue(
+              next,
+              prefix + (index === 0 ? "" : ",") + value,
+            ) || overflowed;
+        }
+      }
+      values = next;
+      complete = complete && part.complete;
+      overflowed = overflowed || part.overflowed;
+    });
+    return { values, complete, overflowed };
+  }
+  if (
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "String" &&
+    node.arguments.length === 1
+  ) {
+    return possibleStaticStringValues(node.arguments[0]);
+  }
+  if (
+    ts.isNewExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "String" &&
+    node.arguments?.length === 1
+  ) {
+    return possibleStaticStringValues(node.arguments[0]);
+  }
+  if (
+    ts.isCallExpression(node) &&
+    node.arguments.length === 0 &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    (node.expression.name.text === "toString" ||
+      node.expression.name.text === "valueOf")
+  ) {
+    return possibleStaticStringValues(node.expression.expression);
+  }
+  if (
+    ts.isTaggedTemplateExpression(node) &&
+    ts.isPropertyAccessExpression(node.tag) &&
+    ts.isIdentifier(node.tag.expression) &&
+    node.tag.expression.text === "String" &&
+    node.tag.name.text === "raw"
+  ) {
+    return possibleStaticStringValues(node.template);
+  }
   if (ts.isConditionalExpression(node)) {
     return mergeSyntaxValues(
       possibleStaticStringValues(node.whenTrue),
@@ -594,6 +654,26 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
     [
       "await-composed constructor element",
       '(async () => (() => {})[await ("con" + "structor")]("return process")())()',
+    ],
+    [
+      "String-coerced constructor element",
+      '(() => {})[String("con" + "structor")]("return process")()',
+    ],
+    [
+      "boxed-String constructor element",
+      '(() => {})[new String("con" + "structor")]("return process")()',
+    ],
+    [
+      "array-coerced constructor element",
+      '(() => {})[["con" + "structor"]]("return process")()',
+    ],
+    [
+      "toString-coerced constructor element",
+      '(() => {})[("con" + "structor").toString()]("return process")()',
+    ],
+    [
+      "String.raw constructor element",
+      '(() => {})[String.raw`${"con"}structor`]("return process")()',
     ],
     [
       "comma constructor element",
