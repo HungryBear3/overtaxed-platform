@@ -33,7 +33,7 @@ function isForbiddenStatic(specifier: string): boolean {
 }
 
 // Loader identifiers that a pure data helper must never reference in ANY form
-// (as a callee, a value, an alias RHS, or inside a comma/parenthesized callee).
+// (callee, value, alias RHS, comma/parenthesized callee).
 const LOADER_IDENTIFIERS = new Set([
   "require",
   "createRequire",
@@ -41,33 +41,85 @@ const LOADER_IDENTIFIERS = new Set([
   "Function",
   "Reflect",
 ]);
-// Global objects whose dynamic member access can reach a loader (e.g. globalThis["require"]).
-const GLOBAL_OBJECTS = new Set([
+// Runtime escape roots: the globals/objects from which a loader (require,
+// getBuiltinModule, module._load, …) can be recovered. A pure first-party helper
+// references none of them except the benign `process.env` config read (allowed as
+// a literal member access below).
+const ESCAPE_ROOTS = new Set([
+  "process",
+  "module",
   "globalThis",
+  "global",
   "window",
   "self",
-  "global",
-  "module",
+  "Bun",
+  "Deno",
+]);
+// Member/element spellings that recover a loader from an object or a function.
+const LOADER_RECOVERY_MEMBERS = new Set([
+  "require",
+  "createRequire",
+  "getBuiltinModule",
+  "_load",
+  "constructor",
 ]);
 
 /**
+ * True when an identifier occupies a NAME position (a declaration binding, a member
+ * name like `foo.process`, or an object-literal/property key `{ process: 1 }`) —
+ * i.e. it is not a value read of the global. Such positions are never a runtime
+ * escape and must not false-positive.
+ */
+function isDeclarationOrPropertyName(node: ts.Identifier): boolean {
+  const p = node.parent;
+  if (!p) return false;
+  if (ts.isPropertyAccessExpression(p) && p.name === node) return true;
+  if (ts.isQualifiedName(p) && p.right === node) return true;
+  if (ts.isPropertyAssignment(p) && p.name === node) return true;
+  if (ts.isShorthandPropertyAssignment(p) && p.name === node) return true;
+  if (ts.isBindingElement(p) && p.propertyName === node) return true;
+  if (
+    (ts.isVariableDeclaration(p) ||
+      ts.isParameter(p) ||
+      ts.isBindingElement(p) ||
+      ts.isPropertyDeclaration(p) ||
+      ts.isPropertySignature(p) ||
+      ts.isMethodDeclaration(p) ||
+      ts.isMethodSignature(p) ||
+      ts.isFunctionDeclaration(p) ||
+      ts.isClassDeclaration(p) ||
+      ts.isEnumMember(p) ||
+      ts.isTypeParameterDeclaration(p)) &&
+    p.name === node
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * AST purity check (TypeScript compiler API — node kinds, not regex). Returns a
- * list of impurity findings for a source. It is a conservative FIRST-PARTY tripwire
- * over pure helper files (which reference none of these constructs) and FAILS
- * CLOSED on direct AND indirect module loading:
- *   - a static import/export of a forbidden module/subpath;
- *   - ANY dynamic `import(...)`, regardless of the argument form;
+ * list of impurity findings for a source.
+ *
+ * This is a CONSERVATIVE FIRST-PARTY TRIPWIRE over the project's own pure helper
+ * files — NOT a security sandbox and NOT a claim of mathematically detecting every
+ * possible loader (that is undecidable). It fails closed on the syntactic loader
+ * and runtime-escape forms below while leaving every real `lib/fulfillment/*.ts`
+ * file (which uses none of them, apart from the benign `process.env` read) at zero
+ * findings:
+ *   - a forbidden static import/export (module/subpath);
+ *   - ANY dynamic `import(...)`, any argument form;
  *   - ANY reference to a loader identifier (`require`, `createRequire`, `eval`,
- *     `Function`, `Reflect`) as a value or callee — so `require(...)`,
- *     `(0, require)(...)`, `const r = require`, `Function("…")`, `Reflect.get(…)`
- *     are all caught, not merely a bare `require(...)` callee;
- *   - a `.require` / `.createRequire` member access (e.g. `module.require`);
- *   - element access on a global object (e.g. `globalThis[k](...)`), any argument;
+ *     `Function`, `Reflect`) — callee, value, alias, or comma/parenthesized callee;
+ *   - a reference/alias to a runtime escape root (`process`, `module`,
+ *     `globalThis`, `global`, `window`, `self`, `Bun`, `Deno`) used as a bare value
+ *     or via a dynamic element key — while a benign literal member such as
+ *     `process.env` is allowed;
+ *   - a loader-recovery member/element on any object (`.constructor`,
+ *     `.getBuiltinModule`, `._load`, `.require`, `.createRequire`, and the
+ *     `["constructor"]` / `["_load"]` / … literal spellings);
  *   - a string-literal `"require"`/`"createRequire"` call/reflection argument.
- * Comments and ordinary strings that merely mention a module name are ignored
- * because only AST nodes (not raw text) are inspected. Catching every conceivable
- * indirect load is undecidable; this decidably rejects every syntactic loader form
- * while leaving pure, loader-free source (all real lib files) with zero findings.
+ * Comments and ordinary strings are ignored because only AST nodes are inspected.
  */
 function findImpurities(source: string): string[] {
   const sf = ts.createSourceFile(
@@ -101,24 +153,34 @@ function findImpurities(source: string): string[] {
       // Any reference to a loader identifier (callee, value, alias, comma-expr).
       findings.push(`loader-identifier:${node.text}`);
     } else if (
+      ts.isIdentifier(node) &&
+      ESCAPE_ROOTS.has(node.text) &&
+      !isDeclarationOrPropertyName(node)
+    ) {
+      const p = node.parent;
+      if (ts.isPropertyAccessExpression(p) && p.expression === node) {
+        // `process.<member>` — a benign literal member (e.g. `process.env`) is
+        // allowed; a dangerous member is caught by the loader-recovery rule below.
+      } else if (ts.isElementAccessExpression(p) && p.expression === node) {
+        const a = p.argumentExpression;
+        if (!a || !ts.isStringLiteral(a)) {
+          findings.push("escape-root-dynamic-element"); // process[k] / globalThis[k]
+        } else if (LOADER_RECOVERY_MEMBERS.has(a.text)) {
+          findings.push(`escape-root-loader-element:${a.text}`); // process["getBuiltinModule"]
+        }
+      } else {
+        // Bare value / alias: `const p = process`, `const g = globalThis`, etc.
+        findings.push(`escape-root-reference:${node.text}`);
+      }
+    } else if (
       ts.isPropertyAccessExpression(node) &&
-      (node.name.text === "require" || node.name.text === "createRequire")
+      LOADER_RECOVERY_MEMBERS.has(node.name.text)
     ) {
       findings.push(`member-loader:${node.name.text}`);
     } else if (ts.isElementAccessExpression(node)) {
-      const obj = node.expression;
-      const arg = node.argumentExpression;
-      const argIsLiteral = arg !== undefined && ts.isStringLiteral(arg);
-      if (
-        ts.isIdentifier(obj) &&
-        GLOBAL_OBJECTS.has(obj.text) &&
-        !argIsLiteral
-      ) {
-        // A dynamic (non-literal) key on a global object could resolve to a loader.
-        findings.push("global-dynamic-element-access");
-      }
-      if (arg && ts.isStringLiteral(arg) && LOADER_IDENTIFIERS.has(arg.text))
-        findings.push(`element-loader-string:${arg.text}`);
+      const a = node.argumentExpression;
+      if (a && ts.isStringLiteral(a) && LOADER_RECOVERY_MEMBERS.has(a.text))
+        findings.push(`element-loader:${a.text}`);
     } else if (ts.isCallExpression(node)) {
       // A string-literal loader name passed to a call (e.g. Reflect.get(globalThis, "require")).
       for (const a of node.arguments) {
@@ -255,6 +317,43 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
       "destructured require from module call",
       `const { createRequire } = require("module")`,
     ],
+    // Runtime escape roots + loader-recovery primitives (Node 24 public APIs and
+    // constructor/_load reflection) — reproduced controller bypasses:
+    ["process.getBuiltinModule", `const fs = process.getBuiltinModule("fs")`],
+    [
+      "process dynamic getBuiltinModule",
+      `const k = "getBuiltinModule"; process[k]("fs")`,
+    ],
+    ["module.constructor._load", `const fs = module.constructor._load("fs")`],
+    [
+      "module.constructor dynamic _load",
+      `const k = "_load"; module.constructor[k]("fs")`,
+    ],
+    [
+      "constructor-of-constructor Function",
+      `const F = (() => {}).constructor; F("return process")()`,
+    ],
+    [
+      "global alias then dynamic key",
+      `const g = globalThis; const k = "require"; g[k]("fs")`,
+    ],
+    ["process element getBuiltinModule", `process["getBuiltinModule"]("fs")`],
+    [
+      "module element constructor/_load",
+      `module["constructor"]["_load"]("fs")`,
+    ],
+    [
+      "arrow element constructor",
+      `(() => {})["constructor"]("return process")()`,
+    ],
+    [
+      "process aliased to a value",
+      `const p = process; p.getBuiltinModule("fs")`,
+    ],
+    [
+      "module aliased to a value",
+      `const m = module; m.constructor._load("fs")`,
+    ],
   ])("detects %s", (_label, src) => {
     expect(findImpurities(src).length).toBeGreaterThan(0);
   });
@@ -298,6 +397,19 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
     [
       "a string that merely equals a loader name in non-call position",
       `export const name = "require"`,
+    ],
+    // Benign escape-root usage that real helpers actually contain must NOT trip:
+    [
+      "the benign process.env config read (as in flag.ts)",
+      `export function f(env: NodeJS.ProcessEnv = process.env) { return env.X === "true" }`,
+    ],
+    [
+      "a literal non-loader member on a global",
+      `const s = globalThis.JSON.stringify({})`,
+    ],
+    [
+      "an identifier used as a property NAME equal to a root",
+      `const o = { process: 1 }; const v = o.process`,
     ],
   ])("ignores %s (no false positive)", (_label, src) => {
     expect(findImpurities(src)).toEqual([]);
