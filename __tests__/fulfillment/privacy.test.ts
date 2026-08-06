@@ -20,9 +20,15 @@ const FORBIDDEN_STATIC = [
   "resend",
   "nodemailer",
   "@vercel/blob",
-  // Loader-construction sources: importing these enables createRequire etc.
+  // Loader-construction / eval-equivalent / process-spawning sources.
   "module",
   "node:module",
+  "vm",
+  "node:vm",
+  "worker_threads",
+  "node:worker_threads",
+  "child_process",
+  "node:child_process",
 ];
 
 /** True if `specifier` is exactly a forbidden module or a subpath of one. */
@@ -55,19 +61,43 @@ const ESCAPE_ROOTS = new Set([
   "Bun",
   "Deno",
 ]);
-// Member/element spellings that recover a loader from an object or a function.
-// Includes the direct Node process loader APIs (`getBuiltinModule`, `dlopen` for
-// native addons, legacy `binding`) alongside the reflection primitives — a benign
-// member such as `process.env`/`process.platform` is NOT in this set and stays
-// allowed.
+// Member/element spellings that recover a loader from an object or a function
+// (on ANY object, including an aliased root). Reflection + the direct Node loader
+// primitives.
 const LOADER_RECOVERY_MEMBERS = new Set([
   "require",
   "createRequire",
   "getBuiltinModule",
   "dlopen",
   "binding",
+  "_linkedBinding",
   "_load",
+  "_compile",
   "constructor",
+]);
+// Roots whose members are ALL treated as escapes for a pure helper: it never uses
+// `module.*`, `Bun.*`, or `Deno.*`, so any member is flagged (closes the whole
+// loader family for these roots without an allowlist).
+const FLAG_ALL_MEMBER_ROOTS = new Set(["module", "Bun", "Deno"]);
+// The ONLY `process` members a pure first-party helper legitimately reads. Every
+// other `process` member (getBuiltinModule, dlopen, binding, _linkedBinding,
+// report, …) is flagged — so new Node process loaders are closed by construction.
+const PROCESS_BENIGN_MEMBERS = new Set([
+  "env",
+  "platform",
+  "arch",
+  "version",
+  "versions",
+  "pid",
+  "ppid",
+  "cwd",
+  "argv",
+  "execPath",
+  "title",
+  "hrtime",
+  "uptime",
+  "nextTick",
+  "exitCode",
 ]);
 
 /**
@@ -163,20 +193,34 @@ function findImpurities(source: string): string[] {
       ESCAPE_ROOTS.has(node.text) &&
       !isDeclarationOrPropertyName(node)
     ) {
+      const root = node.text;
       const p = node.parent;
       if (ts.isPropertyAccessExpression(p) && p.expression === node) {
-        // `process.<member>` — a benign literal member (e.g. `process.env`) is
-        // allowed; a dangerous member is caught by the loader-recovery rule below.
+        // `<root>.<member>`. Policy depends on the root:
+        //  - process: allow only the small benign allowlist; flag everything else
+        //    (getBuiltinModule, dlopen, binding, _linkedBinding, report, …);
+        //  - module/Bun/Deno: flag ANY member (pure helpers never use them);
+        //  - globalThis/window/self/global: allow benign globals; a dangerous
+        //    member is caught by the loader-recovery rule below.
+        if (root === "process" && !PROCESS_BENIGN_MEMBERS.has(p.name.text)) {
+          findings.push(`escape-root-member:process.${p.name.text}`);
+        } else if (FLAG_ALL_MEMBER_ROOTS.has(root)) {
+          findings.push(`escape-root-member:${root}.${p.name.text}`);
+        }
       } else if (ts.isElementAccessExpression(p) && p.expression === node) {
         const a = p.argumentExpression;
         if (!a || !ts.isStringLiteral(a)) {
           findings.push("escape-root-dynamic-element"); // process[k] / globalThis[k]
+        } else if (root === "process" && !PROCESS_BENIGN_MEMBERS.has(a.text)) {
+          findings.push(`escape-root-member:process.${a.text}`); // process["dlopen"]
+        } else if (FLAG_ALL_MEMBER_ROOTS.has(root)) {
+          findings.push(`escape-root-member:${root}.${a.text}`);
         } else if (LOADER_RECOVERY_MEMBERS.has(a.text)) {
-          findings.push(`escape-root-loader-element:${a.text}`); // process["getBuiltinModule"]
+          findings.push(`escape-root-loader-element:${a.text}`); // globalThis["require"]
         }
       } else {
         // Bare value / alias: `const p = process`, `const g = globalThis`, etc.
-        findings.push(`escape-root-reference:${node.text}`);
+        findings.push(`escape-root-reference:${root}`);
       }
     } else if (
       ts.isPropertyAccessExpression(node) &&
@@ -370,6 +414,18 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
       `process["dlopen"]({ exports: {} }, "./x.node")`,
     ],
     ["aliased process.binding", `const p = process; p.binding("fs")`],
+    [
+      "process._linkedBinding internal loader",
+      `process._linkedBinding("spawn_sync")`,
+    ],
+    ["process element _linkedBinding", `process["_linkedBinding"]("fs")`],
+    ["any non-benign process member", `const r = process.report`],
+    ["module member (CJS exports)", `module.exports = { x: 1 }`],
+    ["Bun loader member", `const lib = Bun.dlopen("./x.so", {})`],
+    ["Deno loader member", `const lib = Deno.dlopen("./x.so", {})`],
+    ["vm static import", `import vm from "vm"`],
+    ["worker_threads static import", `import { Worker } from "worker_threads"`],
+    ["child_process static import", `import { execSync } from "child_process"`],
   ])("detects %s", (_label, src) => {
     expect(findImpurities(src).length).toBeGreaterThan(0);
   });
