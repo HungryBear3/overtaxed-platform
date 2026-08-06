@@ -145,7 +145,13 @@ function staticStringValue(node: ts.Expression | undefined): string | null {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
     return node.text;
   }
-  if (ts.isParenthesizedExpression(node)) {
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
+    ts.isNonNullExpression(node)
+  ) {
     return staticStringValue(node.expression);
   }
   if (ts.isTemplateExpression(node)) {
@@ -443,6 +449,18 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
     [
       "concatenated constructor element",
       `(() => {})["con" + "structor"]("return process")()`,
+    ],
+    [
+      "as-wrapped constructor element",
+      '(() => {})["constructor" as string]("return process")()',
+    ],
+    [
+      "satisfies-wrapped constructor element",
+      '(() => {})[("constructor" satisfies string)]("return process")()',
+    ],
+    [
+      "non-null-wrapped constructor element",
+      '(() => {})["constructor"!]("return process")()',
     ],
     [
       "process aliased to a value",
