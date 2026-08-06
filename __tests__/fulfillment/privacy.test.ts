@@ -138,6 +138,27 @@ function isDeclarationOrPropertyName(node: ts.Identifier): boolean {
   return false;
 }
 
+/** Resolve only syntax-local string constants. This intentionally does not follow
+ * identifiers, so the guard's documented multi-hop alias limitation is unchanged. */
+function staticStringValue(node: ts.Expression | undefined): string | null {
+  if (!node) return null;
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    return node.text;
+  }
+  if (ts.isParenthesizedExpression(node)) {
+    return staticStringValue(node.expression);
+  }
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.PlusToken
+  ) {
+    const left = staticStringValue(node.left);
+    const right = staticStringValue(node.right);
+    return left !== null && right !== null ? left + right : null;
+  }
+  return null;
+}
+
 /**
  * AST purity check (TypeScript compiler API — node kinds, not regex). Returns a
  * list of impurity findings for a source.
@@ -214,14 +235,15 @@ function findImpurities(source: string): string[] {
         }
       } else if (ts.isElementAccessExpression(p) && p.expression === node) {
         const a = p.argumentExpression;
-        if (!a || !ts.isStringLiteral(a)) {
+        const key = staticStringValue(a);
+        if (key === null) {
           findings.push("escape-root-dynamic-element"); // process[k] / globalThis[k]
-        } else if (root === "process" && !PROCESS_BENIGN_MEMBERS.has(a.text)) {
-          findings.push(`escape-root-member:process.${a.text}`); // process["dlopen"]
+        } else if (root === "process" && !PROCESS_BENIGN_MEMBERS.has(key)) {
+          findings.push(`escape-root-member:process.${key}`); // process["dlopen"]
         } else if (FLAG_ALL_MEMBER_ROOTS.has(root)) {
-          findings.push(`escape-root-member:${root}.${a.text}`);
-        } else if (LOADER_RECOVERY_MEMBERS.has(a.text)) {
-          findings.push(`escape-root-loader-element:${a.text}`); // globalThis["require"]
+          findings.push(`escape-root-member:${root}.${key}`);
+        } else if (LOADER_RECOVERY_MEMBERS.has(key)) {
+          findings.push(`escape-root-loader-element:${key}`); // globalThis["require"]
         }
       } else {
         // Bare value / alias: `const p = process`, `const g = globalThis`, etc.
@@ -233,9 +255,9 @@ function findImpurities(source: string): string[] {
     ) {
       findings.push(`member-loader:${node.name.text}`);
     } else if (ts.isElementAccessExpression(node)) {
-      const a = node.argumentExpression;
-      if (a && ts.isStringLiteral(a) && LOADER_RECOVERY_MEMBERS.has(a.text))
-        findings.push(`element-loader:${a.text}`);
+      const key = staticStringValue(node.argumentExpression);
+      if (key !== null && LOADER_RECOVERY_MEMBERS.has(key))
+        findings.push(`element-loader:${key}`);
     } else if (ts.isCallExpression(node)) {
       // A string-literal loader name passed to a call (e.g. Reflect.get(globalThis, "require")).
       for (const a of node.arguments) {
@@ -400,6 +422,14 @@ describe("AST purity guard fails closed on dynamic / indirect loaders (blocker 2
     [
       "arrow element constructor",
       `(() => {})["constructor"]("return process")()`,
+    ],
+    [
+      "no-substitution template constructor",
+      `(() => {})[${tick}constructor${tick}]("return process")()`,
+    ],
+    [
+      "concatenated constructor element",
+      `(() => {})["con" + "structor"]("return process")()`,
     ],
     [
       "process aliased to a value",
