@@ -10,12 +10,8 @@ export type T2FulfillmentKickoffOrder = {
   id: string;
   tier: string;
   status: string;
-  stripeSessionId?: string | null;
   propertyAddress?: string | null;
   propertyPin?: string | null;
-  township?: string | null;
-  settledAmountCents?: number | null;
-  settledCurrency?: string | null;
   refunded?: boolean;
   disputed?: boolean;
 };

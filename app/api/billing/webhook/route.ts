@@ -325,18 +325,39 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: "OT settlement error" }, { status: 500 })
         }
 
-        if (persistedOrder?.status === "PAID" && persistedOrder.tier === "T2") {
+        if (!persistedOrder || persistedOrder.status !== "PAID") {
+          return NextResponse.json({ received: true, recovery: true })
+        }
+
+        if (!alreadyPaid) {
+          const resolvedAddress = persistedOrder.propertyAddress ?? ""
+          sendNewOrderAlert({
+            tier,
+            customerEmail,
+            customerName,
+            propertyPin: persistedOrder.propertyPin || resolvedAddress,
+            amountPaid,
+            sessionId,
+          }).catch((err) => console.error("[webhook] sendNewOrderAlert failed:", err))
+          if (customerEmail) {
+            sendOrderConfirmation({
+              tier,
+              customerEmail,
+              customerName,
+              address: resolvedAddress || persistedOrder.propertyPin || undefined,
+              amountPaid,
+            }).catch((err) => console.error("[webhook] sendOrderConfirmation failed:", err))
+          }
+        }
+
+        if (persistedOrder.tier === "T2") {
           try {
             await kickOffT2FulfillmentEvidence({
               id: persistedOrder.id,
               tier: persistedOrder.tier,
               status: persistedOrder.status,
-              stripeSessionId: persistedOrder.stripeSessionId,
               propertyAddress: persistedOrder.propertyAddress,
               propertyPin: persistedOrder.propertyPin,
-              township: persistedOrder.township,
-              settledAmountCents: amountCents,
-              settledCurrency: currency,
             })
           } catch (err) {
             const errorName = err instanceof Error ? err.name : "UnknownError"
@@ -345,32 +366,15 @@ export async function POST(request: NextRequest) {
                 ? String((err as { code?: unknown }).code ?? "UNKNOWN")
                 : "UNKNOWN"
             console.error(
-              `[webhook] T2 evidence persistence failed orderId=${persistedOrder.id} error=${errorName} code=${errorCode}`,
+              `[webhook] T2 evidence persistence failed orderId=${persistedOrder.id} error=${errorName} code=${errorCode}; releasing claim`,
             )
+            await releaseEventClaim()
+            return NextResponse.json({ error: "T2 evidence persistence error" }, { status: 500 })
           }
         }
 
-        if (!persistedOrder || persistedOrder.status !== "PAID" || alreadyPaid) {
-          return NextResponse.json({ received: true, recovery: persistedOrder?.status !== "PAID" })
-        }
-
-        const resolvedAddress = persistedOrder.propertyAddress ?? ""
-        sendNewOrderAlert({
-          tier,
-          customerEmail,
-          customerName,
-          propertyPin: persistedOrder.propertyPin || resolvedAddress,
-          amountPaid,
-          sessionId,
-        }).catch((err) => console.error("[webhook] sendNewOrderAlert failed:", err))
-        if (customerEmail) {
-          sendOrderConfirmation({
-            tier,
-            customerEmail,
-            customerName,
-            address: resolvedAddress || persistedOrder.propertyPin || undefined,
-            amountPaid,
-          }).catch((err) => console.error("[webhook] sendOrderConfirmation failed:", err))
+        if (alreadyPaid) {
+          return NextResponse.json({ received: true, recovery: false })
         }
         break
       }

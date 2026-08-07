@@ -11,12 +11,8 @@ const completePaidT2 = {
   id: "ord_t2_paid",
   tier: "T2",
   status: "PAID",
-  stripeSessionId: "cs_live_t2",
   propertyAddress: "1 TEST ST",
   propertyPin: "09000000000000",
-  township: "Elk Grove",
-  settledAmountCents: 6900,
-  settledCurrency: "usd",
 };
 
 function fakeStore() {

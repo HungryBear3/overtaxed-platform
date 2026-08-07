@@ -340,7 +340,7 @@ describe("billing webhook approved notice settlement", () => {
     expect(sendOrderConfirmationMock).not.toHaveBeenCalled()
   })
 
-  it("preserves paid-order acknowledgment and emails when evidence persistence fails", async () => {
+  it("retries evidence persistence without losing or duplicating paid-order emails", async () => {
     seedOrder({
       tier: "T2",
       analysisAcknowledgedAt: new Date("2026-07-24T12:00:00.000Z"),
@@ -353,11 +353,18 @@ describe("billing webhook approved notice settlement", () => {
     })
     kickOffT2FulfillmentEvidenceMock.mockRejectedValueOnce(new Error("evidence persistence unavailable"))
 
-    const response = await POST(request("evt_t2_evidence_failure", "ord_notice", { tier: "T2" }))
+    const first = await POST(request("evt_t2_evidence_failure", "ord_notice", { tier: "T2" }))
 
-    expect(response.status).toBe(200)
+    expect(first.status).toBe(500)
+    expect(dbState.stripeEvents.has("evt_t2_evidence_failure")).toBe(false)
+    expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
+    expect(sendOrderConfirmationMock).toHaveBeenCalledTimes(1)
+
+    const retry = await POST(request("evt_t2_evidence_failure", "ord_notice", { tier: "T2" }))
+
+    expect(retry.status).toBe(200)
     expect(dbState.stripeEvents.has("evt_t2_evidence_failure")).toBe(true)
-    expect(kickOffT2FulfillmentEvidenceMock).toHaveBeenCalledTimes(1)
+    expect(kickOffT2FulfillmentEvidenceMock).toHaveBeenCalledTimes(2)
     expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
     expect(sendOrderConfirmationMock).toHaveBeenCalledTimes(1)
   })

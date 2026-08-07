@@ -1136,12 +1136,13 @@ model OutreachApprovalEvent {
 // cache-bust: 1774495683
 
 // ============================================
-// OT T2 DELIVERY-EVIDENCE FOUNDATION (Phase 1, additive, default-off)
+// OT T2 DELIVERY-EVIDENCE FOUNDATION (Phase 1 schema; Phase 2 Slice 1 kickoff)
 // ============================================
-// Durable fulfillment-evidence for anonymous paid T2 OTOrder rows. This is a
-// SCHEMA + PURE-HELPER foundation only: no settlement/webhook/admin/worker path
-// writes these tables in Phase 1 (gated by OT_T2_FULFILLMENT_EVIDENCE_ENABLED,
-// default-off, and not wired). All state language mirrors lib/fulfillment/*.
+// Durable fulfillment-evidence for anonymous paid T2 OTOrder rows. The billing
+// settlement seam may create only the initial summary when the strict
+// OT_T2_FULFILLMENT_EVIDENCE_ENABLED flag is exactly true. The flag is default-off;
+// no artifact, attempt, event, packet, delivery, provider, or worker path is wired.
+// All state language mirrors lib/fulfillment/*.
 //
 // Privacy invariants (enforced by __tests__/fulfillment/privacy.test.ts):
 //   - no public bearer URLs, raw artifact bytes, raw provider payloads;

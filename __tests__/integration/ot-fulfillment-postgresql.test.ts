@@ -69,12 +69,8 @@ describeIfDb("OT fulfillment PostgreSQL kickoff proof", () => {
       id: order.id,
       tier: order.tier,
       status: order.status,
-      stripeSessionId: order.stripeSessionId,
       propertyAddress: order.propertyAddress,
       propertyPin: order.propertyPin,
-      township: order.township,
-      settledAmountCents: order.settledAmountCents,
-      settledCurrency: order.settledCurrency,
     };
     const options = {
       env: { OT_T2_FULFILLMENT_EVIDENCE_ENABLED: "true" },
@@ -86,11 +82,29 @@ describeIfDb("OT fulfillment PostgreSQL kickoff proof", () => {
       kickOffT2FulfillmentEvidence(input, options),
     ]);
 
-    expect(
-      await prisma.oTFulfillment.count({
-        where: { orderId: order.id, kind: "T2_APPEAL_EVIDENCE" },
+    const summary = await prisma.oTFulfillment.findUnique({
+      where: {
+        orderId_kind: { orderId: order.id, kind: "T2_APPEAL_EVIDENCE" },
+      },
+    });
+    expect(summary).toMatchObject({
+      orderId: order.id,
+      status: "ARTIFACT_PENDING",
+    });
+    if (!summary) throw new Error("expected fulfillment summary");
+
+    const [artifactCount, attemptCount, eventCount] = await Promise.all([
+      prisma.oTFulfillmentArtifact.count({
+        where: { fulfillmentId: summary.id },
       }),
-    ).toBe(1);
+      prisma.oTDeliveryAttempt.count({ where: { fulfillmentId: summary.id } }),
+      prisma.oTDeliveryEvent.count({ where: { fulfillmentId: summary.id } }),
+    ]);
+    expect({ artifactCount, attemptCount, eventCount }).toEqual({
+      artifactCount: 0,
+      attemptCount: 0,
+      eventCount: 0,
+    });
 
     const fulfillment = await prisma.oTFulfillment.update({
       where: {
