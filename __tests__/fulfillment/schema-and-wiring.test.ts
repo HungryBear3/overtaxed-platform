@@ -40,18 +40,23 @@ describe("row 1 — state language represents every required distinction", () =>
   })
 })
 
-describe("row 15 — no runtime route imports the fulfillment foundation", () => {
-  const routes = [
-    "app/api/billing/webhook/route.ts",
+describe("row 15 — Phase 2 runtime wiring remains bounded", () => {
+  const unwiredRoutes = [
     "app/api/checkout/session/route.ts",
     "app/api/admin/ot-orders/[orderId]/review/route.ts",
     "lib/packet/generate-and-deliver.ts",
     "lib/checkout/ot-settlement.ts",
   ]
 
-  it.each(routes)("%s does not import @/lib/fulfillment", (rel) => {
+  it("wires only the settled-order webhook to the side-effecting kickoff adapter", () => {
+    const src = readFileSync(join(ROOT, "app/api/billing/webhook/route.ts"), "utf8")
+    expect(src).toContain('from "@/lib/fulfillment-runtime/kickoff"')
+    expect(src).not.toContain('from "@/lib/fulfillment/')
+  })
+
+  it.each(unwiredRoutes)("%s remains outside the Phase 2 runtime seam", (rel) => {
     const src = readFileSync(join(ROOT, rel), "utf8")
-    expect(src.includes("lib/fulfillment")).toBe(false)
-    expect(src.includes("fulfillment/")).toBe(false)
+    expect(src.includes("lib/fulfillment-runtime")).toBe(false)
+    expect(src.includes('from "@/lib/fulfillment/')).toBe(false)
   })
 })

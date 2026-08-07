@@ -4,6 +4,7 @@ import { stripe } from "@/lib/stripe/client"
 import { prisma } from "@/lib/db"
 import { generatePacketForInvoice } from "@/lib/packet/generate-and-deliver"
 import { sendNewOrderAlert, sendOrderConfirmation } from "@/lib/email/send"
+import { kickOffT2FulfillmentEvidence } from "@/lib/fulfillment-runtime/kickoff"
 import {
   type OtSettlementOrder,
   validateApprovedNoticeSettlement,
@@ -322,6 +323,31 @@ export async function POST(request: NextRequest) {
           console.error(`[webhook] OT settlement failed for ${sessionId}; releasing claim so Stripe retries:`, err)
           await releaseEventClaim()
           return NextResponse.json({ error: "OT settlement error" }, { status: 500 })
+        }
+
+        if (persistedOrder?.status === "PAID" && persistedOrder.tier === "T2") {
+          try {
+            await kickOffT2FulfillmentEvidence({
+              id: persistedOrder.id,
+              tier: persistedOrder.tier,
+              status: persistedOrder.status,
+              stripeSessionId: persistedOrder.stripeSessionId,
+              propertyAddress: persistedOrder.propertyAddress,
+              propertyPin: persistedOrder.propertyPin,
+              township: persistedOrder.township,
+              settledAmountCents: amountCents,
+              settledCurrency: currency,
+            })
+          } catch (err) {
+            const errorName = err instanceof Error ? err.name : "UnknownError"
+            const errorCode =
+              typeof err === "object" && err !== null && "code" in err
+                ? String((err as { code?: unknown }).code ?? "UNKNOWN")
+                : "UNKNOWN"
+            console.error(
+              `[webhook] T2 evidence persistence failed orderId=${persistedOrder.id} error=${errorName} code=${errorCode}`,
+            )
+          }
         }
 
         if (!persistedOrder || persistedOrder.status !== "PAID" || alreadyPaid) {

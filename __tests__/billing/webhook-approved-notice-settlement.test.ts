@@ -17,6 +17,7 @@ const sendOrderConfirmationMock = jest.fn(async (_args?: unknown) => true)
 const sendPaidOrderRecoveryAlertMock = jest.fn(async (_args?: unknown) => true)
 const sendPaymentRecoveryAcknowledgmentMock = jest.fn(async (_args?: unknown) => true)
 const sendBillingPaymentRecoveryAlertMock = jest.fn(async (_args?: unknown) => true)
+const kickOffT2FulfillmentEvidenceMock = jest.fn(async (_order?: unknown) => ({ outcome: "DISABLED" }))
 let forceOtOrderUpdateMiss = false
 
 jest.mock("@/lib/db", () => ({
@@ -127,6 +128,10 @@ jest.mock("@/lib/email/send", () => ({
   sendPaidOrderRecoveryAlert: (args: unknown) => sendPaidOrderRecoveryAlertMock(args),
   sendPaymentRecoveryAcknowledgment: (args: unknown) => sendPaymentRecoveryAcknowledgmentMock(args),
   sendBillingPaymentRecoveryAlert: (args: unknown) => sendBillingPaymentRecoveryAlertMock(args),
+}))
+
+jest.mock("@/lib/fulfillment-runtime/kickoff", () => ({
+  kickOffT2FulfillmentEvidence: (order: unknown) => kickOffT2FulfillmentEvidenceMock(order),
 }))
 
 const listLineItemsMock = jest.fn()
@@ -304,7 +309,57 @@ describe("billing webhook approved notice settlement", () => {
     const response = await POST(request("evt_t2_paid", "ord_notice", { tier: "T2" }))
     expect(response.status).toBe(200)
     expect(dbState.otOrders.get("cs_notice_paid")).toMatchObject({ status: "PAID" })
+    expect(kickOffT2FulfillmentEvidenceMock).toHaveBeenCalledTimes(1)
+    expect(kickOffT2FulfillmentEvidenceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "ord_notice", tier: "T2", status: "PAID" }),
+    )
     expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("reaches evidence persistence on a paid retry before the already-paid early return", async () => {
+    seedOrder({
+      tier: "T2",
+      status: "PAID",
+      settledAmountCents: 9700,
+      settledCurrency: "usd",
+      amountPaid: 97,
+      analysisAcknowledgedAt: new Date("2026-07-24T12:00:00.000Z"),
+      acknowledgmentVersion: "analysis_ack_v1",
+      acknowledgmentEvidence: { acknowledged: true, version: "analysis_ack_v1" },
+      noticeReviewStatus: null,
+      noticeReviewActionAt: null,
+      noticeReviewActionBy: null,
+      noticeEvidence: null,
+    })
+
+    const response = await POST(request("evt_t2_paid_retry", "ord_notice", { tier: "T2" }))
+
+    expect(response.status).toBe(200)
+    expect(kickOffT2FulfillmentEvidenceMock).toHaveBeenCalledTimes(1)
+    expect(sendNewOrderAlertMock).not.toHaveBeenCalled()
+    expect(sendOrderConfirmationMock).not.toHaveBeenCalled()
+  })
+
+  it("preserves paid-order acknowledgment and emails when evidence persistence fails", async () => {
+    seedOrder({
+      tier: "T2",
+      analysisAcknowledgedAt: new Date("2026-07-24T12:00:00.000Z"),
+      acknowledgmentVersion: "analysis_ack_v1",
+      acknowledgmentEvidence: { acknowledged: true, version: "analysis_ack_v1" },
+      noticeReviewStatus: null,
+      noticeReviewActionAt: null,
+      noticeReviewActionBy: null,
+      noticeEvidence: null,
+    })
+    kickOffT2FulfillmentEvidenceMock.mockRejectedValueOnce(new Error("evidence persistence unavailable"))
+
+    const response = await POST(request("evt_t2_evidence_failure", "ord_notice", { tier: "T2" }))
+
+    expect(response.status).toBe(200)
+    expect(dbState.stripeEvents.has("evt_t2_evidence_failure")).toBe(true)
+    expect(kickOffT2FulfillmentEvidenceMock).toHaveBeenCalledTimes(1)
+    expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
+    expect(sendOrderConfirmationMock).toHaveBeenCalledTimes(1)
   })
 
   it("holds a paid T2 checkout when acknowledgment evidence is missing", async () => {

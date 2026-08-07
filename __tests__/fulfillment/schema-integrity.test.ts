@@ -2,9 +2,9 @@
  * @jest-environment node
  *
  * Remediation blockers A, B, C (schema): the durable evidence chain is structurally
- * enforceable. Because there is no DB in Phase 1, these assertions verify the
- * relational constraints in prisma/schema.prisma AND the generated review-only SQL,
- * which is the structural proxy for "the database rejects an orphaned/foreign row".
+ * enforceable. These assertions verify the relational constraints in
+ * prisma/schema.prisma and the adopted timestamped migration; disposable
+ * PostgreSQL behavior is covered separately by the integration suite.
  */
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -12,7 +12,10 @@ import { join } from "path";
 const ROOT = process.cwd();
 const SCHEMA = readFileSync(join(ROOT, "prisma/schema.prisma"), "utf8");
 const SQL = readFileSync(
-  join(ROOT, "prisma/migrations/add_ot_t2_fulfillment_evidence.sql"),
+  join(
+    ROOT,
+    "prisma/migrations/20260807001500_add_ot_t2_fulfillment_evidence/migration.sql",
+  ),
   "utf8",
 );
 
