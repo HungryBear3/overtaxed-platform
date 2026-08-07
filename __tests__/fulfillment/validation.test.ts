@@ -1,0 +1,277 @@
+/**
+ * @jest-environment node
+ *
+ * Matrix row 11: invalid SHA, byte size, provider id, timestamps, or reason codes
+ * all fail closed.
+ */
+import {
+  isValidArtifactSha256,
+  isValidByteSize,
+  isValidProviderMessageId,
+  isValidProviderEventId,
+  isValidProviderName,
+  isValidReasonCode,
+  validateTimestampChain,
+  MAX_ARTIFACT_BYTES,
+  isPgInt,
+  isPgIntInRange,
+  isBoundedOpaqueString,
+  parseStrictInstant,
+  isValidInstant,
+  isValidPrivateStorageLocator,
+  PG_INT_MIN,
+  PG_INT_MAX,
+} from "@/lib/fulfillment/validation";
+
+describe("isValidArtifactSha256 — lowercase 64-hex only", () => {
+  it("accepts a lowercase 64-hex digest", () => {
+    expect(isValidArtifactSha256("a".repeat(64))).toBe(true);
+    expect(isValidArtifactSha256("0123456789abcdef".repeat(4))).toBe(true);
+  });
+  it("rejects uppercase, wrong length, non-hex and non-strings", () => {
+    expect(isValidArtifactSha256("A".repeat(64))).toBe(false);
+    expect(isValidArtifactSha256("a".repeat(63))).toBe(false);
+    expect(isValidArtifactSha256("a".repeat(65))).toBe(false);
+    expect(isValidArtifactSha256("g".repeat(64))).toBe(false);
+    expect(isValidArtifactSha256(123 as unknown as string)).toBe(false);
+    expect(isValidArtifactSha256("")).toBe(false);
+  });
+});
+
+describe("isValidByteSize — positive bounded integer", () => {
+  it("accepts a positive integer within the bound", () => {
+    expect(isValidByteSize(1)).toBe(true);
+    expect(isValidByteSize(MAX_ARTIFACT_BYTES)).toBe(true);
+  });
+  it("rejects zero, negatives, floats, NaN, over-bound and non-numbers", () => {
+    expect(isValidByteSize(0)).toBe(false);
+    expect(isValidByteSize(-1)).toBe(false);
+    expect(isValidByteSize(1.5)).toBe(false);
+    expect(isValidByteSize(Number.NaN)).toBe(false);
+    expect(isValidByteSize(MAX_ARTIFACT_BYTES + 1)).toBe(false);
+    expect(isValidByteSize("100" as unknown as number)).toBe(false);
+  });
+});
+
+describe("isValidProviderMessageId / isValidProviderEventId — bounded opaque token", () => {
+  it("accepts a bounded opaque id", () => {
+    expect(isValidProviderMessageId("re_12345abcDEF")).toBe(true);
+    expect(isValidProviderEventId("evt_ext_998")).toBe(true);
+  });
+  it("rejects empty, whitespace-only, newline-bearing, over-long and non-strings", () => {
+    expect(isValidProviderMessageId("")).toBe(false);
+    expect(isValidProviderMessageId("   ")).toBe(false);
+    expect(isValidProviderMessageId("has\nnewline")).toBe(false);
+    expect(isValidProviderMessageId("x".repeat(256))).toBe(false);
+    expect(isValidProviderMessageId(null as unknown as string)).toBe(false);
+    expect(isValidProviderEventId("")).toBe(false);
+  });
+});
+
+describe("isValidProviderName — bounded, single-line, delimiter-free", () => {
+  it("accepts a normal provider name", () => {
+    expect(isValidProviderName("resend")).toBe(true);
+    expect(isValidProviderName("postmark-eu")).toBe(true);
+  });
+  it("rejects empty, whitespace, over-long and non-strings", () => {
+    expect(isValidProviderName("")).toBe(false);
+    expect(isValidProviderName("  ")).toBe(false);
+    expect(isValidProviderName("has space")).toBe(false);
+    expect(isValidProviderName("x".repeat(65))).toBe(false);
+    expect(isValidProviderName(null as unknown as string)).toBe(false);
+  });
+});
+
+describe("isValidReasonCode — bounded non-PII allowlist", () => {
+  it("accepts codes on the allowlist", () => {
+    expect(isValidReasonCode("HARD_BOUNCE")).toBe(true);
+    expect(isValidReasonCode("SPAM_COMPLAINT")).toBe(true);
+    expect(isValidReasonCode("INCOMPLETE_INPUT")).toBe(true);
+  });
+  it("rejects unknown / free-form / lowercase strings (fail closed)", () => {
+    expect(isValidReasonCode("user bob@example.com bounced")).toBe(false);
+    expect(isValidReasonCode("hard_bounce")).toBe(false);
+    expect(isValidReasonCode("WHATEVER")).toBe(false);
+    expect(isValidReasonCode("")).toBe(false);
+  });
+});
+
+describe("validateTimestampChain — monotonic and valid", () => {
+  it("accepts a well-ordered chain", () => {
+    expect(
+      validateTimestampChain({
+        createdAt: "2026-08-06T10:00:00.000Z",
+        requestedAt: "2026-08-06T10:01:00.000Z",
+        providerAcceptedAt: "2026-08-06T10:02:00.000Z",
+        deliveredAt: "2026-08-06T10:03:00.000Z",
+      }),
+    ).toBeNull();
+  });
+  it("rejects an out-of-order chain (delivered before accepted)", () => {
+    expect(
+      validateTimestampChain({
+        createdAt: "2026-08-06T10:00:00.000Z",
+        providerAcceptedAt: "2026-08-06T10:03:00.000Z",
+        deliveredAt: "2026-08-06T10:02:00.000Z",
+      }),
+    ).not.toBeNull();
+  });
+  it("rejects an unparseable timestamp", () => {
+    expect(validateTimestampChain({ createdAt: "not-a-date" })).not.toBeNull();
+  });
+});
+
+// ---- Remediation-2 C: schema-safe PostgreSQL Int validators ----
+
+describe("isPgInt / isPgIntInRange", () => {
+  it("accepts safe integers within the 32-bit signed range", () => {
+    expect(isPgInt(0)).toBe(true);
+    expect(isPgInt(PG_INT_MAX)).toBe(true);
+    expect(isPgInt(PG_INT_MIN)).toBe(true);
+  });
+  it("rejects NaN, infinities, fractions, unsafe integers, and out-of-range values", () => {
+    for (const bad of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      1.5,
+      9007199254740992,
+      Number.MAX_SAFE_INTEGER,
+      PG_INT_MAX + 1,
+      PG_INT_MIN - 1,
+      "5" as unknown,
+    ]) {
+      expect(isPgInt(bad)).toBe(false);
+    }
+  });
+  it("isPgIntInRange enforces the sub-range", () => {
+    expect(isPgIntInRange(1, 1, PG_INT_MAX)).toBe(true);
+    expect(isPgIntInRange(0, 1, PG_INT_MAX)).toBe(false);
+    expect(isPgIntInRange(PG_INT_MAX, 1, PG_INT_MAX - 1)).toBe(false);
+  });
+});
+
+// ---- Remediation-2 D: strict canonical UTC instant parser ----
+
+describe("parseStrictInstant / isValidInstant", () => {
+  it("accepts strict RFC3339 UTC instants with optional millis", () => {
+    expect(parseStrictInstant("2026-08-06T10:00:00Z")).not.toBeNull();
+    expect(parseStrictInstant("2026-08-06T10:00:00.123Z")).not.toBeNull();
+    expect(isValidInstant("2026-08-06T10:00:00.000Z")).toBe(true);
+  });
+  it.each([
+    "0",
+    "2026-08-06",
+    "2026-08-06T10:00:00",
+    "2026-08-06T10:00:00.000+00:00",
+    " 2026-08-06T10:00:00.000Z",
+    "2026-08-06T10:00:00.000Z ",
+    "2026-02-30T10:00:00.000Z",
+    "2026-13-01T10:00:00.000Z",
+    "2026-08-06T24:00:00.000Z",
+    "2026-08-06T10:60:00.000Z",
+  ])("rejects non-canonical / impossible instant %p", (value) => {
+    expect(parseStrictInstant(value)).toBeNull();
+    expect(isValidInstant(value)).toBe(false);
+  });
+  it("rejects non-strings and oversized values", () => {
+    expect(parseStrictInstant(0 as unknown)).toBeNull();
+    expect(parseStrictInstant(null as unknown)).toBeNull();
+    expect(parseStrictInstant("2026-08-06T10:00:00.000000000Z")).toBeNull();
+  });
+});
+
+// ---- Remediation-2 D: bounded opaque identity ----
+
+describe("isBoundedOpaqueString", () => {
+  it("accepts a bounded single-line opaque value", () => {
+    expect(isBoundedOpaqueString("worker-1")).toBe(true);
+    expect(isBoundedOpaqueString("tok_ABC.123")).toBe(true);
+  });
+  it("rejects empty, whitespace, newline, control, and over-bound values", () => {
+    for (const bad of [
+      "",
+      " ",
+      "a b",
+      "a\nb",
+      "a\tb",
+      "x".repeat(256),
+      null as unknown,
+      5 as unknown,
+    ]) {
+      expect(isBoundedOpaqueString(bad)).toBe(false);
+    }
+  });
+
+  // ---- Remediation-4 blocker 1: Unicode/C1 control & separator rejection ----
+  // Build hostile values via char codes so the test source stays pure ASCII.
+  const withCp = (cp: number) => "tok" + String.fromCharCode(cp) + "x";
+  it.each([
+    ["U+0085 NEXT LINE", 0x0085],
+    ["U+00A0 NO-BREAK SPACE", 0x00a0],
+    ["U+2028 LINE SEPARATOR", 0x2028],
+    ["U+2029 PARAGRAPH SEPARATOR", 0x2029],
+    ["U+200B ZERO WIDTH SPACE", 0x200b],
+    ["U+FEFF BOM/ZWNBSP", 0xfeff],
+    ["U+0000 NUL (C0)", 0x0000],
+    ["U+001F (C0)", 0x001f],
+    ["U+007F DEL", 0x007f],
+    ["U+0009 TAB", 0x0009],
+    ["U+000A LF", 0x000a],
+    ["U+000D CR", 0x000d],
+    ["U+0020 SPACE", 0x0020],
+    ["U+D800 lone high surrogate", 0xd800],
+    ["U+DFFF lone low surrogate", 0xdfff],
+  ])("rejects %s", (_label, cp) => {
+    expect(isBoundedOpaqueString(withCp(cp))).toBe(false);
+  });
+
+  it("rejects leading and internal ASCII spaces without trimming into validity", () => {
+    expect(isBoundedOpaqueString(" abc")).toBe(false);
+    expect(isBoundedOpaqueString("abc ")).toBe(false);
+    expect(isBoundedOpaqueString("a b c")).toBe(false);
+  });
+
+  it("still accepts ordinary ASCII and ordinary non-control Unicode identifiers", () => {
+    expect(isBoundedOpaqueString("tok_ABC.123")).toBe(true);
+    expect(isBoundedOpaqueString("caf" + String.fromCharCode(0x00e9))).toBe(
+      true,
+    ); // café
+    expect(isBoundedOpaqueString(String.fromCodePoint(0x65e5, 0x672c))).toBe(
+      true,
+    ); // 日本
+  });
+});
+
+// ---- Remediation-2 H: private storage locator contract ----
+
+describe("isValidPrivateStorageLocator — private opaque relative path only", () => {
+  it("accepts a synthetic private key", () => {
+    expect(isValidPrivateStorageLocator("artifacts/ful_123/v1.pdf")).toBe(true);
+    expect(isValidPrivateStorageLocator("a")).toBe(true);
+  });
+  it.each([
+    "https://blob.example.com/x",
+    "http://x/y",
+    "//host/path",
+    "/absolute/path",
+    "data:application/pdf;base64,AAAA",
+    "s3://bucket/key",
+    "artifacts/ful_123/v1.pdf?sig=abc",
+    "artifacts/ful_123/v1.pdf#frag",
+    "artifacts/%2e%2e/secret",
+    "artifacts\\ful_123\\v1.pdf",
+    "artifacts//v1.pdf",
+    "artifacts/../secret",
+    "artifacts/./v1.pdf",
+    "artifacts/ v1.pdf",
+    "artifacts/v1\n.pdf",
+    "x".repeat(513),
+    "",
+  ])("rejects a public/signed/unsafe locator %p", (value) => {
+    expect(isValidPrivateStorageLocator(value)).toBe(false);
+  });
+  it("rejects non-strings", () => {
+    expect(isValidPrivateStorageLocator(123 as unknown)).toBe(false);
+    expect(isValidPrivateStorageLocator(null as unknown)).toBe(false);
+  });
+});
