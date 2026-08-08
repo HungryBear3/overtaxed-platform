@@ -21,7 +21,7 @@ import type { OTDeliveryEventType, OTFulfillmentStatus } from "@/lib/fulfillment
 import { FULFILLMENT_STATUSES, REASON_CODES } from "@/lib/fulfillment/types"
 import type { DeliveryEvent } from "@/lib/fulfillment/state"
 import { foldDeliveryEvents, initialFoldState, validateDeliveryEvent } from "@/lib/fulfillment/state"
-import { isValidArtifactSha256, parseStrictInstant } from "@/lib/fulfillment/validation"
+import { isPgIntInRange, isValidArtifactSha256, isValidByteSize, parseStrictInstant, PG_INT_MAX } from "@/lib/fulfillment/validation"
 import { decideDeliverySend, decideRegeneration } from "@/lib/fulfillment/retry"
 
 // ---------- Input shapes (mirror the Phase 1 rows the loader passes) ----------
@@ -148,7 +148,7 @@ export type ArtifactView = {
   createdAt: string | null
 }
 
-export type AttemptOutcome = "CREATED" | "ACCEPTED" | "DELIVERED" | "DELAYED" | "FAILED"
+export type AttemptOutcome = "CREATED" | "ACCEPTED" | "DELIVERED" | "DELAYED" | "FAILED" | "UNTRUSTED"
 export type AttemptView = {
   attemptNumber: number
   artifactVersion: number
@@ -181,6 +181,8 @@ export type WarningCode =
   | "ARTIFACT_MISSING"
   | "ATTEMPT_ARTIFACT_MISSING"
   | "EVENT_ATTEMPT_MISSING"
+  | "EVENT_PROVIDER_MISMATCH"
+  | "MALFORMED_ARTIFACT"
   | "MALFORMED_EVENT"
   | "EVIDENCE_CONFLICT"
   | "STATUS_DRIFT"
@@ -355,27 +357,67 @@ function mapFoldOutcome(status: OTFulfillmentStatus): DisplayState | null {
   }
 }
 
-function deriveArtifact(f: EvidenceFulfillmentInput): { view: ArtifactView; current: EvidenceArtifactInput | null } {
+const VERSION_METADATA = /^[A-Za-z0-9._-]{1,128}$/
+
+function artifactIsValid(a: EvidenceArtifactInput, now: string): boolean {
+  const createdMs = parseStrictInstant(a.createdAt)
+  const nowMs = parseStrictInstant(now)
+  return (
+    isPgIntInRange(a.version, 1, PG_INT_MAX) &&
+    isValidArtifactSha256(a.artifactSha256) &&
+    isValidByteSize(a.byteSize) &&
+    createdMs !== null &&
+    nowMs !== null &&
+    createdMs <= nowMs &&
+    typeof a.generatorVersion === "string" &&
+    VERSION_METADATA.test(a.generatorVersion) &&
+    (a.templateVersion === null || (typeof a.templateVersion === "string" && VERSION_METADATA.test(a.templateVersion)))
+  )
+}
+
+function deriveArtifact(f: EvidenceFulfillmentInput, now: string): {
+  view: ArtifactView
+  validVersions: ReadonlySet<number>
+  malformed: boolean
+} {
   if (f.artifacts.length === 0) {
     return {
       view: { present: false, version: null, sha256: null, byteSize: null, generatorVersion: null, templateVersion: null, createdAt: null },
-      current: null,
+      validVersions: new Set(),
+      malformed: false,
     }
   }
-  // Current artifact = highest version (Phase 1 derives current identity this way).
+  const versions = new Set<number>()
+  const hashes = new Set<string>()
+  let malformed = false
+  const validVersions = new Set<number>()
+  for (const artifact of f.artifacts) {
+    const duplicateIdentity = versions.has(artifact.version) || hashes.has(artifact.artifactSha256)
+    versions.add(artifact.version)
+    hashes.add(artifact.artifactSha256)
+    if (!artifactIsValid(artifact, now) || duplicateIdentity) malformed = true
+    else validVersions.add(artifact.version)
+  }
   const current = f.artifacts.reduce((a, b) => (b.version > a.version ? b : a))
+  if (malformed || !validVersions.has(current.version)) {
+    return {
+      view: { present: false, version: null, sha256: null, byteSize: null, generatorVersion: null, templateVersion: null, createdAt: null },
+      validVersions,
+      malformed: true,
+    }
+  }
   return {
     view: {
       present: true,
       version: current.version,
-      sha256: current.artifactSha256, // content-address, non-PII
+      sha256: current.artifactSha256,
       byteSize: current.byteSize,
       generatorVersion: current.generatorVersion,
       templateVersion: current.templateVersion,
       createdAt: current.createdAt,
-      // storageLocator deliberately omitted.
     },
-    current,
+    validVersions,
+    malformed: false,
   }
 }
 
@@ -420,7 +462,7 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
       attempts: [],
       timeline: [],
       warnings,
-      actions: buildActions("NOT_STARTED", false, false, 0),
+      actions: buildActions("NOT_STARTED", false, 0, 0, null, false),
       derivedDeliveryStatus: "NONE",
       conflicted: false,
     }
@@ -431,28 +473,24 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
   const lease = deriveLease(f, now)
   if (lease.state === "INVALID") pushWarn("INVALID_LEASE", "Lease metadata is malformed or incomplete.", "warn")
 
-  const { view: artifactView } = deriveArtifact(f)
+  const { view: artifactView, validVersions: validArtifactVersions, malformed: artifactMalformed } = deriveArtifact(f, now)
+  if (artifactMalformed) pushWarn("MALFORMED_ARTIFACT", "Artifact provenance is malformed or conflicting and was suppressed.", "danger")
 
   // ----- Attempts (deterministic order + redaction) -----
   const sortedAttempts = [...f.attempts].sort((a, b) => a.attemptNumber - b.attemptNumber)
-  const artifactVersions = new Set(f.artifacts.map((a) => a.version))
-  const attemptNumbers = new Set(f.attempts.map((a) => a.attemptNumber))
+  const attemptsByNumber = new Map(f.attempts.map((a) => [a.attemptNumber, a]))
+  const taintedAttempts = new Set<number>()
+  let evidenceInvalid = artifactMalformed
   for (const a of sortedAttempts) {
-    if (!artifactVersions.has(a.artifactVersion)) {
-      pushWarn("ATTEMPT_ARTIFACT_MISSING", `Attempt ${a.attemptNumber} references artifact v${a.artifactVersion} which is absent.`, "danger")
+    const linkedArtifact = f.artifacts.find((artifact) => artifact.version === a.artifactVersion)
+    const artifactCreatedMs = linkedArtifact ? parseStrictInstant(linkedArtifact.createdAt) : null
+    const requestedMs = parseStrictInstant(a.requestedAt)
+    if (!validArtifactVersions.has(a.artifactVersion) || artifactCreatedMs === null || requestedMs === null || artifactCreatedMs > requestedMs) {
+      pushWarn("ATTEMPT_ARTIFACT_MISSING", `Attempt ${a.attemptNumber} has missing or invalid artifact lineage for v${a.artifactVersion}.`, "danger")
+      taintedAttempts.add(a.attemptNumber)
+      evidenceInvalid = true
     }
   }
-  const attempts: AttemptView[] = sortedAttempts.map((a) => ({
-    attemptNumber: a.attemptNumber,
-    artifactVersion: a.artifactVersion,
-    provider: a.provider,
-    providerMessageIdMasked: maskOpaque(a.providerMessageId),
-    outcome: attemptOutcome(a),
-    requestedAt: a.requestedAt,
-    acceptedAt: a.providerAcceptedAt,
-    deliveredAt: a.deliveredAt,
-    reasonCode: sanitizeReason(a.reasonCode, pushWarn),
-  }))
 
   // ----- Provider events: validate, fold, and build a redacted timeline -----
   // Fail closed on tainted evidence. A single malformed event, or an event whose
@@ -461,7 +499,7 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
   // the surviving subset to reach an accepted/delivered outcome once any event is
   // malformed or orphaned; a dropped contradictory signal must never be maskable.
   const validEvents: DeliveryEvent[] = []
-  let evidenceInvalid = false
+  const taintedEvents = new Set<EvidenceEventInput>()
   for (const e of f.events) {
     const candidate: DeliveryEvent = {
       provider: String(e.provider),
@@ -474,11 +512,23 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
     if (invalid) {
       pushWarn("MALFORMED_EVENT", `A provider event was rejected as malformed (${invalid}).`, "danger")
       evidenceInvalid = true
+      taintedEvents.add(e)
+      taintedAttempts.add(e.attemptNumber)
       continue
     }
-    if (!attemptNumbers.has(e.attemptNumber)) {
+    const linkedAttempt = attemptsByNumber.get(e.attemptNumber)
+    if (!linkedAttempt) {
       pushWarn("EVENT_ATTEMPT_MISSING", `A provider event references attempt ${e.attemptNumber} which is absent.`, "danger")
       evidenceInvalid = true
+      taintedEvents.add(e)
+    } else if (linkedAttempt.provider !== e.provider) {
+      pushWarn("EVENT_PROVIDER_MISMATCH", `A provider event does not match attempt ${e.attemptNumber}'s provider.`, "danger")
+      evidenceInvalid = true
+      taintedEvents.add(e)
+      taintedAttempts.add(e.attemptNumber)
+    } else if (taintedAttempts.has(e.attemptNumber)) {
+      evidenceInvalid = true
+      taintedEvents.add(e)
     }
     validEvents.push(candidate)
     sanitizeReason(e.reasonCode, pushWarn)
@@ -490,13 +540,28 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
     ? initialFoldState("DELIVERY_PENDING")
     : foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), validEvents)
   const conflicted = fold.conflicted || evidenceInvalid
-  if (conflicted) pushWarn("EVIDENCE_CONFLICT", "Provider events are contradictory; evidence requires manual reconciliation.", "danger")
+  if (conflicted) pushWarn("EVIDENCE_CONFLICT", "Provider events or artifact lineage are contradictory; evidence requires manual reconciliation.", "danger")
+
+  const attempts: AttemptView[] = sortedAttempts.map((a) => {
+    const untrusted = conflicted || taintedAttempts.has(a.attemptNumber)
+    return {
+      attemptNumber: a.attemptNumber,
+      artifactVersion: a.artifactVersion,
+      provider: a.provider,
+      providerMessageIdMasked: maskOpaque(a.providerMessageId),
+      outcome: untrusted ? "UNTRUSTED" : attemptOutcome(a),
+      requestedAt: parseStrictInstant(a.requestedAt) === null ? null : a.requestedAt,
+      acceptedAt: untrusted || parseStrictInstant(a.providerAcceptedAt) === null ? null : a.providerAcceptedAt,
+      deliveredAt: untrusted || parseStrictInstant(a.deliveredAt) === null ? null : a.deliveredAt,
+      reasonCode: sanitizeReason(a.reasonCode, pushWarn),
+    }
+  })
 
   const timeline: TimelineEntry[] = [...f.events]
     .sort((a, b) => a.sequence - b.sequence || String(a.occurredAt).localeCompare(String(b.occurredAt)) || String(a.providerEventId).localeCompare(String(b.providerEventId)))
     .map((e) => ({
       sequence: e.sequence,
-      eventType: (validateDeliveryEvent({ provider: String(e.provider), providerEventId: String(e.providerEventId), eventType: e.eventType as OTDeliveryEventType, sequence: e.sequence, occurredAt: String(e.occurredAt) }) === null
+      eventType: (!taintedEvents.has(e) && validateDeliveryEvent({ provider: String(e.provider), providerEventId: String(e.providerEventId), eventType: e.eventType as OTDeliveryEventType, sequence: e.sequence, occurredAt: String(e.occurredAt) }) === null
         ? (e.eventType as OTDeliveryEventType)
         : "UNKNOWN"),
       occurredAt: parseStrictInstant(e.occurredAt) === null ? null : e.occurredAt,
@@ -552,6 +617,9 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
     if (displayState === "STALE_LEASE") pushWarn("STALE_LEASE", "Worker lease has expired without progress.", "warn")
   }
 
+  const authoritativeActionStatus: OTFulfillmentStatus =
+    !conflicted && eventOutcome ? fold.status : statusIsKnown && !conflicted ? (f.status as OTFulfillmentStatus) : "MANUAL_REVIEW"
+
   return {
     orderId: order.id,
     hasFulfillment: true,
@@ -571,7 +639,14 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
     attempts,
     timeline,
     warnings: dedupeWarnings(warnings),
-    actions: buildActions(statusIsKnown ? (f.status as OTFulfillmentStatus) : "MANUAL_REVIEW", artifactView.present, sortedAttempts.length > 0, artifactView.version ?? 0, artifactView.sha256),
+    actions: buildActions(
+      authoritativeActionStatus,
+      artifactView.present,
+      sortedAttempts.length,
+      artifactView.version ?? 0,
+      artifactView.sha256,
+      statusIsKnown && !conflicted,
+    ),
     derivedDeliveryStatus,
     conflicted,
   }
@@ -604,9 +679,10 @@ function dedupeWarnings(warnings: readonly Warning[]): Warning[] {
 function buildActions(
   status: OTFulfillmentStatus,
   hasArtifact: boolean,
-  hasAttempts: boolean,
+  attemptCount: number,
   currentArtifactVersion: number,
   currentSha256: string | null = null,
+  evidenceTrusted = true,
 ): ActionView[] {
   const inspect: ActionView = {
     action: "INSPECT",
@@ -629,18 +705,26 @@ function buildActions(
     label: "Regenerate artifact",
     enabled: false,
     interactive: false,
-    wouldBeEligible: regen.regenerate,
-    reason: regen.regenerate ? "Would produce a new artifact version (disabled in this phase)." : `Not eligible: ${regen.reason}.`,
+    wouldBeEligible: evidenceTrusted && regen.regenerate,
+    reason: !evidenceTrusted
+      ? "Not eligible: evidence requires reconciliation."
+      : regen.regenerate
+        ? "Would produce a new artifact version (disabled in this phase)."
+        : `Not eligible: ${regen.reason}.`,
   }
 
-  const send = decideDeliverySend({ status, attemptCount: hasAttempts ? Math.max(1, 1) : 0, maxAttempts: MAX_DISPLAY_ATTEMPTS })
+  const send = decideDeliverySend({ status, attemptCount, maxAttempts: MAX_DISPLAY_ATTEMPTS })
   const retryAction: ActionView = {
     action: "RETRY_DELIVERY",
     label: "Retry delivery",
     enabled: false,
     interactive: false,
-    wouldBeEligible: send.send,
-    reason: send.send ? "Would create a new delivery attempt (disabled in this phase)." : `Not eligible: ${send.reason}.`,
+    wouldBeEligible: evidenceTrusted && send.send,
+    reason: !evidenceTrusted
+      ? "Not eligible: evidence requires reconciliation."
+      : send.send
+        ? "Would create a new delivery attempt (disabled in this phase)."
+        : `Not eligible: ${send.reason}.`,
   }
 
   return [inspect, regenAction, retryAction]

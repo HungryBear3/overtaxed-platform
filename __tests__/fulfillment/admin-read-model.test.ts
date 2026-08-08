@@ -346,6 +346,66 @@ describe("malformed / hostile records fail closed", () => {
     expect(v.warnings.map((w) => w.code)).toContain("ATTEMPT_ARTIFACT_MISSING")
   })
 
+  it("suppresses a delivered attempt badge when any linked event is malformed", () => {
+    const v = view({
+      fulfillment: fulfillment({
+        status: "DELIVERED",
+        attemptCount: 1,
+        artifacts: [artifact(1)],
+        attempts: [attempt(1, { deliveredAt: "2026-08-03T00:00:02.000Z" })],
+        events: [event(2, "DELIVERED"), event(0, "BOUNCED", { providerEventId: "evt_bad" })],
+      }),
+    })
+    expect(v.summary.displayState).toBe("MANUAL_REVIEW")
+    expect(v.summary.tone).not.toBe("success")
+    expect(v.attempts[0]?.outcome).toBe("UNTRUSTED")
+    expect(v.attempts[0]?.deliveredAt).toBeNull()
+  })
+
+  it("rejects provider events whose provider does not match the linked attempt", () => {
+    const v = view({
+      fulfillment: fulfillment({
+        status: "DELIVERED",
+        attemptCount: 1,
+        artifacts: [artifact(1)],
+        attempts: [attempt(1, { provider: "resend", deliveredAt: "2026-08-03T00:00:02.000Z" })],
+        events: [event(2, "DELIVERED", { provider: "other" })],
+      }),
+    })
+    expect(v.summary.displayState).toBe("MANUAL_REVIEW")
+    expect(v.attempts[0]?.outcome).toBe("UNTRUSTED")
+    expect(v.warnings.map((w) => w.code)).toContain("EVENT_PROVIDER_MISMATCH")
+  })
+
+  it("missing artifact lineage taints linked delivery evidence and prevents success", () => {
+    const v = view({
+      fulfillment: fulfillment({
+        status: "DELIVERED",
+        attemptCount: 1,
+        artifacts: [],
+        attempts: [attempt(1, { artifactVersion: 9, deliveredAt: "2026-08-03T00:00:02.000Z" })],
+        events: [event(2, "DELIVERED")],
+      }),
+    })
+    expect(v.summary.displayState).toBe("MANUAL_REVIEW")
+    expect(v.artifact.present).toBe(false)
+    expect(v.attempts[0]?.outcome).toBe("UNTRUSTED")
+    expect(v.warnings.map((w) => w.code)).toContain("ATTEMPT_ARTIFACT_MISSING")
+  })
+
+  it("suppresses malformed artifact provenance instead of presenting it ready", () => {
+    const v = view({
+      fulfillment: fulfillment({
+        status: "ARTIFACT_READY",
+        artifacts: [artifact(-2, "bad", { byteSize: -1, generatorVersion: "", createdAt: "not-a-date" })],
+      }),
+    })
+    expect(v.summary.displayState).toBe("MANUAL_REVIEW")
+    expect(v.artifact.present).toBe(false)
+    expect(v.warnings.map((w) => w.code)).toContain("MALFORMED_ARTIFACT")
+    expect(v.actions.filter((a) => a.action !== "INSPECT").every((a) => !a.wouldBeEligible)).toBe(true)
+  })
+
   it("an invalid (unknown) reason code is flagged, not echoed as authoritative", () => {
     const v = view({ fulfillment: fulfillment({ status: "BOUNCED", attemptCount: 1, attempts: [attempt(1)], artifacts: [artifact(1)], events: [event(1, "BOUNCED", { reasonCode: "leaked secret text" })] }) })
     expect(v.warnings.map((w) => w.code)).toContain("INVALID_REASON_CODE")
@@ -373,6 +433,21 @@ describe("display-only action eligibility", () => {
     const bounced = view({ fulfillment: fulfillment({ status: "BOUNCED", attemptCount: 1, attempts: [attempt(1)], artifacts: [artifact(1)], events: [event(1, "BOUNCED")] }) })
     const retryBounced = bounced.actions.find((a) => a.action === "RETRY_DELIVERY")!
     expect(retryBounced.wouldBeEligible).toBe(false)
+  })
+
+  it("uses derived truth and the real attempt count for action eligibility", () => {
+    const delivered = view({
+      fulfillment: fulfillment({
+        status: "DELAYED",
+        attemptCount: 3,
+        artifacts: [artifact(1)],
+        attempts: [attempt(1), attempt(2), attempt(3)],
+        events: [event(1, "ACCEPTED"), event(2, "DELIVERED")],
+      }),
+    })
+    expect(delivered.summary.displayState).toBe("DELIVERED")
+    expect(delivered.warnings.map((w) => w.code)).toContain("STATUS_DRIFT")
+    expect(delivered.actions.find((a) => a.action === "RETRY_DELIVERY")?.wouldBeEligible).toBe(false)
   })
 })
 
