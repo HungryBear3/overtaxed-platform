@@ -8,21 +8,26 @@
 
 const getSessionMock = jest.fn()
 const flagEnabledMock = jest.fn()
+const controlFlagEnabledMock = jest.fn()
 const orderFindUniqueMock = jest.fn()
 const fulfillmentFindFirstMock = jest.fn()
+const adminEventFindManyMock = jest.fn()
 
 jest.mock("@/lib/auth/session", () => ({
   getSession: (...a: unknown[]) => getSessionMock(...a),
 }))
 jest.mock("@/lib/fulfillment/flag", () => ({
   t2EvidenceConsoleEnabled: (...a: unknown[]) => flagEnabledMock(...a),
+  t2ManualReviewControlEnabled: (...a: unknown[]) => controlFlagEnabledMock(...a),
   OT_T2_EVIDENCE_CONSOLE_FLAG: "OT_T2_EVIDENCE_CONSOLE_ENABLED",
+  OT_T2_MANUAL_REVIEW_CONTROL_FLAG: "OT_T2_MANUAL_REVIEW_CONTROL_ENABLED",
   OT_T2_FULFILLMENT_EVIDENCE_FLAG: "OT_T2_FULFILLMENT_EVIDENCE_ENABLED",
 }))
 jest.mock("@/lib/db", () => ({
   prisma: {
     oTOrder: { findUnique: (...a: unknown[]) => orderFindUniqueMock(...a) },
     oTFulfillment: { findFirst: (...a: unknown[]) => fulfillmentFindFirstMock(...a) },
+    oTFulfillmentAdminEvent: { findMany: (...a: unknown[]) => adminEventFindManyMock(...a) },
   },
 }))
 
@@ -34,6 +39,7 @@ beforeEach(() => {
   jest.clearAllMocks()
   getSessionMock.mockResolvedValue({ user: { id: "u1", role: "ADMIN" } })
   flagEnabledMock.mockReturnValue(true)
+  controlFlagEnabledMock.mockReturnValue(true)
   orderFindUniqueMock.mockResolvedValue({
     id: "ord_1",
     tier: "T2",
@@ -42,6 +48,7 @@ beforeEach(() => {
     createdAt: new Date("2026-08-01T00:00:00.000Z"),
   })
   fulfillmentFindFirstMock.mockResolvedValue(null)
+  adminEventFindManyMock.mockResolvedValue([])
 })
 
 describe("auth boundary", () => {
@@ -89,12 +96,12 @@ describe("enabled admin reads", () => {
     expect(r.view.summary.displayState).toBe("RECONCILIATION_NEEDED")
   })
 
-  it("does NOT select storageLocator, leaseToken, or idempotencyKey from the database", async () => {
+  it("selects leaseToken only for authoritative eligibility, but no locator or idempotency key", async () => {
     await loadAdminEvidenceView("ord_1", { now: NOW })
     const arg = fulfillmentFindFirstMock.mock.calls[0]?.[0]
     const selectJson = JSON.stringify(arg?.select ?? {})
     expect(selectJson).not.toContain("storageLocator")
-    expect(selectJson).not.toContain("leaseToken")
+    expect(selectJson).toContain("leaseToken")
     expect(selectJson).not.toContain("idempotencyKey")
   })
 
@@ -146,5 +153,62 @@ describe("enabled admin reads", () => {
     expect(r.view.summary.displayState).toBe("DELIVERED")
     expect(JSON.stringify(r.view)).not.toContain("re_RAWID_XYZ")
     expect(r.view.attempts[0]?.providerMessageIdMasked).toBe("re_•••YZ")
+  })
+
+  it("requires the separate control flag and derives an authoritative capability", async () => {
+    fulfillmentFindFirstMock.mockResolvedValue({
+      id: "ful_eligible", kind: "T2_APPEAL_EVIDENCE", status: "ARTIFACT_PENDING",
+      statusRevision: 2, attemptCount: 0, leaseOwner: null, leaseToken: null,
+      leaseExpiresAt: null, lastReasonCode: null,
+      createdAt: new Date("2026-08-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-08-01T00:00:00.000Z"), artifacts: [], attempts: [], events: [],
+    })
+    const result = await loadAdminEvidenceView("ord_1", { now: NOW })
+    expect(result.kind).toBe("ok")
+    if (result.kind !== "ok") throw new Error("expected ok")
+    expect(result.manualReviewControlEnabled).toBe(true)
+    expect(result.manualReviewCapability).toEqual({
+      eligible: true, status: "ARTIFACT_PENDING", statusRevision: 2, reason: null,
+    })
+
+    controlFlagEnabledMock.mockReturnValue(false)
+    const disabled = await loadAdminEvidenceView("ord_1", { now: NOW })
+    expect(disabled.kind).toBe("ok")
+    if (disabled.kind !== "ok") throw new Error("expected ok")
+    expect(disabled.manualReviewControlEnabled).toBe(false)
+  })
+
+  it("keeps paid/no-ledger reconciliation behavior and no enabled control", async () => {
+    const result = await loadAdminEvidenceView("ord_1", { now: NOW })
+    expect(result.kind).toBe("ok")
+    if (result.kind !== "ok") throw new Error("expected ok")
+    expect(result.view.summary.displayState).toBe("RECONCILIATION_NEEDED")
+    expect(result.manualReviewCapability).toEqual({
+      eligible: false, status: null, statusRevision: null, reason: "NO_FULFILLMENT_SUMMARY",
+    })
+  })
+
+  it("fetches admin history separately and masks the actor", async () => {
+    fulfillmentFindFirstMock.mockResolvedValue({
+      id: "ful_1", kind: "T2_APPEAL_EVIDENCE", status: "MANUAL_REVIEW",
+      statusRevision: 3, attemptCount: 0, leaseOwner: null, leaseToken: null,
+      leaseExpiresAt: null, lastReasonCode: "MANUAL_REVIEW",
+      createdAt: new Date("2026-08-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-08-02T00:00:00.000Z"), artifacts: [], attempts: [], events: [],
+    })
+    adminEventFindManyMock.mockResolvedValue([{
+      action: "ENTER_MANUAL_REVIEW", fromStatus: "ARTIFACT_PENDING", toStatus: "MANUAL_REVIEW",
+      fromRevision: 2, toRevision: 3, actorUserId: "admin_RAW_SECRET_99",
+      createdAt: new Date("2026-08-02T00:00:00.000Z"),
+    }])
+    const result = await loadAdminEvidenceView("ord_1", { now: NOW })
+    expect(result.kind).toBe("ok")
+    if (result.kind !== "ok") throw new Error("expected ok")
+    expect(result.adminEvents).toEqual([{
+      action: "ENTER_MANUAL_REVIEW", fromStatus: "ARTIFACT_PENDING", toStatus: "MANUAL_REVIEW",
+      fromRevision: 2, toRevision: 3, actorMasked: "adm•••99",
+      createdAt: "2026-08-02T00:00:00.000Z",
+    }])
+    expect(JSON.stringify(result)).not.toContain("admin_RAW_SECRET_99")
   })
 })

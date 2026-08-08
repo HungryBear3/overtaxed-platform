@@ -5,6 +5,11 @@ import type {
   Tone,
   Warning,
 } from "@/lib/fulfillment/admin-read-model"
+import {
+  ManualReviewControl,
+  type ManualReviewCapability,
+} from "@/components/admin/ManualReviewControl"
+import type { AdminStateEvent } from "@/lib/admin/evidence-loader"
 
 const TONE_BADGE: Record<Tone, string> = {
   neutral: "bg-gray-100 text-gray-700 border-gray-200",
@@ -44,7 +49,22 @@ function ActionButton({ action }: { action: ActionView }) {
   )
 }
 
-export function EvidenceConsolePanel({ view }: { view: AdminEvidenceView }) {
+export function EvidenceConsolePanel({
+  view,
+  manualReviewControlEnabled = false,
+  manualReviewCapability = {
+    eligible: false,
+    status: null,
+    statusRevision: null,
+    reason: "CONTROL_DISABLED",
+  },
+  adminEvents = [],
+}: {
+  view: AdminEvidenceView
+  manualReviewControlEnabled?: boolean
+  manualReviewCapability?: ManualReviewCapability
+  adminEvents?: AdminStateEvent[]
+}) {
   const { summary, lease, artifact, attempts, timeline, warnings, actions } = view
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
@@ -148,7 +168,7 @@ export function EvidenceConsolePanel({ view }: { view: AdminEvidenceView }) {
       </section>
 
       {/* Evidence trail */}
-      <section className="mb-6">
+      <section className="mb-6" aria-label="Evidence trail">
         <h2 className="mb-2 text-sm font-semibold text-gray-900">Evidence trail</h2>
         {timeline.length === 0 ? (
           <p className="text-sm text-gray-500">No provider events.</p>
@@ -170,12 +190,40 @@ export function EvidenceConsolePanel({ view }: { view: AdminEvidenceView }) {
         )}
       </section>
 
-      {/* Actions — display-only, inert in this phase */}
+      <section className="mb-6" aria-label="Admin state history">
+        <h2 className="mb-2 text-sm font-semibold text-gray-900">Admin state history</h2>
+        {adminEvents.length === 0 ? (
+          <p className="text-sm text-gray-500">No admin state changes.</p>
+        ) : (
+          <ol className="space-y-2">
+            {adminEvents.map((event) => (
+              <li key={`${event.toRevision}-${event.createdAt}`} className="rounded-md border border-gray-200 bg-white p-3 text-xs">
+                <span className="font-semibold">{event.action}</span>{" "}
+                <span className="font-mono">{event.fromStatus} r{event.fromRevision}</span>{" → "}
+                <span className="font-mono">{event.toStatus} r{event.toRevision}</span>{" · "}
+                <span>{event.createdAt}</span>{" · "}
+                <span className="font-mono">{event.actorMasked}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+
+      {/* Actions */}
       <section aria-label="Actions">
         <h2 className="mb-2 text-sm font-semibold text-gray-900">Actions</h2>
         <p className="mb-3 text-xs text-gray-500">
-          Read-only in this phase. Every control is disabled; no retry, regeneration, send, lease, or mutation occurs here.
+          Existing operational controls remain display-only and disabled.
         </p>
+        {manualReviewControlEnabled && (
+          <div className="mb-3">
+            <ManualReviewControl
+              orderId={view.orderId}
+              enabled
+              capability={manualReviewCapability}
+            />
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
           {actions.map((a) => (
             <ActionButton key={a.action} action={a} />

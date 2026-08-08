@@ -7,8 +7,10 @@
 import {
   OT_T2_EVIDENCE_CONSOLE_FLAG,
   OT_T2_FULFILLMENT_EVIDENCE_FLAG,
+  OT_T2_MANUAL_REVIEW_CONTROL_FLAG,
   t2EvidenceConsoleEnabled,
   t2FulfillmentEvidenceWritesEnabled,
+  t2ManualReviewControlEnabled,
 } from "@/lib/fulfillment/flag"
 
 // The project augments NodeJS.ProcessEnv with required keys, so a synthetic env
@@ -41,6 +43,41 @@ describe("OT T2 fulfillment-evidence feature flag", () => {
     const snapshot = JSON.stringify(env)
     t2FulfillmentEvidenceWritesEnabled(env)
     expect(JSON.stringify(env)).toBe(snapshot)
+  })
+})
+
+describe("OT T2 manual-review-control feature flag", () => {
+  it("uses the exact independent default-off env name", () => {
+    expect(OT_T2_MANUAL_REVIEW_CONTROL_FLAG).toBe(
+      "OT_T2_MANUAL_REVIEW_CONTROL_ENABLED",
+    )
+  })
+
+  it("is not enabled by either existing flag", () => {
+    expect(
+      t2ManualReviewControlEnabled(
+        mkEnv({
+          [OT_T2_FULFILLMENT_EVIDENCE_FLAG]: "true",
+          [OT_T2_EVIDENCE_CONSOLE_FLAG]: "true",
+        }),
+      ),
+    ).toBe(false)
+  })
+
+  it("is enabled only by exact true", () => {
+    expect(t2ManualReviewControlEnabled(mkEnv({}))).toBe(false)
+    for (const raw of ["false", "0", "1", "yes", "TRUE", " true", "true ", "enabled", ""]) {
+      expect(
+        t2ManualReviewControlEnabled(
+          mkEnv({ [OT_T2_MANUAL_REVIEW_CONTROL_FLAG]: raw }),
+        ),
+      ).toBe(false)
+    }
+    expect(
+      t2ManualReviewControlEnabled(
+        mkEnv({ [OT_T2_MANUAL_REVIEW_CONTROL_FLAG]: "true" }),
+      ),
+    ).toBe(true)
   })
 })
 

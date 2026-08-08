@@ -10,6 +10,8 @@
  */
 export const OT_T2_FULFILLMENT_EVIDENCE_FLAG = "OT_T2_FULFILLMENT_EVIDENCE_ENABLED"
 export const OT_T2_EVIDENCE_CONSOLE_FLAG = "OT_T2_EVIDENCE_CONSOLE_ENABLED"
+export const OT_T2_MANUAL_REVIEW_CONTROL_FLAG =
+  "OT_T2_MANUAL_REVIEW_CONTROL_ENABLED"
 
 export function t2FulfillmentEvidenceWritesEnabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
@@ -26,4 +28,11 @@ export function t2EvidenceConsoleEnabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
   return env[OT_T2_EVIDENCE_CONSOLE_FLAG] === "true"
+}
+
+/** Independent default-off gate for the one-way admin hold control. */
+export function t2ManualReviewControlEnabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return env[OT_T2_MANUAL_REVIEW_CONTROL_FLAG] === "true"
 }

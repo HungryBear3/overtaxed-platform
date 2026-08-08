@@ -1210,11 +1210,32 @@ model OTFulfillment {
   artifacts OTFulfillmentArtifact[]
   attempts  OTDeliveryAttempt[]
   events    OTDeliveryEvent[]
+  adminEvents OTFulfillmentAdminEvent[]
 
   @@unique([orderId, kind])
   @@index([status])
   @@index([leaseExpiresAt])
   @@map("ot_fulfillment")
+}
+
+/// Actor-attributed, append-only evidence for the narrow one-way admin hold.
+model OTFulfillmentAdminEvent {
+  id            String              @id @default(cuid())
+  fulfillmentId String              @map("fulfillment_id")
+  action        String
+  fromStatus    OTFulfillmentStatus @map("from_status")
+  toStatus      OTFulfillmentStatus @map("to_status")
+  fromRevision  Int                 @map("from_revision")
+  toRevision    Int                 @map("to_revision")
+  reasonCode    String              @map("reason_code")
+  actorUserId   String              @map("actor_user_id")
+  createdAt     DateTime            @default(now()) @map("created_at")
+
+  fulfillment OTFulfillment @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+
+  @@unique([fulfillmentId, toRevision])
+  @@index([fulfillmentId, createdAt])
+  @@map("ot_fulfillment_admin_event")
 }
 
 /// Append-only artifact-version records. Content identity is immutable: a given
