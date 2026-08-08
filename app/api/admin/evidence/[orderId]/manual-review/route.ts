@@ -39,16 +39,13 @@ export async function POST(
   if (!t2EvidenceConsoleEnabled() || !t2ManualReviewControlEnabled())
     return json({ ok: false, code: "MANUAL_REVIEW_CONTROL_DISABLED" }, 404)
 
-  let requestOrigin: string
   try {
     const origin = request.headers.get("origin")
-    if (!origin) throw new Error("missing")
-    requestOrigin = new URL(origin).origin
+    const expectedOrigin = new URL(request.url).origin
+    if (!origin || origin !== expectedOrigin) throw new Error("invalid serialized origin")
   } catch {
     return json({ ok: false, code: "INVALID_ORIGIN" }, 403)
   }
-  if (requestOrigin !== new URL(request.url).origin)
-    return json({ ok: false, code: "INVALID_ORIGIN" }, 403)
   if (request.headers.get("content-type") !== "application/json")
     return json({ ok: false, code: "INVALID_CONTENT_TYPE" }, 400)
 

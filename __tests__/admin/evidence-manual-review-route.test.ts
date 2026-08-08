@@ -112,10 +112,35 @@ describe("manual-review admin route boundary", () => {
     expect(storeMock).not.toHaveBeenCalled()
   })
 
-  it.each(["https://evil.example", "not a URL"])(
-    "rejects cross-origin/malformed origin %s",
+  it.each([
+    "https://evil.example",
+    "not a URL",
+    "https://admin.example/path",
+    "https://admin.example?x=1",
+    "https://admin.example#fragment",
+    "https://user:pass@admin.example",
+    "",
+  ])(
+    "rejects cross-origin or non-serialized origin %s",
     async (origin) => {
       const response = await POST(request(body, { origin }), context())
+      expect(response.status).toBe(403)
+      expect(storeMock).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each([" https://admin.example", "https://admin.example "])(
+    "rejects unnormalized whitespace origin %s at the route boundary",
+    async (origin) => {
+      const base = request(body)
+      const hostile = {
+        url: base.url,
+        headers: {
+          get: (name: string) => name.toLowerCase() === "origin" ? origin : base.headers.get(name),
+        },
+        json: () => base.json(),
+      } as unknown as import("next/server").NextRequest
+      const response = await POST(hostile, context())
       expect(response.status).toBe(403)
       expect(storeMock).not.toHaveBeenCalled()
     },
