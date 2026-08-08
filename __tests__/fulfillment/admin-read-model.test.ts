@@ -378,6 +378,55 @@ describe("malformed / hostile records fail closed", () => {
     expect(v.warnings.map((w) => w.code)).toContain("MALFORMED_ATTEMPT")
   })
 
+  it("rejects provider events that predate their linked attempt and artifact", () => {
+    const v = view({
+      fulfillment: fulfillment({
+        status: "DELIVERED",
+        attemptCount: 1,
+        artifacts: [artifact(1)],
+        attempts: [attempt(1)],
+        events: [event(1, "DELIVERED", { occurredAt: "2026-08-01T00:00:00.000Z", receivedAt: "2026-08-03T00:00:03.000Z" })],
+      }),
+    })
+    expect(v.summary.displayState).toBe("MANUAL_REVIEW")
+    expect(v.summary.tone).not.toBe("success")
+    expect(v.conflicted).toBe(true)
+    expect(v.warnings.map((w) => w.code)).toContain("MALFORMED_EVENT")
+  })
+
+  it("rejects future-dated attempts and provider events relative to injected now", () => {
+    const future = "2027-01-01T00:00:00.000Z"
+    const v = view({
+      fulfillment: fulfillment({
+        status: "DELIVERED",
+        attemptCount: 1,
+        artifacts: [artifact(1)],
+        attempts: [attempt(1, { requestedAt: future, createdAt: future, deliveredAt: future })],
+        events: [event(1, "DELIVERED", { occurredAt: future, receivedAt: future })],
+      }),
+    })
+    expect(v.summary.displayState).toBe("MANUAL_REVIEW")
+    expect(v.summary.tone).not.toBe("success")
+    expect(v.attempts[0]?.outcome).toBe("UNTRUSTED")
+    expect(v.conflicted).toBe(true)
+  })
+
+  it("fails closed and reports real rows when stored attemptCount is contradictory", () => {
+    const v = view({
+      fulfillment: fulfillment({
+        status: "DELIVERED",
+        attemptCount: -7,
+        artifacts: [artifact(1)],
+        attempts: [attempt(1)],
+        events: [event(1, "DELIVERED")],
+      }),
+    })
+    expect(v.summary.displayState).toBe("MANUAL_REVIEW")
+    expect(v.summary.attemptCount).toBe(1)
+    expect(v.summary.tone).not.toBe("success")
+    expect(v.warnings.map((w) => w.code)).toContain("ATTEMPT_COUNT_MISMATCH")
+  })
+
   it("rejects non-positive attempt numbers even when an event uses the same number", () => {
     const v = view({
       fulfillment: fulfillment({

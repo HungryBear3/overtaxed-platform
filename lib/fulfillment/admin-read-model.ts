@@ -183,6 +183,7 @@ export type WarningCode =
   | "EVENT_ATTEMPT_MISSING"
   | "EVENT_PROVIDER_MISMATCH"
   | "MALFORMED_ATTEMPT"
+  | "ATTEMPT_COUNT_MISMATCH"
   | "MALFORMED_ARTIFACT"
   | "MALFORMED_EVENT"
   | "EVIDENCE_CONFLICT"
@@ -430,6 +431,18 @@ function attemptOutcomeFromEvents(eventTypes: ReadonlySet<string>): AttemptOutco
   return "CREATED"
 }
 
+function eventTimestampsAreCausal(
+  event: EvidenceEventInput,
+  attempt: EvidenceAttemptInput,
+  nowMs: number | null,
+): boolean {
+  const occurredMs = parseStrictInstant(event.occurredAt)
+  const receivedMs = parseStrictInstant(event.receivedAt)
+  const requestedMs = parseStrictInstant(attempt.requestedAt)
+  return occurredMs !== null && receivedMs !== null && requestedMs !== null && nowMs !== null &&
+    occurredMs >= requestedMs && occurredMs <= nowMs && receivedMs >= occurredMs && receivedMs <= nowMs
+}
+
 const MAX_DISPLAY_ATTEMPTS = 3
 
 export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenceView {
@@ -470,6 +483,7 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
   }
 
   const f = fulfillment
+  const nowMs = parseStrictInstant(now)
   const statusIsKnown = (FULFILLMENT_STATUSES as readonly string[]).includes(f.status)
   const lease = deriveLease(f, now)
   if (lease.state === "INVALID") pushWarn("INVALID_LEASE", "Lease metadata is malformed or incomplete.", "warn")
@@ -481,7 +495,11 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
   const sortedAttempts = [...f.attempts].sort((a, b) => a.attemptNumber - b.attemptNumber)
   const attemptsByNumber = new Map<number, EvidenceAttemptInput>()
   const taintedAttempts = new Set<number>()
-  let evidenceInvalid = artifactMalformed
+  const attemptCountMatches =
+    isPgIntInRange(f.attemptCount, 0, PG_INT_MAX) && f.attemptCount === sortedAttempts.length
+  if (!attemptCountMatches)
+    pushWarn("ATTEMPT_COUNT_MISMATCH", "Recorded attempt count does not match the authoritative attempt rows.", "danger")
+  let evidenceInvalid = artifactMalformed || !attemptCountMatches
   for (const a of sortedAttempts) {
     const requestedMs = parseStrictInstant(a.requestedAt)
     const createdMs = parseStrictInstant(a.createdAt)
@@ -489,8 +507,14 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
     const timestampsValid =
       requestedMs !== null &&
       createdMs !== null &&
+      nowMs !== null &&
       createdMs <= requestedMs &&
-      optionalTimes.every((value) => value === null || (parseStrictInstant(value) !== null && parseStrictInstant(value)! >= requestedMs))
+      requestedMs <= nowMs &&
+      optionalTimes.every((value) => {
+        if (value === null) return true
+        const valueMs = parseStrictInstant(value)
+        return valueMs !== null && valueMs >= requestedMs && valueMs <= nowMs
+      })
     const duplicateAttempt = attemptsByNumber.has(a.attemptNumber)
     const metadataValid =
       isPgIntInRange(a.attemptNumber, 1, PG_INT_MAX) &&
@@ -550,6 +574,11 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
       evidenceInvalid = true
       taintedEvents.add(e)
       taintedAttempts.add(e.attemptNumber)
+    } else if (!eventTimestampsAreCausal(e, linkedAttempt, nowMs)) {
+      pushWarn("MALFORMED_EVENT", "A provider event has impossible causal timestamps and was suppressed.", "danger")
+      evidenceInvalid = true
+      taintedEvents.add(e)
+      taintedAttempts.add(e.attemptNumber)
     } else if (taintedAttempts.has(e.attemptNumber)) {
       evidenceInvalid = true
       taintedEvents.add(e)
@@ -568,11 +597,17 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
   for (const a of sortedAttempts) {
     if (taintedAttempts.has(a.attemptNumber)) continue
     const types = eventTypesByAttempt.get(a.attemptNumber) ?? new Set<string>()
+    const hasMatchingEvent = (eventTypes: readonly string[], timestamp: string | null) =>
+      timestamp === null || f.events.some((event) =>
+        !taintedEvents.has(event) &&
+        event.attemptNumber === a.attemptNumber &&
+        eventTypes.includes(event.eventType) &&
+        event.occurredAt === timestamp)
     const unsupportedTimestampClaim =
-      (a.providerAcceptedAt !== null && !types.has("ACCEPTED")) ||
-      (a.deliveredAt !== null && !types.has("DELIVERED")) ||
-      (a.delayedAt !== null && !types.has("DELAYED")) ||
-      (a.failedAt !== null && !["FAILED", "BOUNCED", "COMPLAINED"].some((type) => types.has(type)))
+      !hasMatchingEvent(["ACCEPTED"], a.providerAcceptedAt) ||
+      !hasMatchingEvent(["DELIVERED"], a.deliveredAt) ||
+      !hasMatchingEvent(["DELAYED"], a.delayedAt) ||
+      !hasMatchingEvent(["FAILED", "BOUNCED", "COMPLAINED"], a.failedAt)
     if (unsupportedTimestampClaim) {
       pushWarn("MALFORMED_ATTEMPT", "Delivery-attempt timestamps are not corroborated by provider events and were suppressed.", "danger")
       taintedAttempts.add(a.attemptNumber)
@@ -692,7 +727,7 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
       recordedStatus: statusIsKnown ? f.status : "INVALID",
       statusRevision: f.statusRevision,
       kind: f.kind === "T2_APPEAL_EVIDENCE" ? f.kind : "UNKNOWN",
-      attemptCount: f.attemptCount,
+      attemptCount: sortedAttempts.length,
       createdAt: f.createdAt,
       updatedAt: f.updatedAt,
     },
