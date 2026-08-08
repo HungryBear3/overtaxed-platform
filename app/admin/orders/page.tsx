@@ -1,6 +1,8 @@
+import Link from "next/link"
 import { prisma } from "@/lib/db"
 import { getSession } from "@/lib/auth/session"
 import { OTNoticeReviewActions } from "@/components/admin/OTNoticeReviewActions"
+import { t2FulfillmentEvidenceWritesEnabled } from "@/lib/fulfillment/flag"
 
 export const dynamic = "force-dynamic"
 
@@ -21,6 +23,10 @@ export default async function AdminOrdersPage() {
     orderBy: { createdAt: "desc" },
     take: 250,
   })
+
+  // Default-off: the evidence console entry point is hidden (and no Phase 1 evidence
+  // records are read on this ordinary admin path) unless the flag is explicitly on.
+  const evidenceEnabled = t2FulfillmentEvidenceWritesEnabled()
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -69,9 +75,21 @@ export default async function AdminOrdersPage() {
                   </span>
                 </td>
                 <td className="px-4 py-3">
-                  {["NOTICE_REVIEW_REQUIRED", "CHECKOUT_PENDING", "CHECKOUT_FAILED"].includes(order.status) && !order.stripeSessionId ? (
-                    <OTNoticeReviewActions orderId={order.id} />
-                  ) : "—"}
+                  <div className="flex flex-col gap-2">
+                    {["NOTICE_REVIEW_REQUIRED", "CHECKOUT_PENDING", "CHECKOUT_FAILED"].includes(order.status) && !order.stripeSessionId ? (
+                      <OTNoticeReviewActions orderId={order.id} />
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
+                    {evidenceEnabled ? (
+                      <Link
+                        href={`/admin/evidence/${order.id}`}
+                        className="text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                      >
+                        Evidence →
+                      </Link>
+                    ) : null}
+                  </div>
                 </td>
               </tr>
             ))}
