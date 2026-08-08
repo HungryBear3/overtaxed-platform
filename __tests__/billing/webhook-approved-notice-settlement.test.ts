@@ -19,6 +19,7 @@ const sendPaymentRecoveryAcknowledgmentMock = jest.fn(async (_args?: unknown) =>
 const sendBillingPaymentRecoveryAlertMock = jest.fn(async (_args?: unknown) => true)
 const kickOffT2FulfillmentEvidenceMock = jest.fn(async (_order?: unknown) => ({ outcome: "DISABLED" }))
 let forceOtOrderUpdateMiss = false
+let forceStripeEventDeleteFailure = false
 
 jest.mock("@/lib/db", () => ({
   prisma: {
@@ -34,6 +35,7 @@ jest.mock("@/lib/db", () => ({
       }),
       findUnique: jest.fn(async ({ where }: { where: { id: string } }) => dbState.stripeEvents.get(where.id) ?? null),
       delete: jest.fn(async ({ where }: { where: { id: string } }) => {
+        if (forceStripeEventDeleteFailure) throw new Error("claim release unavailable")
         const row = dbState.stripeEvents.get(where.id)
         dbState.stripeEvents.delete(where.id)
         return row ?? null
@@ -132,6 +134,8 @@ jest.mock("@/lib/email/send", () => ({
 
 jest.mock("@/lib/fulfillment-runtime/kickoff", () => ({
   kickOffT2FulfillmentEvidence: (order: unknown) => kickOffT2FulfillmentEvidenceMock(order),
+  t2FulfillmentEvidenceWritesEnabled: () =>
+    process.env.OT_T2_FULFILLMENT_EVIDENCE_ENABLED === "true",
 }))
 
 const listLineItemsMock = jest.fn()
@@ -153,6 +157,8 @@ beforeEach(() => {
   dbState.otOrders.clear()
   dbState.recoveries.clear()
   forceOtOrderUpdateMiss = false
+  forceStripeEventDeleteFailure = false
+  delete process.env.OT_T2_FULFILLMENT_EVIDENCE_ENABLED
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test"
   listLineItemsMock.mockResolvedValue({
     data: [{
@@ -367,6 +373,56 @@ describe("billing webhook approved notice settlement", () => {
     expect(kickOffT2FulfillmentEvidenceMock).toHaveBeenCalledTimes(2)
     expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
     expect(sendOrderConfirmationMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("retries enabled T2 evidence when a failed claim release leaves the event row", async () => {
+    process.env.OT_T2_FULFILLMENT_EVIDENCE_ENABLED = "true"
+    seedOrder({
+      tier: "T2",
+      analysisAcknowledgedAt: new Date("2026-07-24T12:00:00.000Z"),
+      acknowledgmentVersion: "analysis_ack_v1",
+      acknowledgmentEvidence: { acknowledged: true, version: "analysis_ack_v1" },
+      noticeReviewStatus: null,
+      noticeReviewActionAt: null,
+      noticeReviewActionBy: null,
+      noticeEvidence: null,
+    })
+    kickOffT2FulfillmentEvidenceMock.mockRejectedValueOnce(new Error("evidence persistence unavailable"))
+    forceStripeEventDeleteFailure = true
+
+    const first = await POST(request("evt_t2_stale_claim", "ord_notice", { tier: "T2" }))
+
+    expect(first.status).toBe(500)
+    expect(dbState.stripeEvents.has("evt_t2_stale_claim")).toBe(true)
+    expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
+    expect(sendOrderConfirmationMock).toHaveBeenCalledTimes(1)
+
+    forceStripeEventDeleteFailure = false
+    const retry = await POST(request("evt_t2_stale_claim", "ord_notice", { tier: "T2" }))
+
+    expect(retry.status).toBe(200)
+    expect(kickOffT2FulfillmentEvidenceMock).toHaveBeenCalledTimes(2)
+    expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
+    expect(sendOrderConfirmationMock).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { flag: undefined, tier: "T2" },
+    { flag: "true", tier: "T3" },
+  ])("keeps ordinary duplicate skipping for flag=$flag tier=$tier", async ({ flag, tier }) => {
+    if (flag) process.env.OT_T2_FULFILLMENT_EVIDENCE_ENABLED = flag
+    seedOrder({ tier, status: "PAID" })
+    dbState.stripeEvents.set("evt_ordinary_duplicate", {
+      id: "evt_ordinary_duplicate",
+      type: "checkout.session.completed",
+    })
+
+    const response = await POST(request("evt_ordinary_duplicate", "ord_notice", { tier }))
+
+    expect(response.status).toBe(200)
+    expect(kickOffT2FulfillmentEvidenceMock).not.toHaveBeenCalled()
+    expect(sendNewOrderAlertMock).not.toHaveBeenCalled()
+    expect(sendOrderConfirmationMock).not.toHaveBeenCalled()
   })
 
   it("holds a paid T2 checkout when acknowledgment evidence is missing", async () => {

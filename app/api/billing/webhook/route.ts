@@ -4,7 +4,10 @@ import { stripe } from "@/lib/stripe/client"
 import { prisma } from "@/lib/db"
 import { generatePacketForInvoice } from "@/lib/packet/generate-and-deliver"
 import { sendNewOrderAlert, sendOrderConfirmation } from "@/lib/email/send"
-import { kickOffT2FulfillmentEvidence } from "@/lib/fulfillment-runtime/kickoff"
+import {
+  kickOffT2FulfillmentEvidence,
+  t2FulfillmentEvidenceWritesEnabled,
+} from "@/lib/fulfillment-runtime/kickoff"
 import {
   type OtSettlementOrder,
   validateApprovedNoticeSettlement,
@@ -43,6 +46,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 })
   }
 
+  const data = event.data.object as unknown as Record<string, unknown>
+  const metadata = (data.metadata ?? {}) as Record<string, string | undefined>
+
   // Idempotency: claim the event row before doing business work. Two changes
   // vs. the prior "check first, write later" pattern:
   //  1. We INSERT first. The unique PK on StripeEvent.id means concurrent
@@ -56,10 +62,39 @@ export async function POST(request: NextRequest) {
   } catch (e) {
     const code = (e as { code?: string })?.code
     if (code === "P2002") {
-      console.log(`[webhook] Duplicate event ${event.id} (${event.type}) — skipping`)
-      return NextResponse.json({ received: true })
+      const duplicateMayNeedT2Evidence =
+        event.type === "checkout.session.completed" &&
+        metadata.tier === "T2" &&
+        Boolean(metadata.orderId) &&
+        t2FulfillmentEvidenceWritesEnabled()
+
+      if (duplicateMayNeedT2Evidence) {
+        try {
+          const settledOrder = await prisma.oTOrder.findUnique({
+            where: { id: metadata.orderId },
+            select: { status: true, tier: true },
+          })
+          if (settledOrder?.status === "PAID" && settledOrder.tier === "T2") {
+            console.log(
+              `[webhook] Duplicate paid T2 event ${event.id} — retrying idempotent evidence persistence`,
+            )
+          } else {
+            console.log(`[webhook] Duplicate event ${event.id} (${event.type}) — skipping`)
+            return NextResponse.json({ received: true })
+          }
+        } catch (lookupError) {
+          console.error(
+            `[webhook] Failed to verify duplicate T2 event ${event.id} for evidence retry:`,
+            lookupError,
+          )
+          return NextResponse.json({ error: "Duplicate T2 verification error" }, { status: 500 })
+        }
+      } else {
+        console.log(`[webhook] Duplicate event ${event.id} (${event.type}) — skipping`)
+        return NextResponse.json({ received: true })
+      }
     }
-    throw e
+    if (code !== "P2002") throw e
   }
 
   /** Release the StripeEvent claim so Stripe retries. Must be awaited before
@@ -73,9 +108,6 @@ export async function POST(request: NextRequest) {
       console.error(`[webhook] Failed to release StripeEvent claim ${event.id}:`, err)
     }
   }
-
-  const data = event.data.object as unknown as Record<string, unknown>
-  const metadata = (data.metadata ?? {}) as Record<string, string | undefined>
 
   switch (event.type) {
     case "checkout.session.completed": {

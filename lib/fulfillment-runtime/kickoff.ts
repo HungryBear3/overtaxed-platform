@@ -1,5 +1,6 @@
 import { evaluateT2Eligibility } from "@/lib/fulfillment/eligibility";
 import { t2FulfillmentEvidenceWritesEnabled } from "@/lib/fulfillment/flag";
+export { t2FulfillmentEvidenceWritesEnabled } from "@/lib/fulfillment/flag";
 import type {
   OTFulfillmentKind,
   OTFulfillmentStatus,
