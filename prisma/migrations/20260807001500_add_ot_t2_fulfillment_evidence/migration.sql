@@ -1,8 +1,6 @@
--- REVIEW ONLY — DO NOT APPLY. Generated via 'prisma migrate diff' (offline, no DB, no shadow DB).
--- Additive T2 delivery-evidence foundation (Phase 1).
--- Intended migration name if adopted later: <UTCstamp>_add_ot_t2_fulfillment_evidence.
--- This loose .sql follows the repo add_*.sql convention and is NOT applied by 'prisma migrate'.
--- migration applications = 0.
+-- Phase 2 Slice 1 — timestamped Prisma migration for the controller-reviewed
+-- additive OT T2 fulfillment-evidence schema. Apply only in a separately
+-- approved migration-first production release.
 
 -- CreateEnum
 CREATE TYPE "OTFulfillmentKind" AS ENUM ('T2_APPEAL_EVIDENCE');

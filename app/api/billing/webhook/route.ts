@@ -5,6 +5,10 @@ import { prisma } from "@/lib/db"
 import { generatePacketForInvoice } from "@/lib/packet/generate-and-deliver"
 import { sendNewOrderAlert, sendOrderConfirmation } from "@/lib/email/send"
 import {
+  kickOffT2FulfillmentEvidence,
+  t2FulfillmentEvidenceWritesEnabled,
+} from "@/lib/fulfillment-runtime/kickoff"
+import {
   type OtSettlementOrder,
   validateApprovedNoticeSettlement,
   validateCurrentT3Settlement,
@@ -42,6 +46,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 })
   }
 
+  const data = event.data.object as unknown as Record<string, unknown>
+  const metadata = (data.metadata ?? {}) as Record<string, string | undefined>
+
   // Idempotency: claim the event row before doing business work. Two changes
   // vs. the prior "check first, write later" pattern:
   //  1. We INSERT first. The unique PK on StripeEvent.id means concurrent
@@ -55,10 +62,39 @@ export async function POST(request: NextRequest) {
   } catch (e) {
     const code = (e as { code?: string })?.code
     if (code === "P2002") {
-      console.log(`[webhook] Duplicate event ${event.id} (${event.type}) — skipping`)
-      return NextResponse.json({ received: true })
+      const duplicateMayNeedT2Evidence =
+        event.type === "checkout.session.completed" &&
+        metadata.tier === "T2" &&
+        Boolean(metadata.orderId) &&
+        t2FulfillmentEvidenceWritesEnabled()
+
+      if (duplicateMayNeedT2Evidence) {
+        try {
+          const settledOrder = await prisma.oTOrder.findUnique({
+            where: { id: metadata.orderId },
+            select: { status: true, tier: true },
+          })
+          if (settledOrder?.status === "PAID" && settledOrder.tier === "T2") {
+            console.log(
+              `[webhook] Duplicate paid T2 event ${event.id} — retrying idempotent evidence persistence`,
+            )
+          } else {
+            console.log(`[webhook] Duplicate event ${event.id} (${event.type}) — skipping`)
+            return NextResponse.json({ received: true })
+          }
+        } catch (lookupError) {
+          console.error(
+            `[webhook] Failed to verify duplicate T2 event ${event.id} for evidence retry:`,
+            lookupError,
+          )
+          return NextResponse.json({ error: "Duplicate T2 verification error" }, { status: 500 })
+        }
+      } else {
+        console.log(`[webhook] Duplicate event ${event.id} (${event.type}) — skipping`)
+        return NextResponse.json({ received: true })
+      }
     }
-    throw e
+    if (code !== "P2002") throw e
   }
 
   /** Release the StripeEvent claim so Stripe retries. Must be awaited before
@@ -72,9 +108,6 @@ export async function POST(request: NextRequest) {
       console.error(`[webhook] Failed to release StripeEvent claim ${event.id}:`, err)
     }
   }
-
-  const data = event.data.object as unknown as Record<string, unknown>
-  const metadata = (data.metadata ?? {}) as Record<string, string | undefined>
 
   switch (event.type) {
     case "checkout.session.completed": {
@@ -324,27 +357,56 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: "OT settlement error" }, { status: 500 })
         }
 
-        if (!persistedOrder || persistedOrder.status !== "PAID" || alreadyPaid) {
-          return NextResponse.json({ received: true, recovery: persistedOrder?.status !== "PAID" })
+        if (!persistedOrder || persistedOrder.status !== "PAID") {
+          return NextResponse.json({ received: true, recovery: true })
         }
 
-        const resolvedAddress = persistedOrder.propertyAddress ?? ""
-        sendNewOrderAlert({
-          tier,
-          customerEmail,
-          customerName,
-          propertyPin: persistedOrder.propertyPin || resolvedAddress,
-          amountPaid,
-          sessionId,
-        }).catch((err) => console.error("[webhook] sendNewOrderAlert failed:", err))
-        if (customerEmail) {
-          sendOrderConfirmation({
+        if (!alreadyPaid) {
+          const resolvedAddress = persistedOrder.propertyAddress ?? ""
+          sendNewOrderAlert({
             tier,
             customerEmail,
             customerName,
-            address: resolvedAddress || persistedOrder.propertyPin || undefined,
+            propertyPin: persistedOrder.propertyPin || resolvedAddress,
             amountPaid,
-          }).catch((err) => console.error("[webhook] sendOrderConfirmation failed:", err))
+            sessionId,
+          }).catch((err) => console.error("[webhook] sendNewOrderAlert failed:", err))
+          if (customerEmail) {
+            sendOrderConfirmation({
+              tier,
+              customerEmail,
+              customerName,
+              address: resolvedAddress || persistedOrder.propertyPin || undefined,
+              amountPaid,
+            }).catch((err) => console.error("[webhook] sendOrderConfirmation failed:", err))
+          }
+        }
+
+        if (persistedOrder.tier === "T2") {
+          try {
+            await kickOffT2FulfillmentEvidence({
+              id: persistedOrder.id,
+              tier: persistedOrder.tier,
+              status: persistedOrder.status,
+              propertyAddress: persistedOrder.propertyAddress,
+              propertyPin: persistedOrder.propertyPin,
+            })
+          } catch (err) {
+            const errorName = err instanceof Error ? err.name : "UnknownError"
+            const errorCode =
+              typeof err === "object" && err !== null && "code" in err
+                ? String((err as { code?: unknown }).code ?? "UNKNOWN")
+                : "UNKNOWN"
+            console.error(
+              `[webhook] T2 evidence persistence failed orderId=${persistedOrder.id} error=${errorName} code=${errorCode}; releasing claim`,
+            )
+            await releaseEventClaim()
+            return NextResponse.json({ error: "T2 evidence persistence error" }, { status: 500 })
+          }
+        }
+
+        if (alreadyPaid) {
+          return NextResponse.json({ received: true, recovery: false })
         }
         break
       }
