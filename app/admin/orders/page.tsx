@@ -2,7 +2,7 @@ import Link from "next/link"
 import { prisma } from "@/lib/db"
 import { getSession } from "@/lib/auth/session"
 import { OTNoticeReviewActions } from "@/components/admin/OTNoticeReviewActions"
-import { t2FulfillmentEvidenceWritesEnabled } from "@/lib/fulfillment/flag"
+import { t2EvidenceConsoleEnabled } from "@/lib/fulfillment/flag"
 
 export const dynamic = "force-dynamic"
 
@@ -26,7 +26,7 @@ export default async function AdminOrdersPage() {
 
   // Default-off: the evidence console entry point is hidden (and no Phase 1 evidence
   // records are read on this ordinary admin path) unless the flag is explicitly on.
-  const evidenceEnabled = t2FulfillmentEvidenceWritesEnabled()
+  const evidenceEnabled = t2EvidenceConsoleEnabled()
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">

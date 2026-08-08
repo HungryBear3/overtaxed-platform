@@ -9,9 +9,21 @@
  * `=== "true"` compare, with no fallback that can enable it.
  */
 export const OT_T2_FULFILLMENT_EVIDENCE_FLAG = "OT_T2_FULFILLMENT_EVIDENCE_ENABLED"
+export const OT_T2_EVIDENCE_CONSOLE_FLAG = "OT_T2_EVIDENCE_CONSOLE_ENABLED"
 
 export function t2FulfillmentEvidenceWritesEnabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
   return env[OT_T2_FULFILLMENT_EVIDENCE_FLAG] === "true"
+}
+
+/**
+ * Admin evidence-console visibility/read gate. This is deliberately independent
+ * from the fulfillment write gate: Production may accept new evidence while the
+ * admin surface remains unavailable until separately reviewed and activated.
+ */
+export function t2EvidenceConsoleEnabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return env[OT_T2_EVIDENCE_CONSOLE_FLAG] === "true"
 }

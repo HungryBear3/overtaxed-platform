@@ -12,7 +12,7 @@
  */
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
-import { t2FulfillmentEvidenceWritesEnabled } from "@/lib/fulfillment/flag"
+import { t2EvidenceConsoleEnabled } from "@/lib/fulfillment/flag"
 import {
   deriveAdminEvidenceView,
   type AdminEvidenceView,
@@ -37,7 +37,7 @@ export async function loadAdminEvidenceView(
   if (role !== "ADMIN") return { kind: "unauthorized" }
 
   // Default-off: no Phase 1 database query happens unless explicitly enabled.
-  if (!t2FulfillmentEvidenceWritesEnabled()) return { kind: "disabled" }
+  if (!t2EvidenceConsoleEnabled()) return { kind: "disabled" }
 
   const now = opts?.now ?? new Date().toISOString()
 

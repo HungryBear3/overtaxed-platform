@@ -15,7 +15,8 @@ jest.mock("@/lib/auth/session", () => ({
   getSession: (...a: unknown[]) => getSessionMock(...a),
 }))
 jest.mock("@/lib/fulfillment/flag", () => ({
-  t2FulfillmentEvidenceWritesEnabled: (...a: unknown[]) => flagEnabledMock(...a),
+  t2EvidenceConsoleEnabled: (...a: unknown[]) => flagEnabledMock(...a),
+  OT_T2_EVIDENCE_CONSOLE_FLAG: "OT_T2_EVIDENCE_CONSOLE_ENABLED",
   OT_T2_FULFILLMENT_EVIDENCE_FLAG: "OT_T2_FULFILLMENT_EVIDENCE_ENABLED",
 }))
 jest.mock("@/lib/db", () => ({

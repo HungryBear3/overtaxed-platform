@@ -201,9 +201,8 @@ export function EvidenceDisabledPanel() {
       <div className="rounded-lg border border-gray-200 bg-white p-6 text-center shadow-sm">
         <h1 className="text-lg font-semibold text-gray-900">Fulfillment evidence is disabled</h1>
         <p className="mx-auto mt-3 max-w-prose text-sm text-gray-600">
-          The <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-xs">OT_T2_FULFILLMENT_EVIDENCE_ENABLED</code> flag is off. No
-          artifact generation, delivery attempt, provider call, or evidence write has occurred, and no evidence records are read while it
-          remains disabled.
+          The <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-xs">OT_T2_EVIDENCE_CONSOLE_ENABLED</code> flag is off. This
+          surface reads no fulfillment evidence and exposes no retry, regeneration, send, lease, provider, or mutation action while disabled.
         </p>
         <div className="mt-6">
           <Link href="/admin/orders" className="text-sm text-gray-500 hover:text-gray-900">

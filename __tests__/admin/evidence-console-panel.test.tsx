@@ -13,7 +13,7 @@ describe("EvidenceDisabledPanel (flag off)", () => {
   it("shows the disabled message and exposes NO interactive controls", () => {
     const { container } = render(<EvidenceDisabledPanel />)
     expect(screen.getByText(/Fulfillment evidence is disabled/i)).toBeInTheDocument()
-    expect(screen.getByText(/OT_T2_FULFILLMENT_EVIDENCE_ENABLED/)).toBeInTheDocument()
+    expect(screen.getByText(/OT_T2_EVIDENCE_CONSOLE_ENABLED/)).toBeInTheDocument()
     // No buttons or form controls at all when disabled.
     expect(container.querySelectorAll("button")).toHaveLength(0)
     expect(container.querySelectorAll("input, select, textarea")).toHaveLength(0)
