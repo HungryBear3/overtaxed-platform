@@ -28,7 +28,7 @@ export interface T2FulfillmentKickoffStore {
   ensureInitial(input: T2FulfillmentKickoffInput): Promise<{
     id: string;
     status: OTFulfillmentStatus;
-  }>;
+  } | null>;
 }
 
 export type T2FulfillmentKickoffResult =
@@ -87,6 +87,10 @@ export async function kickOffT2FulfillmentEvidence(
     reasonCode:
       eligibility.outcome === "INCOMPLETE_INPUT" ? eligibility.outcome : null,
   });
+
+  if (!persisted) {
+    return { outcome: "SKIPPED", reason: "AUTHORITATIVE_ORDER_INELIGIBLE" };
+  }
 
   return {
     outcome: "PERSISTED",

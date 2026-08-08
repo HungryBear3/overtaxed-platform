@@ -26,6 +26,27 @@ function fakeStore() {
   };
 }
 
+function transactionalPrisma(
+  upsert: jest.Mock,
+  findUnique: jest.Mock,
+  order: { id: string; status: string; tier: string } = {
+    id: "ord_t2_paid",
+    status: "PAID",
+    tier: "T2",
+  },
+) {
+  const transaction = {
+    $queryRaw: jest.fn(async () => [order]),
+    oTFulfillment: { upsert, findUnique },
+  };
+  return {
+    $transaction: jest.fn(
+      async (work: (tx: typeof transaction) => Promise<unknown>) =>
+        work(transaction),
+    ),
+  } as unknown as Parameters<typeof createPrismaT2FulfillmentKickoffStore>[0];
+}
+
 describe("kickOffT2FulfillmentEvidence", () => {
   it.each([undefined, "false", "TRUE", "1"])(
     "is a hard no-op unless the feature flag is exact true (%s)",
@@ -111,6 +132,36 @@ describe("kickOffT2FulfillmentEvidence", () => {
 });
 
 describe("Prisma T2 fulfillment kickoff store", () => {
+  it("fails closed when the locked authoritative order is no longer paid T2", async () => {
+    const upsert = jest.fn(async () => ({
+      id: "ful_stale",
+      status: "ARTIFACT_PENDING",
+    }));
+    const tx = {
+      $queryRaw: jest.fn(async () => [
+        { id: "ord_t2_paid", status: "REFUNDED", tier: "T2" },
+      ]),
+      oTFulfillment: { upsert, findUnique: jest.fn() },
+    };
+    const client = {
+      $transaction: jest.fn(async (work: (transaction: typeof tx) => unknown) =>
+        work(tx),
+      ),
+      oTFulfillment: { upsert, findUnique: jest.fn() },
+    } as unknown as Parameters<typeof createPrismaT2FulfillmentKickoffStore>[0];
+    const store = createPrismaT2FulfillmentKickoffStore(client);
+
+    await expect(
+      store.ensureInitial({
+        orderId: "ord_t2_paid",
+        kind: "T2_APPEAL_EVIDENCE",
+        status: "ARTIFACT_PENDING",
+        reasonCode: null,
+      }),
+    ).resolves.toBeNull();
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
   it("uses create-only upsert semantics so retries never rewrite existing state", async () => {
     const upsert = jest.fn(async () => ({
       id: "ful_existing",
@@ -118,9 +169,9 @@ describe("Prisma T2 fulfillment kickoff store", () => {
       createdAt: new Date("2026-08-07T00:20:00.000Z"),
     }));
     const findUnique = jest.fn();
-    const store = createPrismaT2FulfillmentKickoffStore({
-      oTFulfillment: { upsert, findUnique },
-    });
+    const store = createPrismaT2FulfillmentKickoffStore(
+      transactionalPrisma(upsert, findUnique),
+    );
 
     await expect(
       store.ensureInitial({
@@ -157,9 +208,9 @@ describe("Prisma T2 fulfillment kickoff store", () => {
       id: "ful_winner",
       status: "ARTIFACT_PENDING",
     }));
-    const store = createPrismaT2FulfillmentKickoffStore({
-      oTFulfillment: { upsert, findUnique },
-    });
+    const store = createPrismaT2FulfillmentKickoffStore(
+      transactionalPrisma(upsert, findUnique),
+    );
 
     await expect(
       store.ensureInitial({
@@ -182,12 +233,11 @@ describe("Prisma T2 fulfillment kickoff store", () => {
 
   it("fails closed when a uniqueness error has no exact compound-key winner", async () => {
     const unique = Object.assign(new Error("unique"), { code: "P2002" });
-    const store = createPrismaT2FulfillmentKickoffStore({
-      oTFulfillment: {
-        upsert: jest.fn(async () => Promise.reject(unique)),
-        findUnique: jest.fn(async () => null),
-      },
-    });
+    const upsert = jest.fn(async () => Promise.reject(unique));
+    const findUnique = jest.fn(async () => null);
+    const store = createPrismaT2FulfillmentKickoffStore(
+      transactionalPrisma(upsert, findUnique),
+    );
 
     await expect(
       store.ensureInitial({

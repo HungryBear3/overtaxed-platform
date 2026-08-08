@@ -124,6 +124,58 @@ describeIfDb("OT fulfillment PostgreSQL kickoff proof", () => {
     });
   });
 
+  it("does not create evidence when a concurrent terminal transition commits first", async () => {
+    const order = await paidT2Order();
+    const store = createPrismaT2FulfillmentKickoffStore(
+      prisma as unknown as Parameters<
+        typeof createPrismaT2FulfillmentKickoffStore
+      >[0],
+    );
+    let releaseRefund!: () => void;
+    const holdRefund = new Promise<void>((resolve) => {
+      releaseRefund = resolve;
+    });
+    let refundLocked!: () => void;
+    const refundHasLock = new Promise<void>((resolve) => {
+      refundLocked = resolve;
+    });
+
+    const refund = prisma.$transaction(async (tx) => {
+      await tx.oTOrder.update({
+        where: { id: order.id },
+        data: { status: "REFUNDED" },
+      });
+      refundLocked();
+      await holdRefund;
+    });
+    await refundHasLock;
+
+    const kickoff = kickOffT2FulfillmentEvidence(
+      {
+        id: order.id,
+        tier: "T2",
+        status: "PAID",
+        propertyAddress: order.propertyAddress,
+        propertyPin: order.propertyPin,
+      },
+      {
+        env: { OT_T2_FULFILLMENT_EVIDENCE_ENABLED: "true" },
+        store,
+      },
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    releaseRefund();
+
+    const [, result] = await Promise.all([refund, kickoff]);
+    expect(result).toEqual({
+      outcome: "SKIPPED",
+      reason: "AUTHORITATIVE_ORDER_INELIGIBLE",
+    });
+    expect(
+      await prisma.oTFulfillment.count({ where: { orderId: order.id } }),
+    ).toBe(0);
+  });
+
   it("cascades the summary when its parent OT order is deleted", async () => {
     const order = await paidT2Order();
     const store = createPrismaT2FulfillmentKickoffStore(

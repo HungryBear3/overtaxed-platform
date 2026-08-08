@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import type {
   T2FulfillmentKickoffInput,
@@ -10,13 +11,26 @@ type FulfillmentRow = {
   status: string;
 };
 
+type AuthoritativeOrderRow = {
+  id: string;
+  status: string;
+  tier: string;
+};
+
 type PrismaFulfillmentDelegate = {
   upsert(input: unknown): Promise<FulfillmentRow>;
   findUnique(input: unknown): Promise<FulfillmentRow | null>;
 };
 
-type PrismaLike = {
+type PrismaTransactionLike = {
+  $queryRaw<T>(query: unknown): Promise<T>;
   oTFulfillment: PrismaFulfillmentDelegate;
+};
+
+type PrismaLike = {
+  $transaction<T>(
+    work: (transaction: PrismaTransactionLike) => Promise<T>,
+  ): Promise<T>;
 };
 
 function isPrismaUniqueError(error: unknown): boolean {
@@ -37,38 +51,49 @@ export function createPrismaT2FulfillmentKickoffStore(
 ): T2FulfillmentKickoffStore {
   return {
     async ensureInitial(input: T2FulfillmentKickoffInput) {
-      const identity = {
-        orderId_kind: {
-          orderId: input.orderId,
-          kind: input.kind,
-        },
-      };
+      return client.$transaction(async (transaction) => {
+        // Lock the parent row and evaluate its current state in the same
+        // transaction as the create-only upsert. A concurrent terminal update
+        // that wins the lock is therefore visible before evidence can be made.
+        const orders = await transaction.$queryRaw<AuthoritativeOrderRow[]>(
+          Prisma.sql`SELECT "id", "status", "tier" FROM "ot_order" WHERE "id" = ${input.orderId} FOR UPDATE`,
+        );
+        const order = orders[0];
+        if (order?.status !== "PAID" || order.tier !== "T2") return null;
 
-      try {
-        const row = await client.oTFulfillment.upsert({
-          where: identity,
-          create: {
+        const identity = {
+          orderId_kind: {
             orderId: input.orderId,
             kind: input.kind,
-            status: input.status,
-            lastReasonCode: input.reasonCode,
           },
-          update: {},
-          select: { id: true, status: true },
-        });
-        return result(row);
-      } catch (error) {
-        if (!isPrismaUniqueError(error)) throw error;
+        };
 
-        // PostgreSQL can surface P2002 when two create-only upserts race. Treat
-        // it as convergence only after reading the exact compound-key winner.
-        const winner = await client.oTFulfillment.findUnique({
-          where: identity,
-          select: { id: true, status: true },
-        });
-        if (!winner) throw error;
-        return result(winner);
-      }
+        try {
+          const row = await transaction.oTFulfillment.upsert({
+            where: identity,
+            create: {
+              orderId: input.orderId,
+              kind: input.kind,
+              status: input.status,
+              lastReasonCode: input.reasonCode,
+            },
+            update: {},
+            select: { id: true, status: true },
+          });
+          return result(row);
+        } catch (error) {
+          if (!isPrismaUniqueError(error)) throw error;
+
+          // Treat a uniqueness race as convergence only after reading the exact
+          // compound-key winner inside this same transaction.
+          const winner = await transaction.oTFulfillment.findUnique({
+            where: identity,
+            select: { id: true, status: true },
+          });
+          if (!winner) throw error;
+          return result(winner);
+        }
+      });
     },
   };
 }
