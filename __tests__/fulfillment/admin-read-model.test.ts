@@ -362,6 +362,54 @@ describe("malformed / hostile records fail closed", () => {
     expect(v.attempts[0]?.deliveredAt).toBeNull()
   })
 
+  it("rejects attempt delivery timestamps that are not corroborated by a DELIVERED event", () => {
+    const v = view({
+      fulfillment: fulfillment({
+        status: "PROVIDER_ACCEPTED",
+        attemptCount: 1,
+        artifacts: [artifact(1)],
+        attempts: [attempt(1, { deliveredAt: "2026-08-03T00:00:02.000Z" })],
+        events: [event(1, "ACCEPTED")],
+      }),
+    })
+    expect(v.summary.displayState).toBe("MANUAL_REVIEW")
+    expect(v.attempts[0]?.outcome).toBe("UNTRUSTED")
+    expect(v.attempts[0]?.deliveredAt).toBeNull()
+    expect(v.warnings.map((w) => w.code)).toContain("MALFORMED_ATTEMPT")
+  })
+
+  it("rejects non-positive attempt numbers even when an event uses the same number", () => {
+    const v = view({
+      fulfillment: fulfillment({
+        status: "DELIVERED",
+        attemptCount: 1,
+        artifacts: [artifact(1)],
+        attempts: [attempt(-1, { deliveredAt: "2026-08-03T00:00:02.000Z" })],
+        events: [event(2, "DELIVERED", { attemptNumber: -1 })],
+      }),
+    })
+    expect(v.summary.displayState).toBe("MANUAL_REVIEW")
+    expect(v.summary.tone).not.toBe("success")
+    expect(v.attempts[0]?.outcome).toBe("UNTRUSTED")
+    expect(v.warnings.map((w) => w.code)).toContain("MALFORMED_ATTEMPT")
+  })
+
+  it("suppresses malformed attempt provider metadata instead of leaking it", () => {
+    const providerPii = "victim@example.com"
+    const v = view({
+      fulfillment: fulfillment({
+        status: "ARTIFACT_READY",
+        attemptCount: 1,
+        artifacts: [artifact(1)],
+        attempts: [attempt(1, { provider: providerPii })],
+      }),
+    })
+    expect(v.summary.displayState).toBe("MANUAL_REVIEW")
+    expect(JSON.stringify(v)).not.toContain(providerPii)
+    expect(v.attempts[0]?.provider).toBe("invalid")
+    expect(v.actions.filter((a) => a.action !== "INSPECT").every((a) => !a.wouldBeEligible)).toBe(true)
+  })
+
   it("rejects provider events whose provider does not match the linked attempt", () => {
     const v = view({
       fulfillment: fulfillment({
@@ -448,6 +496,13 @@ describe("display-only action eligibility", () => {
     expect(delivered.summary.displayState).toBe("DELIVERED")
     expect(delivered.warnings.map((w) => w.code)).toContain("STATUS_DRIFT")
     expect(delivered.actions.find((a) => a.action === "RETRY_DELIVERY")?.wouldBeEligible).toBe(false)
+  })
+
+  it("marks every non-inspect action ineligible for an unsupported stored delivery state", () => {
+    const unsupported = view({ fulfillment: fulfillment({ status: "DELAYED", artifacts: [artifact(1)] }) })
+    expect(unsupported.summary.displayState).toBe("RECONCILIATION_NEEDED")
+    expect(unsupported.derivedDeliveryStatus).toBe("UNSUPPORTED")
+    expect(unsupported.actions.filter((a) => a.action !== "INSPECT").every((a) => !a.wouldBeEligible)).toBe(true)
   })
 })
 

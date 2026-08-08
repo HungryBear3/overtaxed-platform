@@ -21,7 +21,7 @@ import type { OTDeliveryEventType, OTFulfillmentStatus } from "@/lib/fulfillment
 import { FULFILLMENT_STATUSES, REASON_CODES } from "@/lib/fulfillment/types"
 import type { DeliveryEvent } from "@/lib/fulfillment/state"
 import { foldDeliveryEvents, initialFoldState, validateDeliveryEvent } from "@/lib/fulfillment/state"
-import { isPgIntInRange, isValidArtifactSha256, isValidByteSize, parseStrictInstant, PG_INT_MAX } from "@/lib/fulfillment/validation"
+import { isPgIntInRange, isValidArtifactSha256, isValidByteSize, isValidProviderName, parseStrictInstant, PG_INT_MAX } from "@/lib/fulfillment/validation"
 import { decideDeliverySend, decideRegeneration } from "@/lib/fulfillment/retry"
 
 // ---------- Input shapes (mirror the Phase 1 rows the loader passes) ----------
@@ -182,6 +182,7 @@ export type WarningCode =
   | "ATTEMPT_ARTIFACT_MISSING"
   | "EVENT_ATTEMPT_MISSING"
   | "EVENT_PROVIDER_MISMATCH"
+  | "MALFORMED_ATTEMPT"
   | "MALFORMED_ARTIFACT"
   | "MALFORMED_EVENT"
   | "EVIDENCE_CONFLICT"
@@ -421,11 +422,11 @@ function deriveArtifact(f: EvidenceFulfillmentInput, now: string): {
   }
 }
 
-function attemptOutcome(a: EvidenceAttemptInput): AttemptOutcome {
-  if (a.failedAt) return "FAILED"
-  if (a.deliveredAt) return "DELIVERED"
-  if (a.delayedAt) return "DELAYED"
-  if (a.providerAcceptedAt) return "ACCEPTED"
+function attemptOutcomeFromEvents(eventTypes: ReadonlySet<string>): AttemptOutcome {
+  if (eventTypes.has("FAILED") || eventTypes.has("BOUNCED") || eventTypes.has("COMPLAINED")) return "FAILED"
+  if (eventTypes.has("DELIVERED")) return "DELIVERED"
+  if (eventTypes.has("DELAYED")) return "DELAYED"
+  if (eventTypes.has("ACCEPTED")) return "ACCEPTED"
   return "CREATED"
 }
 
@@ -476,15 +477,38 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
   const { view: artifactView, validVersions: validArtifactVersions, malformed: artifactMalformed } = deriveArtifact(f, now)
   if (artifactMalformed) pushWarn("MALFORMED_ARTIFACT", "Artifact provenance is malformed or conflicting and was suppressed.", "danger")
 
-  // ----- Attempts (deterministic order + redaction) -----
+  // ----- Attempts (deterministic order + fail-closed metadata validation) -----
   const sortedAttempts = [...f.attempts].sort((a, b) => a.attemptNumber - b.attemptNumber)
-  const attemptsByNumber = new Map(f.attempts.map((a) => [a.attemptNumber, a]))
+  const attemptsByNumber = new Map<number, EvidenceAttemptInput>()
   const taintedAttempts = new Set<number>()
   let evidenceInvalid = artifactMalformed
   for (const a of sortedAttempts) {
+    const requestedMs = parseStrictInstant(a.requestedAt)
+    const createdMs = parseStrictInstant(a.createdAt)
+    const optionalTimes = [a.providerAcceptedAt, a.deliveredAt, a.delayedAt, a.failedAt]
+    const timestampsValid =
+      requestedMs !== null &&
+      createdMs !== null &&
+      createdMs <= requestedMs &&
+      optionalTimes.every((value) => value === null || (parseStrictInstant(value) !== null && parseStrictInstant(value)! >= requestedMs))
+    const duplicateAttempt = attemptsByNumber.has(a.attemptNumber)
+    const metadataValid =
+      isPgIntInRange(a.attemptNumber, 1, PG_INT_MAX) &&
+      isPgIntInRange(a.artifactVersion, 1, PG_INT_MAX) &&
+      isValidProviderName(a.provider) &&
+      timestampsValid &&
+      !duplicateAttempt
+
+    if (!metadataValid) {
+      pushWarn("MALFORMED_ATTEMPT", "Delivery-attempt metadata is malformed or conflicting and was suppressed.", "danger")
+      taintedAttempts.add(a.attemptNumber)
+      evidenceInvalid = true
+    } else {
+      attemptsByNumber.set(a.attemptNumber, a)
+    }
+
     const linkedArtifact = f.artifacts.find((artifact) => artifact.version === a.artifactVersion)
     const artifactCreatedMs = linkedArtifact ? parseStrictInstant(linkedArtifact.createdAt) : null
-    const requestedMs = parseStrictInstant(a.requestedAt)
     if (!validArtifactVersions.has(a.artifactVersion) || artifactCreatedMs === null || requestedMs === null || artifactCreatedMs > requestedMs) {
       pushWarn("ATTEMPT_ARTIFACT_MISSING", `Attempt ${a.attemptNumber} has missing or invalid artifact lineage for v${a.artifactVersion}.`, "danger")
       taintedAttempts.add(a.attemptNumber)
@@ -530,8 +554,30 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
       evidenceInvalid = true
       taintedEvents.add(e)
     }
-    validEvents.push(candidate)
     sanitizeReason(e.reasonCode, pushWarn)
+    if (!taintedEvents.has(e)) validEvents.push(candidate)
+  }
+
+  const eventTypesByAttempt = new Map<number, Set<string>>()
+  for (const e of f.events) {
+    if (taintedEvents.has(e)) continue
+    const types = eventTypesByAttempt.get(e.attemptNumber) ?? new Set<string>()
+    types.add(e.eventType)
+    eventTypesByAttempt.set(e.attemptNumber, types)
+  }
+  for (const a of sortedAttempts) {
+    if (taintedAttempts.has(a.attemptNumber)) continue
+    const types = eventTypesByAttempt.get(a.attemptNumber) ?? new Set<string>()
+    const unsupportedTimestampClaim =
+      (a.providerAcceptedAt !== null && !types.has("ACCEPTED")) ||
+      (a.deliveredAt !== null && !types.has("DELIVERED")) ||
+      (a.delayedAt !== null && !types.has("DELAYED")) ||
+      (a.failedAt !== null && !["FAILED", "BOUNCED", "COMPLAINED"].some((type) => types.has(type)))
+    if (unsupportedTimestampClaim) {
+      pushWarn("MALFORMED_ATTEMPT", "Delivery-attempt timestamps are not corroborated by provider events and were suppressed.", "danger")
+      taintedAttempts.add(a.attemptNumber)
+      evidenceInvalid = true
+    }
   }
 
   // Only fold when every event is well-formed and every pointer resolves; otherwise
@@ -547,12 +593,18 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
     return {
       attemptNumber: a.attemptNumber,
       artifactVersion: a.artifactVersion,
-      provider: a.provider,
+      provider: isValidProviderName(a.provider) ? a.provider : "invalid",
       providerMessageIdMasked: maskOpaque(a.providerMessageId),
-      outcome: untrusted ? "UNTRUSTED" : attemptOutcome(a),
+      outcome: untrusted ? "UNTRUSTED" : attemptOutcomeFromEvents(eventTypesByAttempt.get(a.attemptNumber) ?? new Set()),
       requestedAt: parseStrictInstant(a.requestedAt) === null ? null : a.requestedAt,
-      acceptedAt: untrusted || parseStrictInstant(a.providerAcceptedAt) === null ? null : a.providerAcceptedAt,
-      deliveredAt: untrusted || parseStrictInstant(a.deliveredAt) === null ? null : a.deliveredAt,
+      acceptedAt:
+        untrusted || !eventTypesByAttempt.get(a.attemptNumber)?.has("ACCEPTED") || parseStrictInstant(a.providerAcceptedAt) === null
+          ? null
+          : a.providerAcceptedAt,
+      deliveredAt:
+        untrusted || !eventTypesByAttempt.get(a.attemptNumber)?.has("DELIVERED") || parseStrictInstant(a.deliveredAt) === null
+          ? null
+          : a.deliveredAt,
       reasonCode: sanitizeReason(a.reasonCode, pushWarn),
     }
   })
@@ -617,8 +669,18 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
     if (displayState === "STALE_LEASE") pushWarn("STALE_LEASE", "Worker lease has expired without progress.", "warn")
   }
 
+  const evidenceTrustedForActions =
+    statusIsKnown &&
+    !conflicted &&
+    derivedDeliveryStatus !== "UNSUPPORTED" &&
+    displayState !== "RECONCILIATION_NEEDED" &&
+    displayState !== "UNKNOWN"
   const authoritativeActionStatus: OTFulfillmentStatus =
-    !conflicted && eventOutcome ? fold.status : statusIsKnown && !conflicted ? (f.status as OTFulfillmentStatus) : "MANUAL_REVIEW"
+    evidenceTrustedForActions && eventOutcome
+      ? fold.status
+      : evidenceTrustedForActions
+        ? (f.status as OTFulfillmentStatus)
+        : "MANUAL_REVIEW"
 
   return {
     orderId: order.id,
@@ -645,7 +707,7 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
       sortedAttempts.length,
       artifactView.version ?? 0,
       artifactView.sha256,
-      statusIsKnown && !conflicted,
+      evidenceTrustedForActions,
     ),
     derivedDeliveryStatus,
     conflicted,
