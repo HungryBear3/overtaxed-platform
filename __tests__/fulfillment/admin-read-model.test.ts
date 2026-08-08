@@ -278,6 +278,47 @@ describe("malformed / hostile records fail closed", () => {
     expect(v.summary.displayState).not.toBe("DELIVERED")
   })
 
+  it("valid DELIVERED + malformed BOUNCED(seq 0) with stored DELIVERED → fail closed, never DELIVERED", () => {
+    // Controller-confirmed case: a malformed contradictory event must poison the whole
+    // aggregate rather than being dropped so the surviving valid event shows success.
+    const v = view({
+      fulfillment: fulfillment({
+        status: "DELIVERED",
+        attemptCount: 1,
+        attempts: [attempt(1)],
+        artifacts: [artifact(1)],
+        events: [event(2, "DELIVERED"), event(0, "BOUNCED", { providerEventId: "evt_bad" })],
+      }),
+    })
+    expect(v.summary.displayState).not.toBe("DELIVERED")
+    expect(v.summary.displayState).toBe("MANUAL_REVIEW")
+    expect(v.summary.tone).not.toBe("success")
+    expect(v.conflicted).toBe(true)
+    expect(v.derivedDeliveryStatus).toBe("CONFLICT")
+    const malformed = v.warnings.find((w) => w.code === "MALFORMED_EVENT")
+    expect(malformed?.severity).toBe("danger")
+    expect(v.warnings.map((w) => w.code)).toContain("EVIDENCE_CONFLICT")
+  })
+
+  it("syntactically valid event referencing a missing attempt → fail closed (orphaned pointer)", () => {
+    const v = view({
+      fulfillment: fulfillment({
+        status: "DELIVERED",
+        attemptCount: 1,
+        attempts: [attempt(1)],
+        artifacts: [artifact(1)],
+        events: [event(2, "DELIVERED", { attemptNumber: 99 })],
+      }),
+    })
+    expect(v.summary.displayState).not.toBe("DELIVERED")
+    expect(v.summary.displayState).toBe("MANUAL_REVIEW")
+    expect(v.conflicted).toBe(true)
+    expect(v.derivedDeliveryStatus).toBe("CONFLICT")
+    const orphan = v.warnings.find((w) => w.code === "EVENT_ATTEMPT_MISSING")
+    expect(orphan?.severity).toBe("danger")
+    expect(v.warnings.map((w) => w.code)).toContain("EVIDENCE_CONFLICT")
+  })
+
   it("conflicting duplicate sequences → fail closed to MANUAL_REVIEW + conflict warning", () => {
     const v = view({
       fulfillment: fulfillment({

@@ -455,7 +455,13 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
   }))
 
   // ----- Provider events: validate, fold, and build a redacted timeline -----
+  // Fail closed on tainted evidence. A single malformed event, or an event whose
+  // attemptNumber does not resolve to a real attempt, poisons the whole aggregate —
+  // mirroring the Phase 1 `foldDeliveryEvents` INVALID_EVENT contract. We never fold
+  // the surviving subset to reach an accepted/delivered outcome once any event is
+  // malformed or orphaned; a dropped contradictory signal must never be maskable.
   const validEvents: DeliveryEvent[] = []
+  let evidenceInvalid = false
   for (const e of f.events) {
     const candidate: DeliveryEvent = {
       provider: String(e.provider),
@@ -466,18 +472,24 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
     }
     const invalid = validateDeliveryEvent(candidate)
     if (invalid) {
-      pushWarn("MALFORMED_EVENT", `A provider event was rejected as malformed (${invalid}).`, "warn")
+      pushWarn("MALFORMED_EVENT", `A provider event was rejected as malformed (${invalid}).`, "danger")
+      evidenceInvalid = true
       continue
     }
     if (!attemptNumbers.has(e.attemptNumber)) {
-      pushWarn("EVENT_ATTEMPT_MISSING", `A provider event references attempt ${e.attemptNumber} which is absent.`, "warn")
+      pushWarn("EVENT_ATTEMPT_MISSING", `A provider event references attempt ${e.attemptNumber} which is absent.`, "danger")
+      evidenceInvalid = true
     }
     validEvents.push(candidate)
     sanitizeReason(e.reasonCode, pushWarn)
   }
 
-  const fold = foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), validEvents)
-  const conflicted = fold.conflicted
+  // Only fold when every event is well-formed and every pointer resolves; otherwise
+  // the aggregate is conflicted and no folded outcome is trusted.
+  const fold = evidenceInvalid
+    ? initialFoldState("DELIVERY_PENDING")
+    : foldDeliveryEvents(initialFoldState("DELIVERY_PENDING"), validEvents)
+  const conflicted = fold.conflicted || evidenceInvalid
   if (conflicted) pushWarn("EVIDENCE_CONFLICT", "Provider events are contradictory; evidence requires manual reconciliation.", "danger")
 
   const timeline: TimelineEntry[] = [...f.events]
