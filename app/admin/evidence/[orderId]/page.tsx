@@ -31,5 +31,12 @@ export default async function AdminEvidencePage({ params }: { params: Promise<{ 
     )
   }
 
-  return <EvidenceConsolePanel view={result.view} />
+  return (
+    <EvidenceConsolePanel
+      view={result.view}
+      manualReviewControlEnabled={result.manualReviewControlEnabled}
+      manualReviewCapability={result.manualReviewCapability}
+      adminEvents={result.adminEvents}
+    />
+  )
 }

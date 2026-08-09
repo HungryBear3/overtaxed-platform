@@ -85,13 +85,44 @@ describe("EvidenceConsolePanel (flag on, read-only)", () => {
     expect(container.querySelectorAll("input, select, textarea")).toHaveLength(0)
   })
 
-  it("leaks no PII, private locator, lease token, idempotency key, or raw message id in the DOM", () => {
+  it("leaks no private locator, lease token, idempotency key, or raw message id", () => {
     const { container } = render(<EvidenceConsolePanel view={hostileView} />)
     const html = container.innerHTML
     for (const secret of ["s3://private/secret/v1.pdf", "tok_SECRET", "otf:SECRETKEY", "re_RAWSECRETID", "worker-secret-9"]) {
       expect(html).not.toContain(secret)
     }
-    // Masked provider message id is present instead.
     expect(html).toContain("re_•••ID")
+  })
+
+  it("renders admin state history separately from provider evidence and masks actors", () => {
+    const { container } = render(
+      <EvidenceConsolePanel
+        view={hostileView}
+        manualReviewControlEnabled={false}
+        manualReviewCapability={{
+          eligible: false,
+          status: "PROVIDER_ACCEPTED",
+          statusRevision: 3,
+          reason: "INELIGIBLE_SOURCE_STATUS",
+        }}
+        adminEvents={[{
+          action: "ENTER_MANUAL_REVIEW",
+          fromStatus: "ARTIFACT_PENDING",
+          toStatus: "MANUAL_REVIEW",
+          fromRevision: 2,
+          toRevision: 3,
+          actorMasked: "adm•••99",
+          createdAt: "2026-08-02T00:00:00.000Z",
+        }]}
+      />,
+    )
+    const history = screen.getByRole("region", { name: /Admin state history/i })
+    expect(history).toHaveTextContent("ENTER_MANUAL_REVIEW")
+    expect(history).toHaveTextContent("ARTIFACT_PENDING")
+    expect(history).toHaveTextContent("MANUAL_REVIEW")
+    expect(history).toHaveTextContent("adm•••99")
+    const evidence = screen.getByRole("region", { name: /^Evidence trail$/i })
+    expect(evidence).not.toHaveTextContent("ENTER_MANUAL_REVIEW")
+    expect(container.innerHTML).not.toContain("admin_RAW_SECRET_99")
   })
 })

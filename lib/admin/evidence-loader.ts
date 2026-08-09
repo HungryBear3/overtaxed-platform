@@ -12,7 +12,12 @@
  */
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
-import { t2EvidenceConsoleEnabled } from "@/lib/fulfillment/flag"
+import {
+  t2EvidenceConsoleEnabled,
+  t2ManualReviewControlEnabled,
+} from "@/lib/fulfillment/flag"
+import { decideEnterManualReview } from "@/lib/fulfillment/manual-review"
+import type { ManualReviewCapability } from "@/components/admin/ManualReviewControl"
 import {
   deriveAdminEvidenceView,
   type AdminEvidenceView,
@@ -23,7 +28,23 @@ export type AdminEvidenceLoadResult =
   | { kind: "unauthorized" }
   | { kind: "disabled" }
   | { kind: "not_found" }
-  | { kind: "ok"; view: AdminEvidenceView }
+  | {
+      kind: "ok"
+      view: AdminEvidenceView
+      manualReviewControlEnabled: boolean
+      manualReviewCapability: ManualReviewCapability
+      adminEvents: AdminStateEvent[]
+    }
+
+export type AdminStateEvent = {
+  action: string
+  fromStatus: string
+  toStatus: string
+  fromRevision: number
+  toRevision: number
+  actorMasked: string
+  createdAt: string
+}
 
 const iso = (d: Date | string | null): string | null =>
   d === null ? null : d instanceof Date ? d.toISOString() : String(d)
@@ -56,6 +77,7 @@ export async function loadAdminEvidenceView(
       statusRevision: true,
       attemptCount: true,
       leaseOwner: true,
+      leaseToken: true,
       leaseExpiresAt: true,
       lastReasonCode: true,
       createdAt: true,
@@ -114,7 +136,73 @@ export async function loadAdminEvidenceView(
     now,
   })
 
-  return { kind: "ok", view }
+  const decision = decideEnterManualReview({
+    action: "ENTER_MANUAL_REVIEW",
+    fulfillment: fulfillment ? {
+      status: String(fulfillment.status),
+      statusRevision: fulfillment.statusRevision,
+      attemptCount: fulfillment.attemptCount,
+      leaseOwner: fulfillment.leaseOwner,
+      leaseToken: fulfillment.leaseToken,
+      leaseExpiresAt: fulfillment.leaseExpiresAt,
+      attemptRows: fulfillment.attempts.length,
+      eventRows: fulfillment.events.length,
+    } : null,
+  })
+  const parentEligible = String(order.tier) === "T2" && String(order.status) === "PAID"
+  const manualReviewCapability: ManualReviewCapability = decision.allowed && parentEligible
+    ? {
+        eligible: true,
+        status: decision.fromStatus,
+        statusRevision: decision.fromRevision,
+        reason: null,
+      }
+    : {
+        eligible: false,
+        status: fulfillment ? String(fulfillment.status) as ManualReviewCapability["status"] : null,
+        statusRevision: fulfillment?.statusRevision ?? null,
+        reason: parentEligible
+          ? (decision.allowed ? null : decision.code)
+          : String(order.tier) !== "T2" ? "ORDER_NOT_T2" : "ORDER_NOT_PAID",
+      }
+
+  const events = fulfillment
+    ? await prisma.oTFulfillmentAdminEvent.findMany({
+        where: { fulfillmentId: fulfillment.id },
+        orderBy: [{ toRevision: "asc" }, { createdAt: "asc" }],
+        select: {
+          action: true,
+          fromStatus: true,
+          toStatus: true,
+          fromRevision: true,
+          toRevision: true,
+          actorUserId: true,
+          createdAt: true,
+        },
+      })
+    : []
+  const adminEvents = events.map((event) => ({
+    action: String(event.action),
+    fromStatus: String(event.fromStatus),
+    toStatus: String(event.toStatus),
+    fromRevision: event.fromRevision,
+    toRevision: event.toRevision,
+    actorMasked: maskActor(String(event.actorUserId)),
+    createdAt: iso(event.createdAt) ?? "",
+  }))
+
+  return {
+    kind: "ok",
+    view,
+    manualReviewControlEnabled: t2ManualReviewControlEnabled(),
+    manualReviewCapability,
+    adminEvents,
+  }
+}
+
+function maskActor(value: string): string {
+  if (value.length <= 6) return "•••"
+  return `${value.slice(0, 3)}•••${value.slice(-2)}`
 }
 
 type PrismaFulfillment = {
@@ -124,6 +212,7 @@ type PrismaFulfillment = {
   statusRevision: number
   attemptCount: number
   leaseOwner: string | null
+  leaseToken: string | null
   leaseExpiresAt: Date | null
   lastReasonCode: string | null
   createdAt: Date
