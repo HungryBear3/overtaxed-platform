@@ -5,7 +5,9 @@
  * is absent, false, or malformed, and reading it must never mutate anything.
  */
 import {
+  OT_T2_EVIDENCE_CONSOLE_FLAG,
   OT_T2_FULFILLMENT_EVIDENCE_FLAG,
+  t2EvidenceConsoleEnabled,
   t2FulfillmentEvidenceWritesEnabled,
 } from "@/lib/fulfillment/flag"
 
@@ -39,5 +41,25 @@ describe("OT T2 fulfillment-evidence feature flag", () => {
     const snapshot = JSON.stringify(env)
     t2FulfillmentEvidenceWritesEnabled(env)
     expect(JSON.stringify(env)).toBe(snapshot)
+  })
+})
+
+describe("OT T2 admin evidence-console feature flag", () => {
+  it("is isolated from the already-enabled fulfillment write flag", () => {
+    const env = mkEnv({ [OT_T2_FULFILLMENT_EVIDENCE_FLAG]: "true" })
+    expect(t2FulfillmentEvidenceWritesEnabled(env)).toBe(true)
+    expect(t2EvidenceConsoleEnabled(env)).toBe(false)
+  })
+
+  it("uses a distinct default-off env name", () => {
+    expect(OT_T2_EVIDENCE_CONSOLE_FLAG).toBe("OT_T2_EVIDENCE_CONSOLE_ENABLED")
+  })
+
+  it("is OFF for absent or non-exact-true values and ON only for exact true", () => {
+    expect(t2EvidenceConsoleEnabled(mkEnv({}))).toBe(false)
+    for (const raw of ["false", "1", "TRUE", " true", "true ", "enabled", ""]) {
+      expect(t2EvidenceConsoleEnabled(mkEnv({ [OT_T2_EVIDENCE_CONSOLE_FLAG]: raw }))).toBe(false)
+    }
+    expect(t2EvidenceConsoleEnabled(mkEnv({ [OT_T2_EVIDENCE_CONSOLE_FLAG]: "true" }))).toBe(true)
   })
 })
