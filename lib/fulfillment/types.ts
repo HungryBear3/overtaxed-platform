@@ -119,3 +119,29 @@ export const REASON_CODES: ReadonlySet<string> = new Set([
 
 /** Upper bound on a persisted artifact's byte size (defensive validation only). */
 export const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
+
+/**
+ * Whether a bound artifact's stored property-binding fingerprint still agrees with
+ * the authoritative order it claims to describe.
+ *
+ * This is the ONLY property-binding fact that may cross into a read model. The
+ * comparison is performed server-side against the current order; neither the PIN,
+ * the address, the stored fingerprint, nor the expected fingerprint travels with it.
+ *
+ *   ABSENT       no fingerprint recorded — the normal shape of a pre-Slice-2 row,
+ *                silent and non-tainting
+ *   MATCHES      recomputed fingerprint equals the stored one
+ *   DRIFTED      well-formed fingerprint that does NOT describe this order's property
+ *   MALFORMED    stored value is not a well-formed fingerprint
+ *   UNVERIFIABLE the current order lacks the property inputs needed to compare
+ */
+export type PropertyBindingState =
+  | "ABSENT"
+  | "MATCHES"
+  | "DRIFTED"
+  | "MALFORMED"
+  | "UNVERIFIABLE"
+
+/** Property-binding states that make a bound artifact untrustworthy. */
+export const UNTRUSTED_PROPERTY_BINDING_STATES: ReadonlySet<PropertyBindingState> =
+  new Set<PropertyBindingState>(["DRIFTED", "MALFORMED", "UNVERIFIABLE"])

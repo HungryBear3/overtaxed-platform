@@ -12,6 +12,7 @@ export const OT_T2_FULFILLMENT_EVIDENCE_FLAG = "OT_T2_FULFILLMENT_EVIDENCE_ENABL
 export const OT_T2_EVIDENCE_CONSOLE_FLAG = "OT_T2_EVIDENCE_CONSOLE_ENABLED"
 export const OT_T2_MANUAL_REVIEW_CONTROL_FLAG =
   "OT_T2_MANUAL_REVIEW_CONTROL_ENABLED"
+export const OT_T2_ARTIFACT_BINDING_FLAG = "OT_T2_ARTIFACT_BINDING_ENABLED"
 
 export function t2FulfillmentEvidenceWritesEnabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
@@ -35,4 +36,20 @@ export function t2ManualReviewControlEnabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
   return env[OT_T2_MANUAL_REVIEW_CONTROL_FLAG] === "true"
+}
+
+/**
+ * Independent default-off gate for Phase 2 Slice 2 artifact identity/provenance
+ * binding writes.
+ *
+ * This is deliberately NOT folded into the Phase 1 write gate. That gate
+ * (`OT_T2_FULFILLMENT_EVIDENCE_ENABLED`) is already exactly "true" in
+ * Production, so reusing it would silently activate artifact binding the moment
+ * this code deployed. Binding gets its own switch so schema, code, and
+ * activation stay three separately reviewed steps.
+ */
+export function t2ArtifactBindingEnabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return env[OT_T2_ARTIFACT_BINDING_FLAG] === "true"
 }

@@ -17,11 +17,11 @@
  *     present provider message id / event id / lease owner is shown only masked.
  *   - Action eligibility is display-only; nothing here mutates or authorizes a send.
  */
-import type { OTDeliveryEventType, OTFulfillmentStatus } from "@/lib/fulfillment/types"
-import { FULFILLMENT_STATUSES, REASON_CODES } from "@/lib/fulfillment/types"
+import type { OTDeliveryEventType, OTFulfillmentStatus, PropertyBindingState } from "@/lib/fulfillment/types"
+import { FULFILLMENT_STATUSES, REASON_CODES, UNTRUSTED_PROPERTY_BINDING_STATES } from "@/lib/fulfillment/types"
 import type { DeliveryEvent } from "@/lib/fulfillment/state"
 import { foldDeliveryEvents, initialFoldState, validateDeliveryEvent } from "@/lib/fulfillment/state"
-import { isPgIntInRange, isValidArtifactSha256, isValidByteSize, isValidProviderName, parseStrictInstant, PG_INT_MAX } from "@/lib/fulfillment/validation"
+import { isPgIntInRange, isValidArtifactSha256, isValidByteSize, isValidPrivateStorageLocator, isValidProviderName, parseStrictInstant, PG_INT_MAX } from "@/lib/fulfillment/validation"
 import { decideDeliverySend, decideRegeneration } from "@/lib/fulfillment/retry"
 
 // ---------- Input shapes (mirror the Phase 1 rows the loader passes) ----------
@@ -38,13 +38,31 @@ export type EvidenceArtifactInput = {
   version: number
   artifactSha256: string
   byteSize: number
-  // PRIVATE and OPTIONAL: the derivation never reads it, so the loader need not even
-  // fetch it from the database. Accepted here only so hostile fixtures can prove it
-  // is dropped.
+  // PRIVATE and OPTIONAL: the loader still does not fetch it. Accepted here only so
+  // hostile fixtures can prove it is classified, never echoed.
   storageLocator?: string
   generatorVersion: string
   templateVersion: string | null
   createdAt: string
+  // --- Phase 2 Slice 2 provenance (all OPTIONAL: Phase 1 rows predate them) ---
+  /** When the bytes were generated, as distinct from when the row was inserted. */
+  generatedAt?: string | null
+  /** The order the generator claims these bytes were produced from. */
+  sourceOrderId?: string | null
+  /**
+   * MATCH STATE ONLY. The property-binding fingerprint is derived from the PIN and
+   * the address, so neither it nor the expected fingerprint may reach an admin
+   * surface. This is a bounded enum rather than the string on purpose: the read
+   * model is structurally incapable of receiving — and therefore of leaking — any
+   * fingerprint. The server loader performs the comparison against the current
+   * authoritative order and reduces the column to this state at the query boundary.
+   *
+   * Presence alone is NOT agreement: a well-formed fingerprint for a different
+   * property is exactly as dangerous as a mismatched source order, so anything in
+   * `UNTRUSTED_PROPERTY_BINDING_STATES` taints the aggregate. Omitted (or ABSENT)
+   * means a pre-Slice-2 row, which is silent and non-tainting.
+   */
+  propertyBinding?: PropertyBindingState
 }
 
 export type EvidenceAttemptInput = {
@@ -138,6 +156,21 @@ export type EvidenceSummary = {
 export type LeaseState = "NONE" | "ACTIVE" | "STALE" | "INVALID"
 export type LeaseView = { state: LeaseState; ownerMasked: string | null; expiresAt: string | null }
 
+/**
+ * Whether the Slice 2 provenance triple is recorded, and whether it agrees with
+ * the order being viewed. `ABSENT` is the normal state for a Phase 1 row bound
+ * before provenance existed — it is NOT an error and must never read as one.
+ */
+export type ArtifactProvenanceState = "ABSENT" | "PARTIAL" | "RECORDED" | "MISMATCHED"
+
+/**
+ * Classification of the private storage locator. The loader deliberately does
+ * not fetch the locator, so `NOT_LOADED` is the production value; the other
+ * classifications exist so a hostile fixture is classified rather than echoed.
+ * No variant ever carries the locator itself.
+ */
+export type ArtifactLocatorClass = "NOT_LOADED" | "PRIVATE_INTERNAL" | "UNSAFE_PUBLIC"
+
 export type ArtifactView = {
   present: boolean
   version: number | null
@@ -146,6 +179,12 @@ export type ArtifactView = {
   generatorVersion: string | null
   templateVersion: string | null
   createdAt: string | null
+  /** Generation time of the bytes. Null when unrecorded (pre-Slice-2 rows). */
+  generatedAt: string | null
+  provenance: ArtifactProvenanceState
+  /** Match state only — no fingerprint, PIN, or address is ever surfaced. */
+  propertyBinding: PropertyBindingState
+  locatorClass: ArtifactLocatorClass
 }
 
 export type AttemptOutcome = "CREATED" | "ACCEPTED" | "DELIVERED" | "DELAYED" | "FAILED" | "UNTRUSTED"
@@ -185,6 +224,10 @@ export type WarningCode =
   | "MALFORMED_ATTEMPT"
   | "ATTEMPT_COUNT_MISMATCH"
   | "MALFORMED_ARTIFACT"
+  | "ARTIFACT_PROVENANCE_MISMATCH"
+  | "ARTIFACT_PROVENANCE_PARTIAL"
+  | "ARTIFACT_LOCATOR_UNSAFE"
+  | "ARTIFACT_PROPERTY_BINDING_UNTRUSTED"
   | "MALFORMED_EVENT"
   | "EVIDENCE_CONFLICT"
   | "STATUS_DRIFT"
@@ -377,17 +420,65 @@ function artifactIsValid(a: EvidenceArtifactInput, now: string): boolean {
   )
 }
 
-function deriveArtifact(f: EvidenceFulfillmentInput, now: string): {
+/** An artifact view carrying no facts. Used for both "none" and "suppressed". */
+function emptyArtifactView(): ArtifactView {
+  return {
+    present: false,
+    version: null,
+    sha256: null,
+    byteSize: null,
+    generatorVersion: null,
+    templateVersion: null,
+    createdAt: null,
+    generatedAt: null,
+    provenance: "ABSENT",
+    propertyBinding: "ABSENT",
+    locatorClass: "NOT_LOADED",
+  }
+}
+
+/**
+ * Classify the locator WITHOUT returning it. Anything that could act as a public
+ * bearer reference is called out; everything else that the Phase 1 private-locator
+ * validator accepts is internal.
+ */
+function classifyLocator(locator: string | undefined): ArtifactLocatorClass {
+  if (locator === undefined) return "NOT_LOADED"
+  return isValidPrivateStorageLocator(locator) ? "PRIVATE_INTERNAL" : "UNSAFE_PUBLIC"
+}
+
+/**
+ * Derive provenance state for the current artifact. Absent provenance is the
+ * expected shape for rows bound before Slice 2 and is reported as ABSENT, never
+ * as a defect. A recorded source order that names a DIFFERENT order is the one
+ * case that is genuinely alarming, and it fails closed to MISMATCHED.
+ */
+function deriveProvenanceState(a: EvidenceArtifactInput, orderId: string, now: string): ArtifactProvenanceState {
+  const present = [
+    typeof a.generatedAt === "string" && a.generatedAt.length > 0,
+    typeof a.sourceOrderId === "string" && a.sourceOrderId.length > 0,
+    (a.propertyBinding ?? "ABSENT") !== "ABSENT",
+  ]
+  const count = present.filter(Boolean).length
+  if (count === 0) return "ABSENT"
+  if (count < present.length) return "PARTIAL"
+  if (a.sourceOrderId !== orderId) return "MISMATCHED"
+  const generatedMs = parseStrictInstant(a.generatedAt as string)
+  const nowMs = parseStrictInstant(now)
+  const createdMs = parseStrictInstant(a.createdAt)
+  // Bytes cannot be generated in the future, nor after the row that records them.
+  if (generatedMs === null || nowMs === null || createdMs === null) return "PARTIAL"
+  if (generatedMs > nowMs || generatedMs > createdMs) return "MISMATCHED"
+  return "RECORDED"
+}
+
+function deriveArtifact(f: EvidenceFulfillmentInput, now: string, orderId: string): {
   view: ArtifactView
   validVersions: ReadonlySet<number>
   malformed: boolean
 } {
   if (f.artifacts.length === 0) {
-    return {
-      view: { present: false, version: null, sha256: null, byteSize: null, generatorVersion: null, templateVersion: null, createdAt: null },
-      validVersions: new Set(),
-      malformed: false,
-    }
+    return { view: emptyArtifactView(), validVersions: new Set(), malformed: false }
   }
   const versions = new Set<number>()
   const hashes = new Set<string>()
@@ -402,12 +493,10 @@ function deriveArtifact(f: EvidenceFulfillmentInput, now: string): {
   }
   const current = f.artifacts.reduce((a, b) => (b.version > a.version ? b : a))
   if (malformed || !validVersions.has(current.version)) {
-    return {
-      view: { present: false, version: null, sha256: null, byteSize: null, generatorVersion: null, templateVersion: null, createdAt: null },
-      validVersions,
-      malformed: true,
-    }
+    return { view: emptyArtifactView(), validVersions, malformed: true }
   }
+  const provenance = deriveProvenanceState(current, orderId, now)
+  const propertyBinding = current.propertyBinding ?? "ABSENT"
   return {
     view: {
       present: true,
@@ -417,6 +506,16 @@ function deriveArtifact(f: EvidenceFulfillmentInput, now: string): {
       generatorVersion: current.generatorVersion,
       templateVersion: current.templateVersion,
       createdAt: current.createdAt,
+      // Only surfaced once the whole triple is coherent AND the binding still
+      // describes this order's property. Partial, mismatched, or untrustworthy
+      // provenance must not display a timestamp that looks authoritative.
+      generatedAt:
+        provenance === "RECORDED" && !UNTRUSTED_PROPERTY_BINDING_STATES.has(propertyBinding)
+          ? (current.generatedAt ?? null)
+          : null,
+      provenance,
+      propertyBinding,
+      locatorClass: classifyLocator(current.storageLocator),
     },
     validVersions,
     malformed: false,
@@ -472,7 +571,7 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
         updatedAt: null,
       },
       lease: { state: "NONE", ownerMasked: null, expiresAt: null },
-      artifact: { present: false, version: null, sha256: null, byteSize: null, generatorVersion: null, templateVersion: null, createdAt: null },
+      artifact: emptyArtifactView(),
       attempts: [],
       timeline: [],
       warnings,
@@ -488,8 +587,38 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
   const lease = deriveLease(f, now)
   if (lease.state === "INVALID") pushWarn("INVALID_LEASE", "Lease metadata is malformed or incomplete.", "warn")
 
-  const { view: artifactView, validVersions: validArtifactVersions, malformed: artifactMalformed } = deriveArtifact(f, now)
+  const { view: artifactView, validVersions: validArtifactVersions, malformed: artifactMalformed } = deriveArtifact(f, now, order.id)
   if (artifactMalformed) pushWarn("MALFORMED_ARTIFACT", "Artifact provenance is malformed or conflicting and was suppressed.", "danger")
+  // ABSENT is silent on purpose: every artifact bound before Slice 2 is legitimately
+  // without provenance, and warning on those would flood the console with noise.
+  if (artifactView.provenance === "MISMATCHED")
+    pushWarn("ARTIFACT_PROVENANCE_MISMATCH", "Artifact provenance does not agree with this order and requires manual reconciliation.", "danger")
+  else if (artifactView.provenance === "PARTIAL")
+    pushWarn("ARTIFACT_PROVENANCE_PARTIAL", "Artifact provenance is only partially recorded.", "warn")
+  if (artifactView.locatorClass === "UNSAFE_PUBLIC")
+    pushWarn("ARTIFACT_LOCATOR_UNSAFE", "Artifact storage locator is not a private internal reference.", "danger")
+  if (UNTRUSTED_PROPERTY_BINDING_STATES.has(artifactView.propertyBinding))
+    pushWarn(
+      "ARTIFACT_PROPERTY_BINDING_UNTRUSTED",
+      "Artifact property binding could not be authenticated against this order and requires manual reconciliation.",
+      "danger",
+    )
+
+  // Provenance that does not agree with the order it is attached to is not a
+  // cosmetic display defect — it means these bytes may describe someone else's
+  // property. It is treated exactly like malformed evidence: the aggregate goes
+  // conflicted, the display state falls back to manual review, and every action
+  // beyond read-only inspection becomes ineligible. PARTIAL is included because
+  // a half-written provenance triple cannot be authenticated either way, and an
+  // unauthenticated binding is not a trusted one.
+  //
+  // ABSENT is deliberately excluded: a Phase 1 row bound before Slice 2 existed
+  // is legitimately provenance-free and must stay silent and non-tainting.
+  const provenanceInvalid =
+    artifactView.provenance === "MISMATCHED" ||
+    artifactView.provenance === "PARTIAL" ||
+    artifactView.locatorClass === "UNSAFE_PUBLIC" ||
+    UNTRUSTED_PROPERTY_BINDING_STATES.has(artifactView.propertyBinding)
 
   // ----- Attempts (deterministic order + fail-closed metadata validation) -----
   const sortedAttempts = [...f.attempts].sort((a, b) => a.attemptNumber - b.attemptNumber)
@@ -499,7 +628,7 @@ export function deriveAdminEvidenceView(input: AdminEvidenceInput): AdminEvidenc
     isPgIntInRange(f.attemptCount, 0, PG_INT_MAX) && f.attemptCount === sortedAttempts.length
   if (!attemptCountMatches)
     pushWarn("ATTEMPT_COUNT_MISMATCH", "Recorded attempt count does not match the authoritative attempt rows.", "danger")
-  let evidenceInvalid = artifactMalformed || !attemptCountMatches
+  let evidenceInvalid = artifactMalformed || provenanceInvalid || !attemptCountMatches
   for (const a of sortedAttempts) {
     const requestedMs = parseStrictInstant(a.requestedAt)
     const createdMs = parseStrictInstant(a.createdAt)

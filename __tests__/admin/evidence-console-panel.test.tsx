@@ -40,7 +40,13 @@ describe("EvidenceConsolePanel (flag on, read-only)", () => {
           version: 1,
           artifactSha256: "b".repeat(64),
           byteSize: 4096,
-          storageLocator: "s3://private/secret/v1.pdf",
+          // A well-formed PRIVATE locator per the deployed Phase 1 contract
+          // (`isValidPrivateStorageLocator`: scheme-free relative path). The
+          // point of this fixture is that a private locator is never rendered,
+          // so it must be a locator the system considers private — a public
+          // bearer URL is a different case and fails closed to manual review
+          // in the read-model suite instead.
+          storageLocator: "artifacts/ful_1/private-secret-v1.pdf",
           generatorVersion: "gen_v1",
           templateVersion: "tpl_v1",
           createdAt: "2026-08-02T00:00:00.000Z",
@@ -88,7 +94,7 @@ describe("EvidenceConsolePanel (flag on, read-only)", () => {
   it("leaks no private locator, lease token, idempotency key, or raw message id", () => {
     const { container } = render(<EvidenceConsolePanel view={hostileView} />)
     const html = container.innerHTML
-    for (const secret of ["s3://private/secret/v1.pdf", "tok_SECRET", "otf:SECRETKEY", "re_RAWSECRETID", "worker-secret-9"]) {
+    for (const secret of ["artifacts/ful_1/private-secret-v1.pdf", "tok_SECRET", "otf:SECRETKEY", "re_RAWSECRETID", "worker-secret-9"]) {
       expect(html).not.toContain(secret)
     }
     expect(html).toContain("re_•••ID")

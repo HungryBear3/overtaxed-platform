@@ -32,6 +32,7 @@ jest.mock("@/lib/db", () => ({
 }))
 
 import { loadAdminEvidenceView } from "@/lib/admin/evidence-loader"
+import { computePropertyBindingFingerprint } from "@/lib/fulfillment/artifact-digest"
 
 const NOW = "2026-08-08T12:00:00.000Z"
 
@@ -210,5 +211,166 @@ describe("enabled admin reads", () => {
       createdAt: "2026-08-02T00:00:00.000Z",
     }])
     expect(JSON.stringify(result)).not.toContain("admin_RAW_SECRET_99")
+  })
+})
+
+/**
+ * Phase 2 Slice 2 — the property binding is AUTHENTICATED at this boundary.
+ *
+ * The reviewed version reduced any nonempty fingerprint to `true`, so a
+ * well-formed fingerprint computed for a completely different property read as
+ * agreement. The loader now recomputes the expected fingerprint from the current
+ * authoritative order and passes only the bounded comparison result inward.
+ */
+describe("Slice 2 — property-binding authentication at the loader boundary", () => {
+  const PIN = "09000000000000"
+  const ADDRESS = "123 Main St"
+  const GENERATED_AT = new Date("2026-08-02T00:00:00.000Z")
+
+  const MATCHING = computePropertyBindingFingerprint({
+    orderId: "ord_1",
+    propertyPin: PIN,
+    propertyAddress: ADDRESS,
+  })
+  const OTHER_PROPERTY = computePropertyBindingFingerprint({
+    orderId: "ord_1",
+    propertyPin: "09000000000001",
+    propertyAddress: "999 Elsewhere Ave",
+  })
+
+  const order = (overrides: Record<string, unknown> = {}) => ({
+    id: "ord_1",
+    tier: "T2",
+    status: "PAID",
+    amountPaid: 149,
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
+    propertyPin: PIN,
+    propertyAddress: ADDRESS,
+    ...overrides,
+  })
+
+  const withArtifact = (fingerprint: string | null) => ({
+    id: "ful_1",
+    kind: "T2_APPEAL_EVIDENCE",
+    status: "ARTIFACT_READY",
+    statusRevision: 2,
+    attemptCount: 0,
+    leaseOwner: null,
+    leaseToken: null,
+    leaseExpiresAt: null,
+    lastReasonCode: null,
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-08-02T00:00:00.000Z"),
+    artifacts: [
+      {
+        version: 1,
+        artifactSha256: "a".repeat(64),
+        byteSize: 2048,
+        generatorVersion: "gen_v1",
+        templateVersion: "tpl_v1",
+        createdAt: new Date("2026-08-02T00:00:00.000Z"),
+        generatedAt: GENERATED_AT,
+        sourceOrderId: "ord_1",
+        propertyBindingFingerprint: fingerprint,
+      },
+    ],
+    attempts: [],
+    events: [],
+  })
+
+  beforeEach(() => {
+    orderFindUniqueMock.mockResolvedValue(order())
+  })
+
+  async function load() {
+    const r = await loadAdminEvidenceView("ord_1", { now: NOW })
+    if (r.kind !== "ok") throw new Error(`expected ok, got ${r.kind}`)
+    return r
+  }
+
+  it("selects the authoritative property inputs needed to recompute the fingerprint", async () => {
+    fulfillmentFindFirstMock.mockResolvedValue(withArtifact(MATCHING))
+    await load()
+    const select = JSON.stringify(orderFindUniqueMock.mock.calls[0]?.[0]?.select ?? {})
+    expect(select).toContain("propertyPin")
+    expect(select).toContain("propertyAddress")
+  })
+
+  it("reports MATCHES and does not taint when the binding describes this order", async () => {
+    fulfillmentFindFirstMock.mockResolvedValue(withArtifact(MATCHING))
+    const r = await load()
+    expect(r.view.artifact.propertyBinding).toBe("MATCHES")
+    expect(r.view.conflicted).toBe(false)
+    expect(r.view.artifact.provenance).toBe("RECORDED")
+  })
+
+  it("reports DRIFTED and fails closed for a fingerprint of a different property", async () => {
+    // The reviewed version reported this as `propertyBindingRecorded: true`.
+    fulfillmentFindFirstMock.mockResolvedValue(withArtifact(OTHER_PROPERTY))
+    const r = await load()
+    expect(r.view.artifact.propertyBinding).toBe("DRIFTED")
+    expect(r.view.conflicted).toBe(true)
+    expect(r.view.summary.displayState).toBe("MANUAL_REVIEW")
+    expect(r.view.warnings.map((w) => w.code)).toContain(
+      "ARTIFACT_PROPERTY_BINDING_UNTRUSTED",
+    )
+    for (const a of r.view.actions) {
+      if (a.action !== "INSPECT") expect(a.wouldBeEligible).toBe(false)
+    }
+  })
+
+  it("reports DRIFTED when the order's property has since changed", async () => {
+    orderFindUniqueMock.mockResolvedValue(order({ propertyAddress: "77 New Address Rd" }))
+    fulfillmentFindFirstMock.mockResolvedValue(withArtifact(MATCHING))
+    const r = await load()
+    expect(r.view.artifact.propertyBinding).toBe("DRIFTED")
+    expect(r.view.conflicted).toBe(true)
+  })
+
+  it("reports MALFORMED and fails closed for a present-but-invalid fingerprint", async () => {
+    fulfillmentFindFirstMock.mockResolvedValue(withArtifact("not-a-fingerprint"))
+    const r = await load()
+    expect(r.view.artifact.propertyBinding).toBe("MALFORMED")
+    expect(r.view.conflicted).toBe(true)
+    expect(JSON.stringify(r.view)).not.toContain("not-a-fingerprint")
+  })
+
+  it("reports UNVERIFIABLE and fails closed when the current order lacks property inputs", async () => {
+    orderFindUniqueMock.mockResolvedValue(order({ propertyPin: null }))
+    fulfillmentFindFirstMock.mockResolvedValue(withArtifact(MATCHING))
+    const r = await load()
+    expect(r.view.artifact.propertyBinding).toBe("UNVERIFIABLE")
+    expect(r.view.conflicted).toBe(true)
+    expect(r.view.summary.displayState).toBe("MANUAL_REVIEW")
+  })
+
+  it("keeps a legacy pre-Slice-2 row silent, distinguishable, and non-tainting", async () => {
+    const legacy = withArtifact(null)
+    legacy.artifacts[0]!.generatedAt = null as unknown as Date
+    legacy.artifacts[0]!.sourceOrderId = null as unknown as string
+    fulfillmentFindFirstMock.mockResolvedValue(legacy)
+    const r = await load()
+    expect(r.view.artifact.propertyBinding).toBe("ABSENT")
+    expect(r.view.artifact.provenance).toBe("ABSENT")
+    expect(r.view.conflicted).toBe(false)
+    expect(r.view.warnings.map((w) => w.code)).not.toContain(
+      "ARTIFACT_PROPERTY_BINDING_UNTRUSTED",
+    )
+  })
+
+  it.each([
+    ["matching", MATCHING],
+    ["drifted", OTHER_PROPERTY],
+  ])("never surfaces the PIN, address, or %s fingerprint", async (_label, fingerprint) => {
+    fulfillmentFindFirstMock.mockResolvedValue(withArtifact(fingerprint))
+    const r = await load()
+    const json = JSON.stringify(r)
+    expect(json).not.toContain(fingerprint)
+    expect(json).not.toContain(MATCHING)
+    expect(json).not.toContain(PIN)
+    expect(json).not.toContain(ADDRESS)
+    expect(json).not.toContain("propertyBindingFingerprint")
+    expect(json).not.toContain("propertyPin")
+    expect(json).not.toContain("propertyAddress")
   })
 })
