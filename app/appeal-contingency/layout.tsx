@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Contingency Property Tax Appeal Review",
+  title: {
+    default: "Contingency Property Tax Appeal Review",
+    template: "%s | OverTaxed IL",
+  },
 };
 
 export default function AppealContingencyLayout({

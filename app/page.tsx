@@ -6,8 +6,7 @@ import "./ot-design.css";
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
 
 export const metadata: Metadata = {
-  title:
-    "Cook County property tax appeals, from $69",
+  title: "OverTaxed IL — Cook County property tax appeals, from $69",
   description:
     "Free check tells you if your Cook County assessment is out of line with comparable properties. DIY packet ($69) or done-for-you filing ($97). Not a law firm.",
   alternates: { canonical: siteUrl + "/" },
