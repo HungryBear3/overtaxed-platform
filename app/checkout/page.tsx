@@ -6,7 +6,7 @@ import "../ot-design.css";
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
 
 export const metadata: Metadata = {
-  title: "Checkout — OverTaxed IL",
+  title: "Checkout",
   description:
     "Start with DIY Appeal Analysis at $69, Done-For-You at $97, or contingency. Eligibility is confirmed before payment.",
   alternates: { canonical: siteUrl + "/checkout" },

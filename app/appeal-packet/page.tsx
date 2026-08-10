@@ -4,7 +4,7 @@ import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
 import "../ot-design.css";
 
 export const metadata: Metadata = {
-  title: "DIY Cook County Appeal Packet | OverTaxed IL",
+  title: "DIY Cook County Appeal Packet",
   description:
     "A $69 Cook County property-tax appeal packet: comparable-property summary, Board of Review filing instructions, deadline checklist, and plain-English next steps.",
 };
