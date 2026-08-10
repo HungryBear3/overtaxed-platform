@@ -4,7 +4,7 @@ import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import "../ot-design.css"
 
 export const metadata: Metadata = {
-  title: "Illinois Homestead Exemption Guide — Free Download | OverTaxed IL",
+  title: "Illinois Homestead Exemption Guide — Free Download",
   description:
     "Many Illinois homeowners miss the General Homestead Exemption. Free guide shows how to check in 5 minutes — for informational purposes only, not legal or tax advice.",
 }

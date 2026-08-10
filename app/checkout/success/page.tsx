@@ -8,7 +8,7 @@ interface Props {
 }
 
 export const metadata = {
-  title: "Payment Successful | Overtaxed IL",
+  title: "Payment Successful",
   description: "Your payment was received. We'll be in touch soon.",
 };
 

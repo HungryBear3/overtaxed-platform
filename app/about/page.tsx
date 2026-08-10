@@ -7,7 +7,7 @@ import { CalendarDays, DollarSign, Phone, Search, FileText, Bell } from "lucide-
 import "../ot-design.css"
 
 export const metadata: Metadata = {
-  title: "About OverTaxed IL | Cook County Property Tax Appeals",
+  title: "About | Cook County Property Tax Appeals",
   description: "OverTaxed IL helps Illinois homeowners and HOA/condo associations check their Cook County property tax assessment and prepare appeal materials. Not a law firm.",
 }
 

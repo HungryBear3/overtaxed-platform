@@ -4,7 +4,7 @@ import { SiteHeader, SiteFooter, OT_PUBLIC_CONTACT } from "@/components/ot-desig
 import "../../ot-design.css";
 
 export const metadata: Metadata = {
-  title: "Review Request Received | OverTaxed IL",
+  title: "Review Request Received",
   description: "OverTaxed IL received your Cook County contingency review request.",
 };
 
