@@ -1253,6 +1253,18 @@ model OTFulfillmentArtifact {
   templateVersion  String?  @map("template_version")
   createdAt        DateTime @default(now()) @map("created_at")
 
+  // --- Phase 2 Slice 2: exact provenance binding (additive, nullable) ---
+  // When the packet BYTES were generated, as distinct from when this evidence
+  // row was inserted (`createdAt`).
+  generatedAt                DateTime? @map("generated_at")
+  // Denormalized authoritative order binding. Redundant with fulfillment.orderId
+  // by design: it makes the artifact row self-describing, so a replay can detect
+  // an order/fulfillment mismatch without a join.
+  sourceOrderId              String?   @map("source_order_id")
+  // Stable fingerprint of the property binding in effect at generation time, so
+  // later drift is detectable without storing a second copy of the PIN/address.
+  propertyBindingFingerprint String?   @map("property_binding_fingerprint")
+
   fulfillment OTFulfillment       @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
   // Delivery attempts that sent THIS immutable artifact version (same fulfillment).
   attempts    OTDeliveryAttempt[]
@@ -1260,6 +1272,7 @@ model OTFulfillmentArtifact {
   @@unique([fulfillmentId, version])
   @@unique([fulfillmentId, artifactSha256])
   @@index([artifactSha256])
+  @@index([sourceOrderId])
   @@map("ot_fulfillment_artifact")
 }
 

@@ -17,6 +17,7 @@ import {
   t2ManualReviewControlEnabled,
 } from "@/lib/fulfillment/flag"
 import { decideEnterManualReview } from "@/lib/fulfillment/manual-review"
+import { classifyPropertyBinding } from "@/lib/fulfillment/artifact-binding"
 import type { ManualReviewCapability } from "@/components/admin/ManualReviewControl"
 import {
   deriveAdminEvidenceView,
@@ -46,8 +47,11 @@ export type AdminStateEvent = {
   createdAt: string
 }
 
-const iso = (d: Date | string | null): string | null =>
-  d === null ? null : d instanceof Date ? d.toISOString() : String(d)
+// `== null` covers undefined as well as null on purpose: a missing column must
+// normalize to "absent", never to the literal string "undefined", which would
+// read downstream as a recorded — and therefore checkable — provenance value.
+const iso = (d: Date | string | null | undefined): string | null =>
+  d == null ? null : d instanceof Date ? d.toISOString() : String(d)
 
 export async function loadAdminEvidenceView(
   orderId: string,
@@ -64,7 +68,20 @@ export async function loadAdminEvidenceView(
 
   const order = await prisma.oTOrder.findUnique({
     where: { id: orderId },
-    select: { id: true, tier: true, status: true, amountPaid: true, createdAt: true },
+    // `propertyPin` and `propertyAddress` are the authoritative property inputs.
+    // They are selected ONLY to recompute the expected binding fingerprint below
+    // and are never placed on the view input, which has no field able to hold
+    // them. See `mapFulfillment`: the comparison result — a bounded enum — is the
+    // only thing that crosses into the pure read model.
+    select: {
+      id: true,
+      tier: true,
+      status: true,
+      amountPaid: true,
+      createdAt: true,
+      propertyPin: true,
+      propertyAddress: true,
+    },
   })
   if (!order) return { kind: "not_found" }
 
@@ -82,8 +99,10 @@ export async function loadAdminEvidenceView(
       lastReasonCode: true,
       createdAt: true,
       updatedAt: true,
-      // NOTE: leaseToken, artifact.storageLocator, and attempt.idempotencyKey are
-      // deliberately NOT selected — they never leave the database.
+      // NOTE: artifact.storageLocator and attempt.idempotencyKey are deliberately
+      // NOT selected — they never leave the database. `leaseToken` IS selected,
+      // but only so `decideEnterManualReview` can evaluate lease ownership below;
+      // `mapFulfillment` drops it, so it never reaches the view or the client.
       artifacts: {
         select: {
           version: true,
@@ -92,6 +111,13 @@ export async function loadAdminEvidenceView(
           generatorVersion: true,
           templateVersion: true,
           createdAt: true,
+          // Phase 2 Slice 2 provenance. `propertyBindingFingerprint` is selected
+          // only to be authenticated and reduced to a bounded match state below —
+          // the value is never carried into the view input, which has no field
+          // able to hold it.
+          generatedAt: true,
+          sourceOrderId: true,
+          propertyBindingFingerprint: true,
         },
       },
       attempts: {
@@ -132,7 +158,13 @@ export async function loadAdminEvidenceView(
       amountPaid: Number(order.amountPaid),
       createdAt: iso(order.createdAt) ?? "",
     },
-    fulfillment: fulfillment ? mapFulfillment(fulfillment) : null,
+    fulfillment: fulfillment
+      ? mapFulfillment(fulfillment, {
+          id: order.id,
+          propertyPin: order.propertyPin,
+          propertyAddress: order.propertyAddress,
+        })
+      : null,
     now,
   })
 
@@ -224,6 +256,10 @@ type PrismaFulfillment = {
     generatorVersion: string
     templateVersion: string | null
     createdAt: Date
+    // Nullable: rows bound before Phase 2 Slice 2 carry no provenance.
+    generatedAt: Date | null
+    sourceOrderId: string | null
+    propertyBindingFingerprint: string | null
   }>
   attempts: Array<{
     attemptNumber: number
@@ -250,7 +286,21 @@ type PrismaFulfillment = {
   }>
 }
 
-function mapFulfillment(f: PrismaFulfillment): EvidenceFulfillmentInput {
+/**
+ * The authoritative property identity an artifact's binding is checked against.
+ * This shape exists only inside the loader; nothing derived from it other than a
+ * `PropertyBindingState` is allowed past `mapFulfillment`'s return statement.
+ */
+type AuthoritativeProperty = {
+  id: string
+  propertyPin: string | null
+  propertyAddress: string | null
+}
+
+function mapFulfillment(
+  f: PrismaFulfillment,
+  order: AuthoritativeProperty,
+): EvidenceFulfillmentInput {
   return {
     id: f.id,
     kind: String(f.kind),
@@ -269,6 +319,19 @@ function mapFulfillment(f: PrismaFulfillment): EvidenceFulfillmentInput {
       generatorVersion: a.generatorVersion,
       templateVersion: a.templateVersion,
       createdAt: iso(a.createdAt) ?? "",
+      generatedAt: iso(a.generatedAt),
+      sourceOrderId: a.sourceOrderId,
+      // AUTHENTICATED here, at the query boundary — presence is not agreement.
+      // The stored fingerprint is validated and compared against one recomputed
+      // from the current authoritative order id / PIN / address; only the bounded
+      // match state survives this line. Neither fingerprint, nor the PIN, nor the
+      // address goes any further.
+      propertyBinding: classifyPropertyBinding({
+        storedFingerprint: a.propertyBindingFingerprint,
+        orderId: order.id,
+        propertyPin: order.propertyPin,
+        propertyAddress: order.propertyAddress,
+      }),
     })),
     attempts: f.attempts.map((a) => ({
       attemptNumber: a.attemptNumber,
