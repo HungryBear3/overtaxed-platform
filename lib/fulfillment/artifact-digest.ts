@@ -22,6 +22,11 @@ export function computeArtifactSha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+/** Canonical private key for immutable T2 artifact bytes. */
+export function contentAddressedT2ArtifactLocator(sha256: string): string {
+  return `t2-artifacts/sha256/${sha256}.pdf`;
+}
+
 /**
  * Stable, bounded fingerprint of the property binding that a packet claims as
  * its source.

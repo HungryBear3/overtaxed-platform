@@ -56,6 +56,21 @@ function input(
       status: "PAID",
       propertyPin: PIN,
       propertyAddress: ADDRESS,
+      analysisAcknowledgedAt: new Date("2026-08-09T11:00:00.000Z"),
+      acknowledgmentVersion: "analysis_ack_v1",
+      acknowledgmentEvidence: { acknowledged: true, version: "analysis_ack_v1" },
+      checkoutKey: "ord_123:checkout",
+      contractKey: "ord_123:contract",
+      stripeSessionId: "cs_test_ord_123",
+      checkoutPriceId: "price_t2",
+      checkoutProductId: "product_t2",
+      checkoutAmountCents: 6900,
+      checkoutCurrency: "usd",
+      settledAmountCents: 6900,
+      settledCurrency: "usd",
+      amountPaid: 69,
+      attempt: 0,
+      recoveryReason: null,
       refunded: false,
       disputed: false,
     },
@@ -130,6 +145,20 @@ describe("Slice 2 — eligibility and binding fail closed", () => {
         /^[0-9a-f]{64}$/,
       );
     }
+  });
+
+  it("accepts the genuine modern first-checkout attempt value zero", () => {
+    expect(input().order?.attempt).toBe(0);
+    expect(decideArtifactBinding(input()).ok).toBe(true);
+  });
+
+  it("refuses a recovery-marked or negative-attempt row as legacy", () => {
+    expect(blockerOf(decideArtifactBinding(input({
+      order: { ...input().order!, recoveryReason: "MANUAL_RECOVERY" },
+    })))).toBe("LEGACY_ORDER_EXCLUDED");
+    expect(blockerOf(decideArtifactBinding(input({
+      order: { ...input().order!, attempt: -1 },
+    })))).toBe("LEGACY_ORDER_EXCLUDED");
   });
 
   it("refuses when the feature flag is absent/default-off", () => {
@@ -257,6 +286,13 @@ describe("Slice 2 — eligibility and binding fail closed", () => {
     const decision = decideArtifactBinding(
       input({ fulfillment: { ...input().fulfillment!, status } }),
     );
+    expect(blockerOf(decision)).toBe("INELIGIBLE_FULFILLMENT_STATUS");
+  });
+
+  it("refuses a fulfillment of the wrong kind", () => {
+    const decision = decideArtifactBinding(input({
+      fulfillment: { ...input().fulfillment!, kind: "T2_PACKET_DELIVERY" },
+    }));
     expect(blockerOf(decision)).toBe("INELIGIBLE_FULFILLMENT_STATUS");
   });
 });
@@ -721,11 +757,8 @@ describe("Slice 2 — generation time must not follow the trusted transaction cl
     const decision = decideArtifactBinding(
       input({
         order: {
-          id: ORDER_ID,
+          ...input().order!,
           tier: "T1",
-          status: "PAID",
-          propertyPin: PIN,
-          propertyAddress: ADDRESS,
         },
         provenance: {
           sourceOrderId: ORDER_ID,

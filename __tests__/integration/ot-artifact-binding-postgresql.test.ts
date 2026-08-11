@@ -11,6 +11,12 @@
  * Requires TEST_DATABASE_URL pointing at a DISPOSABLE local database. It must
  * never be aimed at Production or a shared Preview database.
  */
+const readBackMock = jest.fn();
+
+jest.mock("@/lib/fulfillment-runtime/t2-artifact-storage", () => ({
+  readT2ArtifactBytes: (...args: unknown[]) => readBackMock(...args),
+}));
+
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { Pool } from "pg";
@@ -34,29 +40,28 @@ describeIfDb("OT T2 artifact provenance binding — PostgreSQL proof", () => {
   let pool: Pool;
   let prisma: PrismaClient;
   let store: ReturnType<typeof createPrismaArtifactBindingStore>;
-  let disabledStore: ReturnType<typeof createPrismaArtifactBindingStore>;
   let prefix: string;
+  let priorBindingFlag: string | undefined;
 
   beforeAll(() => {
+    priorBindingFlag = process.env.OT_T2_ARTIFACT_BINDING_ENABLED;
+    process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true";
     pool = new Pool({ connectionString: testDatabaseUrl, max: 10, ssl: false });
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
     const client = prisma as unknown as Parameters<
       typeof createPrismaArtifactBindingStore
     >[0];
-    // Activation is a construction-time dependency, never command data, so this
-    // suite enables the store by injection rather than by mutating the process
-    // environment. `disabledStore` proves the same live client stays inert when
-    // the gate is off.
-    store = createPrismaArtifactBindingStore(client, {
-      isBindingEnabled: () => true,
-    });
-    disabledStore = createPrismaArtifactBindingStore(client, {
-      isBindingEnabled: () => false,
-    });
+    store = createPrismaArtifactBindingStore(client);
   });
 
   beforeEach(() => {
     prefix = `ot_bind_pg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    readBackMock.mockReset();
+    readBackMock.mockImplementation(async ({ locator }: { locator: string }) => {
+      if (locator.includes(computeArtifactSha256(BYTES))) return BYTES;
+      if (locator.includes(computeArtifactSha256(OTHER_BYTES))) return OTHER_BYTES;
+      throw new Error("unrecognized disposable content address");
+    });
   });
 
   afterEach(async () => {
@@ -66,6 +71,8 @@ describeIfDb("OT T2 artifact provenance binding — PostgreSQL proof", () => {
   afterAll(async () => {
     await prisma.$disconnect();
     await pool.end();
+    if (priorBindingFlag === undefined) delete process.env.OT_T2_ARTIFACT_BINDING_ENABLED;
+    else process.env.OT_T2_ARTIFACT_BINDING_ENABLED = priorBindingFlag;
   });
 
   async function seed(
@@ -76,13 +83,28 @@ describeIfDb("OT T2 artifact provenance binding — PostgreSQL proof", () => {
       address?: string | null;
       fulfillmentStatus?: OTFulfillmentStatus;
       withFulfillment?: boolean;
+      analysisAcknowledgedAt?: Date | null;
+      acknowledgmentVersion?: string | null;
+      acknowledgmentEvidence?: Prisma.InputJsonValue | Prisma.NullableJsonNullValueInput;
+      checkoutKey?: string | null;
+      contractKey?: string | null;
+      stripeSessionId?: string | null;
+      checkoutPriceId?: string | null;
+      checkoutProductId?: string | null;
+      checkoutAmountCents?: number | null;
+      checkoutCurrency?: string | null;
+      settledAmountCents?: number | null;
+      settledCurrency?: string | null;
+      amountPaid?: number;
+      attempt?: number;
+      recoveryReason?: string | null;
     } = {},
   ) {
     const order = await prisma.oTOrder.create({
       data: {
         id: `${prefix}_order`,
-        checkoutKey: `${prefix}:checkout`,
-        contractKey: `${prefix}:contract`,
+        checkoutKey: overrides.checkoutKey === undefined ? `${prefix}:checkout` : overrides.checkoutKey,
+        contractKey: overrides.contractKey === undefined ? `${prefix}:contract` : overrides.contractKey,
         tier: overrides.tier ?? "T2",
         email: `${prefix}@example.com`,
         propertyAddress:
@@ -90,13 +112,20 @@ describeIfDb("OT T2 artifact provenance binding — PostgreSQL proof", () => {
         propertyPin: overrides.pin === undefined ? PIN : overrides.pin,
         township: "Northfield",
         windowStatus: "OPEN",
-        checkoutAmountCents: 6900,
-        checkoutCurrency: "usd",
-        settledAmountCents: 6900,
-        settledCurrency: "usd",
-        stripeSessionId: `${prefix}_session`,
+        analysisAcknowledgedAt: overrides.analysisAcknowledgedAt === undefined ? new Date("2026-08-09T11:00:00.000Z") : overrides.analysisAcknowledgedAt,
+        acknowledgmentVersion: overrides.acknowledgmentVersion === undefined ? "analysis_ack_v1" : overrides.acknowledgmentVersion,
+        acknowledgmentEvidence: overrides.acknowledgmentEvidence === undefined ? { acknowledged: true, version: "analysis_ack_v1" } : overrides.acknowledgmentEvidence,
+        checkoutPriceId: overrides.checkoutPriceId === undefined ? `${prefix}_price` : overrides.checkoutPriceId,
+        checkoutProductId: overrides.checkoutProductId === undefined ? `${prefix}_product` : overrides.checkoutProductId,
+        checkoutAmountCents: overrides.checkoutAmountCents === undefined ? 6900 : overrides.checkoutAmountCents,
+        checkoutCurrency: overrides.checkoutCurrency === undefined ? "usd" : overrides.checkoutCurrency,
+        settledAmountCents: overrides.settledAmountCents === undefined ? 6900 : overrides.settledAmountCents,
+        settledCurrency: overrides.settledCurrency === undefined ? "usd" : overrides.settledCurrency,
+        amountPaid: overrides.amountPaid === undefined ? 69 : overrides.amountPaid,
+        stripeSessionId: overrides.stripeSessionId === undefined ? `${prefix}_session` : overrides.stripeSessionId,
+        recoveryReason: overrides.recoveryReason === undefined ? null : overrides.recoveryReason,
         status: overrides.status ?? "PAID",
-        attempt: 1,
+        attempt: overrides.attempt ?? 0,
       },
     });
 
@@ -123,7 +152,6 @@ describeIfDb("OT T2 artifact provenance binding — PostgreSQL proof", () => {
       orderId: order.id,
       fulfillmentId: fulfillment.id,
       bytes: BYTES,
-      storageLocator: `artifacts/${prefix}/v1.pdf`,
       provenance: {
         sourceOrderId: order.id,
         propertyPin: PIN,
@@ -263,8 +291,9 @@ describeIfDb("OT T2 artifact provenance binding — PostgreSQL proof", () => {
 
   it("writes nothing when the feature flag is absent/default-off", async () => {
     const { order, fulfillment } = await seed();
-    // Same live client, gate off: the refusal happens before any transaction.
-    const result = await disabledStore.bind(command(order, fulfillment!));
+    delete process.env.OT_T2_ARTIFACT_BINDING_ENABLED;
+    const result = await store.bind(command(order, fulfillment!));
+    process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true";
 
     expect(result).toEqual({ ok: false, blocker: "FLAG_DISABLED" });
     const count = await prisma.oTFulfillmentArtifact.count({
@@ -280,6 +309,115 @@ describeIfDb("OT T2 artifact provenance binding — PostgreSQL proof", () => {
       statusRevision: 0,
     });
   });
+
+  it("refuses a stored-byte mismatch before opening a binding transaction", async () => {
+    const { order, fulfillment } = await seed();
+    readBackMock.mockResolvedValue(OTHER_BYTES);
+
+    await expect(store.bind(command(order, fulfillment!))).resolves.toEqual({
+      ok: false,
+      blocker: "STORED_BYTES_MISMATCH",
+    });
+    expect(await prisma.oTFulfillmentArtifact.count({
+      where: { fulfillmentId: fulfillment!.id },
+    })).toBe(0);
+    expect(await prisma.oTFulfillment.findUnique({
+      where: { id: fulfillment!.id },
+    })).toMatchObject({ status: "ARTIFACT_PENDING", statusRevision: 0 });
+  });
+
+  it("fails closed when activation is withdrawn while the locked transaction waits", async () => {
+    const { order, fulfillment } = await seed();
+    const locker = await pool.connect();
+    let pending: Promise<Awaited<ReturnType<typeof store.bind>>> | undefined;
+    try {
+      await locker.query("BEGIN");
+      await locker.query('SELECT "id" FROM "ot_order" WHERE "id" = $1 FOR UPDATE', [order.id]);
+      pending = store.bind(command(order, fulfillment!));
+
+      let observedLockWait = false;
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        const waits = await pool.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count
+             FROM pg_stat_activity
+            WHERE datname = current_database()
+              AND wait_event_type = 'Lock'
+              AND query LIKE '%FROM "ot_order"%'`,
+        );
+        if (Number(waits.rows[0]?.count ?? 0) > 0) {
+          observedLockWait = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(observedLockWait).toBe(true);
+
+      delete process.env.OT_T2_ARTIFACT_BINDING_ENABLED;
+      await locker.query("COMMIT");
+      await expect(pending).resolves.toEqual({ ok: false, blocker: "FLAG_DISABLED" });
+    } finally {
+      process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true";
+      await locker.query("ROLLBACK").catch(() => undefined);
+      locker.release();
+      if (pending) await pending.catch(() => undefined);
+    }
+
+    expect(await prisma.oTFulfillmentArtifact.count({
+      where: { fulfillmentId: fulfillment!.id },
+    })).toBe(0);
+    expect(await prisma.oTFulfillment.findUnique({
+      where: { id: fulfillment!.id },
+    })).toMatchObject({ status: "ARTIFACT_PENDING", statusRevision: 0 });
+  });
+
+  it.each(["REFUNDED", "CANCELLED"])(
+    "fails closed when %s wins after stored-byte proof but before the locked bind",
+    async (terminalStatus) => {
+      const { order, fulfillment } = await seed();
+      const locker = await pool.connect();
+      let pending: Promise<Awaited<ReturnType<typeof store.bind>>> | undefined;
+      try {
+        await locker.query("BEGIN");
+        await locker.query('SELECT "id" FROM "ot_order" WHERE "id" = $1 FOR UPDATE', [order.id]);
+        pending = store.bind(command(order, fulfillment!));
+
+        let observedLockWait = false;
+        for (let attempt = 0; attempt < 50; attempt += 1) {
+          const waits = await pool.query<{ count: string }>(
+            `SELECT COUNT(*)::text AS count
+               FROM pg_stat_activity
+              WHERE datname = current_database()
+                AND wait_event_type = 'Lock'
+                AND query LIKE '%FROM "ot_order"%'`,
+          );
+          if (Number(waits.rows[0]?.count ?? 0) > 0) {
+            observedLockWait = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(observedLockWait).toBe(true);
+
+        await locker.query('UPDATE "ot_order" SET "status" = $1 WHERE "id" = $2', [terminalStatus, order.id]);
+        await locker.query("COMMIT");
+        await expect(pending).resolves.toEqual({
+          ok: false,
+          blocker: "INELIGIBLE_SETTLEMENT",
+        });
+      } finally {
+        await locker.query("ROLLBACK").catch(() => undefined);
+        locker.release();
+        if (pending) await pending.catch(() => undefined);
+      }
+
+      expect(await prisma.oTFulfillmentArtifact.count({
+        where: { fulfillmentId: fulfillment!.id },
+      })).toBe(0);
+      expect(await prisma.oTFulfillment.findUnique({
+        where: { id: fulfillment!.id },
+      })).toMatchObject({ status: "ARTIFACT_PENDING", statusRevision: 0 });
+    },
+  );
 
   it.each([
     ["CHECKOUT_CREATED"],
@@ -324,6 +462,59 @@ describeIfDb("OT T2 artifact provenance binding — PostgreSQL proof", () => {
         where: { fulfillmentId: fulfillment!.id },
       }),
     ).toBe(0);
+  });
+
+  it.each([
+    ["analysis acknowledgment timestamp", { analysisAcknowledgedAt: null }, "MISSING_ANALYSIS_ACKNOWLEDGMENT"],
+    ["analysis acknowledgment version", { acknowledgmentVersion: null }, "MISSING_ANALYSIS_ACKNOWLEDGMENT"],
+    ["analysis acknowledgment evidence", { acknowledgmentEvidence: Prisma.JsonNull }, "MISSING_ANALYSIS_ACKNOWLEDGMENT"],
+    ["checkout key", { checkoutKey: null }, "INCOMPLETE_CHECKOUT_CONTRACT"],
+    ["contract key", { contractKey: null }, "INCOMPLETE_CHECKOUT_CONTRACT"],
+    ["Stripe session", { stripeSessionId: null }, "INCOMPLETE_CHECKOUT_CONTRACT"],
+    ["checkout price", { checkoutPriceId: null }, "INCOMPLETE_CHECKOUT_CONTRACT"],
+    ["checkout product", { checkoutProductId: null }, "INCOMPLETE_CHECKOUT_CONTRACT"],
+    ["checkout amount", { checkoutAmountCents: null }, "INCOMPLETE_CHECKOUT_CONTRACT"],
+    ["checkout currency", { checkoutCurrency: null }, "INCOMPLETE_CHECKOUT_CONTRACT"],
+    ["positive settled amount", { settledAmountCents: 0 }, "INVALID_SETTLEMENT"],
+    ["settled currency", { settledCurrency: null }, "INVALID_SETTLEMENT"],
+    ["positive amountPaid", { amountPaid: 0 }, "INVALID_SETTLEMENT"],
+    ["matching amount", { settledAmountCents: 6800 }, "CHECKOUT_SETTLEMENT_MISMATCH"],
+    ["matching currency", { settledCurrency: "cad" }, "CHECKOUT_SETTLEMENT_MISMATCH"],
+    ["nonnegative modern attempt marker", { attempt: -1 }, "LEGACY_ORDER_EXCLUDED"],
+    ["absence of recovery marker", { recoveryReason: "MANUAL_RECOVERY" }, "LEGACY_ORDER_EXCLUDED"],
+  ] as const)("fails closed with zero mutation when %s is invalid", async (_label, overrides, blocker) => {
+    const { order, fulfillment } = await seed(overrides as Parameters<typeof seed>[0]);
+    const result = await store.bind(command(order, fulfillment!));
+    expect(result).toEqual({ ok: false, blocker });
+    expect(await prisma.oTFulfillmentArtifact.count({ where: { fulfillmentId: fulfillment!.id } })).toBe(0);
+    expect(await prisma.oTFulfillment.findUnique({ where: { id: fulfillment!.id } })).toMatchObject({
+      status: "ARTIFACT_PENDING",
+      statusRevision: 0,
+    });
+  });
+
+  it("explicitly refuses a synthetic ARTIFACT_PENDING legacy-shaped paid row", async () => {
+    const { order, fulfillment } = await seed({
+      attempt: 0,
+      analysisAcknowledgedAt: null,
+      acknowledgmentVersion: null,
+      acknowledgmentEvidence: Prisma.JsonNull,
+      checkoutKey: null,
+      contractKey: null,
+      stripeSessionId: null,
+      checkoutPriceId: null,
+      checkoutProductId: null,
+      checkoutAmountCents: null,
+      checkoutCurrency: null,
+      settledAmountCents: null,
+      settledCurrency: null,
+      amountPaid: 0,
+    });
+    await expect(store.bind(command(order, fulfillment!))).resolves.toEqual({
+      ok: false,
+      blocker: "MISSING_ANALYSIS_ACKNOWLEDGMENT",
+    });
+    expect(await prisma.oTFulfillmentArtifact.count({ where: { fulfillmentId: fulfillment!.id } })).toBe(0);
   });
 
   it("refuses a fulfillment belonging to a different order and mutates nothing", async () => {
