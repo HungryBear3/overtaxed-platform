@@ -77,6 +77,11 @@ export type ArtifactBindingBlocker =
   | "INELIGIBLE_TIER"
   | "INELIGIBLE_SETTLEMENT"
   | "INCOMPLETE_PROPERTY_BINDING"
+  | "LEGACY_ORDER_EXCLUDED"
+  | "MISSING_ANALYSIS_ACKNOWLEDGMENT"
+  | "INCOMPLETE_CHECKOUT_CONTRACT"
+  | "INVALID_SETTLEMENT"
+  | "CHECKOUT_SETTLEMENT_MISMATCH"
   | "PROVENANCE_ORDER_MISMATCH"
   | "PROVENANCE_PROPERTY_MISMATCH"
   | "INELIGIBLE_FULFILLMENT_STATUS"
@@ -89,6 +94,8 @@ export type ArtifactBindingBlocker =
   | "GENERATED_AT_IN_FUTURE"
   | "UNTRUSTED_CLOCK"
   | "SHA256_ASSERTION_MISMATCH"
+  | "STORAGE_READ_FAILED"
+  | "STORED_BYTES_MISMATCH"
   | "ARTIFACT_BINDING_CONFLICT";
 
 export const ARTIFACT_BINDING_BLOCKERS: ReadonlySet<string> = new Set<string>([
@@ -99,6 +106,11 @@ export const ARTIFACT_BINDING_BLOCKERS: ReadonlySet<string> = new Set<string>([
   "INELIGIBLE_TIER",
   "INELIGIBLE_SETTLEMENT",
   "INCOMPLETE_PROPERTY_BINDING",
+  "LEGACY_ORDER_EXCLUDED",
+  "MISSING_ANALYSIS_ACKNOWLEDGMENT",
+  "INCOMPLETE_CHECKOUT_CONTRACT",
+  "INVALID_SETTLEMENT",
+  "CHECKOUT_SETTLEMENT_MISMATCH",
   "PROVENANCE_ORDER_MISMATCH",
   "PROVENANCE_PROPERTY_MISMATCH",
   "INELIGIBLE_FULFILLMENT_STATUS",
@@ -111,6 +123,8 @@ export const ARTIFACT_BINDING_BLOCKERS: ReadonlySet<string> = new Set<string>([
   "GENERATED_AT_IN_FUTURE",
   "UNTRUSTED_CLOCK",
   "SHA256_ASSERTION_MISMATCH",
+  "STORAGE_READ_FAILED",
+  "STORED_BYTES_MISMATCH",
   "ARTIFACT_BINDING_CONFLICT",
 ]);
 
@@ -120,6 +134,21 @@ export type ArtifactBindingOrder = {
   status: string;
   propertyPin: string | null;
   propertyAddress: string | null;
+  analysisAcknowledgedAt: Date | null;
+  acknowledgmentVersion: string | null;
+  acknowledgmentEvidence: unknown;
+  checkoutKey: string | null;
+  contractKey: string | null;
+  stripeSessionId: string | null;
+  checkoutPriceId: string | null;
+  checkoutProductId: string | null;
+  checkoutAmountCents: number | null;
+  checkoutCurrency: string | null;
+  settledAmountCents: number | null;
+  settledCurrency: string | null;
+  amountPaid: number;
+  attempt: number;
+  recoveryReason: string | null;
   refunded?: boolean;
   disputed?: boolean;
 };
@@ -262,7 +291,51 @@ export function decideArtifactBinding(
   if (!presentString(order.propertyAddress))
     return refuse("INCOMPLETE_PROPERTY_BINDING");
 
-  // 6. Packet provenance must name that same order and that same property.
+  // 6. Only orders created by the durable modern checkout contract are eligible.
+  // Historical/manual-recovery rows are deliberately excluded even if a summary
+  // was synthetically moved to ARTIFACT_PENDING.
+  if (!Number.isSafeInteger(order.attempt) || order.attempt < 0 || order.recoveryReason !== null)
+    return refuse("LEGACY_ORDER_EXCLUDED");
+
+  const acknowledgment = order.acknowledgmentEvidence as Record<string, unknown> | null;
+  if (
+    !(order.analysisAcknowledgedAt instanceof Date) ||
+    !Number.isFinite(order.analysisAcknowledgedAt.getTime()) ||
+    order.acknowledgmentVersion !== "analysis_ack_v1" ||
+    !acknowledgment ||
+    acknowledgment.acknowledged !== true ||
+    acknowledgment.version !== "analysis_ack_v1"
+  ) return refuse("MISSING_ANALYSIS_ACKNOWLEDGMENT");
+
+  const checkoutStrings = [
+    order.checkoutKey,
+    order.contractKey,
+    order.stripeSessionId,
+    order.checkoutPriceId,
+    order.checkoutProductId,
+    order.checkoutCurrency,
+  ];
+  if (
+    checkoutStrings.some((value) => !presentString(value)) ||
+    !Number.isSafeInteger(order.checkoutAmountCents) ||
+    (order.checkoutAmountCents ?? 0) <= 0
+  ) return refuse("INCOMPLETE_CHECKOUT_CONTRACT");
+
+  if (
+    !Number.isSafeInteger(order.settledAmountCents) ||
+    (order.settledAmountCents ?? 0) <= 0 ||
+    !presentString(order.settledCurrency) ||
+    !Number.isFinite(order.amountPaid) ||
+    order.amountPaid <= 0
+  ) return refuse("INVALID_SETTLEMENT");
+
+  if (
+    order.checkoutAmountCents !== order.settledAmountCents ||
+    order.checkoutCurrency !== order.settledCurrency ||
+    Math.round(order.amountPaid * 100) !== order.settledAmountCents
+  ) return refuse("CHECKOUT_SETTLEMENT_MISMATCH");
+
+  // 7. Packet provenance must name that same order and that same property.
   const provenance = input.provenance;
   if (provenance?.sourceOrderId !== order.id)
     return refuse("PROVENANCE_ORDER_MISMATCH");
@@ -284,6 +357,8 @@ export function decideArtifactBinding(
     ? REPLAYABLE_FULFILLMENT_STATUSES
     : BINDABLE_FULFILLMENT_STATUSES;
   if (!allowedStatuses.has(String(fulfillment.status)))
+    return refuse("INELIGIBLE_FULFILLMENT_STATUS");
+  if (fulfillment.kind !== "T2_APPEAL_EVIDENCE")
     return refuse("INELIGIBLE_FULFILLMENT_STATUS");
 
   // 8. Bytes must be non-empty and within the explicit bounded size.

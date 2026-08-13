@@ -27,6 +27,8 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { t2ArtifactBindingEnabled } from "@/lib/fulfillment/flag";
+import { computeArtifactSha256, contentAddressedT2ArtifactLocator } from "@/lib/fulfillment/artifact-digest";
+import { readT2ArtifactBytes } from "@/lib/fulfillment-runtime/t2-artifact-storage";
 import {
   decideArtifactBinding,
   isIdenticalBinding,
@@ -43,15 +45,13 @@ export type ArtifactBindingOutcome =
 /**
  * Note what is NOT here: there is no `flagEnabled`. Activation is not something a
  * caller — least of all request-shaped data — gets to assert. The gate is owned by
- * the orchestration seam and re-checked by this store's own injected evaluator.
+ * the orchestration seam and re-checked from the ambient deployment policy here.
  */
 export type BindArtifactCommand = {
   orderId: string;
   fulfillmentId: string;
   bytes: Buffer;
   provenance: ArtifactBindingInput["provenance"];
-  storageLocator: string;
-  assertedSha256?: string;
 };
 
 // `ot_order` is one of the tables that kept camelCase physical column names, so
@@ -62,6 +62,21 @@ type OrderRow = {
   status: string;
   propertyPin: string | null;
   propertyAddress: string | null;
+  analysisAcknowledgedAt: Date | null;
+  acknowledgmentVersion: string | null;
+  acknowledgmentEvidence: unknown;
+  checkoutKey: string | null;
+  contractKey: string | null;
+  stripeSessionId: string | null;
+  checkoutPriceId: string | null;
+  checkoutProductId: string | null;
+  checkoutAmountCents: number | null;
+  checkoutCurrency: string | null;
+  settledAmountCents: number | null;
+  settledCurrency: string | null;
+  amountPaid: number;
+  attempt: number;
+  recoveryReason: string | null;
 };
 
 type FulfillmentRow = {
@@ -151,30 +166,39 @@ type ClientLike = {
 
 export function createPrismaArtifactBindingStore(
   client: ClientLike,
-  deps: {
-    /**
-     * Injected so tests can enable the store without setting a real environment
-     * variable, and so activation is a construction-time dependency rather than
-     * anything a command can carry. Defaults to the strict default-off gate.
-     */
-    isBindingEnabled?: () => boolean;
-  } = {},
 ) {
-  const isBindingEnabled =
-    deps.isBindingEnabled ?? (() => t2ArtifactBindingEnabled(process.env));
-
   return {
     async bind(command: BindArtifactCommand): Promise<ArtifactBindingOutcome> {
-      // Defence in depth: the orchestration seam already refused if disabled.
-      // A disabled deployment does zero work and opens zero transactions.
-      const flagEnabled = isBindingEnabled() === true;
+      // Defence in depth: a disabled deployment opens no storage or database boundary.
+      const flagEnabled = t2ArtifactBindingEnabled(process.env);
       if (!flagEnabled) return { ok: false, blocker: "FLAG_DISABLED" };
+
+      const artifactSha256 = computeArtifactSha256(command.bytes);
+      const storageLocator = contentAddressedT2ArtifactLocator(artifactSha256);
+      let persistedBytes: Buffer;
+      try {
+        persistedBytes = await readT2ArtifactBytes({ locator: storageLocator });
+      } catch {
+        return { ok: false, blocker: "STORAGE_READ_FAILED" };
+      }
+      if (
+        persistedBytes.byteLength !== command.bytes.byteLength ||
+        computeArtifactSha256(persistedBytes) !== artifactSha256
+      ) {
+        return { ok: false, blocker: "STORED_BYTES_MISMATCH" };
+      }
+      if (!t2ArtifactBindingEnabled(process.env))
+        return { ok: false, blocker: "FLAG_DISABLED" };
 
       try {
         return await client.$transaction(async (tx) => {
           // Authoritative parent lock. Settlement is READ here, never written.
           const orders = await tx.$queryRaw<OrderRow[]>(
-            Prisma.sql`SELECT "id", "tier", "status", "propertyPin", "propertyAddress"
+            Prisma.sql`SELECT "id", "tier", "status", "propertyPin", "propertyAddress",
+                              "analysisAcknowledgedAt", "acknowledgmentVersion", "acknowledgmentEvidence",
+                              "checkoutKey", "contractKey", "stripeSessionId", "checkoutPriceId",
+                              "checkoutProductId", "checkoutAmountCents", "checkoutCurrency",
+                              "settledAmountCents", "settledCurrency", "amountPaid", "attempt", "recoveryReason"
                        FROM "ot_order" WHERE "id" = ${command.orderId} FOR UPDATE`,
           );
           const orderRow = orders[0];
@@ -220,7 +244,7 @@ export function createPrismaArtifactBindingStore(
           // Re-run the full pure decision inside the lock against freshly read
           // state. The caller's view of the world is never trusted.
           const decision = decideArtifactBinding({
-            flagEnabled,
+            flagEnabled: t2ArtifactBindingEnabled(process.env),
             trustedNow,
             bytes: command.bytes,
             existingBinding: existing !== null,
@@ -231,12 +255,27 @@ export function createPrismaArtifactBindingStore(
                   status: orderRow.status,
                   propertyPin: orderRow.propertyPin,
                   propertyAddress: orderRow.propertyAddress,
+                  analysisAcknowledgedAt: orderRow.analysisAcknowledgedAt,
+                  acknowledgmentVersion: orderRow.acknowledgmentVersion,
+                  acknowledgmentEvidence: orderRow.acknowledgmentEvidence,
+                  checkoutKey: orderRow.checkoutKey,
+                  contractKey: orderRow.contractKey,
+                  stripeSessionId: orderRow.stripeSessionId,
+                  checkoutPriceId: orderRow.checkoutPriceId,
+                  checkoutProductId: orderRow.checkoutProductId,
+                  checkoutAmountCents: orderRow.checkoutAmountCents,
+                  checkoutCurrency: orderRow.checkoutCurrency,
+                  settledAmountCents: orderRow.settledAmountCents,
+                  settledCurrency: orderRow.settledCurrency,
+                  amountPaid: orderRow.amountPaid,
+                  attempt: orderRow.attempt,
+                  recoveryReason: orderRow.recoveryReason,
                 }
               : null,
             fulfillment,
             provenance: command.provenance,
-            storageLocator: command.storageLocator,
-            assertedSha256: command.assertedSha256,
+            storageLocator,
+            assertedSha256: artifactSha256,
           });
 
           if (!decision.ok) throw new BindingRefusal(decision.blocker);
@@ -251,6 +290,8 @@ export function createPrismaArtifactBindingStore(
             // difference in bytes, provenance, or locator => stable conflict.
             if (!isIdenticalBinding(existing, identity))
               throw new BindingRefusal("ARTIFACT_BINDING_CONFLICT");
+            if (!t2ArtifactBindingEnabled(process.env))
+              throw new BindingRefusal("FLAG_DISABLED");
             return {
               ok: true as const,
               created: false,
@@ -262,6 +303,8 @@ export function createPrismaArtifactBindingStore(
           // Symmetrically, only a CREATE decision may insert.
           if (decision.mode !== "CREATE")
             throw new BindingRefusal("ARTIFACT_BINDING_CONFLICT");
+          if (!t2ArtifactBindingEnabled(process.env))
+            throw new BindingRefusal("FLAG_DISABLED");
 
           const created = await tx.oTFulfillmentArtifact.create({
             data: {
@@ -297,6 +340,11 @@ export function createPrismaArtifactBindingStore(
             select: ARTIFACT_SELECT,
           });
 
+          // If activation is withdrawn while the INSERT is awaiting PostgreSQL,
+          // abort the transaction before the summary can advertise readiness.
+          if (!t2ArtifactBindingEnabled(process.env))
+            throw new BindingRefusal("FLAG_DISABLED");
+
           // Advance the summary only from the exact revision we decided
           // against. A concurrent transition invalidates this binding rather
           // than clobbering it.
@@ -313,6 +361,10 @@ export function createPrismaArtifactBindingStore(
           });
           if (advanced.count !== 1)
             throw new BindingRefusal("ARTIFACT_BINDING_CONFLICT");
+          // The transition and artifact insert are one transaction. A withdrawal
+          // observed while the CAS awaited rolls both writes back.
+          if (!t2ArtifactBindingEnabled(process.env))
+            throw new BindingRefusal("FLAG_DISABLED");
 
           return {
             ok: true as const,
