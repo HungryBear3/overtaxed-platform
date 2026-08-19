@@ -16,8 +16,9 @@ const VALID_TOWNSHIPS = new Set([
   "New Trier", "Northfield", "Palatine", "Wheeling",
   "Chicago (City)",
   "Berwyn", "Hanover", "Oak Park", "River Forest", "Schaumburg",
-  // Waitlist sentinel — used by Board of Review waitlist form
-  "Board of Review Waitlist",
+  // The "Board of Review Waitlist" sentinel is deliberately absent: the BOR
+  // product is held, and accepting waitlist enrolment for it induces homeowners
+  // to defer on a live statutory deadline (BL-A7).
   // HOA / condo association waitlist — homepage HOA section
   "HOA Waitlist",
   // Free check result signup when township unknown or user just wants reminders

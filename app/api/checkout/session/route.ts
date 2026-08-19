@@ -34,11 +34,22 @@ import {
   marketingGateReason,
   previewNoopResponseBody,
 } from "@/lib/marketing/preview-gate"
+import { isHeldProduct } from "@/lib/products/held"
+import { heldProductResponse } from "@/lib/products/held-response"
 
 const PRICE_MAP: Record<"T2" | "T3", string | undefined> = {
   T2: process.env.STRIPE_PRICE_T2_DIY_PRO?.trim(),
   T3: process.env.STRIPE_PRICE_T3_DFY?.trim(),
 }
+
+/** Maps a checkout tier onto the product whose hold governs it. */
+const TIER_PRODUCT_IDS: Record<"T2" | "T3", string> = {
+  T2: "T2_PACKET",
+  T3: "T3_DFY",
+}
+
+/** Upper bound on the accepted checkout request body. */
+const MAX_CHECKOUT_BODY_BYTES = 16 * 1024
 
 const PAID_STATUSES = ["PAID", "PAID_RECOVERY_REQUIRED"] as const
 const isPaidStatus = (status: string | null | undefined) =>
@@ -308,11 +319,46 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const parsed = CheckoutInput.safeParse(await req.json().catch(() => null))
+  // Bound the body before parsing it. An unauthenticated payment endpoint must
+  // not accept an arbitrarily large document just to discover the tier is held.
+  const declaredLength = Number(req.headers.get("content-length") ?? "0")
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_CHECKOUT_BODY_BYTES) {
+    return NextResponse.json(
+      { error: "Check the checkout details and try again.", code: "CHECKOUT_BODY_TOO_LARGE" },
+      { status: 413 },
+    )
+  }
+
+  const rawBody = await req.text().catch(() => null)
+  if (rawBody === null || rawBody.length > MAX_CHECKOUT_BODY_BYTES) {
+    return NextResponse.json(
+      { error: "Check the checkout details and try again.", code: "CHECKOUT_BODY_TOO_LARGE" },
+      { status: 413 },
+    )
+  }
+
+  const parsed = CheckoutInput.safeParse(
+    (() => {
+      try {
+        return JSON.parse(rawBody) as unknown
+      } catch {
+        return null
+      }
+    })(),
+  )
   if (!parsed.success) {
     return NextResponse.json({ error: "Check the checkout details and try again.", code: "INVALID_CHECKOUT_INPUT" }, { status: 400 })
   }
   const input = parsed.data
+
+  // Held products fail closed before a provider client is constructed. This is
+  // the tier boundary; it does not depend on a Price being absent from the
+  // environment, which is configuration rather than a hold.
+  const tierProductId = TIER_PRODUCT_IDS[input.tier]
+  if (isHeldProduct(tierProductId)) {
+    return heldProductResponse(tierProductId, "api/checkout/session")
+  }
+
   const normalizedEmail = normalizeEmail(input.email)
   const priceId = PRICE_MAP[input.tier]
   if (!priceId) {

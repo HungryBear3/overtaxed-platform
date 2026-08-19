@@ -6,6 +6,8 @@ import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
 import { put, del } from "@vercel/blob"
 import { fillOfficialCookCountyAuthForm } from "@/lib/document-generation/fill-official-auth-form"
+import { heldProductResponse } from "@/lib/products/held-response"
+import { isHeldProduct } from "@/lib/products/held"
 import { z } from "zod"
 
 const authorizationSchema = z.object({
@@ -34,6 +36,18 @@ export async function POST(
     const session = await getSession(request)
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    // Staff-assisted filing is the held Done-For-You product. This route
+    // captured a drawn signature onto the county's official
+    // Attorney/Representative form — the single most consequential artefact on
+    // the platform, and one CC-11 says OverTaxed IL cannot lawfully act on.
+    //
+    // The hold is checked after auth (so a withdrawn endpoint does not become
+    // an unauthenticated probe for valid appeal IDs) and before the body is
+    // parsed or the appeal is read, so no signature reaches the process.
+    if (isHeldProduct("T3_DFY")) {
+      return heldProductResponse("T3_DFY", "appeals.authorization.create")
     }
 
     const { id: appealId } = await params

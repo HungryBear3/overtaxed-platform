@@ -2,10 +2,25 @@
  * Create and send Stripe invoices for contingency fees.
  * Uses send_invoice so Stripe emails the customer with a payment link.
  */
-import { stripe } from "@/lib/stripe/client"
 import { prisma } from "@/lib/db"
+import { heldProductFailure } from "@/lib/products/held"
 
 const MIN_AMOUNT_CENTS = 50 // Stripe minimum $0.50
+
+/**
+ * This module invoices the 22% contingency fee, which is a held product.
+ *
+ * Stripe is deliberately NOT imported at module scope: importing it here is
+ * what previously allowed a provider client to be constructed before any hold
+ * assertion ran. Every exported function asserts its hold first and only then
+ * dynamically acquires the client.
+ */
+const BOUNDARY = "lib/billing/stripe-invoice"
+
+async function acquireStripe() {
+  const { getStripe } = await import("@/lib/stripe/client")
+  return getStripe()
+}
 
 /**
  * Get or create Stripe Customer for a user.
@@ -13,6 +28,10 @@ const MIN_AMOUNT_CENTS = 50 // Stripe minimum $0.50
 export async function getOrCreateStripeCustomer(
   userId: string
 ): Promise<string | null> {
+  // Held: refuse before touching the provider or reading customer records.
+  if (heldProductFailure("CONTINGENCY", BOUNDARY)) return null
+
+  const stripe = await acquireStripe()
   if (!stripe) return null
 
   const user = await prisma.user.findUnique({
@@ -51,6 +70,11 @@ export async function createAndSendStripeInvoice(args: {
   invoiceNumber: string
   description?: string
 }): Promise<CreateStripeInvoiceResult> {
+  // Held: refuse before acquiring Stripe, creating a customer, or writing.
+  const held = heldProductFailure("PERFORMANCE_INVOICE", BOUNDARY)
+  if (held) return held
+
+  const stripe = await acquireStripe()
   if (!stripe) {
     return { success: false, error: "Stripe not configured" }
   }

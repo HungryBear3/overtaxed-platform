@@ -1,7 +1,24 @@
 import { resend, FROM_EMAIL } from "./resend"
+import { isHeldProduct } from "@/lib/products/held"
 
 const SUPPORT_EMAIL = "support@overtaxed-il.com"
 const OPS_EMAIL = "alexyopenclaw@gmail.com"
+
+/**
+ * Checkout tiers that map onto a held product.
+ *
+ * T3 is the $97 Done-For-You service. Its purchase route is closed, so nothing
+ * reaches these helpers with "T3" today — but a template outlives the route in
+ * front of it, and the T3 confirmation copy promised an authorization form to
+ * sign "before we file", which OverTaxed IL does not and cannot do. The hold is
+ * therefore enforced where the message is composed, not only where it is sold.
+ */
+const TIER_PRODUCT_IDS: Record<string, string> = { T3: "T3_DFY" }
+
+function heldTier(tier: string): boolean {
+  const productId = TIER_PRODUCT_IDS[tier]
+  return productId != null && isHeldProduct(productId)
+}
 
 export async function sendContactEmail(args: {
   name: string
@@ -183,10 +200,16 @@ export async function sendNewOrderAlert(args: {
   sessionId: string
 }): Promise<boolean> {
   const { tier, customerEmail, customerName, propertyPin, amountPaid, sessionId } = args
+  if (heldTier(tier)) {
+    // An ops alert for a held tier would say an order exists for something that
+    // cannot be sold. If one ever arrives, the discrepancy belongs in the logs
+    // and the payment record, not in an inbox that reads it as work to do.
+    console.error(`[email] Refusing order alert for held tier "${tier}" (session ${sessionId})`)
+    return false
+  }
   const tierLabels: Record<string, string> = {
     T1: "DIY Starter ($37)",
     T2: "DIY Pro ($69)",
-    T3: "Done-For-You ($97)",
   }
   const label = tierLabels[tier] ?? tier
   const subject = `[NEW ORDER] ${label} — ${customerEmail}`
@@ -225,17 +248,24 @@ export async function sendOrderConfirmation(args: {
   amountPaid: number
 }): Promise<boolean> {
   const { tier, customerEmail, customerName, address, amountPaid } = args
+  if (heldTier(tier)) {
+    // Confirming a held tier is the worst of the two failures: it tells a
+    // customer their purchase is in hand and sets them waiting on a fulfilment
+    // step that will not happen, against a deadline that is running.
+    console.error(`[email] Refusing order confirmation for held tier "${tier}"`)
+    return false
+  }
   const tierLabels: Record<string, string> = {
     T1: "DIY Starter",
     T2: "DIY Appeal Packet",
-    T3: "Done-For-You",
   }
   const label = tierLabels[tier] ?? tier
-  const isT3 = tier === "T3"
   const subject = `Your OverTaxed IL order — ${label}`
-  const nextStep = isT3
-    ? "We'll email you within 24 hours with an authorization form to sign before we file."
-    : "We'll email you within 24 hours with your completed appeal packet."
+  // The T3 branch here promised "an authorization form to sign before we
+  // file". OverTaxed IL does not file, sign, or represent anyone, so there was
+  // no honest version of that sentence to keep; the tier that produced it is
+  // refused above and the remaining copy describes preparation only.
+  const nextStep = "We'll email you within 24 hours with your completed appeal packet."
   const text = [
     `Hi ${customerName || "there"},`,
     ``,

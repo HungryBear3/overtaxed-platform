@@ -175,12 +175,20 @@ const windows = jest.requireMock("@/lib/free-check-appeal-window") as {
 
 const { POST } = require("@/app/api/checkout/session/route") as typeof import("@/app/api/checkout/session/route")
 
+/**
+ * These reuse/idempotency mechanics were written against T3 only because T3 was
+ * the tier in front of them at the time. T3 / $97 DFY is now a held product and
+ * refuses at 410 before any order row is touched, which would make every
+ * assertion below vacuous. The mechanics themselves still have to hold for the
+ * one tier that can reach a provider, so they are exercised against T2. The
+ * hold on T3 is asserted separately at the bottom of this file.
+ */
 function request(checkoutKey: string) {
   return new NextRequest("https://www.overtaxed-il.com/api/checkout/session", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      tier: "T3",
+      tier: "T2",
       email: "Buyer@example.com",
       name: " Buyer Name ",
       address: "1 Test St, Elk Grove Village IL 60007",
@@ -373,5 +381,27 @@ describe("POST /api/checkout/session server-authoritative OT contract reuse", ()
     expect(stripeModule.__create).not.toHaveBeenCalled()
     const [, order] = Array.from(state.orders.entries())[0]
     expect(order.status).not.toBe("CHECKOUT_CREATING")
+  })
+
+  it("does not create or reuse any order row for the held T3 tier", async () => {
+    const res = await POST(new NextRequest("https://www.overtaxed-il.com/api/checkout/session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        tier: "T3",
+        email: "Buyer@example.com",
+        name: " Buyer Name ",
+        address: "1 Test St, Elk Grove Village IL 60007",
+        checkoutKey: "77777777-7777-4777-8777-777777777777",
+      }),
+    }))
+
+    expect(res.status).toBe(410)
+    expect(await res.json()).toMatchObject({ code: "PRODUCT_HELD", product: "T3_DFY" })
+    // The reuse machinery is upstream of the provider but downstream of the
+    // hold: a held tier must not even acquire a contract key, or a later
+    // release would find half-formed rows waiting to be reused.
+    expect(state.orders.size).toBe(0)
+    expect(stripeModule.__create).not.toHaveBeenCalled()
   })
 })

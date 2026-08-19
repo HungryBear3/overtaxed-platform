@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
 import { put, del } from "@vercel/blob"
+import { heldProductResponse } from "@/lib/products/held-response"
+import { isHeldProduct } from "@/lib/products/held"
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
 const ALLOWED_TYPES = ["application/pdf"]
@@ -15,6 +17,14 @@ export async function POST(
     const session = await getSession(request)
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    // Same hold as the sibling create route, and for the same reason: a signed
+    // Attorney/Representative form uploaded here is the same authorization,
+    // arriving as a file instead of a canvas. Checked before the 10 MB body is
+    // read so a withdrawn surface is not also an upload sink.
+    if (isHeldProduct("T3_DFY")) {
+      return heldProductResponse("T3_DFY", "appeals.authorization.upload")
     }
 
     const { id: appealId } = await params
