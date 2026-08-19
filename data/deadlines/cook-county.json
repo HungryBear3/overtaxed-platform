@@ -1,0 +1,601 @@
+{
+  "_comment": "SYNTHETIC FIXTURE — NOT COUNTY DATA. No Cook County page has been fetched for this file. Every date below is a placeholder. `synthetic: true` makes evaluateOfficialDeadlineState refuse this snapshot outright, so all deadline surfaces render the neutral pending copy. Replace it by running scripts/refresh-township-deadlines.ts --allow-network once that outbound call is authorised.",
+  "schemaVersion": 1,
+  "synthetic": true,
+  "sources": {
+    "assessor": {
+      "authority": "cook_county_assessor",
+      "sourceUrl": "https://www.cookcountyassessor.com/assessment-calendar-and-deadlines",
+      "retrievedAt": "1900-01-01T00:00:00.000Z",
+      "sourceUpdatedAt": null,
+      "contentSha256": "168cda949c743f73edb4593c086b306ce236062adee3f02dcb14ce0916ab2251",
+      "httpStatus": 200,
+      "finalUrl": "https://www.cookcountyassessor.com/assessment-calendar-and-deadlines",
+      "parseStatus": "ok",
+      "parserVersion": "1.0.0"
+    },
+    "bor": {
+      "authority": "cook_county_board_of_review",
+      "sourceUrl": "https://www.cookcountyboardofreview.com/appeal-calendar",
+      "retrievedAt": "1900-01-01T00:00:00.000Z",
+      "sourceUpdatedAt": null,
+      "contentSha256": "168cda949c743f73edb4593c086b306ce236062adee3f02dcb14ce0916ab2251",
+      "httpStatus": 200,
+      "finalUrl": "https://www.cookcountyboardofreview.com/appeal-calendar",
+      "parseStatus": "ok",
+      "parserVersion": "1.0.0"
+    }
+  },
+  "townships": {
+    "berwyn": {
+      "townshipName": "Berwyn",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "bloom": {
+      "townshipName": "Bloom",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "bremen": {
+      "townshipName": "Bremen",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "calumet": {
+      "townshipName": "Calumet",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "cicero": {
+      "townshipName": "Cicero",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "lemont": {
+      "townshipName": "Lemont",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "lyons": {
+      "townshipName": "Lyons",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "oak-park": {
+      "townshipName": "Oak Park",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "orland": {
+      "townshipName": "Orland",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "palos": {
+      "townshipName": "Palos",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "proviso": {
+      "townshipName": "Proviso",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "rich": {
+      "townshipName": "Rich",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "river-forest": {
+      "townshipName": "River Forest",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "riverside": {
+      "townshipName": "Riverside",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "stickney": {
+      "townshipName": "Stickney",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "thornton": {
+      "townshipName": "Thornton",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "worth": {
+      "townshipName": "Worth",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "barrington": {
+      "townshipName": "Barrington",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "elk-grove": {
+      "townshipName": "Elk Grove",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "evanston": {
+      "townshipName": "Evanston",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "hanover": {
+      "townshipName": "Hanover",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "leyden": {
+      "townshipName": "Leyden",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "maine": {
+      "townshipName": "Maine",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "new-trier": {
+      "townshipName": "New Trier",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "niles": {
+      "townshipName": "Niles",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "northfield": {
+      "townshipName": "Northfield",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "norwood-park": {
+      "townshipName": "Norwood Park",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "palatine": {
+      "townshipName": "Palatine",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "schaumburg": {
+      "townshipName": "Schaumburg",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "wheeling": {
+      "townshipName": "Wheeling",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "hyde-park": {
+      "townshipName": "Hyde Park",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "jefferson": {
+      "townshipName": "Jefferson",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "lake": {
+      "townshipName": "Lake",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "lake-view": {
+      "townshipName": "Lake View",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "north-chicago": {
+      "townshipName": "North Chicago",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "rogers-park": {
+      "townshipName": "Rogers Park",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "south-chicago": {
+      "townshipName": "South Chicago",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    },
+    "west-chicago": {
+      "townshipName": "West Chicago",
+      "stages": {
+        "assessor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        },
+        "bor": {
+          "noticeDate": "1900-01-01",
+          "openDate": "1900-01-01",
+          "lastFileDate": "1900-01-02"
+        }
+      }
+    }
+  }
+}
