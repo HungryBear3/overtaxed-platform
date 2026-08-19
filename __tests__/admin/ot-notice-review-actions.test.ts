@@ -26,22 +26,6 @@ jest.mock("@/lib/cook-county", () => ({
   searchPropertiesByAddress: jest.fn(),
 }))
 
-jest.mock("@/lib/free-check-appeal-window", () => ({
-  getFreeCheckAppealWindowStatus: jest.fn(() => ({
-    township: "Elk Grove",
-    status: "future_cycle",
-    openDate: null,
-    closeDate: null,
-    filingUrl: "https://official",
-    note: "notice path",
-  })),
-}))
-
-jest.mock("@/lib/appeals/township-deadlines", () => ({
-  ASSESSOR_CALENDAR_URL: "https://official",
-  TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED: "2026-07-23",
-}))
-
 describe("admin OT notice review actions", () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -113,7 +97,16 @@ describe("admin OT notice review actions", () => {
       data: expect.objectContaining({
         noticeReviewStatus: "REVALIDATED",
         township: "Elk Grove",
-        windowStatus: "future_cycle",
+        windowStatus: "unknown",
+        windowOpenDate: null,
+        windowCloseDate: null,
+        windowSourceUpdated: null,
+        windowVerifiedAt: null,
+        eligibilitySnapshot: expect.objectContaining({
+          status: "unknown",
+          verifiedAt: null,
+          pendingReason: "synthetic_source",
+        }),
       }),
     }))
   })

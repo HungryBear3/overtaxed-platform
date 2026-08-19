@@ -3,7 +3,12 @@
  * - Reassessment season: Jan–Aug (data typically published during appeal cycles)
  * - Active townships: only check properties in townships with open or recently closed appeal windows
  */
-import { TOWNSHIP_DEADLINES_2025 } from "@/lib/appeals/township-deadlines"
+import deadlineSnapshot from "@/data/deadlines/cook-county.json"
+import {
+  evaluateOfficialDeadlineState,
+  type OfficialDeadlineSnapshot,
+} from "@/lib/deadlines/official-source-state"
+import { informationalTownship } from "@/lib/deadlines/township-resolution"
 
 /** Cook County reassessment season: January through August. No checks Sep–Dec to reduce pings. */
 const SEASON_START_MONTH = 1
@@ -25,17 +30,22 @@ export function isInReassessmentSeason(date: Date = new Date()): boolean {
  * A township is active when: noticeDate - LEAD_DAYS <= today <= lastFileDate + TRAIL_DAYS
  */
 export function getActiveTownshipNamesForChecks(date: Date = new Date()): Set<string> {
-  const today = date.toISOString().slice(0, 10)
   const active = new Set<string>()
+  const snapshot = deadlineSnapshot as unknown as OfficialDeadlineSnapshot
+  const evaluatedAt = date.toISOString()
 
-  for (const [townshipKey, dates] of Object.entries(TOWNSHIP_DEADLINES_2025)) {
-    const notice = dates.noticeDate
-    const lastFile = dates.lastFileDate
-    if (!notice || !lastFile) continue
+  for (const [townshipKey, row] of Object.entries(snapshot.townships)) {
+    const state = evaluateOfficialDeadlineState({
+      snapshot,
+      township: informationalTownship(townshipKey, row.townshipName),
+      stage: "assessor",
+      evaluatedAt,
+    })
+    if (state.kind !== "verified") continue
 
-    const windowStart = addDays(parseDate(notice), -LEAD_DAYS)
-    const windowEnd = addDays(parseDate(lastFile), TRAIL_DAYS)
-    const d = parseDate(today)
+    const windowStart = addDays(parseDate(state.noticeDate ?? state.openDate), -LEAD_DAYS)
+    const windowEnd = addDays(parseDate(state.lastFileDate), TRAIL_DAYS)
+    const d = date
     if (d >= windowStart && d <= windowEnd) {
       active.add(townshipKey)
     }

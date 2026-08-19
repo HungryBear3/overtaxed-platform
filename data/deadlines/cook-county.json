@@ -5,12 +5,12 @@
   "sources": {
     "assessor": {
       "authority": "cook_county_assessor",
-      "sourceUrl": "https://www.cookcountyassessor.com/assessment-calendar-and-deadlines",
+      "sourceUrl": "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
       "retrievedAt": "1900-01-01T00:00:00.000Z",
       "sourceUpdatedAt": null,
       "contentSha256": "168cda949c743f73edb4593c086b306ce236062adee3f02dcb14ce0916ab2251",
       "httpStatus": 200,
-      "finalUrl": "https://www.cookcountyassessor.com/assessment-calendar-and-deadlines",
+      "finalUrl": "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
       "parseStatus": "ok",
       "parserVersion": "1.0.0"
     },
