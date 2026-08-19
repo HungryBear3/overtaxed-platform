@@ -98,7 +98,10 @@ export default async function OG({ params }: { params: { slug: string } }) {
           }}
         >
           <div style={{ display: "flex" }}>overtaxed-il.com/township/{params.slug}</div>
-          <div style={{ display: "flex" }}>$97 done-for-you filing</div>
+          {/* "$97 done-for-you filing" priced a held product on all 38
+              township cards — the surface a link preview keeps showing long
+              after the page itself changes. */}
+          <div style={{ display: "flex" }}>Free check · you file it yourself</div>
         </div>
       </div>
     ),

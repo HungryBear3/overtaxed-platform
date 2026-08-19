@@ -1,4 +1,5 @@
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
+import { CC_10, CC_11, CC_12 } from "@/lib/copy/canonical"
 import "../ot-design.css"
 
 export const metadata = {
@@ -21,11 +22,18 @@ export default function TermsPage() {
             <p className="text-muted-foreground mb-3">
               Running a free check, viewing pricing, creating an account, or buying a DIY packet does not authorize OverTaxed IL to file an appeal for you.
             </p>
+            {/* The old §1 described a representation path that could be
+                unlocked by "a filing service that requires representation" —
+                the held Done-For-You and contingency services. With no such
+                service offered, the Terms state the single posture that
+                applies rather than reserving a path to a product that does not
+                exist. CC-11 states the Board of Review position, where
+                representation is barred to us by rule at any price. */}
             <p className="text-muted-foreground mb-3">
-              OverTaxed IL will act as your filing representative only if you choose a filing service that requires representation and separately sign or check an explicit authorization for that property. That authorization will describe what we may submit, which property it covers, and when it expires.
+              OverTaxed IL does not act as your filing representative. We prepare appeal materials; you review, sign, and file them with Cook County yourself. If you buy the DIY Appeal Packet, you remain responsible for filing the appeal.
             </p>
             <p className="text-muted-foreground">
-              If you choose the DIY Appeal Packet, you remain responsible for filing the appeal yourself unless you later purchase a Done-For-You or contingency filing service and provide separate authorization.
+              {CC_11}
             </p>
           </section>
 
@@ -41,21 +49,26 @@ export default function TermsPage() {
             <p className="text-muted-foreground mb-3">
               <strong>3.1 DIY Appeal Packet — $69 one-time.</strong> We prepare comparable-property analysis, an appeal argument draft, and filing instructions. You file the appeal yourself with Cook County.
             </p>
+            {/* §3.2 Done-For-You and §3.3 Contingency are removed. A Terms of
+                Service is the document a reader is most likely to treat as
+                authoritative about what is on offer, so leaving priced terms
+                for held products here would keep offering them after every
+                other surface stopped. §3.4 is renumbered to §3.2. */}
             <p className="text-muted-foreground mb-3">
-              <strong>3.2 Done-For-You — $97 one-time.</strong> We prepare the packet and submit the appeal for you after you provide explicit filing authorization. County filing availability and requirements may vary by appeal body and cycle.
-            </p>
-            <p className="text-muted-foreground mb-3">
-              <strong>3.3 Contingency — 22% of first-year tax savings.</strong> If you are accepted for contingency filing, you pay no upfront OverTaxed IL service fee. If the county grants a reduction, you agree to pay 22% of the first-year tax savings from that reduction, subject to any minimum shown at checkout or in your signed contingency authorization. If the county grants no reduction, you owe no contingency fee.
+              {CC_10}
             </p>
             <p className="text-muted-foreground">
-              <strong>3.4 County fees.</strong> Cook County currently does not charge homeowners a fee to file a residential assessment appeal. If a government fee or third-party fee applies in the future, we will disclose it before you authorize payment.
+              <strong>3.2 County fees.</strong> Cook County currently does not charge homeowners a fee to file a residential assessment appeal. If a government fee or third-party fee applies in the future, we will disclose it before you authorize payment.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold text-foreground mb-3">4. Payment, Invoices, and Late Payments</h2>
+            {/* The contingency-invoicing sentence described a fee that can no
+                longer be incurred: the outcome-conditioned fee is the held
+                product itself. */}
             <p className="text-muted-foreground mb-3">
-              Flat-fee products are charged at checkout. Contingency fees, if any, are invoiced only after a county reduction is granted and the savings calculation is available.
+              The flat fee is charged at checkout. OverTaxed IL does not invoice any fee that depends on what the county decides.
             </p>
             <p className="text-muted-foreground mb-3">
               If you believe an invoice is incorrect, email support@overtaxed-il.com within 30 days with the reason you dispute it. We will review the calculation and provide a written response.
@@ -66,9 +79,13 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground mb-3">5. No Guarantee of Results</h2>
+            <h2 className="text-xl font-semibold text-foreground mb-3">5. County Decisions Are Final</h2>
+            {/* The disclaimer is CC-12, rendered rather than paraphrased, so
+                the negated form is the canonical one the acceptance lexicon
+                recognises. "Estimates shown on the site are educational
+                projections" is dropped with the dollar estimates themselves. */}
             <p className="text-muted-foreground">
-              OverTaxed IL does not guarantee that any appeal will result in a lower assessment or lower tax bill. The Assessor, Board of Review, or other tax authority makes the final decision. Estimates shown on the site are educational projections based on available public records and may differ from final outcomes.
+              {CC_12} The Cook County Assessor makes the decision on an appeal filed at that stage.
             </p>
           </section>
 
@@ -81,14 +98,17 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-semibold text-foreground mb-3">7. Procedural Error Review and Refund Requests</h2>
+            {/* The refund rule itself is unchanged. It is an owner policy term
+                (OD-5, unsigned), so only the reference to the held $97 service
+                and to submissions we make is removed — we make none. */}
             <p className="text-muted-foreground mb-3">
-              For the $69 DIY Appeal Packet and $97 Done-For-You service, if your filing is rejected or denied solely because of an OverTaxed IL procedural error in the materials or submission we prepared, contact us so we can review the issue and determine whether a refund of the OverTaxed IL service fee is appropriate under these Terms.
+              For the $69 DIY Appeal Packet, if your filing is rejected or denied solely because of an OverTaxed IL procedural error in the materials we prepared, contact us so we can review the issue and determine whether a refund of the OverTaxed IL service fee is appropriate under these Terms.
             </p>
             <p className="text-muted-foreground mb-3">
               Refund review does not apply when the county denies an appeal on the merits, when the property is not eligible, when the appeal window is closed before you provide required information or authorization, or when information you provided is inaccurate or incomplete.
             </p>
             <p className="text-muted-foreground">
-              To request a refund, contact support@overtaxed-il.com within 30 days of the county notice and include the notice or filing status. Contingency customers owe no contingency fee if there is no granted reduction.
+              To request a refund, contact support@overtaxed-il.com within 30 days of the county notice and include the notice or filing status.
             </p>
           </section>
 
@@ -129,7 +149,7 @@ export default function TermsPage() {
         </div>
 
         <p className="mt-12 text-sm text-muted-foreground">
-          By purchasing a service or using OverTaxed IL, you acknowledge that you have read and understood these Terms. Filing authorization, where needed, is requested separately and explicitly.
+          By purchasing a service or using OverTaxed IL, you acknowledge that you have read and understood these Terms. OverTaxed IL does not request filing authorization, because it does not file.
         </p>
       </main>
       <SiteFooter />

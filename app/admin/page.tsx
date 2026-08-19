@@ -99,7 +99,10 @@ export default async function AdminDashboardPage() {
           className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
         >
           <Percent className="h-4 w-4" />
-          Contingency fee review (22%)
+          {/* The console this links to no longer calculates fee eligibility.
+              Leaving "(22%)" on the entry point would keep advertising a rate
+              to the operator that no surface can act on. */}
+          Contingency fee review (withdrawn)
         </Link>
       </div>
     </div>

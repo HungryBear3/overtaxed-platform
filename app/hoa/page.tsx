@@ -133,7 +133,7 @@ export default function HoaPage() {
               />
               <InfoCard
                 title="Public-record orientation"
-                body="The tools use Cook County Assessor and Board of Review public-record context to help owners understand where to look next."
+                body="The tools use Cook County Assessor public-record context to help owners understand where to look next."
               />
               <InfoCard
                 title="No association commitment"

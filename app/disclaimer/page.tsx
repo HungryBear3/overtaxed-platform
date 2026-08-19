@@ -1,4 +1,5 @@
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
+import { CC_11 } from "@/lib/copy/canonical"
 import "../ot-design.css"
 
 export const metadata = {
@@ -56,6 +57,12 @@ export default function DisclaimerPage() {
             <p className="text-gray-700">
               Our MVP supports Cook County, Illinois only. Procedures, deadlines, and requirements may differ in other counties or states. Do not rely on our Service for properties outside our supported jurisdictions. Appeal requirements (comparable properties, document deadlines) are set by the Cook County Assessor and Board of Review. Board of Review Rule 15 governs document submission; comparable-sales guidance comes from Assessor requirements.
             </p>
+            {/* The Board is named here for a real reason — it sets some of the
+                requirements this section describes — so the mention stays and
+                CC-11 answers it (BL-F5). This is the page where the boundary
+                belongs in full: a reader here is checking what we are and are
+                not responsible for. */}
+            <p className="text-gray-700 mt-3">{CC_11}</p>
           </section>
 
           <section>

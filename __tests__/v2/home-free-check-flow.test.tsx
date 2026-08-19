@@ -68,9 +68,12 @@ describe("OT home free-check flow", () => {
     fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }));
 
     await waitFor(() => expect(screen.getByText(/Sample data — not your submitted address · Sample result/i)).toBeTruthy());
-    expect(screen.getByText(/DIY \$69/)).toBeTruthy();
-    expect(screen.getByText(/Done-For-You \$97/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: /^Contingency$/ })).toBeTruthy();
+    // One filing CTA, because one product is offered. The Done-For-You and
+    // Contingency links are gone from the result panel entirely — presenting a
+    // held product as a choice is still offering it.
+    expect(screen.getByText(/DIY Appeal Packet \$69/)).toBeTruthy();
+    expect(screen.queryByText(/Done-For-You/)).toBeNull();
+    expect(screen.queryByRole("link", { name: /^Contingency$/ })).toBeNull();
   });
 
   it("renders real fair-assessment results without sample copy or double signs", async () => {
@@ -113,8 +116,8 @@ describe("OT home free-check flow", () => {
     expect(screen.queryByText(/Estimated annual overpayment found/i)).toBeNull();
     expect(screen.getByText("-$13,858")).toBeTruthy();
     expect(screen.queryByText(/\+-\$/)).toBeNull();
-    expect(screen.queryByText(/DIY \$69/)).toBeNull();
-    expect(screen.queryByText(/Done-For-You \$97/)).toBeNull();
+    expect(screen.queryByText(/DIY Appeal Packet \$69/)).toBeNull();
+    expect(screen.queryByText(/Done-For-You/)).toBeNull();
     expect(screen.queryByRole("link", { name: /^Contingency$/ })).toBeNull();
   });
 
@@ -135,7 +138,7 @@ describe("OT home free-check flow", () => {
     await waitFor(() => expect(screen.getByText(/No Cook County property found/i)).toBeTruthy());
     expect(screen.queryByText(/Sample data — not your submitted address/i)).toBeNull();
     expect(screen.queryByText(/Your free check · Sample result/i)).toBeNull();
-    expect(screen.queryByText(/DIY \$69/)).toBeNull();
+    expect(screen.queryByText(/DIY Appeal Packet \$69/)).toBeNull();
   });
 
   it("does not fabricate a deadline when the API appeal window is unknown", async () => {

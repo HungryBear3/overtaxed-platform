@@ -8,6 +8,7 @@ import {
   TOWNSHIPS_BY_SLUG,
   type Township,
 } from "@/lib/townships";
+import { CC_10 } from "@/lib/copy/canonical";
 import "../../ot-design.css";
 
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
@@ -29,22 +30,25 @@ function buildTownshipFaqEntries(t: Township) {
         `(Cook County reassesses each township once every three years).`,
     },
     {
+      // These township windows are Assessor-stage reassessment windows. Calling
+      // them "the Board of Review appeal deadline" named the wrong stage — and
+      // the one stage OverTaxed IL cannot serve — on 38 pages at once.
       q: `What's the deadline to file an appeal in ${t.name}?`,
       a:
-        `The Board of Review appeal deadline for ${t.name} Township is ${t.closeDateLong}. ` +
-        `Late filings are not accepted — there is no grace period and no appeal-by-mail postmark exception.`,
+        `The Cook County Assessor appeal deadline for ${t.name} Township is ${t.closeDateLong}. ` +
+        `Late filings are not accepted — there is no grace period and no appeal-by-mail postmark exception. ` +
+        `Confirm your filing deadline with the county before you file.`,
     },
     {
       q: `What does it cost to appeal?`,
       a:
-        `The Cook County Board of Review charges no fee. OverTaxed IL offers a $69 DIY Appeal Packet, ` +
-        `$97 Done-For-You filing after explicit authorization, and a 22% contingency option for eligible cases. ` +
+        `The Cook County Assessor charges no fee to file. ${CC_10} ` +
         `You can also file on your own at no cost.`,
     },
     {
       q: `What evidence do I need to appeal in ${t.name}?`,
       a:
-        `The Board of Review accepts comparable assessments, relevant sales evidence, ` +
+        `The Assessor accepts comparable assessments, relevant sales evidence, ` +
         `lack-of-uniformity arguments (your assessment vs. similar properties), and condition-based evidence ` +
         `(recent photos, contractor estimates). We pull public-record comparable properties from ` +
         `${t.name} and surrounding townships automatically when you run a free check.`,
@@ -52,8 +56,8 @@ function buildTownshipFaqEntries(t: Township) {
     {
       q: `Will appealing increase my taxes?`,
       a:
-        `No. The Board of Review can confirm or lower your assessed value but cannot raise it as a result of your appeal. ` +
-        `The worst case is your assessment stays the same.`,
+        `The Assessor can confirm or lower your assessed value on your own appeal, but cannot raise it as a result of it. ` +
+        `A change in assessed value does not produce an equal change in a tax bill.`,
     },
   ];
 }
@@ -114,7 +118,7 @@ export async function generateMetadata({
         : `Next window: ${t.cycleYear}`;
   const description =
     `${t.name} Township appeal window: ${t.openDateLong} – ${t.closeDateLong}. ` +
-    `${days}. Free check, deadline reminders, and $97 done-for-you filing.`;
+    `${days}. Free check, deadline reminders, and a $69 preparation packet you file yourself.`;
 
   return {
     title: `${t.name} Township Property Tax Appeal Deadline ${t.cycleYear}`,

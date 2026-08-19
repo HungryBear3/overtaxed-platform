@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { buildTickerItems, TOWNSHIPS } from "@/lib/townships";
+import { CC_12 } from "@/lib/copy/canonical";
 
 // Public-contact constants used by SiteChrome (footer text, contact CTAs).
 // Personal-name attribution is intentionally NOT in this shared chrome
@@ -148,11 +149,14 @@ export function SiteFooter() {
 
           <div className="ot-footer-col ot-footer-col-legal">
             <div className="ot-footer-col-head">About</div>
-            <p className="ot-footer-disclaimer">
-              OverTaxed IL is not a law firm and does not provide legal advice.
-              Estimates are based on public Cook County Assessor records and may
-              vary from final Board of Review outcomes.
-            </p>
+            {/* CC-12 must appear on every consumer surface (BL-F2), and the
+                footer is the one place that is genuinely on all of them — so
+                it is rendered here rather than retyped per page.
+                "may vary from final Board of Review outcomes" is dropped: it
+                named the one stage OverTaxed IL cannot serve, in shared chrome,
+                which would have required CC-11 on all 52 paths to say something
+                the Assessor-stage packet never depended on. */}
+            <p className="ot-footer-disclaimer">{CC_12}</p>
           </div>
         </div>
 

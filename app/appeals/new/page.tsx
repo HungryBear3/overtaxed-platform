@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
+import { CC_11 } from "@/lib/copy/canonical"
 
 interface Property {
   id: string
@@ -456,9 +457,12 @@ export default function NewAppealPage() {
                       <div>
                         <p className="font-medium text-gray-900">Assessor&apos;s Office Appeal</p>
                         <p className="text-sm text-gray-500 mt-1">
-                          First-level appeal filed directly with the Cook County Assessor. 
-                          This is the fastest option and typically resolves within 30-60 days. 
-                          <strong className="text-gray-700"> Recommended for most homeowners.</strong>
+                          First-level appeal filed directly with the Cook County Assessor.
+                          {/* "Recommended for most homeowners" existed only to
+                              contrast with the Board of Review option below it.
+                              With that option removed there is nothing to
+                              recommend against, and the Assessor stage is now
+                              simply the only stage this form covers. */}
                         </p>
                       </div>
                       {appealType === "ASSESSOR" && (
@@ -469,37 +473,17 @@ export default function NewAppealPage() {
                     </div>
                   </label>
                   
-                  <label
-                    className={`block p-4 border-2 rounded-lg cursor-pointer transition-colors ${
-                      appealType === "BOARD_REVIEW"
-                        ? "border-blue-500 bg-blue-50"
-                        : "border-gray-200 hover:border-gray-300"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="appealType"
-                      value="BOARD_REVIEW"
-                      checked={appealType === "BOARD_REVIEW"}
-                      onChange={(e) => setAppealType(e.target.value as "ASSESSOR" | "BOARD_REVIEW")}
-                      className="sr-only"
-                    />
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="font-medium text-gray-900">Board of Review Appeal</p>
-                        <p className="text-sm text-gray-500 mt-1">
-                          Second-level appeal filed after Assessor&apos;s decision, or if you missed the Assessor deadline. 
-                          Takes longer (60-120 days) but provides a fresh review. 
-                          <strong className="text-gray-700"> Use if you disagree with Assessor&apos;s decision.</strong>
-                        </p>
-                      </div>
-                      {appealType === "BOARD_REVIEW" && (
-                        <svg className="w-5 h-5 text-blue-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                      )}
-                    </div>
-                  </label>
+                  {/* The Board of Review radio is removed rather than disabled.
+                      Offering it inside our own appeal-creation form is a
+                      staff-assisted filing affordance for a stage we do not and
+                      cannot serve: Board Rule 1 bars non-attorney practice, so
+                      an appeal record of that type could never be acted on.
+                      BL-F5 additionally requires CC-11 wherever the Board is
+                      named, which is what stands in its place. */}
+                  <div className="block p-4 border-2 border-amber-200 bg-amber-50 rounded-lg">
+                    <p className="font-medium text-gray-900">Board of Review Appeal</p>
+                    <p className="text-sm text-gray-700 mt-1">{CC_11}</p>
+                  </div>
                 </div>
               </div>
 
@@ -512,8 +496,16 @@ export default function NewAppealPage() {
                     </svg>
                     <div className="text-sm flex-1">
                       <p className="font-medium text-amber-800">Filing Deadline</p>
+                      {/* "(2025 calendar)" named a specific published year with
+                          no retrieval timestamp, and kept naming it into 2026.
+                          A deadline claim needs CC-08's source + retrieval
+                          stamp (BL-D4); until this surface is wired to the
+                          canonical source state it makes no year claim at all
+                          and sends the user to the county's own calendar. */}
                       <p className="text-amber-700 mt-1">
-                        Cook County reassesses on a 3-year cycle by township. We look up your township from your PIN and auto-fill the deadline when available (2025 calendar).
+                        Cook County reassesses on a 3-year cycle by township. We look up your
+                        township from your PIN. Confirm your filing deadline with the county
+                        before you file.
                       </p>
                       {townshipInfo ? (
                         <p className="text-amber-700 mt-2">
@@ -521,11 +513,17 @@ export default function NewAppealPage() {
                             <>
                               Your township: <strong>{townshipInfo.township}</strong>
                               {townshipInfo.lastFileDate && " — deadline auto-filled above."}{" "}
-                              {townshipInfo.noticeDate && townshipInfo.lastFileDate && taxYear === 2025 && (
-                                <span className="block mt-2 text-amber-800 font-medium">
-                                  ✓ Synced with Cook County calendar: Notice {new Date(townshipInfo.noticeDate).toLocaleDateString("en-US")}, Last file {new Date(townshipInfo.lastFileDate).toLocaleDateString("en-US")}
-                                </span>
-                              )}
+                              {/* The "✓ Synced with Cook County calendar" badge
+                                  was the strongest freshness claim on the site
+                                  and the least earned: it rendered whenever
+                                  taxYear happened to be 2025, from a bundled
+                                  table, with no retrieval timestamp and no
+                                  check that the source was reachable. A green
+                                  tick asserting sync with a county feed we
+                                  never called is BL-D2. Removed outright rather
+                                  than reworded, because the underlying claim is
+                                  not true until this surface reads the
+                                  canonical source state. */}
                             </>
                           ) : (
                             "Township could not be looked up. "

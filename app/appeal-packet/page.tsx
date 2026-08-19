@@ -1,12 +1,23 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
+import { CC_10, CC_12 } from "@/lib/copy/canonical";
 import "../ot-design.css";
 
+/**
+ * The packet is an Assessor-stage product.
+ *
+ * Every "Board of Review" on this page described it as a Board product — Board
+ * filing instructions in the description, a "Board of Review filing guide" in
+ * the contents list, the Board's process in the scope note. That is the one
+ * stage Board Rule 1 closes to us, so the mentions are corrected to the
+ * Assessor rather than answered with CC-11: a disclosure explaining why we
+ * cannot do the thing the page says we do is not a fix for the page.
+ */
 export const metadata: Metadata = {
   title: "DIY Cook County Appeal Packet",
   description:
-    "A $69 Cook County property-tax appeal packet: comparable-property summary, Board of Review filing instructions, deadline checklist, and plain-English next steps.",
+    "A $69 Cook County property-tax appeal preparation packet: comparable-property summary, Assessor filing instructions, deadline checklist, and plain-English next steps. You file it yourself.",
 };
 
 const included = [
@@ -19,8 +30,8 @@ const included = [
     desc: "Plain-English context for Cook County's 10% residential target and uniformity review.",
   },
   {
-    title: "Board of Review filing guide",
-    desc: "A step-by-step checklist for submitting your packet during your township's appeal window.",
+    title: "Assessor filing guide",
+    desc: "A step-by-step checklist for submitting your packet yourself during your township's appeal window.",
   },
   {
     title: "Deadline and evidence checklist",
@@ -40,7 +51,7 @@ export default function AppealPacketPage() {
             A clean $69 packet for homeowners who want to file their own Cook County appeal.
           </h1>
           <p className="ot-sublead">
-            OverTaxed IL turns public Cook County Assessor and Board of Review records into a filing-ready packet: comps, assessment-level context, filing instructions, and a deadline checklist. No savings promises. No fake testimonials. Not legal advice.
+            OverTaxed IL turns public Cook County Assessor records into a filing-ready packet: comps, assessment-level context, filing instructions, and a deadline checklist. No savings promises. No testimonials. Not legal advice.
           </p>
           <div className="ot-hero-actions">
             <Link href="/#hero-check" className="ot-cta ot-cta-primary">
@@ -67,14 +78,20 @@ export default function AppealPacketPage() {
             <p className="ot-eyebrow">Scope discipline</p>
             <h2 className="ot-h3">Cook County first.</h2>
             <p>
-              This launch product is built around Cook County's township appeal windows, Board of Review process, and residential assessment methodology. We are not advertising an all-Illinois county packet until those workflows are separately verified.
+              This launch product is built around Cook County's township appeal windows, the Assessor's appeal process, and residential assessment methodology. We are not advertising an all-Illinois county packet until those workflows are separately verified.
             </p>
           </div>
           <div className="ot-method-card">
             <strong>Flat fee</strong>
-            <p>
-              The $69 DIY packet is a preparation service fee and is paid regardless of appeal outcome. A procedural refund applies only if an OverTaxed IL filing error causes the county to reject the filing.
-            </p>
+            {/* The refund sentence here promised a procedural refund "if an
+                OverTaxed IL filing error causes the county to reject the
+                filing" — a promise about a filing we do not make, conditioned
+                on an error we cannot commit. It is also an owner policy term
+                (OD-5, unsigned), so it is removed rather than reworded: the
+                published refund rule lives in the Terms, and restating it here
+                is how two copies drift apart. */}
+            <p>{CC_10}</p>
+            <p style={{ marginTop: 10 }}>{CC_12}</p>
           </div>
         </section>
         </div>

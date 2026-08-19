@@ -13,16 +13,32 @@ describe("OT checkout copy", () => {
   it("renders apostrophes as apostrophes, not HTML entities", () => {
     render(<CheckoutPage />);
 
-    expect(screen.getByText(/we're paid from your savings/i)).toBeTruthy();
-    expect(screen.getByText(/If we don't reduce your bill, you pay \$0/i)).toBeTruthy();
+    // This previously anchored on two contingency bullets — "we're paid from
+    // your savings" and "If we don't reduce your bill, you pay $0". Both are
+    // gone with the held tier, and the second was an outcome promise on a
+    // decision the county makes. The entity check is what the test is for, so
+    // it re-anchors on surviving copy that still carries an apostrophe.
+    expect(screen.getByText(/Let’s confirm your property first/i)).toBeTruthy();
     expect(document.body.textContent).not.toContain("&apos;");
+    expect(document.body.textContent).not.toContain("&#39;");
   });
 
   it("keeps checkout metadata aligned with current pricing and conditional window safeguards", () => {
     const serialized = JSON.stringify(metadata);
-    expect(serialized).toContain("Done-For-You at $97");
+    expect(serialized).toContain("$69 DIY Appeal Packet");
     expect(serialized).toContain("Eligibility is confirmed before payment");
     expect(serialized).not.toContain("$149");
     expect(serialized).not.toMatch(/money-back|procedural denial/i);
+    // Metadata outlives the page in search results and link previews, so the
+    // held tiers must not survive here after being removed from the body.
+    expect(serialized).not.toMatch(/done-for-you|\$97|contingency|22%/i);
+  });
+
+  it("offers no held plan in the rendered checkout body", () => {
+    render(<CheckoutPage />);
+
+    expect(document.body.textContent).not.toMatch(/done-for-you/i);
+    expect(document.body.textContent).not.toContain("$97");
+    expect(document.body.textContent).not.toContain("22%");
   });
 });

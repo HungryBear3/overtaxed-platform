@@ -8,6 +8,7 @@ import {
   formatCampaignDate,
   getActiveTownshipCampaign,
 } from "@/lib/marketing/active-township-campaigns";
+import { CC_11 } from "@/lib/copy/canonical";
 import "../../ot-design.css";
 
 const siteUrl =
@@ -91,6 +92,15 @@ export default async function TownshipDeadlineCampaignPage({
                       ? "The first-level Assessor window is no longer open. The Board of Review is a separate later opportunity."
                       : `The published window opens ${openDate}.`}
                 </p>
+                {/* The expired branch above points a homeowner at the Board of
+                    Review as "a separate later opportunity" — at the exact
+                    moment they have missed the Assessor window and are most
+                    likely to act on it. BL-F5 requires CC-11 wherever the Board
+                    is named, and here it is also the substantive answer: the
+                    opportunity is real, but it is not one we can take for them. */}
+                {campaign.phase === "expired" && (
+                  <p className="ot-tp-sub">{CC_11}</p>
+                )}
                 <div className="ot-tp-hero-cta-row">
                   <Link
                     href={buildCampaignFreeCheckHref(campaign, "hero")}

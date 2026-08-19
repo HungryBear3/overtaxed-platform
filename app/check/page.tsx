@@ -4,8 +4,12 @@ import "../ot-design.css"
 
 export const metadata = {
   title: "Free Property Tax Assessment Check",
+  // The Board of Review is dropped from the description rather than disclosed
+  // there. BL-F5 requires CC-11 wherever the Board is named, and a meta
+  // description is truncated by every consumer that displays it — so it cannot
+  // carry a disclosure, only the claim that would need one.
   description:
-    "See how your Cook County assessed value compares to nearby properties. Free check — no signup. Built around Cook County Assessor and Board of Review public records.",
+    "See how your Cook County assessed value compares to nearby properties. Free check — no signup. Built around Cook County Assessor public records.",
   alternates: { canonical: "https://www.overtaxed-il.com/check" },
 }
 

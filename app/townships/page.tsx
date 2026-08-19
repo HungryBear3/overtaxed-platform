@@ -279,8 +279,13 @@ export default function TownshipsPage() {
             <div>
               <p className="text-sm font-semibold text-blue-700 mb-1">3. File before your deadline</p>
               <p className="text-sm text-gray-600">
-                Submit through the Cook County Assessor or Board of Review portal before your
-                township window closes. Filing is free.
+                {/* The Board of Review is dropped rather than disclosed. The
+                    windows listed on this page are the Assessor's, so offering
+                    the Board as an alternative portal for them pointed
+                    homeowners at the wrong stage — and at the one stage
+                    OverTaxed IL cannot serve. */}
+                Submit through the Cook County Assessor before your township window closes.
+                Filing with the county is free.
               </p>
             </div>
           </div>

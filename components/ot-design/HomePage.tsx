@@ -7,6 +7,7 @@ import {
   LiveTicker,
 } from "@/components/ot-design/SiteChrome";
 import { analytics } from "@/lib/analytics/events";
+import { CC_01, CC_10, CC_11, CC_12 } from "@/lib/copy/canonical";
 
 /* ── Sample result returned by /api/check stub ─────────────────────────── */
 const SAMPLE_RESULT = {
@@ -476,14 +477,14 @@ function HeroCheckResult({
 
       {resultOpportunity && resultWindowOpen ? (
         <>
+          {/* One option, because one is offered. The Done-For-You and
+              Contingency CTAs are removed rather than disabled: a held product
+              presented as a choice is still an offer. BL-F3 requires CC-10
+              wherever $69 appears, so it renders directly beneath the price. */}
           <div className="ot-result-tier-actions" aria-label="Filing options">
-            <a href="/checkout?plan=diy" className="ot-cta ot-cta-block ot-result-tier-cta">DIY $69</a>
-            <a href="/checkout?plan=done-for-you" className="ot-cta ot-cta-block ot-result-tier-cta">Done-For-You $97</a>
-            <a href="/appeal-contingency" className="ot-cta ot-cta-block ot-result-tier-cta ot-result-tier-cta-secondary">Contingency</a>
+            <a href="/checkout?plan=diy" className="ot-cta ot-cta-block ot-result-tier-cta">DIY Appeal Packet $69</a>
           </div>
-          <div className="ot-result-altline">
-            Pick a filing option if the check shows a real opportunity · no account required to review
-          </div>
+          <div className="ot-result-altline">{CC_10}</div>
         </>
       ) : resultOpportunity ? (
         <div className="ot-result-altline" role="status">
@@ -919,50 +920,35 @@ function Testimonials() {
   );
 }
 
+/**
+ * One plan, because one is offered.
+ *
+ * The Done-For-You and Contingency cards are removed, not disabled. Beyond
+ * pricing held products they carried the lexicon's most severe claims:
+ * "We prepare and submit the appeal" and "we file for you" (BL-A1), "you just
+ * sign the authorization" (BL-A3), "Tracked through BoR decision" (BL-A2 —
+ * Board Rule 1 bars us from practising there at any price), and "only if
+ * granted" (BL-A5).
+ *
+ * The surviving card is also corrected: "keep 100% of your savings" is BL-B4,
+ * and the packet's comparables are prepared for the Assessor stage, which is
+ * the stage OverTaxed IL operates at — labelling them "Formatted for Board of
+ * Review" described the one stage we cannot serve.
+ */
 const PRICING_PLANS = [
   {
     id: "diy", name: "DIY Appeal Packet", price: "$69",
-    priceNote: "one-time · keep 100% of your savings",
+    priceNote: "one-time",
     summary: "Everything you need to file the appeal yourself in your township.",
-    tag: "Recommended",
+    tag: null,
     href: "/checkout",
     cta: "Get the DIY Packet",
     features: [
       { label: "Pre-written appeal argument", ok: true, detail: "Tailored to assessment level + comp uniformity" },
-      { label: "3 nearby comparables", ok: true, detail: "Formatted for Board of Review" },
+      { label: "3 nearby comparables", ok: true, detail: "Prepared for an Assessor-stage appeal" },
       { label: "Step-by-step filing instructions", ok: true, detail: "Specific to your township" },
-      { label: "Deadline reminders", ok: true, detail: "2026 window + 2027 second pass" },
-      { label: "We submit on your behalf", ok: false, detail: "You file yourself (~15 min)" },
-    ],
-  },
-  {
-    id: "dfy", name: "Done-For-You", price: "$97",
-    priceNote: "one-time · we file and follow up",
-    summary: "We prepare and submit the appeal — you just sign the authorization.",
-    tag: null,
-    href: "/checkout",
-    cta: "Choose Done-For-You",
-    features: [
-      { label: "Pre-written appeal argument", ok: true, detail: "Tailored to assessment level + comp uniformity" },
-      { label: "3 nearby comparables", ok: true, detail: "Formatted for Board of Review" },
-      { label: "Step-by-step filing instructions", ok: true, detail: "Or skip — we file for you" },
-      { label: "Deadline reminders", ok: true, detail: "2026 window + 2027 second pass" },
-      { label: "We submit on your behalf", ok: true, detail: "Tracked through BoR decision" },
-    ],
-  },
-  {
-    id: "contingency", name: "Contingency", price: "22%",
-    priceNote: "of first-year savings · only if granted",
-    summary: "For larger potential reductions: no upfront service fee, reviewed before acceptance.",
-    tag: "No upfront fee",
-    href: "/appeal-contingency",
-    cta: "Request contingency review",
-    features: [
-      { label: "Pre-written appeal argument", ok: true, detail: "Built after case review" },
-      { label: "3 nearby comparables", ok: true, detail: "Formatted for Board of Review" },
-      { label: "Step-by-step filing instructions", ok: false, detail: "We handle accepted cases" },
-      { label: "Deadline reminders", ok: true, detail: "Tracked through decision" },
-      { label: "We submit on your behalf", ok: true, detail: "After explicit authorization" },
+      { label: "Deadline reminders", ok: true, detail: "For a future eligible window" },
+      { label: "You file it yourself", ok: true, detail: "We prepare it; you review, sign, and file" },
     ],
   },
 ];
@@ -972,8 +958,12 @@ function PricingCompare() {
     <section id="pricing" className="ot-pcompare">
       <div className="ot-pcompare-inner">
         <div className="ot-pcompare-head">
-          <div className="ot-eyebrow">Three ways to file</div>
-          <h2 className="ot-h2">Same outcome. Pick flat-fee help or contingency review.</h2>
+          <div className="ot-eyebrow">One way to file</div>
+          {/* "Same outcome" claimed the county decides identically whichever
+              tier you buy — an outcome claim about a decision that is not
+              ours. With one plan there is nothing left to compare anyway. */}
+          <h2 className="ot-h2">The DIY Appeal Packet.</h2>
+          <p className="ot-pcompare-sub">{CC_10}</p>
         </div>
         <div className="ot-pcompare-grid">
           {PRICING_PLANS.map((plan) => (
@@ -1014,38 +1004,48 @@ function PricingCompare() {
 const FAQ_ITEMS = [
   {
     id: "deadline",
+    // The cycle-year schedule ("2026 triennial covers the South and West
+    // Suburbs first ... 2027 and 2028") was a hard-coded window status with no
+    // source and no retrieval timestamp, restated on the busiest page on the
+    // site and never refreshed. The answer now points at the one surface that
+    // carries provenance instead of holding a second, drifting copy.
     q: "When is the deadline to file an appeal?",
-    a: "Each Cook County township has its own appeal window. The county runs on a rolling 3-year triennial cycle, and only about a third of townships are open at any given time. Once you enter your address, we show your specific township's window and exact close date. The 2026 triennial covers the South and West Suburbs first; North Suburbs and the City of Chicago follow in 2027 and 2028.",
+    a: "Each Cook County township has its own appeal window, and the county opens them on a rolling schedule. Enter your address and we show your township's status as published by the county, with the source and the time we retrieved it. Confirm your filing deadline with the county before you file.",
     expanded: true,
   },
   {
     id: "after-check",
     q: "What happens after I submit my free check?",
-    a: "You'll see your full report on the next screen — assessed value vs. comparable properties, assessment-level gap, estimated annual and 3-year overpayment, and your township's appeal window status. No signup, no credit card. If your check shows over-assessment, you can pick the DIY Appeal Packet ($69), Done-For-You ($97), or request contingency review for larger cases. If your numbers don't suggest an appeal, we'll tell you that too.",
+    // "estimated annual and 3-year overpayment" put a dollar figure on a
+    // decision the county has not made (BL-B3). The report describes the
+    // comparison it actually performed.
+    a: "You'll see your full report on the next screen — assessed value against comparable properties, the assessment-level gap, and your township's appeal window status as published by the county. No signup, no credit card. If the evidence appears to support closer review and your window is open, you can order the $69 DIY Appeal Packet. If it does not, we'll tell you that too.",
     expanded: true,
   },
   {
     id: "data",
     q: "Where does your data come from? How fresh is it?",
-    a: "Cook County Assessor and Board of Review public records. We check township schedules regularly and avoid publishing outcome claims until they are verified. It's the same public-record base the Board of Review uses to decide appeals.",
+    a: "Cook County Assessor public records. Every deadline we show carries the source it came from and the time we retrieved it, and we publish no outcome claims.",
     expanded: true,
   },
   {
     id: "win-rate",
     q: "What if my appeal isn't successful?",
-    a: "Cook County doesn't penalize you for filing — you keep the assessed value on file. The $69 DIY packet is a flat service fee for preparing your appeal materials and is paid regardless of outcome. A refund applies only if an OverTaxed IL procedural error causes the county to reject the filing.",
+    // The refund rule is a Terms of Service term and an owner policy decision
+    // (OD-5, unsigned), so it is not restated or reworded here. CC-12 replaces
+    // only the outcome framing.
+    a: `Cook County doesn't penalize you for filing — you keep the assessed value on file. The $69 packet is a flat fee for preparing your appeal materials and is paid regardless of what the county decides. ${CC_12}`,
     expanded: true,
   },
-  {
-    id: "diy-vs-dfy",
-    q: "DIY Packet vs Done-For-You — which should I pick?",
-    a: "Most homeowners pick the $69 DIY Appeal Packet when they want us to build the comp package and they are comfortable filing it themselves. Done-For-You at $97 is for homeowners who want us to submit after they sign explicit filing authorization.",
-    expanded: true,
-  },
+  // The "DIY Packet vs Done-For-You" entry is removed. It compared the packet
+  // against a held product, and opened with "Most homeowners pick..." (BL-B2).
   {
     id: "law-firm",
     q: "Are you a law firm?",
-    a: "No. OverTaxed IL is not a law firm and does not provide legal advice. We help you organize public records into the format the Board of Review accepts.",
+    // "the format the Board of Review accepts" described our packet as built
+    // for the one stage we cannot serve. Every Board of Review mention has to
+    // co-render CC-11, and this is the answer where that belongs.
+    a: `${CC_12} ${CC_01} ${CC_11}`,
     expanded: true,
   },
 ];

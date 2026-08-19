@@ -59,7 +59,13 @@ export default function AboutPage() {
             Most Cook County homeowners don&apos;t know they can appeal their property tax assessment — and those who do often don&apos;t know where to start. The appeal process is time-sensitive, data-heavy, and easy to get wrong without the right tools.
           </p>
           <p className="text-gray-700 text-lg leading-relaxed">
-            OverTaxed IL was built to fix that. We pull your assessment data, generate a comparable sales packet, and give you everything you need to file a strong appeal — built around Cook County Assessor + Board of Review public records.
+            {/* Two changes. "a strong appeal" characterises the merits of a
+                case the county has not seen, which is the same claim class as
+                a success rate (BL-B2). And the Board of Review is dropped from
+                the provenance line: the packet is built from Assessor records
+                for an Assessor-stage appeal, so naming the Board here claimed
+                a source we do not use for a stage we do not serve. */}
+            OverTaxed IL was built to fix that. We pull your assessment data, generate a comparable sales packet, and give you the materials to prepare and file your own appeal — built around Cook County Assessor public records.
           </p>
         </div>
 

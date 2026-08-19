@@ -8,6 +8,7 @@ import {
   type Township,
   type TownshipStatus,
 } from "@/lib/townships";
+import { CC_10 } from "@/lib/copy/canonical";
 
 const DISTRICT_LABEL: Record<string, string> = {
   "south-west-suburbs": "South & West Suburbs",
@@ -62,7 +63,13 @@ function TownshipHero({ t }: { t: Township }) {
             </h1>
             <p className="ot-tp-sub">
               {DISTRICT_LABEL[t.district]} · Cook County, Illinois · {t.cycleYear} triennial reassessment.
-              {isOpen && <> File a formal appeal with the Cook County Board of Review by <strong>{t.closeDateLong}</strong>.</>}
+              {/* Assessor, not Board of Review. These township windows are the
+                  Assessor's, and naming the Board here both misdirected the
+                  filing and put the one stage OverTaxed IL cannot serve into
+                  the hero of 38 pages — which BL-F5 would then require CC-11
+                  to answer on every one of them. Correcting the stage is the
+                  fix; the disclosure is not. */}
+              {isOpen && <> File a formal appeal with the Cook County Assessor by <strong>{t.closeDateLong}</strong>.</>}
               {isSoon && <> The window opens <strong>{t.openDateLong}</strong> and closes <strong>{t.closeDateLong}</strong>.</>}
               {!isOpen && !isSoon && <> The next appeal window for {t.name} Township opens in {t.cycleYear}. We&apos;ll email you when it does.</>}
             </p>
@@ -105,7 +112,7 @@ function TownshipHero({ t }: { t: Township }) {
               </div>
               <div>
                 <dt>Filing body</dt>
-                <dd>Cook County Board of Review</dd>
+                <dd>Cook County Assessor</dd>
               </div>
             </dl>
           </aside>
@@ -262,20 +269,25 @@ function TownshipFaq({ t }: { t: Township }) {
       a: <>The {t.cycleYear} window opens <strong>{t.openDateLong}</strong> and closes <strong>{t.closeDateLong}</strong>. After it closes, the next opportunity to formally appeal will be in {t.cycleYear + 3} (Cook County reassesses each township once every three years).</>,
     },
     {
+      // Kept in lockstep with buildTownshipFaqEntries in
+      // app/township/[slug]/page.tsx — the JSON-LD there mirrors this text, and
+      // Google rejects FAQPage markup whose answers are not on the page.
+      // These windows are Assessor-stage; naming the Board of Review named the
+      // wrong stage, and the one OverTaxed IL cannot serve, on 38 pages.
       q: `What's the deadline to file an appeal in ${t.name}?`,
-      a: <>The Board of Review appeal deadline for {t.name} Township is <strong>{t.closeDateLong}</strong>. Late filings are not accepted — there is no grace period and no appeal-by-mail postmark exception.</>,
+      a: <>The Cook County Assessor appeal deadline for {t.name} Township is <strong>{t.closeDateLong}</strong>. Late filings are not accepted — there is no grace period and no appeal-by-mail postmark exception. Confirm your filing deadline with the county before you file.</>,
     },
     {
       q: `What does it cost to appeal?`,
-      a: <>The Cook County Board of Review charges no fee. OverTaxed IL offers a $69 DIY Appeal Packet, $97 Done-For-You filing after explicit authorization, and a 22% contingency option for eligible cases. You can also file on your own at no cost — see the <Link href="/#pricing">pricing details</Link>.</>,
+      a: <>The Cook County Assessor charges no fee to file. {CC_10} You can also file on your own at no cost — see the <Link href="/#pricing">pricing details</Link>.</>,
     },
     {
       q: `What evidence do I need to appeal in ${t.name}?`,
-      a: <>The Board of Review accepts comparable assessments, relevant sales evidence, lack-of-uniformity arguments (your assessment vs. similar properties), and condition-based evidence (recent photos, contractor estimates). We pull public-record comparable properties from {t.name} and surrounding townships automatically when you run a free check.</>,
+      a: <>The Assessor accepts comparable assessments, relevant sales evidence, lack-of-uniformity arguments (your assessment vs. similar properties), and condition-based evidence (recent photos, contractor estimates). We pull public-record comparable properties from {t.name} and surrounding townships automatically when you run a free check.</>,
     },
     {
       q: `Will appealing increase my taxes?`,
-      a: <>No. The Board of Review can confirm or lower your assessed value but cannot raise it as a result of your appeal. The worst case is your assessment stays the same.</>,
+      a: <>The Assessor can confirm or lower your assessed value on your own appeal, but cannot raise it as a result of it. A change in assessed value does not produce an equal change in a tax bill.</>,
     },
   ];
   return (

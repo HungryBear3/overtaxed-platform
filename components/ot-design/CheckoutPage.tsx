@@ -5,8 +5,17 @@ import { useRouter } from "next/navigation"
 import { RiskReversalBadge } from "@/components/ot-design/SiteChrome"
 import { isClientPreviewStubMode } from "@/lib/marketing/preview-gate-client"
 
-const PLAN_TO_TIER: Record<string, "T2" | "T3"> = { diy: "T2", dfy: "T3" }
-type PlanId = "diy" | "dfy" | "contingency"
+/**
+ * Only the packet is offered, so `diy` is the only plan and `T2` the only tier.
+ *
+ * The `dfy` → `T3` mapping is gone rather than left unused: while it existed,
+ * any state or query value that reached `planId` could select a held tier and
+ * post it to the checkout API. The API refuses T3 independently, but a client
+ * that can still name a held tier is a boundary waiting to be re-opened by a
+ * later edit.
+ */
+const PLAN_TO_TIER: Record<string, "T2"> = { diy: "T2" }
+type PlanId = "diy"
 type WindowState = "open" | "closed" | "future_cycle" | "unknown"
 type Candidate = { pin: string; address: string; city: string; township: string | null }
 type GateState = {
@@ -29,32 +38,13 @@ const PLANS: Array<{ id: PlanId; name: string; price: string; priceNote: string;
       "Filing instructions when an official window is available",
       "Deadline reminders for a future eligible window",
     ],
-    tag: "Recommended",
+    // "Recommended" is dropped along with the tiers it was recommended over.
   },
-  {
-    id: "dfy",
-    name: "Done-For-You",
-    price: "$97",
-    priceNote: "one-time · available only after eligibility confirmation",
-    bullets: [
-      "Everything in DIY plus filing preparation and submission when eligible",
-      "You sign the authorization — we handle the forms",
-      "Tracked through the applicable decision",
-      "Payment stays unavailable until we confirm a filing path",
-    ],
-  },
-  {
-    id: "contingency",
-    name: "Contingency",
-    price: "$0 upfront",
-    priceNote: "22% of first-year savings (only if we win)",
-    bullets: [
-      "No upfront cost — we're paid from your savings",
-      "Best fit if estimated savings exceed $2,500/year",
-      "Same filing quality as Done-For-You",
-      "If we don't reduce your bill, you pay $0",
-    ],
-  },
+  // The Done-For-You and Contingency cards are removed. Beyond pricing held
+  // products, their bullets carried the lexicon's most severe claims: "we
+  // handle the forms" (BL-A6), "only if we win" (BL-A5), "Best fit if estimated
+  // savings exceed $2,500/year" (BL-B3), and "If we don't reduce your bill, you
+  // pay $0" — an outcome promise on a decision the county makes, not us.
 ]
 
 const gateCardStyle: React.CSSProperties = {
@@ -101,10 +91,6 @@ export default function CheckoutPage({ initialPlan = "diy" }: { initialPlan?: Pl
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault()
-    if (planId === "contingency") {
-      router.push("/appeal-contingency")
-      return
-    }
     if (previewMode) {
       setError("Preview checkout disabled — Stripe is not called in this environment.")
       return
@@ -304,7 +290,7 @@ export default function CheckoutPage({ initialPlan = "diy" }: { initialPlan?: Pl
                     className="ot-cta ot-cta-block ot-cta-tall"
                     disabled={loading || previewMode || (isAcknowledgmentGate && !analysisAcknowledged) || (isAmbiguous && !selectedPin) || (showNoticeForm && (!noticeDate || !noticeAddress))}
                   >
-                    {loading ? "Checking eligibility…" : isAmbiguous ? "Use this property" : isAcknowledgmentGate || showNoticeForm ? "Confirm and continue" : planId === "contingency" ? "Request contingency review →" : "Continue to payment →"}
+                    {loading ? "Checking eligibility…" : isAmbiguous ? "Use this property" : isAcknowledgmentGate || showNoticeForm ? "Confirm and continue" : "Continue to payment →"}
                   </button>
                 )}
 
