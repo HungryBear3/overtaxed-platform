@@ -70,22 +70,40 @@ export function TrackedHoaLink({ target, source, className, children }: TrackedH
   );
 }
 
-// ── Resident-resource flyer download ────────────────────────────────────────
+// ── Resident-resource flyer download — WITHDRAWN ────────────────────────────
 //
-// Single source of truth for the flyer asset paths + the GA4 event
-// shape. Two surfaces (hero + above the notice section) both use this,
-// so the analytics payload stays consistent. The HTML version is the
-// canonical asset — it's the same standalone export the design team
-// approved. The PDF is a one-page Letter-size render of the same HTML
-// produced via headless Chrome (run locally; see commit for details).
-// Either is safe to share; the click tracks which format the visitor
-// actually picked.
-
-export const HOA_RESOURCE_HTML_PATH = "/resources/overtaxed-hoa-resident-resource.html";
-export const HOA_RESOURCE_PDF_PATH = "/resources/overtaxed-hoa-resident-resource.pdf";
+// The two artifacts under `public/resources/` are no longer offered. They are
+// left on disk (nothing links to them, and deleting a design asset is not this
+// change's call) but they are not served from any surface.
+//
+// Their content is the reason. The flyer carries a standing "Current appeal
+// windows" badge, the line "Refreshed monthly", and a description of
+// `/deadlines` as a "lookup table of all 38 Cook County townships, with open
+// and close dates for the 2026 cycle". None of those is true:
+//
+//   - No township has a verified window today. `evaluateOfficialDeadlineState`
+//     refuses the committed snapshot, so `/deadlines` shows no dates at all.
+//     The flyer describes a page that does not exist as described.
+//   - Nothing refreshes it monthly. It was produced once by a local headless
+//     Chrome run, and the JSX it was rendered from is not in this repository —
+//     it survives only inside the self-extracting HTML bundle. There is no
+//     source to correct and no pipeline to correct it from.
+//   - It also names the Board of Review's decision as what outcomes depend on,
+//     without CC-11, on an Assessor-stage artifact.
+//
+// This is the worst carrier in the product for a stale window claim. It is
+// designed to be printed and pinned in a lobby, where it outlives the page it
+// came from, carries no retrieval timestamp a reader could check, and is read
+// by residents who never visit the site. A date we cannot attribute is bad on a
+// web page; on a poster with our name on it, it is a claim we cannot withdraw.
+//
+// Correcting the artifacts would mean re-encoding the bundle payload and
+// re-rendering the PDF through headless Chrome. Re-rendering is a build action
+// and the two would disagree until both were done. Suppressing the surface is
+// the narrow fix; regenerating the flyer from real verified state is separate
+// work that needs a real snapshot first.
 
 export type HoaResourceSurface = "hero" | "resident_notice_section";
-type HoaResourceFormat = "html" | "pdf";
 
 interface ResourceDownloadGroupProps {
   source: HoaResourceSurface;
@@ -94,52 +112,48 @@ interface ResourceDownloadGroupProps {
 }
 
 /**
- * Quiet two-button group: primary "Download" (PDF) + secondary "Preview"
- * (HTML in a new tab). Both fire `hoa_resource_download` with the
- * format and surface in the payload so we can split downloads from
- * previews and hero clicks from in-context clicks. No popups, no
- * gates, no email capture.
+ * Replaces the flyer download with a link to the live deadlines page.
+ *
+ * `/deadlines` states what is and is not verified at the moment it is read,
+ * which is the property the printed flyer structurally cannot have.
  */
 export function ResourceDownloadGroup({
   source,
-  primaryLabel = "Download the resident resource flyer",
   helperText = "Prefer to copy-paste? Use the notices below.",
 }: ResourceDownloadGroupProps) {
-  function emit(format: HoaResourceFormat) {
-    trackEvent("hoa_resource_download", {
-      format,
-      source,
-      utm_campaign: NOTICE_CAMPAIGN,
-    });
-  }
   return (
     <div className="ot-hoa-resource-cta" style={{ display: "grid", gap: 10, marginTop: 20 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
         <a
-          href={HOA_RESOURCE_PDF_PATH}
-          download="overtaxed-hoa-resident-resource.pdf"
+          href="/deadlines"
           className="ot-cta"
-          data-action="download-hoa-resource"
-          data-format="pdf"
+          data-action="hoa-resource-deadlines"
           data-source={source}
-          onClick={() => emit("pdf")}
+          onClick={() =>
+            trackEvent("hoa_resource_deadlines_click", {
+              source,
+              utm_campaign: NOTICE_CAMPAIGN,
+            })
+          }
         >
-          {primaryLabel} <span className="ot-cta-arrow">↓</span>
+          Look up your township&apos;s appeal window <span className="ot-cta-arrow">→</span>
         </a>
         <a
-          href={HOA_RESOURCE_HTML_PATH}
+          href="https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
           target="_blank"
-          rel="noopener"
+          rel="noopener noreferrer"
           className="ot-cta ot-cta-ghost"
-          data-action="download-hoa-resource"
-          data-format="html"
+          data-action="hoa-resource-county-calendar"
           data-source={source}
-          onClick={() => emit("html")}
         >
-          Preview in browser
+          Cook County Assessor calendar
         </a>
       </div>
-      <p style={{ margin: 0, fontSize: 13, color: "var(--ink-soft, #6f6457)" }}>{helperText}</p>
+      <p style={{ margin: 0, fontSize: 13, color: "var(--ink-soft, #6f6457)" }}>
+        We no longer publish a printable deadline flyer. Appeal dates are set by township and
+        revised through the year, and a printed sheet cannot say when it was last checked — so
+        it stays accurate only until the county changes something. {helperText}
+      </p>
     </div>
   );
 }
@@ -163,11 +177,27 @@ function noticeUrl(target: HoaLinkTarget): string {
   return `${APP_URL}${target}?${params.toString()}`;
 }
 
+/**
+ * The two copy-paste notices.
+ *
+ * These are the most durable text this product emits: a board pastes one into a
+ * newsletter or a lobby noticeboard, and it is then read months later by people
+ * who never came here and cannot tell when it was written. So they name the
+ * county as the authority on dates and never imply that we hold one. The
+ * previous long notice said it was "Updated for 2026 Cook County appeal
+ * windows" and told owners to "look up your township to see whether your appeal
+ * window is open" — a currency claim we cannot support and an instruction to a
+ * page that, with no verified snapshot, cannot answer it.
+ */
+const COUNTY_CALENDAR_URL = "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines";
+
 const SHORT_NOTICE = (): string =>
   [
     "Cook County property tax appeal deadlines vary by township, and owners often miss the window simply because they do not know when to check.",
     "",
-    `If you'd like to check your township's appeal window and your current assessment, the free tools are at ${APP_URL} — see ${noticeUrl("/deadlines")} for your appeal window and ${noticeUrl("/check")} to look up your assessment.`,
+    `The county publishes and revises those dates through the year, so confirm yours directly at ${COUNTY_CALENDAR_URL} before you rely on it.`,
+    "",
+    `If you'd also like to look up your current assessment, there are free tools at ${APP_URL} — ${noticeUrl("/check")} compares your assessment against nearby properties, and ${noticeUrl("/deadlines")} shows a township's filing window where it has been verified against the county's calendar, and says so plainly where it has not.`,
     "",
     "The board is sharing this resource only; there's no signup, no fee, and no commitment. Whether to appeal is each owner's decision.",
   ].join("\n");
@@ -180,15 +210,19 @@ const LONG_NOTICE = (): string =>
     "",
     "The board is sharing a free property tax resource owners may want to use. We are not endorsing a service, signing a vendor agreement, or collecting a referral fee — this is informational only.",
     "",
-    `Cook County reassesses property in cycles, and the formal appeal window varies by township. Some owners may find appeal opportunities they otherwise would have missed if they don't check before their deadline. Updated for 2026 Cook County appeal windows, OverTaxed IL maintains two free tools:`,
+    "Cook County reassesses property in cycles, and the formal appeal window varies by township. Filing dates are published and revised by the county through the year.",
     "",
-    `  • Township deadline lookup: ${noticeUrl("/deadlines")}`,
+    `Please treat the county as the authority on your own deadline, not this notice and not any website — including the one below. Confirm it at ${COUNTY_CALENDAR_URL}. Late filings are not accepted.`,
+    "",
+    "OverTaxed IL maintains two free tools:",
+    "",
     `  • Free assessment check (no signup): ${noticeUrl("/check")}`,
+    `  • Township deadline pages: ${noticeUrl("/deadlines")} — these show a filing window only where it has been verified against the county's calendar, together with when it was read. Where it has not been verified, they show no date and say so.`,
     "",
     "What you'd typically do, in plain steps:",
-    "  1. Look up your township to see whether your appeal window is open.",
+    "  1. Confirm your township and your filing deadline with the county.",
     "  2. Check your current assessment level against comparable properties.",
-    "  3. Decide whether you want to act before your deadline.",
+    "  3. Decide whether you want to act before that deadline.",
     "",
     "What this is NOT: legal advice, a guarantee that your taxes will go down, an obligation, or an endorsement by the board. OverTaxed IL is not a law firm. For legal questions about your property or appeal, please consult a licensed Illinois attorney.",
     "",

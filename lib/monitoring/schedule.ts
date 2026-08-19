@@ -8,7 +8,7 @@ import {
   evaluateOfficialDeadlineState,
   type OfficialDeadlineSnapshot,
 } from "@/lib/deadlines/official-source-state"
-import { informationalTownship } from "@/lib/deadlines/township-resolution"
+import { informationalTownship, townshipKeyFromName } from "@/lib/deadlines/township-resolution"
 
 /** Cook County reassessment season: January through August. No checks Sep–Dec to reduce pings. */
 const SEASON_START_MONTH = 1
@@ -64,8 +64,18 @@ function addDays(d: Date, n: number): Date {
   return out
 }
 
-/** Normalize township name for matching (same as getTownshipDeadline) */
+/**
+ * Normalize a township name to the canonical snapshot key.
+ *
+ * This used to produce a space-separated form ("elk grove") matching the
+ * hard-coded maps, while the canonical snapshot is keyed the way
+ * [[townshipKeyFromName]] writes it ("elk-grove"). Two normalization dialects
+ * over the same names is a silent-miss bug: a lookup in the wrong dialect finds
+ * nothing and reads as "no deadline published" rather than as an error. There
+ * is now one key space, and it is the canonical one.
+ */
 export function normalizeTownshipForMatch(township: string | null): string | null {
   if (!township?.trim()) return null
-  return township.trim().toLowerCase().replace(/\s*township\s*$/i, "").trim()
+  const bare = township.trim().replace(/\s*township\s*$/i, "").trim()
+  return bare ? townshipKeyFromName(bare) : null
 }

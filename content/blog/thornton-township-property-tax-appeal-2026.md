@@ -1,11 +1,13 @@
 ---
-title: "Thornton Township Property Tax Appeal 2026: South District Homeowners Take Action"
+title: "Thornton Township Property Tax Appeal — Harvey, Homewood, South Holland"
 slug: thornton-township-property-tax-appeal-2026
-description: "Thornton Township is in the 2026 Cook County reassessment cycle. Harvey, Hazel Crest, Homewood, Flossmoor, and South Holland homeowners can appeal now."
+description: "Thornton Township is in the 2026 Cook County reassessment cycle. How the appeal process works, and where to confirm the filing window that applies to your property."
 date: "2026-03-24"
 ---
 
-Thornton Township is one of the South District townships in Cook County's 2026 reassessment cycle. If you own property in Thornton Township — covering Harvey, Hazel Crest, Homewood, Flossmoor, South Holland, and surrounding communities — your appeal window is currently open.
+Thornton Township is in the south and west suburbs district, whose reassessment year in the Cook County triennial cycle is 2026. It covers Harvey, Hazel Crest, Homewood, Flossmoor, South Holland, and surrounding communities.
+
+This page does not publish a filing date and does not tell you whether the appeal window is open today. Cook County sets appeal dates by township and revises them through the year, so the answer has to come from the county on the day you need it: the [Assessor's assessment and appeal calendar](https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines).
 
 ## Communities in Thornton Township
 
@@ -18,25 +20,42 @@ Thornton Township is one of the South District townships in Cook County's 2026 r
 - **Phoenix**
 - **Glenwood** (partial)
 
-## The 2026 Reassessment: What It Means
+Municipality and township are not the same thing. Your township is decided by the county's record for your PIN, not by the name of the village you get mail in — confirm it at the [Assessor's property search](https://www.cookcountyassessoril.gov/address-search).
 
-Every three years, Cook County reassesses all properties in a township district. The South District is up in 2026. This means the Assessor is recalculating every property's value — and in many cases, assessments are increasing faster than actual market values warrant.
+## What the Reassessment Year Means
 
-2025 saw Cook County commercial values drop significantly while residential values held or rose. That shift pushed more of the tax burden onto homeowners. Appealing your 2026 reassessment is one of the only ways to push back.
+Every three years Cook County reassesses all properties in a district, and 2026 is the south and west suburbs year. The Assessor recalculates each property's value using mass appraisal methods, which work from broad market data and do not account for the condition, interior finish, or hyperlocal circumstances of an individual property.
 
-## What You Need for a Successful Appeal
+That is the opening an appeal works in: where the record the county holds does not match properties genuinely comparable to yours.
 
-The Cook County Assessor weighs appeals based on comparable sales data. You need to show that similar homes in your area sold for prices that imply a lower assessed value than what you've been assigned.
+Appealing in a reassessment year is not your only option. You can appeal your existing assessment in the intervening years as well.
 
-Overtaxed IL automates this — we pull the comparable sales, calculate your potential overpayment, and walk you through filing.
+## What You Need for an Appeal
 
-## Average Savings for Thornton Township
+The Assessor weighs first-level appeals on comparable evidence: assessments of properties similar to yours — same class, similar size, similar age, nearby — supported by relevant recent sales. This is what Rule 15 evidence refers to.
 
-Based on Cook County Board of Review data, homeowners who appeal in reassessment years see some of the highest reduction rates. For a median-value home in the $200,000–$350,000 range, successful appeals typically result in:
+Public records may be incomplete, out of date, or inconsistent. Any analysis, ours included, uses only what was retrievable at the time shown, and cannot account for condition, interior finish, or other facts the public record does not carry.
 
-- **Annual savings:** $700–$1,800/year
-- **3-year savings:** $2,100–$5,400
+OverTaxed IL pulls the comparable records, shows you how your assessment compares, and prepares the packet you file yourself.
+
+## Savings for Thornton Township
+
+We do not publish a savings range for Thornton Township. We cannot know what any particular property would save: it depends on how far the assessment sits from comparable properties, on the composite tax rate for the parcel, and on what the county decides. A change in assessed value does not produce an equal change in a tax bill, and no reduction is guaranteed.
+
+If you see a specific dollar range attached to a township anywhere — including the illustrative figures on our own township pages — read it as an illustration, not a forecast for your property.
+
+## The Board of Review
+
+The Board of Review is a separate, later stage with its own calendar, and it is frequently confused with the Assessor's window.
+
+OverTaxed IL does not file, sign, prepare, handle, or represent anyone at the Cook County Board of Review. Under the Board's own rules, only a licensed attorney or the taxpayer personally may practise before it. If we ever offer anything at that stage, it would be attorney-led. Do not wait for us — confirm your own deadline with the county.
 
 ## Start With a Free Check
 
-Enter your property address at [overtaxed-il.com/check](https://www.overtaxed-il.com/check) to see if your Thornton Township assessment is higher than your neighbors'. The check is free, takes 60 seconds, and requires no account.
+[Run a free check on your property](/check) to see how your Thornton Township assessment compares with similar properties nearby. No account required.
+
+This free check compares available public Cook County records. It estimates whether the evidence appears to support closer review. It does not predict whether an appeal will succeed or reduce taxes.
+
+OverTaxed IL analyzes public Cook County records and prepares a defined Assessor-stage appeal packet. You review it, sign it, and file it yourself. The $69 packet is a preparation service. We prepare it; you review it, sign it, and file it with the county yourself. You can also file on your own with the county at no cost.
+
+OverTaxed IL is not a law firm and does not provide legal or tax advice. We do not guarantee a reduction. County decisions are final, and a change in assessed value does not produce an equal change in a tax bill.

@@ -1,8 +1,8 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { buildTickerItems, TOWNSHIPS } from "@/lib/townships";
-import { CC_12 } from "@/lib/copy/canonical";
+import { buildTickerItems, TICKER_STANDING_ITEM, TOWNSHIPS } from "@/lib/townships";
+import { CC_18 } from "@/lib/copy/canonical";
 
 // Public-contact constants used by SiteChrome (footer text, contact CTAs).
 // Personal-name attribution is intentionally NOT in this shared chrome
@@ -20,7 +20,10 @@ const FOOTER_TOWNSHIP_GROUPS = [
     label: "South & West",
     cycle: "2026 cycle",
     count: TOWNSHIPS.filter((t) => t.district === "south-west-suburbs").length,
-    examples: TOWNSHIPS.filter((t) => t.district === "south-west-suburbs" && t.status === "open")
+    // Cross-links, not a shortlist of open windows. This used to filter on a
+    // seed status, so the footer of every page silently asserted which four
+    // townships were accepting appeals.
+    examples: TOWNSHIPS.filter((t) => t.district === "south-west-suburbs")
       .slice(0, 4)
       .map((t) => ({ slug: t.slug, name: t.name })),
   },
@@ -149,14 +152,18 @@ export function SiteFooter() {
 
           <div className="ot-footer-col ot-footer-col-legal">
             <div className="ot-footer-col-head">About</div>
-            {/* CC-12 must appear on every consumer surface (BL-F2), and the
-                footer is the one place that is genuinely on all of them — so
-                it is rendered here rather than retyped per page.
+            {/* CC-18 (CC-01 + CC-12) is the standing footer and must appear on
+                every consumer surface without exception (BL-F2). The footer is
+                the one place genuinely on all of them, so it is rendered here
+                rather than retyped per page — and it is rendered as the joined
+                pair, because a page that carries the disclaimer without the
+                what-we-actually-sell sentence states the limit of a service it
+                never described.
                 "may vary from final Board of Review outcomes" is dropped: it
                 named the one stage OverTaxed IL cannot serve, in shared chrome,
                 which would have required CC-11 on all 52 paths to say something
                 the Assessor-stage packet never depended on. */}
-            <p className="ot-footer-disclaimer">{CC_12}</p>
+            <p className="ot-footer-disclaimer">{CC_18}</p>
           </div>
         </div>
 
@@ -172,12 +179,26 @@ export function SiteFooter() {
 }
 
 /**
- * Locked-on Live Ticker. Cross-fades 4 items every 6s; pauses on hover.
+ * Locked-on Live Ticker. Cross-fades items every 6s; pauses on hover.
+ *
+ * The ticker renders on every public page, including statically prerendered
+ * ones, so it deliberately shows nothing but the standing item until the
+ * component has mounted in a browser. Deriving items during SSR would bake
+ * whatever the window state was at build time into HTML a CDN then serves for
+ * as long as it likes — a "window open" claim frozen at deploy time is the
+ * stale-date defect this rebuild exists to remove, just relocated into the
+ * cache. After mount the items are derived against the visitor's own clock, and
+ * [[buildTickerItems]] emits a township only if the canonical state verified
+ * one for it.
  */
 export function LiveTicker() {
-  const items = buildTickerItems();
+  const [items, setItems] = useState<string[]>([TICKER_STANDING_ITEM]);
   const [idx, setIdx] = useState(0);
   const [paused, setPaused] = useState(false);
+
+  useEffect(() => {
+    setItems(buildTickerItems());
+  }, []);
 
   useEffect(() => {
     if (paused || items.length <= 1) return;
@@ -197,7 +218,7 @@ export function LiveTicker() {
     >
       <div className="ot-ticker-inner">
         <span className="ot-ticker-dot" aria-hidden="true" />
-        <span className="ot-ticker-eyebrow">Schedule checked regularly</span>
+        <span className="ot-ticker-eyebrow">Cook County appeal calendar</span>
         <span className="ot-ticker-track">
           {items.map((it, i) => (
             <span

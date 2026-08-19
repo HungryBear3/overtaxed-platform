@@ -13,6 +13,12 @@ import type {
   PIN,
   AssessmentHistoryRecord,
 } from './types'
+import {
+  normalizePin,
+  resolveTownship,
+  type PropertyRecordLookup,
+  type TownshipResolutionResult,
+} from '@/lib/deadlines/township-resolution'
 
 // Dataset IDs from Cook County Open Data Portal
 const DATASETS = {
@@ -128,7 +134,12 @@ async function fetchSocrataData<T>(
 
 /**
  * Get township_code for a neighborhood from NEIGHBORHOODS dataset.
- * Used for broader geographic fallback when neighborhood returns few comps.
+ *
+ * Comparable-sales search only, and deliberately not exported. Cook County
+ * neighborhoods cross township lines, so this is a widening heuristic for
+ * finding more comps — never evidence of which township a property files in.
+ * The deadline path takes its township from the parcel record instead; see
+ * [[lookupOfficialPropertyRecord]] at the bottom of this file.
  */
 async function getTownshipForNeighborhood(nbhd: string): Promise<string | null> {
   try {
@@ -1299,6 +1310,65 @@ function parseIntSafe(value: unknown): number | null {
   if (!value) return null
   const parsed = parseInt(String(value), 10)
   return isNaN(parsed) ? null : parsed
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Deadline boundary
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The only township evidence this module offers to the deadline path.
+ *
+ * `PropertyData` carries both a `township` (printed on the parcel record) and a
+ * `neighborhood` (the Assessor's valuation neighborhood code). They read like
+ * interchangeable location fields and they are not: Cook County neighborhoods
+ * cross township lines, so a neighborhood tells you roughly where a house is
+ * and cannot tell you when its owner must file. This module already infers
+ * township from neighborhood — see `getTownshipForNeighborhood` — and that
+ * inference is legitimate for what it was written for, widening a comparable-
+ * sales search when a neighborhood returns too few parcels. A comp that is
+ * slightly off costs accuracy. A township that is off costs a missed deadline.
+ *
+ * So the two paths are separated here rather than left to caller discipline.
+ * `getTownshipForNeighborhood` stays module-private and comps-only. Anything
+ * that needs a township for a *deadline* goes through this lookup, which
+ * returns [[OfficialPropertyRecord]] — a shape with no neighborhood field on
+ * it, so the inference is not merely discouraged but unrepresentable.
+ *
+ * Returns null when the parcel record does not exist or does not name a
+ * township. [[resolveTownship]] turns that into `record_unavailable` or
+ * `record_missing_township`, and the projection built from it is unavailable.
+ * There is no fallback, because every candidate fallback is a guess.
+ */
+export const lookupOfficialPropertyRecord: PropertyRecordLookup = async (pin) => {
+  const normalized = normalizePin(pin)
+  if (!normalized) return null
+
+  const response = await getPropertyByPIN(normalized)
+  if (!response.success || !response.data) return null
+
+  return {
+    pin: response.data.pin,
+    township: response.data.township,
+    address: response.data.address || null,
+  }
+}
+
+/**
+ * Resolve a PIN to a township identity that may establish eligibility.
+ *
+ * `resolvedAt` is passed in, not read from the clock, so the caller's freshness
+ * window and this resolution are measured against the same instant.
+ */
+export async function resolveTownshipForDeadline(input: {
+  pin: string
+  resolvedAt: string
+}): Promise<TownshipResolutionResult> {
+  return resolveTownship({
+    pin: input.pin,
+    resolvedAt: input.resolvedAt,
+    lookupPropertyRecord: lookupOfficialPropertyRecord,
+  })
 }
 
 // Export types

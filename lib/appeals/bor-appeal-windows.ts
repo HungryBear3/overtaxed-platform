@@ -1,40 +1,74 @@
-// Board of Review (BOR) appeal windows — Cook County rolling township schedule
-// Update this file each year when the BOR announces the new calendar.
-// Separate from lib/appeals/township-deadlines.ts (Assessor notice dates, different stage/year).
-export const BOR_APPEAL_WINDOWS: Record<string, { open: string; close: string }> = {
-  "chicago": { open: "2026-01-12", close: "2026-04-30" },
-  "city of chicago": { open: "2026-01-12", close: "2026-04-30" },
-  "evanston": { open: "2026-03-02", close: "2026-06-12" },
-  "new trier": { open: "2026-03-02", close: "2026-06-12" },
-  "niles": { open: "2026-04-06", close: "2026-07-10" },
-  "elk grove": { open: "2026-04-06", close: "2026-07-10" },
-  "maine": { open: "2026-04-06", close: "2026-07-10" },
-  "norwood park": { open: "2026-04-06", close: "2026-07-10" },
-  "jefferson": { open: "2026-04-06", close: "2026-07-10" },
-  "oak park": { open: "2026-02-17", close: "2026-05-22" },
-  "river forest": { open: "2026-02-17", close: "2026-05-22" },
-  "proviso": { open: "2026-02-17", close: "2026-05-22" },
-  "berwyn": { open: "2026-02-17", close: "2026-05-22" },
-  "cicero": { open: "2026-02-17", close: "2026-05-22" },
-  "lyons": { open: "2026-02-17", close: "2026-05-22" },
-  "riverside": { open: "2026-02-17", close: "2026-05-22" },
-  "stickney": { open: "2026-02-17", close: "2026-05-22" },
-  "worth": { open: "2026-05-04", close: "2026-08-07" },
-  "palos": { open: "2026-05-04", close: "2026-08-07" },
-  "orland": { open: "2026-05-04", close: "2026-08-07" },
-  "lemont": { open: "2026-05-04", close: "2026-08-07" },
-  "thornton": { open: "2026-05-04", close: "2026-08-07" },
-  "calumet": { open: "2026-05-04", close: "2026-08-07" },
-  "bloom": { open: "2026-05-04", close: "2026-08-07" },
-  "rich": { open: "2026-05-04", close: "2026-08-07" },
-  "bremen": { open: "2026-05-04", close: "2026-08-07" },
-  "lake": { open: "2026-04-06", close: "2026-07-10" },
-  "hanover": { open: "2026-04-06", close: "2026-07-10" },
-  "schaumburg": { open: "2026-04-06", close: "2026-07-10" },
-  "palatine": { open: "2026-04-06", close: "2026-07-10" },
-  "wheeling": { open: "2026-04-06", close: "2026-07-10" },
-  "barrington": { open: "2026-04-06", close: "2026-07-10" },
-  "north chicago": { open: "2026-03-02", close: "2026-06-12" },
-  "south chicago": { open: "2026-01-12", close: "2026-04-30" },
-  "west chicago": { open: "2026-02-17", close: "2026-05-22" },
+/**
+ * Board of Review windows, at the BOR stage of the canonical state.
+ *
+ * This file used to be a hard-coded map of 35 township keys to 2026 open/close
+ * dates, with a comment instructing a developer to "update this file each year".
+ * Three things were wrong with it, and they are worth naming because the same
+ * three recur across every module this rebuild replaced.
+ *
+ * It had no provenance. Nothing in it recorded where the dates came from, when
+ * they were read, or whether the Board had since revised them — so a stale
+ * entry and a current one were indistinguishable, and the file would keep
+ * answering with confidence long after it stopped being true.
+ *
+ * It was keyed in its own dialect (`"north chicago"`, `"city of chicago"`)
+ * rather than the canonical township key, so a lookup that missed returned
+ * `undefined` and read downstream as "no window published" instead of as an
+ * error.
+ *
+ * And it was the wrong stage of the wrong product. BOR is held: under the
+ * Board's own rules only a licensed attorney or the taxpayer personally may
+ * practise before it, which is what CC-11 says on every surface that mentions
+ * the Board. A date map is not the thing standing between a homeowner and a BOR
+ * filing; the honest answer at this stage is the county's own page.
+ *
+ * What remains is a stage-specific adapter over the one canonical state. It
+ * carries no dates of its own, and it returns an unavailable projection unless
+ * the snapshot actually verified a BOR window for that township.
+ */
+
+import {
+  OFFICIAL_DEADLINE_SNAPSHOT,
+  projectTownshipDeadline,
+} from "@/lib/appeals/township-deadlines";
+import type { DeadlineProjection } from "@/lib/deadlines/official-source-state";
+import {
+  informationalTownship,
+  townshipKeyFromName,
+  type TownshipIdentity,
+} from "@/lib/deadlines/township-resolution";
+
+/**
+ * The BOR window for a township established by an official property record.
+ *
+ * Eligibility tier. Pass an identity built from a PIN or address match, not a
+ * name — see [[isEligibleIdentity]].
+ */
+export function projectBorWindow(
+  township: TownshipIdentity | null,
+  at: string,
+): DeadlineProjection {
+  return projectTownshipDeadline({ township, stage: "bor", at });
+}
+
+/**
+ * The BOR window for a township named on a page.
+ *
+ * Informational tier: this may describe what the Board published and can never
+ * open a checkout, run a countdown, or take a reminder signup. Every surface
+ * that renders this must co-render CC-11.
+ */
+export function describeBorWindow(
+  township: string | null,
+  at: string,
+): DeadlineProjection {
+  const name = township?.trim();
+  if (!name) return projectBorWindow(null, at);
+
+  const key = townshipKeyFromName(name.replace(/\s*township\s*$/i, "").trim());
+  const row = OFFICIAL_DEADLINE_SNAPSHOT.townships?.[key];
+  return projectBorWindow(
+    informationalTownship(key, row?.townshipName ?? name),
+    at,
+  );
 }

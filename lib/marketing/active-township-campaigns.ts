@@ -1,28 +1,15 @@
+/**
+ * The four approved township landing-page campaigns.
+ *
+ * Copy lives here; dates never do. Phase and every date come from
+ * [[describeTownshipCalendar]], so this module is not a fifth opinion about
+ * whether a window is open.
+ */
 import {
   ASSESSOR_CALENDAR_URL,
-  getOfficial2026Deadline,
+  describeTownshipCalendar,
 } from "@/lib/appeals/township-deadlines";
-
-const DAY_MS = 86_400_000;
-const CAMPAIGN_TIME_ZONE = "America/Chicago";
-
-function chicagoDateIso(date: Date): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: CAMPAIGN_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-  const value = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((part) => part.type === type)?.value;
-  return `${value("year")}-${value("month")}-${value("day")}`;
-}
-
-function calendarDaysBetween(fromIso: string, toIso: string): number {
-  const from = new Date(`${fromIso}T12:00:00Z`).getTime();
-  const to = new Date(`${toIso}T12:00:00Z`).getTime();
-  return Math.max(0, Math.round((to - from) / DAY_MS));
-}
+import type { PendingReason } from "@/lib/deadlines/official-source-state";
 
 export const ACTIVE_TOWNSHIP_CAMPAIGN_SLUGS = [
   "cicero",
@@ -76,16 +63,57 @@ const COPY: Record<ActiveTownshipCampaignSlug, CampaignCopy> = {
   },
 };
 
-export type TownshipCampaignPhase = "upcoming" | "active" | "expired";
+export type TownshipCampaignPhase =
+  | "upcoming"
+  | "active"
+  | "expired"
+  | "pending";
 
-export interface ActiveTownshipCampaign extends CampaignCopy {
+interface CampaignBase extends CampaignCopy {
   slug: ActiveTownshipCampaignSlug;
-  noticeDate: string;
-  lastFileDate: string;
-  phase: TownshipCampaignPhase;
-  daysRemaining: number;
   calendarUrl: string;
 }
+
+/**
+ * A campaign whose window this site actually verified against the Assessor's
+ * published calendar.
+ */
+export interface VerifiedTownshipCampaign extends CampaignBase {
+  official: true;
+  phase: Exclude<TownshipCampaignPhase, "pending">;
+  noticeDate: string;
+  lastFileDate: string;
+  /** The retrieval instant behind the dates. Required for CC-08/CC-16. */
+  retrievedAt: string;
+  /**
+   * Null whenever the projection did not clear a countdown, which on a campaign
+   * landing page is always: the reader is anonymous, so this is the
+   * informational tier. It was `number` before, which forced every caller to
+   * render some number and left `0` as the only way to say "we don't know" —
+   * indistinguishable from "today is the last day".
+   */
+  daysRemaining: number | null;
+}
+
+/**
+ * A campaign with no verified window.
+ *
+ * The unavailable arm carries no dates at all, so a landing page cannot render
+ * one by reaching past a boolean. `getActiveTownshipCampaign` used to return
+ * `null` in this case and the route turned that into a 404 — on four URLs that
+ * are in the sitemap, are the destination of paid and organic campaigns, and
+ * may already be indexed. A page that has nothing to promise should say so;
+ * disappearing is not the neutral outcome it looks like.
+ */
+export interface PendingTownshipCampaign extends CampaignBase {
+  official: false;
+  phase: "pending";
+  pendingReason: PendingReason;
+}
+
+export type ActiveTownshipCampaign =
+  | VerifiedTownshipCampaign
+  | PendingTownshipCampaign;
 
 export function getActiveTownshipCampaign(
   slug: string,
@@ -98,25 +126,36 @@ export function getActiveTownshipCampaign(
   }
   const typedSlug = slug as ActiveTownshipCampaignSlug;
   const copy = COPY[typedSlug];
-  const official = getOfficial2026Deadline(copy.name);
-  if (!official) return null;
+  const base: CampaignBase = {
+    ...copy,
+    slug: typedSlug,
+    calendarUrl: ASSESSOR_CALENDAR_URL,
+  };
 
-  const localDate = chicagoDateIso(now);
+  // A campaign landing page is read by an anonymous visitor, so this is the
+  // informational tier: it may state what the county published and never runs
+  // a countdown or opens a checkout against it. Phase and dates come from the
+  // projection; this module performs no date arithmetic.
+  const projection = describeTownshipCalendar(copy.name, now.toISOString());
+  if (!projection.available) {
+    return { ...base, official: false, phase: "pending", pendingReason: projection.reason };
+  }
+
   const phase =
-    localDate < official.noticeDate
+    projection.status === "upcoming"
       ? "upcoming"
-      : localDate <= official.lastFileDate
+      : projection.status === "open"
         ? "active"
         : "expired";
 
   return {
-    ...copy,
-    slug: typedSlug,
-    noticeDate: official.noticeDate,
-    lastFileDate: official.lastFileDate,
+    ...base,
+    official: true,
+    noticeDate: projection.noticeDate ?? projection.openDate,
+    lastFileDate: projection.lastFileDate,
     phase,
-    daysRemaining: calendarDaysBetween(localDate, official.lastFileDate),
-    calendarUrl: ASSESSOR_CALENDAR_URL,
+    retrievedAt: projection.retrievedAt,
+    daysRemaining: projection.showCountdown ? projection.daysRemaining : null,
   };
 }
 

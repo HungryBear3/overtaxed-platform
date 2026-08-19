@@ -9,25 +9,30 @@ export function generateStaticParams() {
   return getTownshipSlugs().map((slug) => ({ slug }));
 }
 
+/**
+ * Open Graph card for /township/[slug].
+ *
+ * This card used to print the window: "April 15, 2026 — May 19, 2026. 7 days
+ * left to file." with an OPEN / OPENING SOON banner, for all 38 townships,
+ * from `lib/townships.ts` seed dates and a fixed reference date.
+ *
+ * Three separate reasons that cannot stay, in increasing order of severity.
+ * The dates had no source. The countdown was measured from a date pinned in
+ * May 2026 regardless of when the card was built. And an OG card is rendered
+ * once at build time and then held by every unfurler that has ever seen the
+ * link — so "7 days left to file" is not a claim that goes stale in a week, it
+ * is a claim that keeps being shown, unchanged, for as long as someone keeps
+ * pasting the URL into Slack.
+ *
+ * The card now carries the township's name and its triennial cycle year, both
+ * of which are roster facts that do not move, and points at the page for the
+ * window. The page can re-derive the window on every request; a cached PNG
+ * cannot.
+ */
 export default async function OG({ params }: { params: { slug: string } }) {
   const t = getTownshipBySlug(params.slug);
   const name = t?.name ?? "Cook County";
-  const cycleYear = t?.cycleYear ?? 2026;
-  const openDate = t?.openDateLong ?? "—";
-  const closeDate = t?.closeDateLong ?? "—";
-  const status = t?.status ?? "closed";
-  const days =
-    t?.status === "open"
-      ? `${t.daysUntilClose} days left to file`
-      : t?.status === "opening-soon"
-        ? `Opens ${t.openDateLong}`
-        : `Next window: ${cycleYear}`;
-  const statusColor =
-    status === "open"
-      ? "#1F8A5B"
-      : status === "opening-soon"
-        ? "#D97757"
-        : "#5A5048";
+  const cycleYear = t?.cycleYear ?? null;
 
   return new ImageResponse(
     (
@@ -55,13 +60,13 @@ export default async function OG({ params }: { params: { slug: string } }) {
             style={{
               display: "flex",
               fontSize: 28,
-              color: statusColor,
+              color: "#5A5048",
               fontWeight: 700,
               letterSpacing: 1,
               textTransform: "uppercase",
             }}
           >
-            {status.replace("-", " ")} · {cycleYear} cycle
+            {cycleYear ? `${cycleYear} reassessment cycle` : "Cook County"}
           </div>
           <div
             style={{
@@ -85,7 +90,8 @@ export default async function OG({ params }: { params: { slug: string } }) {
               marginTop: 6,
             }}
           >
-            {openDate} — {closeDate}. {days}.
+            Check the current Assessor filing window and confirm your deadline
+            before you file.
           </div>
         </div>
         <div

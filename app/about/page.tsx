@@ -25,10 +25,18 @@ const howItWorks = [
       "We generate a comp report using recent sales of similar properties — the strongest evidence in any Cook County appeal.",
   },
   {
+    // "We monitor your township's calendar and notify you before your window
+    // closes" was a promise on two systems that do not exist. There is no
+    // monitor — `lib/deadlines/official-source-state.ts` refuses the committed
+    // snapshot outright, so no township has a verified window today — and there
+    // is no notifier: `app/api/cron/township-alerts` is retired and
+    // `/api/reminder` reports `stored: false, scheduled: false`. Promising to
+    // watch a deadline for someone is worse than saying nothing, because the
+    // reasonable response to it is to stop watching it themselves.
     icon: Bell,
-    title: "We track your deadlines",
+    title: "We show you where the deadline comes from",
     description:
-      "Cook County appeal windows vary by township. We monitor your township's calendar and notify you before your window closes.",
+      "Cook County appeal windows vary by township and are revised through the year. Where we can verify a township's window against the county's published calendar, we show you the date and when we read it. Where we cannot, we show no date and say so — and we point you at the county, which is the only source that can answer it today. Confirm your own filing deadline before you file.",
   },
   {
     icon: DollarSign,

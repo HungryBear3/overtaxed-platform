@@ -1,59 +1,60 @@
 ---
-title: "Oak Lawn Property Tax Appeal 2026 — Worth Township Guide"
-description: "Oak Lawn homeowners are in Worth Township, which is in the 2026 Cook County reassessment cycle. Here's how to appeal your property tax assessment before the deadline."
+title: "Oak Lawn Property Tax Appeal — Worth Township Guide"
+description: "Oak Lawn homeowners are in Worth Township. Here's how the Cook County appeal process works, and where to find the filing window that applies to your property."
 date: "2026-03-25"
 slug: "oak-lawn-property-tax-appeal-2026"
 ---
 
-If you own property in Oak Lawn, you're in **Worth Township** — one of the Cook County townships currently open for the 2026 reassessment cycle. That means right now is your best window to appeal your property tax assessment and potentially save hundreds or thousands of dollars per year.
+If you own property in Oak Lawn, you are in **Worth Township**. Worth is in the 2026 group of the Cook County triennial reassessment cycle, which is the year the Assessor re-derives values across the township.
 
-## Worth Township in the 2026 Reassessment
+This guide does not tell you whether your window is open today, and it does not publish a deadline. Cook County sets and revises filing dates by township through the year, and an article is a fixed document that stays online long after it is written. Check the [Assessor's assessment and appeal calendar](https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines) for the current status of Worth Township before you plan anything around it.
 
-Cook County reassesses properties on a 3-year cycle divided by district. Worth Township is part of the south district, which is being reassessed in 2026. When your township is in a reassessment year, the Cook County Assessor's Office is actively reviewing and updating property values — and this is when appeals carry the most weight.
+## Worth Township in the Reassessment Cycle
 
-Worth Township includes: **Oak Lawn, Chicago Ridge, Worth, Palos Hills, Alsip, Hometown, Bridgeview, Justice, Hickory Hills, Burbank**.
+Cook County reassesses on a three-year cycle divided into three districts: the south and west suburbs, the north suburbs, and the City of Chicago. Worth Township sits in the south and west suburbs group, whose reassessment year is 2026. In a reassessment year the Assessor is actively re-deriving values, which is when a well-evidenced appeal has the most to work with.
 
-The Assessor appeal window for Worth Township is **open now**, with a closing deadline in spring 2026. Don't wait.
+Being outside your reassessment year does not mean you cannot appeal. You can appeal your existing assessment in the intervening years as well.
 
-## Are Oak Lawn Homeowners Being Over-Assessed?
+Worth Township includes **Oak Lawn, Chicago Ridge, Worth, Palos Hills, Alsip, Hometown, Bridgeview, Justice, Hickory Hills, and Burbank**.
 
-Cook County has one of the highest effective property tax rates in the country, and over-assessment is widespread — especially in the south suburbs. Assessments are supposed to reflect 10% of your property's fair market value.
+One caution: municipality and township are not the same thing, and some addresses sit differently than the town name suggests. Your township is determined by the county's own record for your PIN. Confirm it at the [Assessor's property search](https://www.cookcountyassessoril.gov/address-search) rather than assuming it from your mailing address.
 
-If your assessed value implies a market value significantly higher than what comparable homes in Oak Lawn are actually selling for, you're over-assessed and paying more than your fair share.
+## Are Oak Lawn Homeowners Over-Assessed?
 
-The only way to fix it is to appeal.
+A Cook County residential assessment is set at 10% of the Assessor's estimate of your property's fair market value. If comparable properties near you are assessed materially lower than yours, that gap is the argument an appeal is built on.
+
+Whether that is true of any particular property is a question about that property's records, not about Oak Lawn generally.
 
 ## How the Appeal Process Works
 
-**Step 1: Get your current assessed value.** Look at your most recent tax bill or search your address at cookcountyassessor.com.
+**Step 1: Get your current assessed value.** It is on your most recent tax bill and in the Assessor's record for your PIN at [cookcountyassessoril.gov](https://www.cookcountyassessoril.gov/address-search).
 
-**Step 2: Find comparable sales.** Recent sales of similar homes in Oak Lawn or nearby Worth Township communities are your strongest evidence. If those homes sold for less than your assessment implies, you have grounds to appeal.
+**Step 2: Find comparable evidence.** Comparable assessments and recent sales for properties genuinely similar to yours — same class, similar size, similar age, nearby — are the strongest first-level material. This is what Rule 15 evidence refers to.
 
-**Step 3: File your appeal with the Assessor's Office.** Submit your evidence (called Rule 15 comparable sales) during the open window. The Assessor reviews it and issues a decision.
+**Step 3: File with the Assessor's Office before the last file date for your township.** Not a "typical" window, and not a date from a blog post. The one the county publishes for Worth. Late filings are not accepted; there is no grace period.
 
-**Step 4: If needed, appeal to the Board of Review.** If the Assessor doesn't reduce your assessment enough — or denies your appeal — you have a second chance at the Cook County Board of Review.
+**Step 4: The Board of Review is a separate, later stage.** It has its own calendar and its own rules, and it is frequently confused with the Assessor's window.
+
+OverTaxed IL does not file, sign, prepare, handle, or represent anyone at the Cook County Board of Review. Under the Board's own rules, only a licensed attorney or the taxpayer personally may practise before it. If we ever offer anything at that stage, it would be attorney-led. Do not wait for us — confirm your own deadline with the county.
 
 ## What You Can Save
 
-Savings vary based on how over-assessed your property is and Oak Lawn's current tax rate. But homeowners in Worth Township and surrounding areas who appeal successfully typically see reductions of **$500–$2,000 per year**. Over a 3-year period before the next reassessment, that's real money.
+We do not publish a savings figure for Oak Lawn, because we cannot know one. Any reduction depends on how far your assessment sits from comparable properties, on the composite tax rate for your parcel, and on what the county decides. A change in assessed value does not produce an equal change in a tax bill.
 
-## How OverTaxed IL Makes It Simple
+Treat any specific dollar range you see attached to a township — including on our own pages, where those figures are illustrative — as an illustration, not a forecast for your property.
 
-Normally this process means spending hours pulling comparable sales, formatting evidence, and filling out Assessor forms — or paying a tax attorney $300–500 to do it for you.
+## How OverTaxed IL Fits
 
-OverTaxed IL automates the whole thing:
+OverTaxed IL analyzes public Cook County records and prepares a defined Assessor-stage appeal packet. You review it, sign it, and file it yourself.
 
-1. Enter your Oak Lawn address
-2. We pull your current assessment and find recent comparable sales automatically
-3. We show you whether you're over-assessed — **the check is free**
-4. If you have grounds to appeal, we generate your complete Rule 15-compliant appeal packet
+[Run a free check on your property](/check). We pull your current assessment from the public record and compare it against comparable properties.
 
-The same analysis attorneys charge hundreds for, done in minutes.
+This free check compares available public Cook County records. It estimates whether the evidence appears to support closer review. It does not predict whether an appeal will succeed or reduce taxes.
 
-[Start your free Oak Lawn property tax check →](/check)
+The $69 packet is a preparation service. We prepare it; you review it, sign it, and file it with the county yourself. You can also file on your own with the county at no cost.
 
-## Don't Miss the Worth Township Deadline
+## Confirm the Worth Township Date Yourself
 
-The 2026 appeal window for Worth Township won't be open much longer. Once it closes, you'll wait until the Board of Review cycle opens — and your next best chance at a major reduction won't come until the next reassessment.
+The single thing worth acting on here is the last file date the county publishes for Worth Township — and it is the one thing this page deliberately will not tell you. Look it up on the [Assessor's calendar](https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines), and if you use our [township deadline pages](/deadlines), note that they show a date only where we have verified it against that calendar and can show you when we read it.
 
-Five minutes to check. Potentially $1,000+ per year saved.
+OverTaxed IL is not a law firm and does not provide legal or tax advice. We do not guarantee a reduction. County decisions are final, and a change in assessed value does not produce an equal change in a tax bill.

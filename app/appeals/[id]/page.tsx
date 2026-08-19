@@ -931,8 +931,8 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                   </li>
                   <li>
                     <strong>Check your township&apos;s filing window</strong> - Appeals are only accepted during specific periods by township. Confirm your deadline at{" "}
-                    <a href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
-                      cookcountyassessor.com/assessment-calendar-and-deadlines
+                    <a href="https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                      cookcountyassessoril.gov/assessment-calendar-and-deadlines
                     </a>.
                   </li>
                   <li>

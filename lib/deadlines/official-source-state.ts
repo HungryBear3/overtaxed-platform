@@ -249,6 +249,29 @@ export function evaluateOfficialDeadlineState(input: {
 
   if (source.parseStatus !== "ok") return pending("parse_failed", source)
 
+  // The retrieval has to have succeeded. Nothing above checks `httpStatus`, so
+  // a snapshot recording a 403 — which is exactly what a controller probe of
+  // the Assessor's calendar returned on 2026-08-19 — would otherwise be served
+  // as verified county data. A parser that produced rows from an error page
+  // produced them from something that is not the calendar.
+  if (!Number.isInteger(source.httpStatus) || source.httpStatus < 200 || source.httpStatus >= 300) {
+    return pending("source_unavailable", source)
+  }
+
+  // The content hash has to be a hash.
+  //
+  // This module cannot recompute the digest — it holds the parsed rows, not the
+  // bytes — so it cannot detect a hash that is merely wrong. What it can refuse
+  // is a provenance record whose hash is absent or malformed, which is the only
+  // form the failure can take here: a writer that had the bytes would have
+  // produced 64 hex characters. Without this, `contentSha256` was a field
+  // nothing ever read, and a snapshot could claim a retrieval it could not
+  // evidence. Verifying the digest against the source bytes belongs to the
+  // refresh script, which is the only place the bytes exist.
+  if (!/^[0-9a-f]{64}$/.test(source.contentSha256 ?? "")) {
+    return pending("parse_failed", source)
+  }
+
   const retrievedMs = parseInstant(source.retrievedAt)
   if (retrievedMs === null) return pending("parse_failed", source)
 

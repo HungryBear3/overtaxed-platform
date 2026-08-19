@@ -540,7 +540,7 @@ export default async function DashboardPage() {
             Sign up for Cook County&apos;s reassessment notice notifications to receive alerts when your township is reassessed.
           </p>
           <a
-            href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines"
+            href="https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm font-medium text-blue-600 hover:text-blue-700 underline"

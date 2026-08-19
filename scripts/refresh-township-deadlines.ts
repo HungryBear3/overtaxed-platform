@@ -47,7 +47,7 @@ export const SOURCES: Record<
 > = {
   assessor: {
     authority: "cook_county_assessor",
-    url: "https://www.cookcountyassessor.com/assessment-calendar-and-deadlines",
+    url: "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
   },
   bor: {
     authority: "cook_county_board_of_review",

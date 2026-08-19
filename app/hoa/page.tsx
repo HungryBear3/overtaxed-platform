@@ -21,7 +21,11 @@ export const metadata: Metadata = {
   robots: { index: true, follow: true },
 };
 
-const todayLabel = "Updated for 2026 Cook County appeal windows";
+// Was "Updated for 2026 Cook County appeal windows" — a freshness claim on a
+// static page, with no retrieval behind it and nothing that would ever change
+// it. A standing "updated" label is worse than no label: it is read as a
+// timestamp and it is not one.
+const todayLabel = "For Cook County HOA and condo boards";
 
 export default function HoaPage() {
   return (
@@ -181,8 +185,7 @@ export default function HoaPage() {
             </p>
             <ResourceDownloadGroup
               source="resident_notice_section"
-              primaryLabel="Download the resident resource flyer"
-              helperText="Prefer to copy-paste? Use the notices below."
+              helperText="The notices below are written to be pasted into a newsletter as-is."
             />
             <HoaNoticeTemplates />
           </div>

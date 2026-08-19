@@ -1,4 +1,4 @@
-import { getOfficial2026Deadline } from "@/lib/appeals/township-deadlines";
+import type { DeadlineProjection } from "@/lib/deadlines/official-source-state";
 
 function esc(value: string): string {
   return value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
@@ -10,16 +10,39 @@ function dateLabel(iso: string): string {
   });
 }
 
+/**
+ * The date this copy may name, or null.
+ *
+ * A projection that is unavailable, or that is available but not cleared for
+ * deadline email, yields null and every template below falls through to its
+ * dateless variant. Both conditions are checked because they fail differently:
+ * unavailable means we could not verify the window, while `allowDeadlineEmail`
+ * false means we verified it and it is closed or the reader's township was
+ * never established by a property record.
+ */
+function labelFor(deadline: DeadlineProjection | null | undefined): string | null {
+  if (!deadline?.available) return null;
+  if (!deadline.allowDeadlineEmail || !deadline.showDates) return null;
+  return dateLabel(deadline.lastFileDate);
+}
+
+/**
+ * Build one follow-up email.
+ *
+ * The caller passes a projection rather than a township name: this module does
+ * no lookup, so there is no path by which it can name a date the canonical
+ * state did not verify.
+ */
 export function buildFollowupEmail(args: {
   step: string;
   township?: string | null;
   address?: string | null;
   resultUrl: string;
   unsubscribeUrl: string;
+  deadline?: DeadlineProjection | null;
 }): { subject: string; text: string; html: string } | null {
   const township = args.township?.trim() || "your township";
-  const deadline = getOfficial2026Deadline(args.township ?? null);
-  const deadlineLabel = deadline ? dateLabel(deadline.lastFileDate) : null;
+  const deadlineLabel = labelFor(args.deadline);
   const copy: Record<string, { subject: string; body: string; cta: string }> = {
     RESULT: {
       subject: `Your ${township} property check`,
@@ -53,8 +76,18 @@ export function buildFollowupEmail(args: {
   return { subject: selected.subject, text, html };
 }
 
-export function buildFollowupSms(args: { township?: string | null; resultUrl: string }): string | null {
-  const deadline = getOfficial2026Deadline(args.township ?? null);
-  if (!deadline) return null;
-  return `OverTaxed IL: ${args.township} Assessor deadline is ${dateLabel(deadline.lastFileDate)}. Review your free check: ${args.resultUrl} Reply STOP to opt out.`;
+/**
+ * The SMS reminder, which exists only to carry a date.
+ *
+ * With nothing verifiable to say there is no message worth sending, so an
+ * unavailable projection returns null rather than a dateless SMS.
+ */
+export function buildFollowupSms(args: {
+  township?: string | null;
+  resultUrl: string;
+  deadline?: DeadlineProjection | null;
+}): string | null {
+  const deadlineLabel = labelFor(args.deadline);
+  if (!deadlineLabel) return null;
+  return `OverTaxed IL: ${args.township} Assessor deadline is ${deadlineLabel}. Review your free check: ${args.resultUrl} Reply STOP to opt out.`;
 }

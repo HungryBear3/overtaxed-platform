@@ -2,23 +2,45 @@ import Link from "next/link"
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import { TownshipAlertForm } from "@/components/townships/TownshipAlertForm"
 import {
-  TOWNSHIPS,
-  TOWNSHIP_STATUS_COUNTS,
-  type Township,
-  type TownshipDistrict,
-  type TownshipStatus,
-} from "@/lib/townships"
+  buildTownship2026Views,
+  count2026Views,
+  official2026Provenance,
+  type Deadline2026Status,
+  type Township2026View,
+} from "@/lib/deadlines-2026"
+import { TOWNSHIPS_BY_SLUG, type TownshipDistrict } from "@/lib/townships"
+import { cc08 } from "@/lib/copy/canonical"
+import { DEADLINE_PENDING_NOTICE, OFFICIAL_DEADLINE_SOURCES } from "@/lib/deadline-sources"
 import "../ot-design.css"
 
+/**
+ * /townships — the township index.
+ *
+ * This page and /deadlines used to render two different calendars while telling
+ * the reader, in a badge at the top, that they were "the same canonical
+ * deadline data". /deadlines read the 2026 map; this page read the seed dates
+ * and fixed reference date in `lib/townships.ts`. The badge was not a lie
+ * anyone told on purpose — it was true of the intent and false of the code,
+ * which is the failure mode a single source of truth exists to make impossible.
+ *
+ * Both now build from [[buildTownship2026Views]], so the claim is structural
+ * rather than aspirational: there is one array, and if a township is open here
+ * it is open there.
+ *
+ * Rendered per request. A status derived at build time and served from a cache
+ * is a seed date with extra steps.
+ */
+export const dynamic = "force-dynamic"
+
 export const metadata = {
-  title: "Cook County Township Appeal Deadlines 2026",
+  title: "Cook County Township Appeal Deadlines",
   description:
-    "Check appeal windows for all 38 Cook County townships using the same deadline data as OverTaxed IL's deadlines page. See open, opening-soon, and future-cycle townships.",
+    "The filing window for each of the 38 Cook County townships, as published by the Cook County Assessor. Townships whose window we have not verified against the county's calendar show no date.",
   alternates: { canonical: "https://www.overtaxed-il.com/townships" },
 }
 
 const statusConfig: Record<
-  TownshipStatus,
+  Deadline2026Status,
   { label: string; badge: string; row: string; dot: string; action: string }
 > = {
   open: {
@@ -28,15 +50,25 @@ const statusConfig: Record<
     dot: "bg-green-500",
     action: "Run free check",
   },
-  "opening-soon": {
-    label: "Opening soon",
+  upcoming: {
+    label: "Not yet open",
     badge: "bg-yellow-100 text-yellow-800 border border-yellow-200",
     row: "bg-yellow-50/30",
     dot: "bg-yellow-400",
     action: "Get notified",
   },
   closed: {
-    label: "Future cycle",
+    label: "Closed",
+    badge: "bg-gray-100 text-gray-600 border border-gray-200",
+    row: "",
+    dot: "bg-gray-300",
+    action: "View details",
+  },
+  // "Pending" is not a fourth kind of window. It means we have not verified this
+  // township against the county's calendar, so we show no date and no status —
+  // which is a statement about us, not about the township.
+  pending: {
+    label: "Not verified",
     badge: "bg-gray-100 text-gray-600 border border-gray-200",
     row: "",
     dot: "bg-gray-300",
@@ -64,30 +96,48 @@ const districtMeta: Record<TownshipDistrict, { label: string; chip: string; dot:
   },
 }
 
-function formatWindow(t: Township): string {
-  return `${t.openDateShort} – ${t.closeDateShort}, ${t.cycleYear}`
+/** The Assessor's last file date, or an explicit absence. Never a guess. */
+function formatWindow(view: Township2026View): string {
+  return view.official && view.lastFileLabel
+    ? `File by ${view.lastFileLabel}`
+    : "Not published"
 }
 
-function alertFormTownships() {
-  return TOWNSHIPS.map((t) => ({
-    name: t.name,
-    district: districtMeta[t.district].label,
-    status:
-      t.status === "open"
-        ? ("OPEN" as const)
-        : t.status === "opening-soon"
-          ? ("UPCOMING" as const)
-          : ("FUTURE" as const),
-    openDate: t.openDateShort,
-    closeDate: t.closeDateShort,
-    cities: t.neighbors.map((slug) => slug.replace(/-/g, " ")).join(", "),
-  }))
+function neighborsOf(slug: string): string {
+  const roster = TOWNSHIPS_BY_SLUG[slug]
+  if (!roster) return ""
+  return roster.neighbors.map((s) => s.replace(/-/g, " ")).join(", ")
+}
+
+/**
+ * Options for the reminder form.
+ *
+ * Only townships with a verified window are offered. The form promises an email
+ * when a window opens and again before it closes; offering a township whose
+ * calendar we have not read would be taking a signup against a date we do not
+ * have. An empty list is the correct output of an un-refreshed snapshot.
+ */
+function alertFormTownships(views: Township2026View[]) {
+  return views
+    .filter((v) => v.official && (v.status === "open" || v.status === "upcoming"))
+    .map((v) => ({
+      name: v.name,
+      district: districtMeta[v.district].label,
+      status: v.status === "open" ? ("OPEN" as const) : ("UPCOMING" as const),
+      closeDate: v.lastFileLabelShort,
+      cities: neighborsOf(v.slug),
+    }))
 }
 
 export default function TownshipsPage() {
-  const grouped = districtOrder.reduce<Record<TownshipDistrict, Township[]>>(
+  const views = buildTownship2026Views()
+  const counts = count2026Views(views)
+  const provenance = official2026Provenance(views)
+  const assessorSource = OFFICIAL_DEADLINE_SOURCES[0]
+
+  const grouped = districtOrder.reduce<Record<TownshipDistrict, Township2026View[]>>(
     (acc, district) => {
-      acc[district] = TOWNSHIPS.filter((t) => t.district === district)
+      acc[district] = views.filter((v) => v.district === district)
       return acc
     },
     {
@@ -103,59 +153,38 @@ export default function TownshipsPage() {
 
       <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12 bg-white">
         <div className="mb-10">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-100 text-blue-800 text-sm font-medium mb-4">
-            Same canonical deadline data as /deadlines
-          </div>
           <h1 className="text-3xl font-bold text-gray-900 mb-3">
             Cook County Township Appeal Deadlines
           </h1>
           <p className="text-lg text-gray-600 max-w-2xl">
-            All 38 Cook County townships are listed below using one shared source of truth:
-            2026 South & West Suburbs, 2027 North Suburbs, and 2028 City of Chicago.
+            All {views.length} Cook County townships, grouped by triennial reassessment
+            cycle: 2026 South &amp; West Suburbs, 2027 North Suburbs, and 2028 City of
+            Chicago. Filing windows come from the Cook County Assessor.
+          </p>
+          <p className="text-sm text-gray-500 max-w-2xl mt-3">
+            {provenance
+              ? cc08({ source: provenance.source, timestamp: provenance.retrievedAt })
+              : DEADLINE_PENDING_NOTICE}
           </p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-10">
           <div className="bg-green-50 border border-green-200 rounded-xl p-5">
-            <p className="text-3xl font-bold text-green-700">{TOWNSHIP_STATUS_COUNTS.open}</p>
-            <p className="text-sm font-medium text-green-800 mt-1">Townships open now</p>
-            <p className="text-xs text-green-600 mt-1">Matches the /deadlines count</p>
+            <p className="text-3xl font-bold text-green-700">{counts.open}</p>
+            <p className="text-sm font-medium text-green-800 mt-1">Open now</p>
+            <p className="text-xs text-green-600 mt-1">Verified against the county calendar</p>
           </div>
           <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-5">
-            <p className="text-3xl font-bold text-yellow-700">{TOWNSHIP_STATUS_COUNTS["opening-soon"]}</p>
-            <p className="text-sm font-medium text-yellow-800 mt-1">Opening soon</p>
+            <p className="text-3xl font-bold text-yellow-700">{counts.upcoming}</p>
+            <p className="text-sm font-medium text-yellow-800 mt-1">Not yet open</p>
             <p className="text-xs text-yellow-600 mt-1">Get notified before the window opens</p>
           </div>
           <div className="bg-gray-50 border border-gray-200 rounded-xl p-5">
-            <p className="text-3xl font-bold text-gray-700">{TOWNSHIP_STATUS_COUNTS.closed}</p>
-            <p className="text-sm font-medium text-gray-800 mt-1">Future-cycle / closed</p>
-            <p className="text-xs text-gray-600 mt-1">North Suburbs and Chicago follow later</p>
-          </div>
-        </div>
-
-        <div className="bg-blue-900 text-white rounded-xl p-6 mb-10">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div>
-              <p className="text-sm font-semibold text-blue-300 uppercase tracking-wide mb-1">
-                Why the cycle matters
-              </p>
-              <h2 className="text-xl font-bold">
-                The deadline page and township index now render from the same data.
-              </h2>
-              <p className="text-blue-200 mt-2 text-sm">
-                If a township is open on /deadlines, it is open here too. Dates are still
-                public-record estimates and should be verified against the official Cook County
-                assessment calendar before filing.
-              </p>
-            </div>
-            <div className="shrink-0">
-              <Link
-                href="/deadlines"
-                className="inline-block bg-white text-blue-900 font-semibold px-6 py-3 rounded-lg hover:bg-blue-50 transition-colors whitespace-nowrap"
-              >
-                Compare deadline view →
-              </Link>
-            </div>
+            <p className="text-3xl font-bold text-gray-700">{counts.pending}</p>
+            <p className="text-sm font-medium text-gray-800 mt-1">Not verified</p>
+            <p className="text-xs text-gray-600 mt-1">
+              No date shown — confirm with the county
+            </p>
           </div>
         </div>
 
@@ -178,19 +207,19 @@ export default function TownshipsPage() {
                     <tr className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
                       <th className="py-3 pl-4 pr-3 text-left font-semibold">Township</th>
                       <th className="px-3 py-3 text-left font-semibold">Status</th>
-                      <th className="hidden sm:table-cell px-3 py-3 text-left font-semibold">Window</th>
+                      <th className="hidden sm:table-cell px-3 py-3 text-left font-semibold">Assessor deadline</th>
                       <th className="hidden md:table-cell px-3 py-3 text-left font-semibold">Nearby townships</th>
                       <th className="px-3 py-3 text-right font-semibold">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {rows.map((t) => {
-                      const cfg = statusConfig[t.status]
+                    {rows.map((v) => {
+                      const cfg = statusConfig[v.status]
                       return (
-                        <tr key={t.slug} className={`${cfg.row} hover:bg-gray-50 transition-colors`}>
+                        <tr key={v.slug} className={`${cfg.row} hover:bg-gray-50 transition-colors`}>
                           <td className="py-3.5 pl-4 pr-3 font-medium text-gray-900">
-                            <Link href={`/township/${t.slug}`} className="hover:text-blue-700 hover:underline">
-                              {t.name}
+                            <Link href={`/township/${v.slug}`} className="hover:text-blue-700 hover:underline">
+                              {v.name}
                             </Link>
                           </td>
                           <td className="px-3 py-3.5">
@@ -200,13 +229,13 @@ export default function TownshipsPage() {
                             </span>
                           </td>
                           <td className="hidden sm:table-cell px-3 py-3.5 text-gray-600">
-                            {formatWindow(t)}
+                            {formatWindow(v)}
                           </td>
                           <td className="hidden md:table-cell px-3 py-3.5 text-gray-500 text-xs max-w-[240px] leading-relaxed capitalize">
-                            {t.neighbors.map((slug) => slug.replace(/-/g, " ")).join(", ")}
+                            {neighborsOf(v.slug)}
                           </td>
                           <td className="px-3 py-3.5 text-right">
-                            {t.status === "open" ? (
+                            {v.status === "open" ? (
                               <div className="inline-flex flex-col items-end gap-1.5">
                                 <Link
                                   href="/check"
@@ -215,13 +244,13 @@ export default function TownshipsPage() {
                                   {cfg.action}
                                 </Link>
                                 <Link
-                                  href={`/township/${t.slug}`}
+                                  href={`/township/${v.slug}`}
                                   className="text-xs text-blue-700 font-medium hover:underline"
                                 >
-                                  {t.name} details →
+                                  {v.name} details →
                                 </Link>
                               </div>
-                            ) : t.status === "opening-soon" ? (
+                            ) : v.status === "upcoming" ? (
                               <div className="inline-flex flex-col items-end gap-1.5">
                                 <a
                                   href="#township-alert"
@@ -230,18 +259,18 @@ export default function TownshipsPage() {
                                   {cfg.action}
                                 </a>
                                 <Link
-                                  href={`/township/${t.slug}`}
+                                  href={`/township/${v.slug}`}
                                   className="text-xs text-blue-700 font-medium hover:underline"
                                 >
-                                  Opens {t.openDateShort} →
+                                  {v.name} details →
                                 </Link>
                               </div>
                             ) : (
                               <Link
-                                href={`/township/${t.slug}`}
+                                href={`/township/${v.slug}`}
                                 className="text-xs text-gray-500 hover:text-blue-700 hover:underline"
                               >
-                                Opens {t.cycleYear} →
+                                {v.name} details →
                               </Link>
                             )}
                           </td>
@@ -256,7 +285,7 @@ export default function TownshipsPage() {
         })}
 
         <div id="township-alert" className="mt-8 mb-10">
-          <TownshipAlertForm townships={alertFormTownships()} />
+          <TownshipAlertForm townships={alertFormTownships(views)} />
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-6 mb-10">
@@ -291,18 +320,28 @@ export default function TownshipsPage() {
           </div>
         </div>
 
+        {/* The old footnote said "Deadline dates are approximate. Always verify
+            current open/close dates" — a disclaimer doing the work of a source.
+            A date is either verified against the county's published calendar,
+            in which case it is shown with CC-08 provenance, or it is not, in
+            which case the row above shows no date at all. */}
         <p className="text-xs text-gray-400 text-center mt-6">
-          Deadline dates are approximate. Always verify current open/close dates at the official{" "}
+          Filing deadlines are set by the county and change through the year. Confirm yours at the{" "}
           <a
-            href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines"
+            href={assessorSource.href}
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:text-gray-600"
           >
-            Cook County Assessor assessment calendar
+            {assessorSource.label}
           </a>
           . OverTaxed IL is not affiliated with the Cook County Assessor&apos;s Office.
         </p>
+
+        {/* CC-18 is not repeated here. It is rendered once by SiteFooter, which
+            is on this page and on every other consumer surface; printing it
+            twice on one page is how a standing disclosure starts reading as
+            page furniture. */}
       </main>
 
       <SiteFooter />

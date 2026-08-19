@@ -1,83 +1,58 @@
 ---
-title: "Cook County Property Tax Appeal Deadlines 2026 — Complete Township Guide"
-description: "Complete guide to Cook County property tax appeal deadlines for all townships in the 2026 reassessment cycle. Find your township, check your deadline, and start your appeal."
+title: "Cook County Property Tax Appeal Deadlines — How the Township Calendar Works"
+description: "How Cook County appeal deadlines are set, why they differ by township, and where to find the current filing window for yours. This guide explains the process; it does not publish dates."
 date: "2026-03-25"
 slug: "cook-county-property-tax-appeal-deadline-2026-by-township"
 ---
 
-If you own property in Cook County, your window to appeal your property tax assessment doesn't stay open forever. Each township has its own filing period — and missing the deadline means waiting another year. Here's everything you need to know.
+If you own property in Cook County, your window to appeal your assessment does not stay open all year. Each township has its own filing period, set by the Assessor and revised through the year, and missing it means waiting for the next one.
+
+This guide explains how that calendar works. It deliberately does not list dates. An article is a fixed document that stays online long after it is written, and a deadline is the one fact on the page a homeowner would act on — which makes a published date in an article the single most dangerous thing on it. The county's calendar is the authority, and it is linked in every section below.
 
 ## How Cook County Appeal Deadlines Work
 
-Cook County operates on a triennial (3-year) reassessment cycle, divided into three districts:
+Cook County reassesses on a triennial (3-year) cycle, divided into three districts: the south and west suburbs, the north suburbs, and the City of Chicago. Each district is reassessed in a different year of the cycle, and each township within a district opens on its own schedule.
 
-- **South suburbs** — reassessed in 2026
-- **North suburbs** — reassessed in 2025
-- **City of Chicago** — reassessed in 2024
+Two things follow from that, and they are the two most common misunderstandings:
 
-Even if your township isn't in the current reassessment year, you can still appeal your existing assessment every year at the Board of Review level. But your strongest window — when the Assessor's Office is actively reviewing values — is during your reassessment year.
+**Your neighbour's deadline is probably not your deadline.** Townships in the same district open weeks apart, and Chicago neighbourhoods can span more than one assessment township. Your township is determined by the county's own record for your PIN, not by which neighbourhood or suburb your address is described as being in.
 
-## 2026 South District Townships (Currently Open or Upcoming)
+**Being outside your reassessment year does not mean you cannot appeal.** You can appeal your existing assessment in the years between reassessments too. The reassessment year is simply when the Assessor is actively re-deriving values, which is when a well-evidenced appeal has the most to work with.
 
-The following townships are in the 2026 south district reassessment cycle. Appeal windows typically open 30 days after assessment notices are mailed.
+## Finding Your Own Deadline
 
-**Bloom Township** — Chicago Heights, Flossmoor, Glenwood, Homewood, Lansing, Lynwood, Sauk Village, South Chicago Heights, Thornton
-- Status: **OPEN** | Assessor window: Jan–Mar 2026
+There is exactly one reliable route, and it takes a few minutes:
 
-**Bremen Township** — Midlothian, Oak Forest, Tinley Park, Orland Park
-- Status: **OPEN** | Assessor window: Jan–Mar 2026
+1. Look up your PIN and township at the [Cook County Assessor's property search](https://www.cookcountyassessoril.gov/address-search). Start from the address; the record tells you the township.
+2. Find that township on the [Assessor's assessment and appeal calendar](https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines). This is the published source, and it is revised through the year.
+3. Note the last file date. Late filings are not accepted — there is no grace period and no appeal-by-mail postmark exception.
 
-**Calumet Township** — Blue Island, Riverdale, Dolton, Harvey
-- Status: **OPEN** | Assessor window: Jan–Mar 2026
+Our own [township deadline pages](/deadlines) show a filing window only where we have verified it against that calendar and can show you when we read it. Where we have not, they show no date and say so. That is deliberate: a date we cannot attribute is not a date worth planning around.
 
-**Rich Township** — Matteson, Park Forest, Richton Park, Olympia Fields
-- Status: **OPEN** | Assessor window: Jan–Mar 2026
+## What Actually Goes in an Appeal
 
-**Thornton Township** — Harvey, Hazel Crest, Homewood, Flossmoor, South Holland
-- Status: **OPEN** | Assessor window: Jan–Mar 2026
+**Verify your assessed value.** It is on your most recent tax bill and in the Assessor's record for your PIN.
 
-**Worth Township** — Worth, Palos Hills, Oak Lawn, Chicago Ridge, Alsip
-- Status: **OPEN** | Assessor window: Jan–Mar 2026
+**Check for over-assessment.** A residential assessment is set at 10% of the Assessor's estimate of market value. If comparable properties are assessed materially lower than yours, that gap is the argument.
 
-**Lemont Township** — Lemont, Palos Park, Homer Glen
-- Status: **UPCOMING** | Watch for notice mailing
+**Gather comparable evidence.** The strongest first-level appeal argument is comparable assessments and relevant recent sales for properties genuinely similar to yours — same class, similar size, similar age, nearby. This is what Rule 15 evidence refers to.
 
-**Lyons Township** — Berwyn, Brookfield, LaGrange, Western Springs
-- Status: **UPCOMING**
+**File before the last file date for your township.** Not the county's "typical" window, and not the date on a blog post. Yours.
 
-**Orland Township** — Orland Park, Orland Hills, Tinley Park
-- Status: **UPCOMING**
+## About the Board of Review
 
-**Palos Township** — Palos Heights, Palos Hills, Palos Park, Hickory Hills
-- Status: **UPCOMING**
+The Board of Review is a separate, later stage with its own calendar, and it is frequently confused with the Assessor's window. If you have missed the Assessor's window, the Board is a real and separate opportunity, and it is worth looking into at [cookcountyboardofreview.com](https://www.cookcountyboardofreview.com/residential-appeals).
 
-**Stickney Township** — Stickney, Forest View, Bedford Park, Summit
-- Status: **UPCOMING**
+OverTaxed IL does not file, sign, prepare, handle, or represent anyone at the Cook County Board of Review. Under the Board's own rules, only a licensed attorney or the taxpayer personally may practise before it. If we ever offer anything at that stage, it would be attorney-led. Do not wait for us — confirm your own deadline with the county.
 
-## North District Townships (2025 Cycle — Board of Review Still Available)
+## Where We Fit
 
-If you're in the north suburbs, your Assessor appeal window has closed for 2025, but you can still appeal at the **Board of Review** level. Contact the Cook County Board of Review directly at cookcountyboardofreview.com for current BOR filing windows.
+OverTaxed IL analyzes public Cook County records and prepares a defined Assessor-stage appeal packet. You review it, sign it, and file it yourself.
 
-Key north townships include: Barrington, Elk Grove, Evanston, Maine, New Trier, Niles, Northfield, Palatine, Wheeling.
+[Run a free check on your property](/check) and we will pull your current assessment from the public record and compare it against comparable properties.
 
-## City of Chicago Townships (2024 Cycle — Board of Review Available)
+This free check compares available public Cook County records. It estimates whether the evidence appears to support closer review. It does not predict whether an appeal will succeed or reduce taxes.
 
-Chicago property owners in the 2024 reassessment cycle can also appeal at the Board of Review. The BOR accepts appeals year-round based on its own calendar.
+The $69 packet is a preparation service. We prepare it; you review it, sign it, and file it with the county yourself.
 
-## What to Do Before Your Deadline
-
-**Step 1: Verify your assessed value.** Find it on your most recent tax bill or at the Cook County Assessor's website (cookcountyassessor.com).
-
-**Step 2: Check for over-assessment.** Your assessment should reflect 10% of your property's market value. If comparable homes in your area have sold for significantly less than what your assessment implies, you likely have grounds for an appeal.
-
-**Step 3: Gather comparable sales (Rule 15 evidence).** The strongest appeal argument is comparable sales data — homes similar to yours that sold recently at lower values. This is called Rule 15 evidence.
-
-**Step 4: File before your deadline.** Late appeals are not accepted.
-
-## Don't Miss Your Window
-
-The south district townships listed above have appeal windows closing in March 2026. If you haven't checked whether you're over-assessed, now is the time.
-
-[Start your free property assessment check at OverTaxed IL](/check) — enter your address and we'll pull your current assessment, find comparable sales, and show you whether you have grounds for an appeal. If you do, we generate the full Rule 15-compliant appeal packet automatically.
-
-Deadlines are firm. Five minutes now could save you $1,000+ per year.
+OverTaxed IL is not a law firm and does not provide legal or tax advice. We do not guarantee a reduction. County decisions are final, and a change in assessed value does not produce an equal change in a tax bill. You can file on your own with the county at no cost.

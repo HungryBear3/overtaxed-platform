@@ -3,7 +3,12 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { getPropertyByPIN } from "@/lib/cook-county"
-import { getTownshipDeadline, ASSESSOR_CALENDAR_URL } from "@/lib/appeals/township-deadlines"
+import { ASSESSOR_CALENDAR_URL, projectTownshipDeadline } from "@/lib/appeals/township-deadlines"
+import {
+  RESOLUTION_SOURCE,
+  normalizePin,
+  townshipKeyFromName,
+} from "@/lib/deadlines/township-resolution"
 
 export async function GET(request: NextRequest) {
   try {
@@ -26,15 +31,35 @@ export async function GET(request: NextRequest) {
     }
 
     const township = result.data.township || null
-    const deadlineInfo = getTownshipDeadline(township)
+    const normalizedPin = normalizePin(pin)
+
+    // The PIN resolved to an official property record, so this is the
+    // eligibility tier rather than a page describing a calendar. The record is
+    // what establishes the township; the canonical state decides whether any
+    // date may be named for it.
+    const evaluatedAt = new Date().toISOString()
+    const projection = township && normalizedPin
+      ? projectTownshipDeadline({
+          township: {
+            inputKind: "pin",
+            normalizedPin,
+            normalizedAddress: null,
+            townshipKey: townshipKeyFromName(township),
+            townshipName: township,
+            resolutionSource: RESOLUTION_SOURCE,
+            resolvedAt: evaluatedAt,
+          },
+          at: evaluatedAt,
+        })
+      : null
 
     return NextResponse.json({
       township,
       calendarUrl: ASSESSOR_CALENDAR_URL,
-      noticeDate: deadlineInfo?.noticeDate ?? null,
-      lastFileDate: deadlineInfo?.lastFileDate ?? null,
-      note: deadlineInfo
-        ? `Based on 2025 Assessor calendar for ${township}. Verify at the Assessor website.`
+      noticeDate: projection?.available ? projection.noticeDate : null,
+      lastFileDate: projection?.available ? projection.lastFileDate : null,
+      note: projection?.available
+        ? `Official Cook County Assessor calendar for ${projection.townshipName}, retrieved ${projection.retrievedAt}. Verify at the Assessor website before filing.`
         : "Cook County appeal deadlines vary by township. Check the Assessor calendar for your township's appeal window.",
     })
   } catch (error) {
