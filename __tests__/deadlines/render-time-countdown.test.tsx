@@ -47,12 +47,12 @@ const resolution: TownshipResolution = {
 function provenance(over: Partial<SourceProvenance> = {}): SourceProvenance {
   return {
     authority: "cook_county_assessor",
-    sourceUrl: "https://www.cookcountyassessor.com/assessment-calendar-and-deadlines",
+    sourceUrl: "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
     retrievedAt: "2026-06-25T13:00:00.000Z",
     sourceUpdatedAt: "2026-06-01T00:00:00.000Z",
     contentSha256: "a".repeat(64),
     httpStatus: 200,
-    finalUrl: "https://www.cookcountyassessor.com/assessment-calendar-and-deadlines",
+    finalUrl: "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
     parseStatus: "ok",
     parserVersion: "1.0.0",
     ...over,
@@ -176,7 +176,7 @@ describe("projecting a verified state", () => {
     expect(projection.lastFileDate).toBe("2026-07-15")
     expect(projection.townshipName).toBe("Rogers Park")
     expect(projection.daysRemaining).toBe(20)
-    expect(projection.officialSourceUrl).toMatch(/^https:\/\/www\.cookcountyassessor\.com\//)
+    expect(projection.officialSourceUrl).toMatch(/^https:\/\/www\.cookcountyassessoril\.gov\//)
     for (const capability of CAPABILITIES) expect(projection[capability]).toBe(true)
   })
 

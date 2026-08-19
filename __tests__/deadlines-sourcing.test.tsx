@@ -13,7 +13,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import DeadlinesRoutePage from "../app/deadlines/page";
 import {
   OFFICIAL_DEADLINE_SOURCES,
-  DEADLINE_VERIFY_NOTICE,
+  DEADLINE_PENDING_NOTICE,
   ASSESSOR_CALENDAR_URL,
 } from "@/lib/deadline-sources";
 
@@ -64,15 +64,38 @@ describe("official deadline sources data", () => {
     expect(OFFICIAL_DEADLINE_SOURCES.length).toBeGreaterThan(0);
     for (const s of OFFICIAL_DEADLINE_SOURCES) {
       expect(s.href).toMatch(/^https:\/\//);
-      expect(s.href).toMatch(/cookcounty(assessoril\.gov|assessor\.com|boardofreview\.com)/);
+      expect(s.href).toMatch(/cookcounty(assessoril\.gov|boardofreview\.com)/);
       expect(s.label.length).toBeGreaterThan(0);
       expect(s.note.length).toBeGreaterThan(0);
     }
   });
 
-  it("verify notice tells users to confirm with the official source", () => {
-    expect(DEADLINE_VERIFY_NOTICE).toMatch(/confirm/i);
-    expect(DEADLINE_VERIFY_NOTICE).toMatch(/official/i);
-    expect(DEADLINE_VERIFY_NOTICE).toMatch(/not an official deadline/i);
+  it("cites the Assessor only at the canonical .gov host", () => {
+    // Controller ruling 2026-08-19: `cookcountyassessor.com` and bare-host
+    // variants redirect to `www.cookcountyassessoril.gov`, which is the one
+    // authorized spelling. A second host reads to a homeowner as a second
+    // corroborating source when it is the same page.
+    expect(ASSESSOR_CALENDAR_URL).toBe(
+      "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+    );
+    for (const s of OFFICIAL_DEADLINE_SOURCES) {
+      expect(s.href).not.toContain("cookcountyassessor.com");
+    }
+  });
+
+  it("pending notice withholds the date instead of disclaiming it", () => {
+    // Replaces the old DEADLINE_VERIFY_NOTICE assertions. That notice sat next
+    // to a rendered seed date and called it "not an official deadline", which
+    // transferred the risk to the reader without removing it. The replacement
+    // has to say no date is being shown at all.
+    expect(DEADLINE_PENDING_NOTICE).toMatch(/not verified/i);
+    expect(DEADLINE_PENDING_NOTICE).toMatch(/not showing one/i);
+    expect(DEADLINE_PENDING_NOTICE).toMatch(/confirm/i);
+    expect(DEADLINE_PENDING_NOTICE).toMatch(/official county source/i);
+    // And it must not itself carry a date a reader could plan around.
+    expect(DEADLINE_PENDING_NOTICE).not.toMatch(/\b(19|20)\d{2}\b/);
+    expect(DEADLINE_PENDING_NOTICE).not.toMatch(
+      /\b(January|February|March|April|May|June|July|August|September|October|November|December)\b/,
+    );
   });
 });

@@ -2,6 +2,12 @@ import { followupDeliveryEnabled, normalizeUsPhone } from "@/lib/followups/confi
 import { buildFollowupSchedule } from "@/lib/followups/schedule";
 import { parseSmsKeyword } from "@/lib/followups/sms";
 import { buildFollowupEmail } from "@/lib/followups/templates";
+import {
+  evaluateOfficialDeadlineState,
+  projectDeadline,
+  type OfficialDeadlineSnapshot,
+} from "@/lib/deadlines/official-source-state";
+import type { TownshipResolution } from "@/lib/deadlines/township-resolution";
 
 describe("free-check follow-up safety", () => {
   it("defaults delivery off and requires exact production activation", () => {
@@ -50,15 +56,107 @@ describe("free-check follow-up safety", () => {
     expect(parseSmsKeyword("hello")).toBe("UNKNOWN");
   });
 
-  it("uses official published deadlines and includes unsubscribe", () => {
+  it("names no date when no projection verified the window", () => {
+    // Was: `expect(email?.subject).toContain("August 12, 2026")` — a date read
+    // from the hard-coded 2026 map by township name. `buildFollowupEmail` no
+    // longer performs a lookup; the caller passes a projection, so a template
+    // with no projection has no date to name and must not invent one.
     const email = buildFollowupEmail({
       step: "FINAL",
       township: "Stickney",
       resultUrl: "https://www.overtaxed-il.com/#hero-check",
       unsubscribeUrl: "https://www.overtaxed-il.com/api/followups/unsubscribe?token=test",
     });
-    expect(email?.subject).toContain("August 12, 2026");
-    expect(email?.text).toContain("Unsubscribe:");
-    expect(email?.text).not.toMatch(/guaranteed savings|keep 100%/i);
+    expect(email).not.toBeNull();
+    expect(email!.subject).not.toMatch(/\b(19|20)\d{2}\b/);
+    expect(email!.text).not.toMatch(/\b(19|20)\d{2}\b/);
+    expect(email!.text).toContain("Unsubscribe:");
+    expect(email!.text).not.toMatch(/guaranteed savings|keep 100%/i);
+  });
+
+  describe("with a projection", () => {
+    const RETRIEVED = "2026-08-04T11:59:55.000Z";
+    const NOW = "2026-08-04T12:00:00.000Z";
+    const source = {
+      authority: "cook_county_assessor" as const,
+      sourceUrl:
+        "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+      retrievedAt: RETRIEVED,
+      sourceUpdatedAt: null,
+      contentSha256: "d".repeat(64),
+      httpStatus: 200,
+      finalUrl:
+        "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+      parseStatus: "ok" as const,
+      parserVersion: "1.0.0",
+    };
+    const snapshot: OfficialDeadlineSnapshot = {
+      schemaVersion: 1,
+      synthetic: false,
+      sources: { assessor: source, bor: source },
+      townships: {
+        stickney: {
+          townshipName: "Stickney",
+          stages: {
+            assessor: {
+              noticeDate: "2026-07-01",
+              openDate: "2026-07-14",
+              lastFileDate: "2026-08-12",
+            },
+          },
+        },
+      },
+    };
+    const resolution: TownshipResolution = {
+      inputKind: "pin",
+      normalizedPin: "19064010250000",
+      normalizedAddress: null,
+      townshipKey: "stickney",
+      townshipName: "Stickney",
+      resolutionSource: "official_property_record",
+      resolvedAt: RETRIEVED,
+    };
+
+    function projectionAt(now: string) {
+      return projectDeadline(
+        evaluateOfficialDeadlineState({
+          snapshot,
+          township: resolution,
+          stage: "assessor",
+          evaluatedAt: now,
+        }),
+        now,
+      );
+    }
+
+    it("names the verified last-file date and still carries unsubscribe", () => {
+      const email = buildFollowupEmail({
+        step: "FINAL",
+        township: "Stickney",
+        resultUrl: "https://www.overtaxed-il.com/#hero-check",
+        unsubscribeUrl:
+          "https://www.overtaxed-il.com/api/followups/unsubscribe?token=test",
+        deadline: projectionAt(NOW),
+      });
+      expect(email?.subject).toContain("August 12, 2026");
+      expect(email?.text).toContain("Unsubscribe:");
+      expect(email?.text).not.toMatch(/guaranteed savings|keep 100%/i);
+    });
+
+    it("falls back to the dateless variant once the window has closed", () => {
+      // `allowDeadlineEmail` is false for a closed window, so a scheduled send
+      // that lands late cannot mail a deadline that has already passed.
+      const closed = projectionAt("2026-08-13T12:00:00.000Z");
+      const email = buildFollowupEmail({
+        step: "FINAL",
+        township: "Stickney",
+        resultUrl: "https://www.overtaxed-il.com/#hero-check",
+        unsubscribeUrl:
+          "https://www.overtaxed-il.com/api/followups/unsubscribe?token=test",
+        deadline: closed,
+      });
+      expect(email!.subject).not.toContain("August 12, 2026");
+      expect(email!.text).not.toContain("August 12, 2026");
+    });
   });
 });

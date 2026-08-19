@@ -250,11 +250,24 @@ describe("OT v2 marketing — township deadline source of truth", () => {
   it("/townships renders from lib/townships instead of a duplicate hardcoded dataset", () => {
     const src = read("app/townships/page.tsx");
     expect(src).toMatch(/from\s+["']@\/lib\/townships["']/);
-    expect(src).toMatch(/TOWNSHIP_STATUS_COUNTS/);
+    // Was `TOWNSHIP_STATUS_COUNTS` — a status tally this page kept for itself,
+    // computed from the seed dates in lib/townships.ts. Counts now come from
+    // the same canonical view model /deadlines reads, which is what stops the
+    // two pages from disagreeing.
+    expect(src).not.toMatch(/TOWNSHIP_STATUS_COUNTS/);
+    expect(src).toMatch(/count2026Views/);
+    expect(src).toMatch(/from\s+["']@\/lib\/deadlines-2026["']/);
     expect(src).not.toMatch(/const townships = \[/);
     expect(src).not.toMatch(/Northwest District/);
     expect(src).not.toMatch(/Berwyn[\s\S]{0,240}2028/);
     expect(src).not.toMatch(/Oak Park[\s\S]{0,240}2028/);
+  });
+
+  it("/townships attributes its dates or shows none", () => {
+    const src = read("app/townships/page.tsx");
+    // CC-08: a source and a retrieval instant wherever a deadline appears.
+    expect(src).toMatch(/official2026Provenance/);
+    expect(src).toMatch(/cc08/);
   });
 
   it("home sample and pricing copy no longer references Jefferson or equity-ratio language", () => {
@@ -320,11 +333,31 @@ describe("OT v2 marketing — launch-blocker copy guards", () => {
     expect(src).not.toMatch(/PIN 18-06-214-011-0000/);
   });
 
-  it("ticker copy never renders a 0-days deadline state", () => {
+  it("the ticker runs no countdown and holds no date of its own", () => {
     const src = read("lib/townships.ts");
-    expect(src).toMatch(/closes today/);
-    expect(src).not.toMatch(/closes in \$\{[^}]+\} day/);
-    expect(src).toMatch(/Township schedules checked regularly/);
+    // Was: require the string "closes today" (the 0-day special case) and the
+    // standing line "Township schedules checked regularly". Both are gone. The
+    // countdown is gone because the ticker renders to an anonymous reader —
+    // the informational tier never counts down — and the standing line is gone
+    // because nothing checked anything regularly.
+    // Read past the doc comments — they quote the removed copy in order to
+    // record what was removed and why, which is evidence, not behaviour.
+    const body = src
+      .replace(/\/\*\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
+    expect(body).not.toMatch(/closes today/);
+    expect(body).not.toMatch(/closes in \$\{[^}]+\} day/);
+    expect(body).not.toMatch(/Township schedules checked regularly/);
+    // And the roster carries no date literal at all, so no future edit can
+    // rebuild a countdown from it without re-adding the data.
+    expect(body).not.toMatch(/\b(19|20)\d{2}-\d{2}-\d{2}\b/);
+    expect(body).not.toMatch(/REFERENCE_DATE/);
+  });
+
+  it("the ticker announces only windows the canonical state verified", () => {
+    const src = read("lib/townships.ts");
+    expect(src).toMatch(/describeTownshipCalendar/);
+    expect(src).toMatch(/projection\.status !== "open"/);
   });
 
   it("flat-fee FAQ states the $69 fee is paid regardless of outcome", () => {
