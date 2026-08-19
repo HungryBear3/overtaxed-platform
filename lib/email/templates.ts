@@ -335,55 +335,31 @@ ${accountLink}
   return { subject, text, html }
 }
 
-const SITE_URL = "https://www.overtaxed-il.com"
-const MEANINGFUL_SAVINGS_THRESHOLD = 100
-
-// Pure helper — testable without DB
+/**
+ * The free-check follow-up email is withdrawn.
+ *
+ * What stood here composed, from a `MEANINGFUL_SAVINGS_THRESHOLD = 100` gate,
+ * a message whose subject line was "Your free check result: $X/year in
+ * potential savings" and whose body told the reader their property "appears to
+ * be over-assessed" and that they "may be overpaying by approximately $X/year
+ * — that's $Y over a typical 3-year assessment cycle", above a "Start Your
+ * Appeal — no attorney required" button and a scarcity line about windows
+ * opening once a year.
+ *
+ * Every one of those is a banned claim: an averaged savings figure and a
+ * dollar projection (BL-B1/B3), a merits finding about the reader's property
+ * (BL-C3), an urgency-to-file CTA (BL-C2), and an unsigned eligibility
+ * threshold the four-state contract forbids. The template had no production
+ * caller, so nothing is being taken away from a live path — but leaving a
+ * ready-made banned-claims email in the module is an invitation to wire it.
+ *
+ * `shouldSendFreeCheckFollowup` is kept and always refuses, so a caller that
+ * is added later fails closed instead of finding no gate at all. Reinstating a
+ * follow-up needs approved copy and a signed eligibility policy (OD-2/OD-3).
+ */
 export function shouldSendFreeCheckFollowup(
-  potentialSavings: number | null | undefined,
-  followupStep: number,
+  _potentialSavings: number | null | undefined,
+  _followupStep: number,
 ): boolean {
-  return (potentialSavings ?? 0) >= MEANINGFUL_SAVINGS_THRESHOLD && followupStep === 0
-}
-
-export function freeCheckFollowupTemplate(args: {
-  address: string
-  potentialSavings: number
-}): { subject: string; text: string; html: string } {
-  const { address, potentialSavings } = args
-  const fmt = (n: number) =>
-    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)
-
-  const ctaUrl = `${SITE_URL}/auth/signup`
-  const subject = `Your free check result: ${fmt(potentialSavings)}/year in potential savings`
-
-  const text = [
-    `Your property at ${address} appears to be over-assessed.`,
-    ``,
-    `Based on comparable properties in your area, you may be overpaying by approximately ${fmt(potentialSavings)}/year — that's ${fmt(potentialSavings * 3)} over a typical 3-year assessment cycle.`,
-    ``,
-    `Start your appeal — no attorney required, takes about 5 minutes:`,
-    `${ctaUrl}`,
-    ``,
-    `Appeal windows are 30–90 days and only open once a year. Acting now means you won't miss it.`,
-    ``,
-    `— The OverTaxed IL Team`,
-    ``,
-    `To unsubscribe from these emails, reply with "unsubscribe".`,
-  ].join("\n")
-
-  const html = `
-    <div style="font-family:sans-serif;max-width:540px;margin:0 auto;color:#1f2937;line-height:1.6;">
-      <p style="font-size:22px;font-weight:700;color:#92400e;margin:0 0 4px;">${fmt(potentialSavings)}/year in potential savings</p>
-      <p style="margin:0 0 16px;color:#6b7280;font-size:14px;">${address}</p>
-      <p style="margin:0 0 16px;">Your property appears to be <strong>over-assessed</strong> compared to similar properties nearby. Based on that analysis, you may be overpaying by approximately <strong>${fmt(potentialSavings)}/year</strong> — <strong>${fmt(potentialSavings * 3)}</strong> over a typical 3-year assessment cycle.</p>
-      <p style="margin:0 0 20px;">An appeal takes about 5 minutes to start. No attorney required.</p>
-      <a href="${ctaUrl}" style="display:inline-block;padding:12px 28px;background:#1e40af;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:16px;">Start Your Appeal →</a>
-      <p style="margin:20px 0 0;font-size:13px;color:#6b7280;">Appeal windows are 30–90 days and open once a year — don't miss yours.</p>
-      <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
-      <p style="font-size:12px;color:#9ca3af;">OverTaxed IL · 1028 W Leland Ave, Chicago IL 60640<br/>To unsubscribe, reply to this email.</p>
-    </div>
-  `.trim()
-
-  return { subject, text, html }
+  return false
 }

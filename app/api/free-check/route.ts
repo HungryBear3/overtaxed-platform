@@ -158,8 +158,7 @@ function buildAppealArgument(
   marketValue: number | null,
   township: string | null,
   neighborhoodCode: string | null,
-  equityRatio: number | null,
-  potentialOverpaymentPerYear: number
+  equityRatio: number | null
 ): string {
   const gap = subjectAV - avgCompAV
   const targetAV = avgCompAV
@@ -172,7 +171,7 @@ function buildAppealArgument(
 
 Comparable properties in ${townshipStr} average $${Math.round(avgCompAV).toLocaleString()} in assessed value, giving a separate uniformity benchmark for similar homes.
 
-Under Illinois law (35 ILCS 200/9-5) and the Cook County Assessor's rules, property assessments should reflect 10% of fair market value and be uniform with comparable properties. This property's assessment exceeds comparable properties by approximately $${Math.round(gap).toLocaleString()}, resulting in an estimated overpayment of $${potentialOverpaymentPerYear.toLocaleString()}/year.
+Under Illinois law (35 ILCS 200/9-5) and the Cook County Assessor's rules, property assessments should reflect 10% of fair market value and be uniform with comparable properties. This property's assessment exceeds comparable properties by approximately $${Math.round(gap).toLocaleString()} in assessed value.
 
 We request a reduction in the assessed value to $${Math.round(targetAV).toLocaleString()}, consistent with the ${mvStr} market value and comparable properties in the neighborhood.`
 }
@@ -422,21 +421,16 @@ export async function POST(req: NextRequest) {
 
     const assessmentGap = avgCompAV != null ? Math.round(subjectAV - avgCompAV) : null
 
-    // ── Overpayment estimate ─────────────────────────────────────────────────
+    // ── No overpayment estimate is computed ──────────────────────────────────
     //
-    // Both factors used to default — `taxRate ?? 0.07` and `stateEqualizer ??
-    // 3.0` — so a parcel whose record carried neither still produced a precise
-    // dollar figure, rendered to the reader as "$1,420/yr" with no indication
-    // that both multiplicands were invented. A missing factor now yields no
-    // estimate, which is what we actually know.
-    const taxRate = propertyData.taxRate
-    const equalizer = propertyData.stateEqualizer
-    const canEstimate =
-      taxRate != null && equalizer != null && Number.isFinite(taxRate) && Number.isFinite(equalizer)
-    const potentialOverpaymentPerYear =
-      canEstimate && avgCompAV != null && subjectAV > avgCompAV
-        ? Math.round((subjectAV - avgCompAV) * equalizer! * taxRate!)
-        : 0
+    // This block used to multiply the assessed-value gap by `taxRate ?? 0.07`
+    // and `stateEqualizer ?? 3.0`, so a parcel whose record carried neither
+    // still produced a precise dollar figure, rendered as "$1,420/yr" with no
+    // indication that both multiplicands were invented. Removing the defaults
+    // was not enough: even from real factors the product is a savings claim
+    // about the reader's property, which BL-B1/B3 bans outright and which no
+    // signed eligibility policy stands behind. The figure is not computed at
+    // all now, so there is nothing for a later consumer to reach for.
 
     // ── The single evaluated outcome ─────────────────────────────────────────
     //
@@ -471,8 +465,7 @@ export async function POST(req: NextRequest) {
             subjectMarketValue,
             propertyData.township,
             neighborhoodCode,
-            equityRatio,
-            potentialOverpaymentPerYear
+            equityRatio
           )
         : null
 
@@ -487,7 +480,6 @@ export async function POST(req: NextRequest) {
     // therefore released only for a supportive outcome. Shown beside
     // "Insufficient evidence" it simply overrides the words next to it.
     const showFigures = outcome.showFigures
-    const releaseProjection = outcome.code === "supportive"
 
     return NextResponse.json({
       success: true,
@@ -512,10 +504,14 @@ export async function POST(req: NextRequest) {
       targetEquityRatio: 10.0,
       avgCompEquityRatio: showFigures ? avgCompEquityRatio : null,
       assessmentGap: showFigures ? assessmentGap : null,
-      potentialOverpaymentPerYear:
-        releaseProjection && potentialOverpaymentPerYear > 0 ? potentialOverpaymentPerYear : null,
-      potentialOverpayment3Year:
-        releaseProjection && potentialOverpaymentPerYear > 0 ? potentialOverpaymentPerYear * 3 : null,
+      // Never released. A per-year or three-year dollar projection is a savings
+      // claim about the reader's property (BL-B1/B3) and a merits
+      // characterization (BL-C3), and no signed eligibility policy (OD-2/OD-3)
+      // stands behind one. The assessment comparison above is the public
+      // record; this was arithmetic performed on top of it and presented as an
+      // outcome. It is computed no further and sent as null on every path.
+      potentialOverpaymentPerYear: null,
+      potentialOverpayment3Year: null,
       appealArgumentText,
       appealWindowStatus,
       propertyCharacteristics,
