@@ -37,6 +37,11 @@ export type FreeCheckAppealWindowStatus = {
   pendingReason: PendingReason | null;
   /** Never true for a township established by name or slug alone. */
   allowCheckout: boolean;
+  /** Render capabilities copied from the canonical projection. */
+  showDates: boolean;
+  showCountdown: boolean;
+  allowDeadlineCta: boolean;
+  allowReminderSignup: boolean;
 };
 
 const filingUrl = "https://www.cookcountyassessoril.gov/online-appeals";
@@ -55,6 +60,10 @@ function fromProjection(
       note: `${projection.notice} Check ${ASSESSOR_CALENDAR_URL} for your township's exact appeal dates.`,
       pendingReason: projection.reason,
       allowCheckout: false,
+      showDates: false,
+      showCountdown: false,
+      allowDeadlineCta: false,
+      allowReminderSignup: false,
     };
   }
 
@@ -67,6 +76,10 @@ function fromProjection(
     note: `Verified against the Cook County Assessor calendar, retrieved ${projection.retrievedAt}. Schedules can change — always confirm before filing.`,
     pendingReason: null,
     allowCheckout: projection.allowCheckout,
+    showDates: projection.showDates,
+    showCountdown: projection.showCountdown,
+    allowDeadlineCta: projection.allowDeadlineCta,
+    allowReminderSignup: projection.allowReminderSignup,
   };
 }
 
@@ -91,6 +104,10 @@ export function getFreeCheckAppealWindowStatus(
       note: null,
       pendingReason: "township_unresolved",
       allowCheckout: false,
+      showDates: false,
+      showCountdown: false,
+      allowDeadlineCta: false,
+      allowReminderSignup: false,
     };
   }
   return fromProjection(

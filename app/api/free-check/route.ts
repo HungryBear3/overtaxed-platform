@@ -116,6 +116,10 @@ const PREVIEW_FREE_CHECK_SAMPLE = {
     note: "Preview sample — no county retrieval was performed. Check https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines for your township's appeal dates.",
     pendingReason: "synthetic_source" as const,
     allowCheckout: false,
+    showDates: false,
+    showCountdown: false,
+    allowDeadlineCta: false,
+    allowReminderSignup: false,
   },
   outcome: {
     code: "insufficient_evidence" as const,

@@ -3,7 +3,7 @@
  *
  * The rendered acceptance corpus (Section E).
  *
- * The controller's frozen matrix accepts 52 freshness-bearing routes and 22
+ * The controller's corrected matrix accepts 53 freshness-bearing routes and 22
  * named surfaces. Everything before this file proves a module in isolation;
  * this proves the pages a homeowner actually opens. It renders each accepted
  * route through direct server-component invocation and asserts one property
@@ -24,6 +24,8 @@ import TownshipPageRoute, { generateMetadata as townshipMetadata } from "@/app/t
 import CampaignPageRoute, { generateMetadata as campaignMetadata } from "@/app/appeal-deadline/[slug]/page"
 import AboutPage from "@/app/about/page"
 import ContingencyPage from "@/app/appeal-contingency/page"
+import CheckPage from "@/app/check/page"
+import { FreeCheckResult, type Result } from "@/components/check/FreeCheckResult"
 import { TOWNSHIPS } from "@/lib/townships"
 import {
   evaluateOfficialDeadlineState,
@@ -81,12 +83,13 @@ function expectNoCommerceOrReminder(html: string, where: string) {
   expect({ where, matched: /Done-For-You/.test(html) }).toEqual({ where, matched: false })
 }
 
-/* ── The 52 accepted routes ──────────────────────────────────────────────── */
+/* ── The 53 accepted routes ──────────────────────────────────────────────── */
 
 describe("the accepted route corpus", () => {
-  it("covers exactly the 52 rows the controller froze", () => {
-    expect(ACCEPTED).toHaveLength(52)
-    expect(new Set(ACCEPTED.map((r) => r.path)).size).toBe(52)
+  it("covers exactly the 53 corrected rows, including /check", () => {
+    expect(ACCEPTED).toHaveLength(53)
+    expect(new Set(ACCEPTED.map((r) => r.path)).size).toBe(53)
+    expect(ACCEPTED.find((r) => r.path === "/check")?.accepted_path_id).toBe(32)
   })
 
   it("accounts for every accepted row in this file", () => {
@@ -95,6 +98,7 @@ describe("the accepted route corpus", () => {
     const rendered = new Set<string>([
       "/about",
       "/appeal-contingency",
+      "/check",
       "/contact",
       "/deadlines",
       "/townships",
@@ -194,6 +198,70 @@ describe("campaign landing pages", () => {
 })
 
 describe("index and static routes", () => {
+  it("/check suppresses stale dates, filing CTA, reminder signup, and checkout together", () => {
+    const routeHtml = renderToStaticMarkup(CheckPage())
+    expectNoUnverifiedDeadlineClaim(routeHtml, "/check initial route")
+
+    const unverifiedResult: Result = {
+      subject: {
+        pin: "10-25-107-045-0000",
+        address: "123 Main St",
+        city: "Evanston",
+        zipCode: "60201",
+        township: "Evanston",
+        neighborhoodCode: "70",
+        taxYear: 2026,
+        assessedTotalValue: 42500,
+        marketValue: 425000,
+      },
+      compCount: 3,
+      comps: [],
+      avgComparableAssessedValue: 35100,
+      equityRatio: 12.1,
+      targetEquityRatio: 10,
+      avgCompEquityRatio: 9.8,
+      assessmentGap: 7400,
+      potentialOverpaymentPerYear: null,
+      potentialOverpayment3Year: null,
+      appealArgumentText: null,
+      appealWindowStatus: {
+        township: "Evanston",
+        status: "unknown",
+        // Hostile stale values prove the renderer obeys capabilities rather
+        // than trusting dates merely because a cached payload carried them.
+        openDate: "1900-01-01",
+        closeDate: "1900-01-02",
+        filingUrl: "https://www.cookcountyassessoril.gov/online-appeals",
+        note: "Synthetic source",
+        pendingReason: "synthetic_source",
+        allowCheckout: false,
+        showDates: false,
+        showCountdown: false,
+        allowDeadlineCta: false,
+        allowReminderSignup: false,
+      },
+      propertyCharacteristics: null,
+      source: "Cook County Open Data",
+      disclosure:
+        "This free check compares available public Cook County records. It estimates whether the evidence appears to support closer review. It does not predict whether an appeal will succeed or reduce taxes.",
+      sourceCaveat: null,
+      outcome: {
+        code: "insufficient_evidence",
+        headline: "Insufficient evidence",
+        allowCheckout: false,
+        showFigures: false,
+        reason: "window_unverified",
+      },
+    }
+    const html = renderToStaticMarkup(<FreeCheckResult result={unverifiedResult} />)
+
+    expectNoUnverifiedDeadlineClaim(html, "/check unverified result")
+    expectNoCommerceOrReminder(html, "/check unverified result")
+    expect(html).not.toContain("online-appeals")
+    expect(html).not.toMatch(/File your appeal|File at CCAO/i)
+    expect(html).not.toMatch(/get notified|remind you|type="email"/i)
+  })
+
   it("/deadlines publishes no date and says the gap is ours", () => {
     const html = renderToStaticMarkup(DeadlinesRoutePage())
     expectNoUnverifiedDeadlineClaim(html, "/deadlines")

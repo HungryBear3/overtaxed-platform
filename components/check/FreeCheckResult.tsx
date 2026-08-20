@@ -21,11 +21,17 @@ export type CompDetail = {
 
 export type AppealWindowStatus = {
   township: string
-  status: "open" | "closed" | "unknown"
+  status: "open" | "closed" | "upcoming" | "unknown"
   openDate: string | null
   closeDate: string | null
   filingUrl: string
   note: string | null
+  pendingReason?: string | null
+  allowCheckout?: boolean
+  showDates?: boolean
+  showCountdown?: boolean
+  allowDeadlineCta?: boolean
+  allowReminderSignup?: boolean
 }
 
 export type PropertyCharacteristics = {
@@ -177,6 +183,12 @@ export function FreeCheckResult({ result }: Props) {
   }
 
   const aw = result.appealWindowStatus
+  // Capability flags come from the canonical render-time projection. Missing
+  // flags (including an older sessionStorage payload) are denied rather than
+  // inferred from a status string or from dates carried in the payload.
+  const windowVerified = aw?.pendingReason === null && aw?.showDates === true
+  const mayFile = windowVerified && aw?.allowDeadlineCta === true
+  const mayTakeReminder = windowVerified && aw?.allowReminderSignup === true
 
   return (
     <div className="space-y-6">
@@ -190,38 +202,44 @@ export function FreeCheckResult({ result }: Props) {
             ? "bg-gray-50 border border-gray-200"
             : "bg-blue-50 border border-blue-200"
         }`}>
-          {aw.status === "open" && (
+          {windowVerified && aw.status === "open" && (
             <>
               <div>
                 <span className="inline-block bg-green-600 text-white text-xs font-bold px-2 py-0.5 rounded mr-2">OPEN NOW</span>
                 <span className="text-sm font-semibold text-green-900">{aw.township} appeal window is open</span>
-                {aw.closeDate && (
+                {aw.showDates && aw.closeDate && (
                   <span className="text-sm text-green-800 ml-1">· Deadline: {formatDate(aw.closeDate)}</span>
                 )}
               </div>
-              <a href={aw.filingUrl} target="_blank" rel="noopener noreferrer"
-                className="inline-block bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap">
-                File your appeal now →
-              </a>
+              {mayFile && (
+                <a href={aw.filingUrl} target="_blank" rel="noopener noreferrer"
+                  className="inline-block bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap">
+                  File your appeal now →
+                </a>
+              )}
             </>
           )}
-          {aw.status === "closed" && (
+          {windowVerified && aw.status === "closed" && (
             <div>
               <span className="text-sm font-semibold text-gray-700">{aw.township} appeal window is currently closed</span>
-              {aw.openDate && (
+              {aw.showDates && aw.openDate && (
                 <span className="text-sm text-gray-600 ml-1">· Opens around {formatDate(aw.openDate)}</span>
               )}
               <p className="text-xs text-gray-500 mt-0.5">Sign up below to be notified when your window opens.</p>
             </div>
           )}
-          {aw.status === "unknown" && (
+          {windowVerified && aw.status === "upcoming" && (
+            <div>
+              <span className="text-sm font-semibold text-blue-900">{aw.township} filing window is not yet open</span>
+              {aw.showDates && aw.openDate && (
+                <span className="text-sm text-blue-800 ml-1">· Opens {formatDate(aw.openDate)}</span>
+              )}
+            </div>
+          )}
+          {!windowVerified && (
             <div>
               <p className="text-sm font-semibold text-blue-900 mb-0.5">Appeal window dates not confirmed for <strong>{aw.township}</strong></p>
-              <p className="text-sm text-blue-800">Cook County opens townships on a rolling schedule and we don&apos;t have confirmed dates for your area. Check the CCAO site to find your exact window and file if it&apos;s currently open.</p>
-              <a href={aw.filingUrl} target="_blank" rel="noopener noreferrer"
-                className="inline-block mt-1.5 text-sm font-semibold text-blue-700 underline hover:text-blue-900">
-                Check your appeal window at CCAO →
-              </a>
+              <p className="text-sm text-blue-800">Cook County opens townships on a rolling schedule and we have not verified dates for this result. The Cook County Assessor publishes the official calendar.</p>
             </div>
           )}
         </div>
@@ -502,7 +520,7 @@ export function FreeCheckResult({ result }: Props) {
                 </Link>
               </>
             )}
-            {aw?.status === "open" && (
+            {mayFile && (
               <a href={aw.filingUrl} target="_blank" rel="noopener noreferrer"
                 className="inline-flex items-center justify-center border border-green-300 bg-green-50 text-green-700 font-semibold px-5 py-2.5 rounded-lg hover:bg-green-100 transition-colors text-sm">
                 File at CCAO →
@@ -595,6 +613,7 @@ export function FreeCheckResult({ result }: Props) {
       )}
 
       {/* ── Email capture ────────────────────────────────────────────────── */}
+      {mayTakeReminder && (
       <div className="bg-white border border-blue-200 rounded-xl p-6 shadow-sm">
         <h3 className="text-base font-semibold text-gray-900 mb-1">
           Save your results and get notified when your appeal window opens
@@ -633,6 +652,7 @@ export function FreeCheckResult({ result }: Props) {
         )}
         {saveStatus === "error" && <p className="text-sm text-red-600 mt-2">{saveError}</p>}
       </div>
+      )}
 
       {/* ── Source attribution ───────────────────────────────────────────── */}
       <p className="text-xs text-gray-400 text-center">
