@@ -33,6 +33,7 @@ import {
   type OfficialDeadlineSnapshot,
 } from "@/lib/deadlines/official-source-state"
 import type { TownshipResolution } from "@/lib/deadlines/township-resolution"
+import { expectNoBannedClaim, readable } from "../lexicon/banned-claims.test"
 
 const MATRIX_PATH =
   "/Users/abigailclaw/.openclaw/workspace/rex/handoffs/ot-minimum-postable-rebuild-20260819/qa/acceptance-matrix.json"
@@ -77,10 +78,35 @@ function expectNoUnverifiedDeadlineClaim(html: string, where: string) {
   expect({ where, matched: PLACEHOLDER_YEAR.test(html) }).toEqual({ where, matched: false })
 }
 
+/**
+ * Commerce, reminder capture, and the canonical lexicon, checked together.
+ *
+ * This helper used to test three strings — `/checkout?plan=`, "DIY Appeal
+ * Packet $69", "Done-For-You" — across 38 township pages. It said nothing about
+ * reminder signup, which the contract requires suppressed *with* the date and
+ * the CTA rather than separately, and nothing about the banned-claims lexicon,
+ * which Section E requires over the whole rendered corpus. A page that hid the
+ * date and kept the "tell me when it opens" box would have passed.
+ */
 function expectNoCommerceOrReminder(html: string, where: string) {
+  const text = readable(html)
+
   expect({ where, matched: /\/checkout\?plan=/.test(html) }).toEqual({ where, matched: false })
   expect({ where, matched: /DIY Appeal Packet \$69/.test(html) }).toEqual({ where, matched: false })
   expect({ where, matched: /Done-For-You/.test(html) }).toEqual({ where, matched: false })
+
+  // Reminder capture. Identified by intent, so a sign-in or contact field is
+  // not mistaken for a deadline subscription.
+  expect({
+    where,
+    reminderControl: /<input[^>]*(name|id|placeholder)="[^"]*(remind|notify|alert|watch)[^"]*"/i.test(html),
+  }).toEqual({ where, reminderControl: false })
+  expect({
+    where,
+    reminderCopy: /\b(notify|remind|alert|tell) me when [^.]{0,40}\b(opens|window|deadline)\b/i.test(text),
+  }).toEqual({ where, reminderCopy: false })
+
+  expectNoBannedClaim(html, where)
 }
 
 /* ── The 53 accepted routes ──────────────────────────────────────────────── */
@@ -265,17 +291,20 @@ describe("index and static routes", () => {
   it("/deadlines publishes no date and says the gap is ours", () => {
     const html = renderToStaticMarkup(DeadlinesRoutePage())
     expectNoUnverifiedDeadlineClaim(html, "/deadlines")
+    expectNoCommerceOrReminder(html, "/deadlines")
     expect(html).toMatch(/we have not (verified|read)/i)
   })
 
   it("/townships publishes no date", async () => {
     const html = renderToStaticMarkup(await TownshipsIndexPage())
     expectNoUnverifiedDeadlineClaim(html, "/townships")
+    expectNoCommerceOrReminder(html, "/townships")
   })
 
   it("/about publishes no date", () => {
     const html = renderToStaticMarkup(AboutPage())
     expectNoUnverifiedDeadlineClaim(html, "/about")
+    expectNoCommerceOrReminder(html, "/about")
   })
 
   it("/appeal-contingency is withdrawn without restating the offer", () => {
@@ -298,7 +327,15 @@ describe("committed blog artifacts", () => {
       const body = readFileSync(file, "utf8")
       // An article is a fixed document that outlives the window it describes,
       // so it may point at the county's calendar and may not carry a date.
-      expect(body).not.toMatch(COUNTDOWN)
+      // Frontmatter carries the publication date and is not a filing claim, so
+      // the sweep runs on the article body. The date check was missing here
+      // entirely: the old assertion allowed "March 15, 2026" to stand in an
+      // article the corpus reported as clean.
+      const article = body.startsWith("---") ? body.slice(body.indexOf("\n---", 3) + 4) : body
+      expect(article).not.toMatch(COUNTDOWN)
+      expect({ slug, matched: DATE_CLAIM.test(article) }).toEqual({ slug, matched: false })
+      expect({ slug, matched: ISO_DATE.test(article) }).toEqual({ slug, matched: false })
+      expectNoBannedClaim(article, `/blog/${slug}`)
       expect(body).toContain("cookcountyassessoril.gov")
       expect(body).not.toContain("cookcountyassessor.com")
     },

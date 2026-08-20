@@ -59,6 +59,22 @@ export interface Township2026View {
    * eligibility-tier caller may reuse this view shape.
    */
   daysUntilLastFile?: number;
+  /**
+   * Whether this view may offer a deadline reminder signup.
+   *
+   * Always present and false by default rather than optional. A township page
+   * identifies its township by slug, so the projection behind it is the
+   * informational tier and this is never true today — which is the controller's
+   * ruling of 2026-08-19 in one field: "Without a verified PIN/property-record
+   * match: no personalized eligibility claim, countdown, reminder signup,
+   * deadline CTA, filing/payment CTA, or checkout."
+   *
+   * It was missing from this view entirely, so the page rendered its reminder
+   * form on every township regardless of state — the date, countdown and CTA
+   * were suppressed and the email capture beside them was not. Suppression is
+   * meant to be one decision.
+   */
+  allowReminderSignup: boolean;
 }
 
 /**
@@ -81,6 +97,7 @@ export function buildTownship2026Views(now: Date = new Date()): Township2026View
         official: false,
         status: "pending" as const,
         pendingReason: projection.reason,
+        allowReminderSignup: false,
       };
     }
 
@@ -96,6 +113,7 @@ export function buildTownship2026Views(now: Date = new Date()): Township2026View
       openLabel: formatDateLong(projection.openDate),
       officialSourceUrl: projection.officialSourceUrl,
       retrievedAt: projection.retrievedAt,
+      allowReminderSignup: projection.allowReminderSignup,
       ...(projection.showCountdown && projection.daysRemaining !== null
         ? { daysUntilLastFile: projection.daysRemaining }
         : {}),

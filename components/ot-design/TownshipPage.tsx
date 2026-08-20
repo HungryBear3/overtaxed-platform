@@ -164,16 +164,22 @@ function TownshipHero({
                   not verified — or one we know is closed — invites a homeowner
                   to spend attention on a filing route that is not open to them
                   today, which is the harm the countdown used to cause more
-                  loudly. Every other state routes to the notify block. */}
+                  loudly.
+                  The other arm used to route unconditionally to the notify
+                  block. That made the reminder the one capability this page
+                  kept while suppressing the date, the countdown and the CTA
+                  around it — so an unverified window still took an address
+                  against a schedule we could not promise. It is now keyed to
+                  the same projection as everything else. */}
               {isOpen ? (
                 <Link href={`/#hero-check`} className="ot-cta">
                   Run free check for my address <span className="ot-cta-arrow">→</span>
                 </Link>
-              ) : (
+              ) : view.allowReminderSignup ? (
                 <a href="#tp-reminder" className="ot-cta">
                   Notify me about {t.name} <span className="ot-cta-arrow">→</span>
                 </a>
-              )}
+              ) : null}
               <a
                 href="https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
                 target="_blank"
@@ -229,48 +235,28 @@ function TownshipHero({
   );
 }
 
-function TownshipStats({ t }: { t: Township }) {
-  const fmt$ = (n: number) => "$" + n.toLocaleString("en-US");
-  return (
-    <section className="ot-tp-stats">
-      <div className="ot-tp-stats-inner">
-        <div className="ot-tp-stats-head">
-          <div className="ot-eyebrow">By the numbers</div>
-          <h2 className="ot-h2">Public-record context for {t.name} Township.</h2>
-          <p className="ot-tp-stats-sub">
-            These are rounded public-record benchmarks used for orientation, not verified
-            OverTaxed IL customer outcomes and not a guarantee of savings. Your
-            property may differ — the only way to know is to{" "}
-            <Link href="/#hero-check">run a free check</Link>.
-          </p>
-        </div>
-        <div className="ot-tp-stats-grid">
-          <div className="ot-tp-stat">
-            <div className="ot-tp-stat-key">Average assessed value</div>
-            <div className="ot-tp-stat-val">{fmt$(t.avgAssessed)}</div>
-            <div className="ot-tp-stat-foot">single-family residential</div>
-          </div>
-          <div className="ot-tp-stat">
-            <div className="ot-tp-stat-key">Illustrative reduction</div>
-            <div className="ot-tp-stat-val">−{t.avgReduction.toFixed(1)}%</div>
-            <div className="ot-tp-stat-foot">scenario for comparing costs</div>
-          </div>
-          <div className="ot-tp-stat ot-tp-stat-hero">
-            <div className="ot-tp-stat-key">Illustrative savings</div>
-            <div className="ot-tp-stat-val">{fmt$(t.avgSavings)}</div>
-            <div className="ot-tp-stat-foot">example only · not a promise</div>
-          </div>
-        </div>
-        <div className="ot-tp-stats-note">
-          Source: Cook County public records and internal modeling. These figures are
-          illustrative benchmarks until verified OverTaxed IL outcomes are
-          published.{" "}
-          <Link href="/#method">How we calculate this →</Link>
-        </div>
-      </div>
-    </section>
-  );
-}
+/**
+ * The "By the numbers" band, withdrawn.
+ *
+ * It rendered three figures for every one of the 38 township pages:
+ * "Average assessed value $48,600", "Illustrative reduction −9.6%", and
+ * "Illustrative savings $1,480", over the source line "Cook County public
+ * records and internal modeling".
+ *
+ * Two problems, either of which is disqualifying. The savings figure is an
+ * averaged savings figure, which BL-B1 bans outright — the ban is on the
+ * number, and relabelling it "Illustrative" changed the caption, not the datum.
+ * And none of the three was ever a public-record benchmark: the roster's own
+ * header described all three as "design-set sample figures, not measured
+ * OverTaxed results", so a band headed "Public-record context" attributed
+ * invented numbers to the county on 38 indexable pages.
+ *
+ * There is no version of this band that survives with the figures in it, and no
+ * honest version without them, so the section is removed rather than trimmed.
+ * The fields behind it are gone from [[lib/townships]] as well, so it cannot be
+ * reassembled from the roster. Rebuilding it from measured, sourced outcomes is
+ * separate work.
+ */
 
 /**
  * The free-check block. Rendered only when the Assessor window is verified
@@ -340,9 +326,11 @@ function TownshipNoWindow({ t, view }: { t: Township; view: Township2026View }) 
         </h2>
         <p className="ot-tp-check-sub">{provenanceLine(view)}</p>
         <div className="ot-tp-hero-cta-row">
-          <a href="#tp-reminder" className="ot-cta">
-            Notify me when it opens <span className="ot-cta-arrow">→</span>
-          </a>
+          {view.allowReminderSignup && (
+            <a href="#tp-reminder" className="ot-cta">
+              Notify me when it opens <span className="ot-cta-arrow">→</span>
+            </a>
+          )}
           <a
             href="https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
             target="_blank"
@@ -445,6 +433,20 @@ function TownshipFaq({ t, faq }: { t: Township; faq: TownshipFaqEntry[] }) {
  * from verified canonical state, so the previous promise was one the sending
  * side was already unable to keep.
  */
+/**
+ * The deadline-reminder block.
+ *
+ * Rendered only when the projection permits a reminder signup, which the
+ * informational tier — a township identified by its own slug — never does. On
+ * this page that means it does not render at all today, and that is the
+ * intended state: the controller's ruling is that without a verified
+ * PIN/property-record match there is no reminder signup, and taking an address
+ * against a window we have not verified is the same promise the countdown used
+ * to make more loudly.
+ *
+ * It is gated rather than deleted. The component is correct; what was missing
+ * was the gate in front of it.
+ */
 function TownshipReminder({ t }: { t: Township }) {
   const [email, setEmail] = useState("");
   const [outcome, setOutcome] = useState<"idle" | "scheduled" | "recorded">("idle");
@@ -543,7 +545,6 @@ export default function TownshipPage({
   return (
     <>
       <TownshipHero t={township} view={view} />
-      <TownshipStats t={township} />
       <section className="ot-tp-map">
         <div className="ot-tp-map-inner">
           <div className="ot-tp-map-head">
@@ -573,7 +574,7 @@ export default function TownshipPage({
       )}
       <TownshipNeighbors t={township} neighbors={neighbors} />
       <TownshipFaq t={township} faq={faq} />
-      <TownshipReminder t={township} />
+      {view.allowReminderSignup && <TownshipReminder t={township} />}
     </>
   );
 }

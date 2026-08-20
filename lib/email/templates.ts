@@ -1,34 +1,89 @@
 // Email templates – return { subject, text, html }
 
+import { cc08 } from "@/lib/copy/canonical"
+
+/** The one authorized spelling of the Assessor calendar host. */
+const ASSESSOR_SOURCE_NAME = "the Cook County Assessor"
+
+/**
+ * Render a canonical last-filing day for a reader.
+ *
+ * Noon UTC and an explicit UTC time zone, so a `yyyy-mm-dd` the county
+ * published never slips a day on the way into a mailbox.
+ */
+function formatCountyDate(lastFileDate: string): string {
+  return new Date(`${lastFileDate}T12:00:00Z`).toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  })
+}
+
+/**
+ * The appeal-deadline reminder.
+ *
+ * Every date-bearing field here now arrives from the canonical projection and
+ * from nowhere else. The previous version took a `deadline: Date` read straight
+ * off `appeal.filingDeadline` — a column a customer typed into a form, or that
+ * the app derived as "notice date + 30 days" — plus a `daysRemaining` the
+ * caller computed by subtracting today from it. It then published both, to a
+ * named homeowner, with no source and no retrieval timestamp.
+ *
+ * `lastFileDate`, `daysRemaining`, `officialSourceUrl` and `retrievedAt` are
+ * therefore all required and all non-nullable: there is no shape of this
+ * template that renders a date without the provenance BL-F4 requires, and no
+ * shape that renders a countdown the projection did not compute. A caller with
+ * only a persisted date cannot construct the arguments.
+ */
 export function deadlineReminderTemplate(args: {
-  userEmail: string
   userName?: string | null
   propertyAddress: string
   pin: string
-  township?: string | null
+  township: string
   taxYear: number
-  deadline: Date
+  /** Canonical last filing day (`yyyy-mm-dd`) from the projection. */
+  lastFileDate: string
+  /** Render-time countdown from the projection. Never a local subtraction. */
   daysRemaining: number
+  /** The authority page the date was published on. */
+  officialSourceUrl: string
+  /** When that page was retrieved. */
+  retrievedAt: string
   appealLink: string
 }): { subject: string; text: string; html: string } {
-  const { userName, propertyAddress, pin, township, taxYear, deadline, daysRemaining, appealLink } = args
-  const formattedDeadline = deadline.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+  const {
+    userName,
+    propertyAddress,
+    pin,
+    township,
+    taxYear,
+    lastFileDate,
+    daysRemaining,
+    officialSourceUrl,
+    retrievedAt,
+    appealLink,
+  } = args
 
-  const subject = `[Action Required] ${daysRemaining} day${daysRemaining !== 1 ? "s" : ""} left to file your ${taxYear} appeal`
+  const formattedDeadline = formatCountyDate(lastFileDate)
+  const dayWord = daysRemaining === 1 ? "day" : "days"
+  const freshness = cc08({ source: ASSESSOR_SOURCE_NAME, timestamp: retrievedAt })
 
-  const townshipLine = township ? `Township: ${township}\n` : ""
+  const subject = `[Action Required] ${daysRemaining} ${dayWord} left to file your ${taxYear} appeal`
 
   const text = `Hi${userName ? ` ${userName}` : ""},
 
 Your ${taxYear} property tax appeal deadline is approaching.
 
 Property: ${propertyAddress} (PIN ${pin})
-${townshipLine}Deadline: ${formattedDeadline} (${daysRemaining} days remaining)
+Township: ${township}
+Deadline: ${formattedDeadline} (${daysRemaining} ${dayWord} remaining)
 
 Log in to complete and file your appeal:
 ${appealLink}
 
-You can also sign up for Cook County's reassessment notifications: https://www.cookcountyassessor.com/assessment-calendar-and-deadlines
+${freshness}
+${officialSourceUrl}
 
 – The OverTaxed IL Team
 `
@@ -37,11 +92,11 @@ You can also sign up for Cook County's reassessment notifications: https://www.c
 <p>Your <strong>${taxYear} property tax appeal</strong> deadline is approaching.</p>
 <table cellpadding="4" style="margin:16px 0">
 <tr><td style="color:#6b7280">Property:</td><td><strong>${propertyAddress}</strong> (PIN ${pin})</td></tr>
-${township ? `<tr><td style="color:#6b7280">Township:</td><td><strong>${township}</strong></td></tr>` : ""}
-<tr><td style="color:#6b7280">Deadline:</td><td><strong>${formattedDeadline}</strong> (${daysRemaining} days remaining)</td></tr>
+<tr><td style="color:#6b7280">Township:</td><td><strong>${township}</strong></td></tr>
+<tr><td style="color:#6b7280">Deadline:</td><td><strong>${formattedDeadline}</strong> (${daysRemaining} ${dayWord} remaining)</td></tr>
 </table>
 <p><a href="${appealLink}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">View Your Appeal</a></p>
-<p><a href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines">Sign up for Cook County&apos;s reassessment notifications</a></p>
+<p style="color:#6b7280;font-size:13px">${freshness} <a href="${officialSourceUrl}">${officialSourceUrl}</a></p>
 <p>— The OverTaxed IL Team</p>`
 
   return { subject, text, html }
@@ -148,7 +203,7 @@ ${startAppealLink}
 
 View the full calendar: ${calendarUrl}
 
-Sign up for Cook County's reassessment notifications: https://www.cookcountyassessor.com/assessment-calendar-and-deadlines
+Sign up for Cook County's reassessment notifications: https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines
 
 – The OverTaxed IL Team
 `
@@ -163,7 +218,7 @@ Sign up for Cook County's reassessment notifications: https://www.cookcountyasse
 <p>You don't have an appeal started yet for this property. Start one now to meet the deadline.</p>
 <p><a href="${startAppealLink}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">Start Appeal</a></p>
 <p><a href="${calendarUrl}">View full calendar</a></p>
-<p><a href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines">Sign up for Cook County&apos;s reassessment notifications</a></p>
+<p><a href="https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines">Sign up for Cook County&apos;s reassessment notifications</a></p>
 <p>— The OverTaxed IL Team</p>`
 
   return { subject, text, html }

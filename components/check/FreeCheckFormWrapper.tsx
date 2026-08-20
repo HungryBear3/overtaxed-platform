@@ -4,7 +4,20 @@ import { useState, useEffect } from "react"
 import { FreeCheckForm } from "./FreeCheckForm"
 import { FreeCheckResult, type Result } from "./FreeCheckResult"
 
-const SESSION_KEY = "freeCheckResult_v1"
+/**
+ * Bumped from `_v1` deliberately.
+ *
+ * The payload contract changed: a result now carries `outcome`, `disclosure`,
+ * and the window capability flags. A `_v1` entry written by the previous build
+ * carries none of them — but it does carry a populated `appealArgumentText`
+ * whose body reads "resulting in an estimated overpayment of $X/year". Reading
+ * it back under the new renderer replayed that claim to a returning visitor.
+ *
+ * Renaming the key retires every such entry at once. The gates downstream are
+ * still fail-closed on their own, because a key rename protects nothing against
+ * the next hand-crafted or partially-migrated payload.
+ */
+const SESSION_KEY = "freeCheckResult_v2"
 
 function loadCachedResult(): Result | null {
   try {

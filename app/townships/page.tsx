@@ -112,14 +112,21 @@ function neighborsOf(slug: string): string {
 /**
  * Options for the reminder form.
  *
- * Only townships with a verified window are offered. The form promises an email
- * when a window opens and again before it closes; offering a township whose
- * calendar we have not read would be taking a signup against a date we do not
- * have. An empty list is the correct output of an un-refreshed snapshot.
+ * Only townships whose projection permits a reminder signup are offered. The
+ * form promises an email when a window opens and again before it closes;
+ * offering a township whose calendar we have not read would be taking a signup
+ * against a date we do not have. An empty list is the correct output of an
+ * un-refreshed snapshot — and, because the block below is gated on the list
+ * being non-empty, an empty list means no capture control renders at all.
+ *
+ * The status filter alone was not enough. It kept the form on the page with an
+ * empty dropdown whenever nothing verified: the date column went quiet and the
+ * email field beside it did not, which is the partial suppression the contract
+ * is written against.
  */
 function alertFormTownships(views: Township2026View[]) {
   return views
-    .filter((v) => v.official && (v.status === "open" || v.status === "upcoming"))
+    .filter((v) => v.allowReminderSignup && v.official && (v.status === "open" || v.status === "upcoming"))
     .map((v) => ({
       name: v.name,
       district: districtMeta[v.district].label,
@@ -133,6 +140,7 @@ export default function TownshipsPage() {
   const views = buildTownship2026Views()
   const counts = count2026Views(views)
   const provenance = official2026Provenance(views)
+  const alertTownships = alertFormTownships(views)
   const assessorSource = OFFICIAL_DEADLINE_SOURCES[0]
 
   const grouped = districtOrder.reduce<Record<TownshipDistrict, Township2026View[]>>(
@@ -284,9 +292,11 @@ export default function TownshipsPage() {
           )
         })}
 
-        <div id="township-alert" className="mt-8 mb-10">
-          <TownshipAlertForm townships={alertFormTownships(views)} />
-        </div>
+        {alertTownships.length > 0 && (
+          <div id="township-alert" className="mt-8 mb-10">
+            <TownshipAlertForm townships={alertTownships} />
+          </div>
+        )}
 
         <div className="bg-white border border-gray-200 rounded-xl p-6 mb-10">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">How the appeal process works</h2>

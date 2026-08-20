@@ -400,11 +400,11 @@ function HeroCheckCard({
           <span id="pin-hint" className="ot-field-hint">
             14 digits · dashes added as you type · find yours at{" "}
             <a
-              href="https://www.cookcountyassessor.com/address-search"
+              href="https://www.cookcountyassessoril.gov/address-search"
               target="_blank"
               rel="noopener noreferrer"
             >
-              cookcountyassessor.com
+              cookcountyassessoril.gov
             </a>
           </span>
         </label>

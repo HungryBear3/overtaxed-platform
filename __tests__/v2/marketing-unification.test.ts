@@ -134,8 +134,11 @@ describe("OT v2 marketing — funnel CTAs", () => {
 
   it("homepage PIN hint no longer uses href=\"#\"", () => {
     const src = read("components/ot-design/HomePage.tsx");
-    // The PIN hint block must not be a no-op link anymore.
-    expect(src).toMatch(/cookcountyassessor\.com\/address-search/);
+    // The PIN hint block must not be a no-op link anymore, and it must point
+    // at the one host the controller authorized on 2026-08-19. Both halves are
+    // asserted: a real destination, and the canonical spelling of it.
+    expect(src).toMatch(/cookcountyassessoril\.gov\/address-search/);
+    expect(src).not.toMatch(/cookcountyassessor\.com/);
     expect(src).not.toMatch(/href="#" onClick=\{\(e\) => e\.preventDefault\(\)\}/);
   });
 });

@@ -3,7 +3,7 @@
 import { useState } from "react"
 import Link from "next/link"
 
-import { CC_05, CC_12 } from "@/lib/copy/canonical"
+import { CC_02, CC_05, CC_12 } from "@/lib/copy/canonical"
 
 /** The canonical Assessor calendar host. See the controller ruling of 2026-08-19. */
 const ASSESSOR_SITE_URL = "https://www.cookcountyassessoril.gov"
@@ -127,13 +127,33 @@ export function FreeCheckResult({ result }: Props) {
   const [showComps, setShowComps] = useState(false)
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle")
 
+  // The response may still carry `disclosure`, but only so drift is
+  // *detectable* — CC-02 is rendered from the canonical module below either
+  // way. A payload that carries the field and disagrees with the frozen text
+  // did not come from a build that agrees with the copy contract, so nothing
+  // else it asserts is trusted either: its outcome is dropped and the result
+  // resolves to CC-05 with no figures and no offer. Absent is not drift; the
+  // previous build sent no disclosure at all, and that path is already covered
+  // by the missing-outcome rule.
+  const disclosureTrusted = result.disclosure == null || result.disclosure === CC_02
+
   // The route's single evaluated outcome. A response that carries none is one
   // we cannot draw a conclusion from, and the contract's resolution for an
   // absent policy is CC-05 with checkout closed — never an optimistic default.
-  const outcome = result.outcome ?? null
+  const outcome = disclosureTrusted ? result.outcome ?? null : null
   const headline = outcome?.headline ?? CC_05
   const showFigures = outcome?.showFigures ?? false
   const canOffer = outcome?.allowCheckout === true
+
+  // The generated appeal argument, and only when the route released figures.
+  //
+  // This card used to render on the mere presence of `appealArgumentText`. The
+  // string the previous build generated ends "...resulting in an estimated
+  // overpayment of $1,420/year", so any payload still carrying one — a cached
+  // response, a replayed body — put a savings claim on this page underneath a
+  // CC-05 headline, with every paid CTA correctly hidden around it. Presence of
+  // a field is not permission to render it; the outcome is.
+  const appealArgumentText = showFigures ? result.appealArgumentText : null
 
   // Whether the public record shows the subject above the comparable average.
   // This is a description of two published numbers, not a conclusion about the
@@ -172,9 +192,9 @@ export function FreeCheckResult({ result }: Props) {
   }
 
   async function handleCopyArgument() {
-    if (!result.appealArgumentText) return
+    if (!appealArgumentText) return
     try {
-      await navigator.clipboard.writeText(result.appealArgumentText)
+      await navigator.clipboard.writeText(appealArgumentText)
       setCopyStatus("copied")
       setTimeout(() => setCopyStatus("idle"), 2000)
     } catch {
@@ -286,10 +306,17 @@ export function FreeCheckResult({ result }: Props) {
             CC-02 sits immediately above the outcome on all four states, byte
             exact and in one element — never split across nodes, never
             summarized. The headline beneath it is CC-03…CC-06 as the route
-            decided it. Nothing here recomputes or re-words either one. */}
-        {result.disclosure && (
-          <p className="text-sm text-gray-600 mb-3" role="note">{result.disclosure}</p>
-        )}
+            decided it. Nothing here recomputes or re-words either one.
+
+            CC-02 is rendered from the canonical module, not from the response.
+            It used to be `{result.disclosure && <p>{result.disclosure}</p>}`,
+            which had two ways to fail open at once: a response that omitted the
+            field rendered a result state with no disclosure above it at all —
+            and every response written by the previous build omits it — while a
+            response that carried a drifted or truncated string rendered that
+            string verbatim. The wire copy is now checked, not trusted, and any
+            mismatch is surfaced rather than shown. */}
+        <p className="text-sm text-gray-600 mb-3" role="note">{CC_02}</p>
         <p className="text-2xl font-bold text-gray-900 mb-2">{headline}</p>
         {result.sourceCaveat && (
           <p className="text-sm text-gray-500 mb-6">{result.sourceCaveat}</p>
@@ -477,7 +504,7 @@ export function FreeCheckResult({ result }: Props) {
       )}
 
       {/* ── Pre-Written Appeal Argument ──────────────────────────────────── */}
-      {result.appealArgumentText && (
+      {appealArgumentText && (
         <div className="bg-white border border-blue-200 rounded-xl p-6 shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-base font-bold text-gray-900">Your appeal argument</h3>
@@ -500,7 +527,7 @@ export function FreeCheckResult({ result }: Props) {
           </p>
           <textarea
             readOnly
-            value={result.appealArgumentText}
+            value={appealArgumentText}
             className="w-full rounded-lg bg-gray-50 border border-gray-200 text-sm text-gray-800 p-3 min-h-[160px] resize-none font-mono leading-relaxed"
           />
           {/* The paid entry points are gated on the route's `allowCheckout`,
@@ -531,7 +558,7 @@ export function FreeCheckResult({ result }: Props) {
       )}
 
       {/* ── What Happens Next (fallback CTA when no argument) ────────────── */}
-      {!result.appealArgumentText && !result.noAssessedValue && (
+      {!appealArgumentText && !result.noAssessedValue && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
           <p className="text-center font-medium text-gray-900 text-lg mb-4">What happens next</p>
           <ol className="list-decimal list-inside space-y-3 text-gray-700 max-w-lg mx-auto mb-6">

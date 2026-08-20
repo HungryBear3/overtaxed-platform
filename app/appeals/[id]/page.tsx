@@ -894,7 +894,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                   </li>
                   <li>
                     Download your PDF above, then submit it yourself at the{" "}
-                    <a href="https://www.cookcountyassessor.com/file-appeal" target="_blank" rel="noopener noreferrer" className="underline font-medium">
+                    <a href="https://www.cookcountyassessoril.gov/file-appeal" target="_blank" rel="noopener noreferrer" className="underline font-medium">
                       Cook County Assessor portal
                     </a>.
                   </li>
@@ -937,8 +937,8 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                   </li>
                   <li>
                     <strong>Go to the Cook County filing portal</strong> - Visit{" "}
-                    <a href="https://www.cookcountyassessor.com/online-appeals" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
-                      cookcountyassessor.com/online-appeals
+                    <a href="https://www.cookcountyassessoril.gov/online-appeals" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                      cookcountyassessoril.gov/online-appeals
                     </a>{" "}
                     or{" "}
                     <a href="https://propertytaxfilings.cookcountyil.gov" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
@@ -963,11 +963,11 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                 </ol>
                 <p className="mt-4 text-xs text-gray-500">
                   Questions? See{" "}
-                  <a href="https://www.cookcountyassessor.com/form-document/online-appeals-guide" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                  <a href="https://www.cookcountyassessoril.gov/form-document/online-appeals-guide" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                     Cook County Online Appeals Guide
                   </a>{" "}
                   or{" "}
-                  <a href="https://www.cookcountyassessor.com/official-appeal-rules-cook-county-assessor" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                  <a href="https://www.cookcountyassessoril.gov/official-appeal-rules-cook-county-assessor" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                     Official Appeal Rules
                   </a>.
                 </p>

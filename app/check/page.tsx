@@ -39,12 +39,12 @@ export default function CheckPage() {
           <p className="text-sm text-gray-500 text-center">
             Don&apos;t know your PIN?{" "}
             <a
-              href="https://www.cookcountyassessor.com/address-search"
+              href="https://www.cookcountyassessoril.gov/address-search"
               target="_blank"
               rel="noopener noreferrer"
               className="text-blue-600 hover:underline"
             >
-              Look it up by address at cookcountyassessor.com
+              Look it up by address at cookcountyassessoril.gov
             </a>
             .
           </p>
