@@ -3,7 +3,7 @@
 import { useState } from "react"
 import Link from "next/link"
 
-import { CC_02, CC_05, CC_12 } from "@/lib/copy/canonical"
+import { CC_02, CC_03, CC_04, CC_05, CC_06, CC_12 } from "@/lib/copy/canonical"
 
 /** The canonical Assessor calendar host. See the controller ruling of 2026-08-19. */
 const ASSESSOR_SITE_URL = "https://www.cookcountyassessoril.gov"
@@ -104,6 +104,67 @@ export type ResultOutcome = {
   reason?: string | null
 }
 
+const OUTCOME_REASONS = {
+  supportive: new Set(["window_not_open", "window_unverified"]),
+  not_supportive: new Set(["below_evidence_threshold"]),
+  insufficient_evidence: new Set([
+    "no_assessed_value",
+    "no_comparables",
+    "no_comparable_level",
+    "eligibility_policy_unsigned",
+  ]),
+  unsupported_property: new Set([
+    "outside_cook_county",
+    "multiple_pins",
+    "property_class_unsupported",
+  ]),
+} as const
+
+/**
+ * Runtime trust boundary for route responses and sessionStorage payloads.
+ * TypeScript types do not protect JSON restored by a browser. Every outcome
+ * capability must be present and consistent with one of the evaluator's exact
+ * four-state variants before any figure or offer may render.
+ */
+export function isCanonicalResultOutcome(value: unknown): value is ResultOutcome {
+  if (!value || typeof value !== "object") return false
+  const outcome = value as Record<string, unknown>
+  if (
+    typeof outcome.code !== "string" ||
+    typeof outcome.headline !== "string" ||
+    typeof outcome.allowCheckout !== "boolean" ||
+    typeof outcome.showFigures !== "boolean" ||
+    !("reason" in outcome) ||
+    (outcome.reason !== null && typeof outcome.reason !== "string")
+  ) return false
+
+  const expectedHeadline = {
+    supportive: CC_03,
+    not_supportive: CC_04,
+    insufficient_evidence: CC_05,
+    unsupported_property: CC_06,
+  }[outcome.code]
+  if (!expectedHeadline || outcome.headline !== expectedHeadline) return false
+
+  if (outcome.code === "supportive") {
+    if (outcome.showFigures !== true) return false
+    if (outcome.reason === null) return outcome.allowCheckout === true
+    return outcome.allowCheckout === false && OUTCOME_REASONS.supportive.has(outcome.reason)
+  }
+
+  if (outcome.allowCheckout !== false) return false
+  const reasonKnownFor = (state: keyof typeof OUTCOME_REASONS) =>
+    outcome.reason === null ||
+    (typeof outcome.reason === "string" && OUTCOME_REASONS[state].has(outcome.reason))
+  if (outcome.code === "not_supportive") {
+    return outcome.showFigures === true && reasonKnownFor("not_supportive")
+  }
+  if (outcome.code === "insufficient_evidence") {
+    return reasonKnownFor("insufficient_evidence")
+  }
+  return outcome.showFigures === false && reasonKnownFor("unsupported_property")
+}
+
 interface Props {
   result: Result
 }
@@ -140,7 +201,9 @@ export function FreeCheckResult({ result }: Props) {
   // The route's single evaluated outcome. A response that carries none is one
   // we cannot draw a conclusion from, and the contract's resolution for an
   // absent policy is CC-05 with checkout closed — never an optimistic default.
-  const outcome = disclosureTrusted ? result.outcome ?? null : null
+  const outcome = disclosureTrusted && isCanonicalResultOutcome(result.outcome)
+    ? result.outcome
+    : null
   const headline = outcome?.headline ?? CC_05
   const showFigures = outcome?.showFigures ?? false
   const canOffer = outcome?.allowCheckout === true

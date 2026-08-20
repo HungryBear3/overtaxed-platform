@@ -2,7 +2,12 @@
 
 import { useState, useEffect } from "react"
 import { FreeCheckForm } from "./FreeCheckForm"
-import { FreeCheckResult, type Result } from "./FreeCheckResult"
+import {
+  FreeCheckResult,
+  isCanonicalResultOutcome,
+  type Result,
+} from "./FreeCheckResult"
+import { CC_02 } from "@/lib/copy/canonical"
 
 /**
  * Bumped from `_v1` deliberately.
@@ -23,13 +28,54 @@ function loadCachedResult(): Result | null {
   try {
     const raw = sessionStorage.getItem(SESSION_KEY)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as Result
-    // Basic shape guard: must have success and a subject with a pin
-    if (parsed?.success && parsed?.subject?.pin) return parsed
+    const parsed = JSON.parse(raw) as unknown
+    if (isCompleteCachedResult(parsed)) return parsed
     return null
   } catch {
     return null
   }
+}
+
+function isNullableNumber(value: unknown): boolean {
+  return value === null || (typeof value === "number" && Number.isFinite(value))
+}
+
+/** Browser JSON is untrusted. Reject partial migrations rather than trying to
+ * complete or infer them from optimistic capability fragments. */
+function isCompleteCachedResult(value: unknown): value is Result {
+  if (!value || typeof value !== "object") return false
+  const result = value as Record<string, unknown>
+  const subject = result.subject as Record<string, unknown> | null
+  if (result.success !== true || !subject || typeof subject !== "object") return false
+  if (
+    typeof subject.pin !== "string" || subject.pin.trim() === "" ||
+    typeof subject.address !== "string" ||
+    typeof subject.city !== "string" ||
+    typeof subject.zipCode !== "string" ||
+    !(subject.township === null || typeof subject.township === "string") ||
+    !(subject.neighborhoodCode === null || typeof subject.neighborhoodCode === "string") ||
+    !isNullableNumber(subject.taxYear) ||
+    !isNullableNumber(subject.assessedTotalValue) ||
+    !isNullableNumber(subject.marketValue)
+  ) return false
+  if (
+    typeof result.compCount !== "number" || !Number.isInteger(result.compCount) || result.compCount < 0 ||
+    !Array.isArray(result.comps) ||
+    !isNullableNumber(result.avgComparableAssessedValue) ||
+    !isNullableNumber(result.equityRatio) ||
+    typeof result.targetEquityRatio !== "number" || !Number.isFinite(result.targetEquityRatio) ||
+    !isNullableNumber(result.avgCompEquityRatio) ||
+    !isNullableNumber(result.assessmentGap) ||
+    !isNullableNumber(result.potentialOverpaymentPerYear) ||
+    !isNullableNumber(result.potentialOverpayment3Year) ||
+    !(result.appealArgumentText === null || typeof result.appealArgumentText === "string") ||
+    !(result.appealWindowStatus === null || typeof result.appealWindowStatus === "object") ||
+    !(result.propertyCharacteristics === null || typeof result.propertyCharacteristics === "object") ||
+    typeof result.source !== "string" ||
+    !(result.disclosure == null || result.disclosure === CC_02) ||
+    !isCanonicalResultOutcome(result.outcome)
+  ) return false
+  return true
 }
 
 function saveCachedResult(result: Result): void {
