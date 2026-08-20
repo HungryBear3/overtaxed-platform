@@ -240,8 +240,45 @@ describe("POST /api/checkout/session approved notice conversion", () => {
     expect(stripeCreateMock).toHaveBeenCalledTimes(1)
     const [sessionArgs] = stripeCreateMock.mock.calls[0]
     expect(sessionArgs.metadata).toMatchObject({ orderId: "ord_notice", tier: "T3" })
+    expect(sessionArgs.metadata).not.toHaveProperty("gaClientId")
     expect(sessionArgs.expires_at).toBeGreaterThan(Math.floor(Date.now() / 1000) + 30 * 60)
     jest.useRealTimers()
+  })
+
+  it("binds sanitized anonymous GA identifiers for the OT checkout path", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-07-24T15:00:00.000Z"))
+    try {
+      seedApprovedHold()
+
+      const response = await POST(new Request("https://www.overtaxed-il.com/api/checkout/session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          tier: "T3",
+          email: "buyer@example.com",
+          name: "Buyer Name",
+          address: "1 Test St, Elk Grove Village IL 60007",
+          checkoutKey: "57dc81a6-1329-4a85-9210-0d6f574ea65d",
+          reassessmentNoticeDate: "2026-07-18",
+          reassessmentNoticeAddress: "1 TEST ST",
+          gaClientId: "1234567890.1234567890",
+          gaSessionId: "1724102400",
+          gaSessionNumber: "3",
+        }),
+      }) as never)
+
+      expect(response.status).toBe(200)
+      const [sessionArgs] = stripeCreateMock.mock.calls[0]
+      expect(sessionArgs.metadata).toMatchObject({
+        orderId: "ord_notice",
+        tier: "T3",
+        gaClientId: "1234567890.1234567890",
+        gaSessionId: "1724102400",
+        gaSessionNumber: "3",
+      })
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it("returns the exact existing open session after an approved-notice response is lost", async () => {

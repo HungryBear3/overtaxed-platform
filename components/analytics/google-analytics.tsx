@@ -1,6 +1,16 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import Script from "next/script"
+import {
+  buildSanitizedPageContext,
+  GA_READY_EVENT_NAME,
+  GA_READY_WINDOW_FLAG,
+  isCanonicalGaHost,
+  markGaReadyOnWindow,
+  shouldEnableLiveGa,
+} from "@/lib/analytics/ga4"
+import { isClientProductionMarketingRuntime } from "@/lib/marketing/preview-gate-client"
 
 interface GoogleAnalyticsProps {
   measurementId?: string
@@ -17,11 +27,31 @@ interface GoogleAnalyticsProps {
  * Per LESSONS_LEARNED: Use GA4 ID as script source; configure Google Ads via gtag('config').
  */
 export function GoogleAnalytics({ measurementId, googleAdsId }: GoogleAnalyticsProps) {
-  if (!measurementId && !googleAdsId) {
+  const [host, setHost] = useState<string | null>(null)
+
+  useEffect(() => {
+    setHost(typeof window !== "undefined" ? window.location.host : null)
+  }, [])
+
+  const liveGa = shouldEnableLiveGa({ measurementId, host })
+  const liveMarketingHost = isCanonicalGaHost(host)
+  const liveMarketing = isClientProductionMarketingRuntime() && liveMarketingHost
+  const pageContext = typeof window !== "undefined"
+    ? buildSanitizedPageContext({ locationHref: window.location.href, referrer: document.referrer })
+    : { page_location: undefined, page_referrer: undefined }
+
+  const primaryId = (liveGa ? measurementId : undefined) || googleAdsId
+
+  useEffect(() => {
+    if (!liveMarketing) return
+    if (typeof window !== "undefined" && typeof window.gtag === "function") {
+      markGaReadyOnWindow()
+    }
+  }, [liveMarketing, primaryId])
+
+  if (!liveMarketing || (!measurementId && !googleAdsId)) {
     return null
   }
-
-  const primaryId = measurementId || googleAdsId
 
   return (
     <>
@@ -33,9 +63,14 @@ export function GoogleAnalytics({ measurementId, googleAdsId }: GoogleAnalyticsP
         {`
           window.dataLayer = window.dataLayer || [];
           function gtag(){dataLayer.push(arguments);}
+          window.gtag = gtag;
           gtag('js', new Date());
-          ${measurementId ? `gtag('config', '${measurementId}', { page_path: window.location.pathname, send_page_view: true });` : ""}
+          ${liveGa && measurementId
+            ? `gtag('config', '${measurementId}', { send_page_view: false, page_location: ${JSON.stringify(pageContext.page_location ?? "")}, page_referrer: ${JSON.stringify(pageContext.page_referrer ?? "")} });`
+            : ""}
           ${googleAdsId ? `gtag('config', '${googleAdsId}');` : ""}
+          window.${GA_READY_WINDOW_FLAG} = true;
+          window.dispatchEvent(new CustomEvent('${GA_READY_EVENT_NAME}'));
         `}
       </Script>
     </>
@@ -58,7 +93,8 @@ export function trackGoogleAdsConversion(
 
 declare global {
   interface Window {
-    gtag: (...args: unknown[]) => void
-    dataLayer: unknown[]
+    __OT_GA_READY__?: boolean
+    gtag?: (...args: unknown[]) => void
+    dataLayer?: unknown[]
   }
 }

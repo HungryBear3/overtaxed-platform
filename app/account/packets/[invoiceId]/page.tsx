@@ -9,15 +9,13 @@ export const dynamic = "force-dynamic"
 
 type Props = {
   params: Promise<{ invoiceId: string }>
-  searchParams?: Promise<{ checkout?: string }>
 }
 
-export default async function PacketDetailPage({ params, searchParams }: Props) {
+export default async function PacketDetailPage({ params }: Props) {
   const session = await getSession()
   if (!session?.user) redirect("/auth/signin")
 
   const { invoiceId } = await params
-  const sp = (await searchParams) ?? {}
 
   const invoice = await prisma.invoice.findUnique({
     where: { id: invoiceId },
@@ -56,7 +54,6 @@ export default async function PacketDetailPage({ params, searchParams }: Props) 
     )
   }
 
-  const justPaid = sp.checkout === "diy_success"
   const stage = invoice.packetStatus
 
   return (
@@ -64,12 +61,6 @@ export default async function PacketDetailPage({ params, searchParams }: Props) 
       <nav className="mb-4">
         <Link href="/account" className="text-sm text-blue-700 hover:text-blue-900 underline">← Back to account</Link>
       </nav>
-
-      {justPaid && (
-        <div className="mb-6 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
-          ✓ Payment received. Your packet is being generated — usually done within a minute.
-        </div>
-      )}
 
       <Card className="mb-6">
         <CardHeader>
