@@ -34,6 +34,7 @@ import {
   marketingGateReason,
   previewNoopResponseBody,
 } from "@/lib/marketing/preview-gate"
+import { sanitizeAnonymousGaIdentifiers } from "@/lib/analytics/ga4"
 
 const PRICE_MAP: Record<"T2" | "T3", string | undefined> = {
   T2: process.env.STRIPE_PRICE_T2_DIY_PRO?.trim(),
@@ -146,6 +147,9 @@ const CheckoutInput = z.object({
   acknowledgmentToken: z.string().max(3000).optional(),
   reassessmentNoticeDate: z.string().date().optional(),
   reassessmentNoticeAddress: z.string().trim().min(5).max(200).optional(),
+  gaClientId: z.string().optional(),
+  gaSessionId: z.string().optional(),
+  gaSessionNumber: z.string().optional(),
 })
 
 type AddressCandidate = {
@@ -313,6 +317,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Check the checkout details and try again.", code: "INVALID_CHECKOUT_INPUT" }, { status: 400 })
   }
   const input = parsed.data
+  const gaIdentifiers = sanitizeAnonymousGaIdentifiers(input)
   const normalizedEmail = normalizeEmail(input.email)
   const priceId = PRICE_MAP[input.tier]
   if (!priceId) {
@@ -787,6 +792,7 @@ export async function POST(req: NextRequest) {
         tier: input.tier,
         windowStatus: snapshot.status,
         windowSourceUpdated: snapshot.sourceUpdated,
+        ...gaIdentifiers,
       },
     }, { idempotencyKey: `ot:${(order as { contractKey?: string }).contractKey}:${(order as { attempt?: number }).attempt ?? 0}` })
 

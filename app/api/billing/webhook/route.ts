@@ -14,6 +14,8 @@ import {
   validateCurrentT3Settlement,
   validateT2Acknowledgment,
 } from "@/lib/checkout/ot-settlement"
+import { sanitizeAnonymousGaIdentifiers } from "@/lib/analytics/ga4"
+import { sendGaPurchaseEvent } from "@/lib/analytics/ga4-measurement"
 
 export async function POST(request: NextRequest) {
   console.log("[webhook] Received webhook request")
@@ -114,6 +116,10 @@ export async function POST(request: NextRequest) {
       console.log("[webhook] Processing checkout.session.completed")
       const invoiceId = metadata.invoiceId
       if (invoiceId) {
+        if (String(data.payment_status ?? "paid") !== "paid") {
+          console.error(`[webhook] Ignoring unsettled invoice checkout ${String(data.id ?? "")}`)
+          break
+        }
         // Required business work for an invoiceId-driven one-time payment:
         //   1. Mark the Invoice PAID (paidAt, paymentMethod).
         //   2. For COMPS_ONLY: persist the user-state side effects (tier patch
@@ -187,6 +193,7 @@ export async function POST(request: NextRequest) {
             console.error(`[webhook] packet generation trigger failed for ${invoiceId}:`, err),
           )
         }
+
         break
       }
 
@@ -361,6 +368,20 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ received: true, recovery: true })
         }
 
+        const gaResult = await sendGaPurchaseEvent({
+          host: request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? new URL(request.url).host,
+          amountCents,
+          currency,
+          itemName: tier,
+          itemCategory: "ot_checkout",
+          itemVariant: tier,
+          transactionId: sessionId,
+          anonymousIds: sanitizeAnonymousGaIdentifiers(metadata),
+        })
+        if (!gaResult.ok) {
+          console.error(`[webhook] GA purchase delivery failed status=${gaResult.status}`)
+        }
+
         if (!alreadyPaid) {
           const resolvedAddress = persistedOrder.propertyAddress ?? ""
           sendNewOrderAlert({
@@ -455,6 +476,10 @@ export async function POST(request: NextRequest) {
 
       // One-time payment: add-slots (update existing subscription) or DIY/comps-only
       if (mode === "payment") {
+        if (String(data.payment_status ?? "paid") !== "paid") {
+          console.error(`[webhook] Ignoring unsettled one-time checkout ${String(data.id ?? "")}`)
+          break
+        }
         const addSlots = metadata.addSlots === "true"
         const subscriptionId = metadata.subscriptionId
         const newQuantityStr = metadata.newQuantity
