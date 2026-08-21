@@ -48,8 +48,8 @@ export default function HomesteadExemptionPage() {
       <SiteHeader />
 
       <section className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-10 text-center bg-white">
-        <div className="inline-block bg-green-100 text-green-800 text-sm font-semibold px-4 py-1.5 rounded-full mb-6">
-          FREE GUIDE — No email required
+        <div className="inline-block bg-gray-100 text-gray-700 text-sm font-semibold px-4 py-1.5 rounded-full mb-6">
+          GUIDE WITHDRAWN
         </div>
         <h1 className="text-4xl sm:text-5xl font-extrabold text-gray-900 mb-6 leading-tight">
           Are you missing the Illinois<br className="hidden sm:block" />
@@ -58,15 +58,10 @@ export default function HomesteadExemptionPage() {
         <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
           The General Homestead Exemption reduces your assessed value if you own and live in your Illinois home. Many homeowners never claim it. Takes about 5 minutes to check.
         </p>
-        <a
-          href="/downloads/homestead-exemption/homestead-exemption-guide.md"
-          download
-          className="inline-block bg-green-600 hover:bg-green-700 text-white font-bold text-lg px-10 py-4 rounded-xl shadow-lg transition-colors"
-        >
-          Download free guide
-        </a>
-        <p className="mt-3 text-sm text-gray-500">
-          Instant download · No signup · Informational only — not legal or tax advice
+        <p className="inline-block bg-gray-50 border border-gray-200 text-gray-700 text-base px-6 py-4 rounded-xl max-w-xl">
+          The downloadable guide has been withdrawn pending verification against
+          the county source. Exemption amounts and eligibility rules are published
+          by your county assessor; check your own property record there.
         </p>
       </section>
 

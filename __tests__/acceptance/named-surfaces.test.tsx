@@ -22,10 +22,13 @@
  *                    reminder capture, no held offer, no banned claim.
  *   EXERCISED  (7) — an HTTP API with no rendered output. The matrix marks
  *                    these `online_probe: false`. They are proven by named
- *                    suites that drive the real handler with provider mocks;
- *                    this file asserts those suites exist and that the route
- *                    still carries its fail-closed guard, so a silent removal
- *                    of either fails here.
+ *                    suites that drive the real handler with provider mocks.
+ *                    This file asserts three things about that claim, because
+ *                    asserting the first alone is how SURF-22 came to be
+ *                    "merely counted": the suite exists, the suite actually
+ *                    *references* the route, and the fail-closed guard is
+ *                    specific enough to be falsifiable — exactly one match, so
+ *                    a common word appearing 48 times cannot stand in for one.
  *   ABSENT     (3) — the app claims no such route, which is the disposition the
  *                    matrix accepts for them. Proven by the absence of any file
  *                    that could serve the path.
@@ -240,7 +243,12 @@ const SURFACES: Record<string, Rendered | Exercised | Absent> = {
   "SURF-20": {
     kind: "exercised",
     routeFile: "app/api/cron/performance-invoices/route.ts",
-    suites: ["__tests__/products/retired-surfaces.test.ts"],
+    suites: [
+      "__tests__/products/retired-surfaces.test.ts",
+      // The held response was proven; the authorization in front of it was not.
+      // This route carried the last `if (expectedKey && ...)` guard in the tree.
+      "__tests__/cron/performance-invoices-auth.test.ts",
+    ],
     guard: /heldProductResponse\(|isHeldProduct\(/,
   },
   "SURF-21": {
@@ -252,8 +260,18 @@ const SURFACES: Record<string, Rendered | Exercised | Absent> = {
   "SURF-22": {
     kind: "exercised",
     routeFile: "app/api/township-alert/route.ts",
-    suites: ["__tests__/products/retired-surfaces.test.ts"],
-    guard: /township/i,
+    // `retired-surfaces.test.ts` was named here and contains no reference to
+    // this route; the row was counted, not proven. These two drive it: the
+    // first asserts the held-BOR refusal, the roster key and the no-schedule
+    // confirmation; the second imports the real `POST` for side-effect gating.
+    suites: [
+      "__tests__/products/township-alert-fail-closed.test.ts",
+      "__tests__/v2/preview-side-effects.test.ts",
+    ],
+    // `/township/i` matched 48 times in this file and could not fail. The
+    // roster check is the invariant that keeps a subscription keyed to a name
+    // the county actually uses; delete it and this guard stops matching.
+    guard: /ROSTER_TOWNSHIP_NAMES\.has\(township\)/,
   },
 }
 
@@ -314,6 +332,42 @@ describe("exercised named surfaces keep their fail-closed guard and their proof"
     for (const suite of surface.suites) {
       expect({ suite, exists: existsSync(join(ROOT, suite)) }).toEqual({ suite, exists: true })
     }
+  })
+
+  it.each(exercised)("%s names suites that actually reference the route", (_id, surface) => {
+    // SURF-22 named a suite containing zero references to its route. A file
+    // that does not mention the route cannot be driving it, and the row is
+    // then an assertion that a filename exists.
+    const routeModule = surface.routeFile.replace(/\/route\.ts$/, "")
+    for (const suite of surface.suites) {
+      const src = readFileSync(join(ROOT, suite), "utf8")
+      expect({ suite, mustReference: routeModule, found: src.includes(routeModule) }).toEqual({
+        suite,
+        mustReference: routeModule,
+        found: true,
+      })
+    }
+  })
+
+  it.each(exercised)("%s uses a guard that can fail", (_id, surface) => {
+    // A guard is evidence only if the route could stop satisfying it. The
+    // rejected `/township/i` matched 48 times: no edit short of deleting the
+    // file would have moved it. Every real guard here names one construct and
+    // matches it once, so removing that construct fails this row.
+    const src = readFileSync(join(ROOT, surface.routeFile), "utf8")
+    const global = new RegExp(surface.guard.source, `${surface.guard.flags.replace("g", "")}g`)
+    const matches = src.match(global) ?? []
+    expect({ route: surface.routeFile, matches: matches.length }).toEqual({
+      route: surface.routeFile,
+      matches: 1,
+    })
+
+    // And prove it directly: excise the matched construct, and the guard dies.
+    const mutated = src.replace(global, "")
+    expect({ route: surface.routeFile, survivesMutation: surface.guard.test(mutated) }).toEqual({
+      route: surface.routeFile,
+      survivesMutation: false,
+    })
   })
 })
 

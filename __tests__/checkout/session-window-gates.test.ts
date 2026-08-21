@@ -685,3 +685,73 @@ describe("POST /api/checkout/session filing-window safeguards", () => {
     expect(stripeCreate).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * The GA4/held-product integration boundary.
+ *
+ * `main` added privacy-safe GA attribution to this route; the compliance branch
+ * made T3 a held product and replaced the snapshot's minted `sourceUpdated`
+ * with an honest `retrievedAt`. Both changes land in the same `metadata`
+ * object, and the only suite that proved GA identifiers reach Stripe asserted
+ * it on T3 — a tier that can no longer transact. Merging the two branches
+ * therefore deletes the proof while keeping the code, which is the failure mode
+ * these cases exist to catch. Nothing here is new behaviour: it is the
+ * attribution contract, re-anchored to the tier that still pays.
+ */
+describe("GA4 attribution survives the held-product boundary", () => {
+  const gaInput = {
+    gaClientId: "1234567890.1234567890",
+    gaSessionId: "1724102400",
+    gaSessionNumber: "3",
+  }
+
+  it("binds sanitized anonymous GA identifiers on a live T2 checkout session", async () => {
+    armOpenCheckout()
+
+    const res = await postT2(gaInput)
+
+    expect(res.status).toBe(200)
+    expect(stripeCreate).toHaveBeenCalledTimes(1)
+    const [sessionArgs] = stripeCreate.mock.calls[0] as [{ metadata: Record<string, unknown> }]
+    expect(sessionArgs.metadata).toMatchObject({ tier: "T2", ...gaInput })
+  })
+
+  it("carries the honest retrieval timestamp alongside attribution, not a minted one", async () => {
+    armOpenCheckout()
+
+    await postT2(gaInput)
+
+    const [sessionArgs] = stripeCreate.mock.calls[0] as [{ metadata: Record<string, unknown> }]
+    // The compliance branch removed `windowSourceUpdated`; the merged route
+    // must not have resurrected it in order to keep the GA spread compiling.
+    expect(sessionArgs.metadata).not.toHaveProperty("windowSourceUpdated")
+    expect(typeof sessionArgs.metadata.windowRetrievedAt).toBe("string")
+  })
+
+  it("drops malformed GA identifiers rather than forwarding them to Stripe", async () => {
+    armOpenCheckout()
+
+    const res = await postT2({
+      gaClientId: "not-a-client-id",
+      gaSessionId: "-1",
+      gaSessionNumber: "0",
+    })
+
+    expect(res.status).toBe(200)
+    const [sessionArgs] = stripeCreate.mock.calls[0] as [{ metadata: Record<string, unknown> }]
+    expect(sessionArgs.metadata).not.toHaveProperty("gaClientId")
+    expect(sessionArgs.metadata).not.toHaveProperty("gaSessionId")
+    expect(sessionArgs.metadata).not.toHaveProperty("gaSessionNumber")
+  })
+
+  it("derives no attribution for a held tier, because the hold refuses first", async () => {
+    armOpenCheckout()
+
+    const res = await POST(request({ ...base, tier: "T3", ...gaInput }) as never)
+
+    expect(res.status).toBe(410)
+    expect(await res.json()).toMatchObject({ code: "PRODUCT_HELD", product: "T3_DFY" })
+    expect(stripeCreate).not.toHaveBeenCalled()
+    expect(db.__upsert).not.toHaveBeenCalled()
+  })
+})
