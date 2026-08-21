@@ -28,9 +28,8 @@ export default function BoardOfReviewPage() {
           {CC_11}
         </p>
         <p className="text-lg text-gray-600 mb-8">
-          Most homeowners don&apos;t know that Cook County has two separate levels of property
-          tax appeal. Large commercial property owners use both — with attorneys. Most
-          homeowners don&apos;t even know the second one exists.
+          Cook County has two separate levels of property tax appeal. Large commercial
+          property owners use both — with attorneys.
         </p>
 
         {/* Two levels */}
@@ -40,7 +39,7 @@ export default function BoardOfReviewPage() {
             <h2 className="text-base font-bold text-gray-900 mb-2">Cook County Assessor</h2>
             <p className="text-sm text-gray-600 mb-3">
               The first appeal window after your township&apos;s reassessment. This is where
-              most homeowners stop — and where OverTaxed IL currently operates.
+              OverTaxed IL currently operates.
             </p>
             <span className="inline-block px-2.5 py-1 rounded-full bg-green-100 text-green-800 text-xs font-semibold">
               ✓ Available now

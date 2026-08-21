@@ -9,9 +9,17 @@
  * file: `qa/acceptance-matrix.json`, `qa/SHA256SUMS.txt` and `qa/qa_runner.py`
  * are untouched, and their counts remain 53 and 22.
  *
- * This registry is the separate additive mechanism the follow-up brief calls
- * for. It governs reachable public surfaces that the frozen declaration does not
- * cover, so that "not in the matrix" stops meaning "never opened by anything".
+ * This registry is the **ratified additive governance layer** for individually
+ * swept public surfaces. It governs reachable surfaces the frozen declaration
+ * does not cover, so that "not in the matrix" stops meaning "never opened by
+ * anything". It is a standing extension point, not frozen-controller membership
+ * and not an exemption mechanism: an entry here faces the same sweeps a
+ * controller-declared surface faces and gains no allowance.
+ *
+ * `/homestead-exemption` is also a member of the crawlable page-route layer in
+ * `__tests__/acceptance/page-route-governance.test.tsx`, which reconciles the
+ * whole route surface; this file is the deep per-surface sweep for it. The two
+ * are asserted consistent there, and neither double-counts the other.
  *
  * The first entry is `/homestead-exemption`, and it is here because of what it
  * cost. It is a live, indexable page in neither the 53-route corpus nor the 22
@@ -23,9 +31,9 @@
  * $37 Etsy offer. Both were reachable the whole time, from a surface nothing
  * governed.
  *
- * Counts reported by this file are **additive implementer coverage**. They are
- * not a controller-ratified corpus change and must never be added to the 53/22
- * figures when reporting controller status.
+ * Counts reported by this file are **additive coverage**. They are not a change
+ * to the controller corpus and must never be added to the 53/22 figures when
+ * reporting controller status.
  */
 jest.mock("next/navigation", () => ({
   __esModule: true,

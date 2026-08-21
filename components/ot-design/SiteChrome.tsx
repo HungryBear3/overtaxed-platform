@@ -292,7 +292,7 @@ export function StatusChip() {
       </span>
       <span className="ot-chip-text">
         <span className="ot-chip-label">
-          Township schedules checked regularly
+          Township schedules, as published by the county
         </span>
       </span>
       <span className="ot-chip-arrow" aria-hidden="true">

@@ -78,11 +78,21 @@ function controllerBlogSlugs(): string[] {
 /**
  * Posts governed by this file rather than by the controller packet.
  *
- * Additive, implementer-owned, **pending controller ratification**. The frozen
- * declaration stays 53 routes / 22 surfaces and is not edited; these four are
- * the remainder of the live corpus, and they are governed here on exactly the
- * same terms as the controller's five — same sweeps, same thresholds, no
- * exemption.
+ * **Ratified additive governance layer.** This is the standing extension point
+ * for reachable content the frozen declaration does not name — not
+ * frozen-controller membership, and not an exemption mechanism. The frozen
+ * packet stays at 53 routes / 22 surfaces / 10 fixtures / 0 mutations, is never
+ * edited, re-hashed, re-stamped or chmod'd, and these entries are never added
+ * to those figures when reporting controller status.
+ *
+ * Membership obliges a post to exactly the sweeps a controller-declared post
+ * faces and buys it nothing: same lexicon, same corpus rules, no allowance. Two
+ * of the four that were once here failed those sweeps and were retired rather
+ * than exempted. A post cannot be quieted by being listed; it can only be listed
+ * once it renders clean.
+ *
+ * See `__tests__/acceptance/page-route-governance.test.tsx` for the same layer
+ * applied to crawlable page routes.
  */
 const ADDITIVE_GOVERNED_SLUGS = ["how-to-appeal-property-tax-illinois", "rule-15-appeal-cook-county-guide"].sort()
 
