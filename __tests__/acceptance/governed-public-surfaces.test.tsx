@@ -278,24 +278,24 @@ describe("governed public surfaces render safely", () => {
 /* ── The non-canonical host outside this task's scope ─────────────────────── */
 
 /**
- * Two authenticated surfaces still cite `cookcountyassessor.com`.
+ * The non-canonical Assessor host is gone from every served source.
  *
- * M8 corrected the hostname "everywhere the map reached", and these are outside
- * it: neither `/properties/add` nor `/appeals/[id]` appears in the frozen 53/22
- * declaration, and `app/robots.ts` disallows `/properties` and `/appeals`, so
- * neither is crawlable. They are behind authentication and make no public claim,
- * which is why they are **reported rather than corrected here** — this task's
- * host scope is `/homestead-exemption` and the components it renders, and
- * `add-comps-dialog` is reached only from `app/appeals/[id]/page.tsx`.
+ * Two authenticated surfaces outlived M8's sweep — neither `/properties/add`
+ * nor `/appeals/[id]` appears in the frozen 53/22 declaration, and `robots.ts`
+ * disallows both prefixes, so neither was crawlable. They have now been
+ * normalized, and the backlog below is empty.
  *
- * Pinned so the count can only shrink. A new non-canonical reference anywhere,
- * including on a public surface, fails this.
+ * It stays as an empty pin rather than being deleted, because an empty expected
+ * object is the assertion that matters: a new `cookcountyassessor.com` anywhere
+ * under `app/`, `components/`, `lib/`, `content/` or `public/` fails this, and
+ * there is no per-file allowance left to grow.
  */
 const NON_CANONICAL_HOST_BACKLOG: Record<string, number> = {
-  // 3 occurrences: one prose mention and one href/label pair.
-  "app/properties/add/page.tsx": 3,
-  // 4 occurrences: two href/label pairs, in the two evidence panels.
-  "components/appeals/add-comps-dialog.tsx": 4,
+  // Closed. `app/properties/add/page.tsx` (3) and
+  // `components/appeals/add-comps-dialog.tsx` (4) were the last seven; both
+  // pointed at paths already proven on the canonical host — the bare host and
+  // `/address-search` — so the correction was a host swap with the path
+  // preserved, and no official URL had to be invented.
 }
 
 describe("the non-canonical Assessor host is contained and pinned", () => {
@@ -334,7 +334,9 @@ describe("the non-canonical Assessor host is contained and pinned", () => {
     }
   })
 
-  it("is confined to robots-disallowed, authenticated paths", () => {
+  it("keeps the authenticated prefixes out of the index regardless", () => {
+    // Belt and braces: those two surfaces are corrected, and they were also
+    // never crawlable. Both facts should stay true.
     const robots = readFileSync(join(ROOT, "app/robots.ts"), "utf8")
     for (const prefix of ["/properties", "/appeals"]) {
       expect(robots).toContain(`"${prefix}"`)

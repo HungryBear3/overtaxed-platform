@@ -1,6 +1,5 @@
 import type { MetadataRoute } from "next"
-import fs from "fs"
-import path from "path"
+import { getAllPosts } from "@/lib/blog"
 import { getTownshipSlugs } from "@/lib/townships"
 import {
   ACTIVE_TOWNSHIP_CAMPAIGN_SLUGS,
@@ -17,16 +16,21 @@ export const revalidate = 43200
 // (2) it included a "chicago" slug that has no corresponding township
 // record (no /township/chicago page exists).
 
+// Blog slugs come from `lib/blog`, the same loader `app/blog/[slug]` and
+// `app/blog` render from and `app/rss.xml` feeds. This used to read
+// `content/blog` with its own `readdirSync`, which made the sitemap a second,
+// independent source of truth for what the site publishes.
+//
+// That is not a hypothetical drift. A post's served slug is its frontmatter
+// `slug` when one is present, and this function derived the slug from the
+// *filename* — so a post whose frontmatter disagreed with its filename would be
+// served at one URL and advertised to crawlers at another. It also meant a file
+// dropped into `content/blog` was indexed without ever passing through the
+// loader every other consumer uses.
+//
+// One source. See [[getAllPosts]].
 function getBlogSlugs(): string[] {
-  try {
-    const blogDir = path.join(process.cwd(), "content/blog")
-    return fs
-      .readdirSync(blogDir)
-      .filter((f) => f.endsWith(".md"))
-      .map((f) => f.replace(".md", ""))
-  } catch {
-    return []
-  }
+  return getAllPosts().map((post) => post.slug)
 }
 
 export default function sitemap(): MetadataRoute.Sitemap {
