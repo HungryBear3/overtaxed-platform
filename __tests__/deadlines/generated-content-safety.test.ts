@@ -451,6 +451,27 @@ describe("the served-tree guard can actually fail", () => {
     ["SD-10 frozen banned-claims lexicon", "We file your appeal for you."],
   ]
 
+  /**
+   * The two variants added to the frozen lexicon in this commit, proven through
+   * SD-10 — a third consumer, and a served-tree shape rather than a rendered
+   * page or a markdown post. Both strings are verbatim from the withdrawn
+   * documents, so this is also the retroactive proof for the widening itself.
+   */
+  const NEW_LEXICON_FIXTURES: Array<[string, string]> = [
+    ["BL-B1 averaged savings, inflected", "the same steps used by homeowners who've saved an average of $1,200+ per year"],
+    ["BL-B5 guarantee, nothing to lose", "You have nothing to lose by filing."],
+  ]
+
+  it.each(NEW_LEXICON_FIXTURES)("SD-10 carries the new %s variant into the served tree", (_id, fixture) => {
+    expect(servedAppealDomainViolations(fixture)).toContain("SD-10 frozen banned-claims lexicon")
+  })
+
+  it.each(NEW_LEXICON_FIXTURES)("%s is a matcher on the frozen lexicon, not a local rule", (id) => {
+    // If someone deletes the widening from the lexicon module, SD-10 stops
+    // catching these and this names why.
+    expect(BANNED_LEXICON.map(([label]) => label)).toContain(id)
+  })
+
   it.each(FIXTURES)("%s fires on the string that was actually live", (id, fixture) => {
     expect(servedAppealDomainViolations(fixture)).toContain(id)
   })
@@ -538,5 +559,190 @@ describe("the served-tree guard can actually fail", () => {
     // Excluded by path, not by pretending the content is clean.
     const excluded = servedAppealDomainPaths().filter((p) => p.startsWith("/downloads/small-claims/"))
     expect(excluded).toEqual([])
+  })
+})
+
+/* ── The whole blog corpus, not the accepted five ─────────────────────────── */
+
+/**
+ * `content/blog` holds **18** posts. `app/blog/[slug]/page.tsx` serves every one
+ * of them, and `app/sitemap.ts` enumerates the directory, so all 18 are
+ * submitted for indexing. The controller's frozen corpus accepts **five** of
+ * them as rows 20, 26, 28, 30 and 31.
+ *
+ * The sweep above therefore covered five posts and thirteen were never opened —
+ * the same shape as the `/resources` row that let five appeal-domain downloads
+ * sit in the served tree, and the same shape as `/homestead-exemption`.
+ *
+ * Widening BL-B1 and BL-B5 to their inflected forms is what surfaced it. Nine of
+ * the thirteen carry banned claims, including the two phrases those widenings
+ * were added for, live on indexed pages right now:
+ *
+ *   bloom-township…:18   "homeowners who appealed their assessments saved an
+ *                         average of $1,200+ per year"
+ *   bremen-township…:31  "The process is free to file — you have nothing to lose."
+ *
+ * **This is an unresolved BLOCK, not an exemption.** Rewriting nine marketing
+ * posts is owner judgment and broader product scope, so it is not done here. The
+ * ledger below is the containment: every one of the thirteen *is* swept, its
+ * current violations are pinned exactly, and the assertion is equality. A new
+ * violation fails. A new post with a violation fails. Fixing one also fails,
+ * which is correct — the ledger must shrink deliberately and visibly, and it may
+ * never be edited to grow.
+ */
+
+const ACCEPTED_BLOG_SLUGS = [
+  "cook-county-property-tax-appeal-deadline-2026-by-township",
+  "oak-lawn-property-tax-appeal-2026",
+  "rich-township-property-tax-appeal-2026",
+  "thornton-township-property-tax-appeal-2026",
+  "worth-township-property-tax-appeal-2026",
+] as const
+
+/**
+ * Unresolved violations on ungoverned, indexed posts. Owner ruling required.
+ * See the note above: this is a defect ledger, not an allowlist.
+ */
+const UNGOVERNED_BLOG_VIOLATIONS: Record<string, string[]> = {
+  "bloom-township-property-tax-appeal-2026": [
+    "BL-B1 averaged savings, inflected",
+    "BL-C2 you should appeal",
+    "BL-C3 overassessed finding",
+  ],
+  "bremen-township-property-tax-appeal-2026": [
+    "BL-B3 dollar savings",
+    "BL-B5 guarantee, nothing to lose",
+  ],
+  "calumet-township-property-tax-appeal-2026": ["BL-B3 dollar savings"],
+  "cook-county-board-of-review-appeal-guide": [],
+  "cook-county-comparable-sales-appeal": ["BL-C1 strong case"],
+  "cook-county-property-tax-appeal-deadline-2026": [],
+  "cook-county-property-tax-how-it-works": ["BL-B2 success rate"],
+  "free-property-tax-check-cook-county": [
+    "BL-B3 dollar savings",
+    "BL-C1 strong case",
+    "BL-C3 overassessed finding",
+  ],
+  "how-much-can-you-save-appealing-property-taxes-illinois": [
+    "BL-B1 averaged savings",
+    "BL-B3 dollar savings",
+  ],
+  "how-to-appeal-property-tax-illinois": [],
+  "is-your-illinois-home-overassessed": ["BL-C3 overassessed finding"],
+  "property-tax-appeal-cook-county": [
+    "BL-C1 strong case",
+    "BL-C3 overassessed finding",
+  ],
+  "rule-15-appeal-cook-county-guide": [],
+}
+
+function blogSlugs(): string[] {
+  return readdirSync(join(ROOT, "content/blog"))
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => f.replace(/\.md$/, ""))
+    .sort()
+}
+
+function blogBody(slug: string): string {
+  const raw = readFileSync(join(ROOT, "content/blog", `${slug}.md`), "utf8")
+  return raw.startsWith("---") ? raw.slice(raw.indexOf("\n---", 3) + 4) : raw
+}
+
+/** Banned-lexicon labels a post trips, full labels so a matcher cannot be confused for its sibling. */
+function blogViolations(slug: string): string[] {
+  const text = readable(blogBody(slug))
+  return BANNED_LEXICON.filter(([, pattern]) => pattern.test(text))
+    .map(([label]) => label)
+    .sort()
+}
+
+describe("every served blog post is swept", () => {
+  it("serves and indexes all 18 posts, while the frozen corpus accepts five", () => {
+    const slugs = blogSlugs()
+    expect(slugs).toHaveLength(18)
+
+    // Reachable: one dynamic route renders any slug in the directory.
+    expect(existsSync(join(ROOT, "app/blog/[slug]/page.tsx"))).toBe(true)
+    // Indexed: the sitemap enumerates the directory rather than a named list.
+    const sitemap = readFileSync(join(ROOT, "app/sitemap.ts"), "utf8")
+    expect(sitemap).toContain("content/blog")
+    expect(sitemap).toContain("readdirSync")
+
+    // And the accepted five are exactly the frozen matrix's blog rows.
+    const matrix = JSON.parse(
+      readFileSync(
+        "/Users/abigailclaw/.openclaw/workspace/rex/handoffs/ot-minimum-postable-rebuild-20260819/qa/acceptance-matrix.json",
+        "utf8",
+      ),
+    ) as { accepted_routes: Array<{ path: string }> }
+    const accepted = matrix.accepted_routes
+      .map((r) => r.path)
+      .filter((p) => p.startsWith("/blog/"))
+      .map((p) => p.slice("/blog/".length))
+      .sort()
+    expect(accepted).toEqual([...ACCEPTED_BLOG_SLUGS].sort())
+  })
+
+  it("places every post in exactly one bucket", () => {
+    const slugs = blogSlugs()
+    const accepted = new Set<string>(ACCEPTED_BLOG_SLUGS)
+    const ledgered = new Set(Object.keys(UNGOVERNED_BLOG_VIOLATIONS))
+
+    // No post is unaccounted for, and none is in both buckets.
+    expect(slugs.filter((s) => !accepted.has(s) && !ledgered.has(s))).toEqual([])
+    expect(slugs.filter((s) => accepted.has(s) && ledgered.has(s))).toEqual([])
+    expect([...ledgered].filter((s) => !slugs.includes(s))).toEqual([])
+    expect(accepted.size + ledgered.size).toBe(slugs.length)
+  })
+
+  it.each([...ACCEPTED_BLOG_SLUGS])("%s — accepted, and clean under the full lexicon", (slug) => {
+    // Strict. The accepted rows carry no ledger and never will.
+    expect({ slug, violations: blogViolations(slug) }).toEqual({ slug, violations: [] })
+  })
+
+  it.each(Object.keys(UNGOVERNED_BLOG_VIOLATIONS))(
+    "%s — ungoverned, violations pinned exactly",
+    (slug) => {
+      expect({ slug, violations: blogViolations(slug) }).toEqual({
+        slug,
+        violations: [...UNGOVERNED_BLOG_VIOLATIONS[slug]].sort(),
+      })
+    },
+  )
+
+  it("records the unresolved total, so the backlog cannot be quietly forgotten", () => {
+    const posts = Object.entries(UNGOVERNED_BLOG_VIOLATIONS).filter(([, v]) => v.length > 0)
+    const total = posts.reduce((n, [, v]) => n + v.length, 0)
+    // 9 ungoverned posts, 16 violations. Owner ruling required; see the note above.
+    expect({ posts: posts.length, violations: total }).toEqual({ posts: 9, violations: 16 })
+  })
+})
+
+describe("the blog sweep can actually fail", () => {
+  it.each([
+    ["BL-B1 averaged savings, inflected", "Homeowners who've saved an average of $1,200+ per year."],
+    ["BL-B5 guarantee, nothing to lose", "The process is free to file — you have nothing to lose."],
+  ])("catches %s injected into a clean accepted post", (id, injected) => {
+    // A previously clean, controller-accepted surface. Both variants were added
+    // in this commit; neither existed when these posts were last swept.
+    const clean = readable(blogBody("oak-lawn-property-tax-appeal-2026"))
+    const rule = BANNED_LEXICON.find(([label]) => label === id)!
+    expect({ id, cleanBefore: rule[1].test(clean) }).toEqual({ id, cleanBefore: false })
+    expect({ id, caughtAfter: rule[1].test(`${clean} ${injected}`) }).toEqual({ id, caughtAfter: true })
+  })
+
+  it("catches a new violation appearing on a ledgered post", () => {
+    const slug = "rule-15-appeal-cook-county-guide"
+    expect(UNGOVERNED_BLOG_VIOLATIONS[slug]).toEqual([])
+    const mutated = `${readable(blogBody(slug))} You have nothing to lose by filing.`
+    const violations = BANNED_LEXICON.filter(([, p]) => p.test(mutated)).map(([l]) => l)
+    expect(violations).toContain("BL-B5 guarantee, nothing to lose")
+  })
+
+  it("catches a brand-new post arriving unswept", () => {
+    // The bucket test above is what fails; this states the mechanism.
+    const slugs = [...blogSlugs(), "a-brand-new-untracked-post"]
+    const known = new Set<string>([...ACCEPTED_BLOG_SLUGS, ...Object.keys(UNGOVERNED_BLOG_VIOLATIONS)])
+    expect(slugs.filter((s) => !known.has(s))).toEqual(["a-brand-new-untracked-post"])
   })
 })
