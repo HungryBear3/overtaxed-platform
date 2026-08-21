@@ -1,0 +1,2500 @@
+{
+  "accepted_routes": [
+    {
+      "accepted_path_id": 3,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/about",
+      "required_disposition": "neutral_static_or_canonical_projection",
+      "route_type": "static",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 6,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/appeal-contingency",
+      "required_disposition": "neutral_static_or_canonical_projection",
+      "route_type": "static",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 7,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/appeal-deadline/rogers-park",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 8,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/appeal-deadline/west-chicago",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 20,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/blog/cook-county-property-tax-appeal-deadline-2026-by-township",
+      "required_disposition": "neutral_static_or_canonical_projection",
+      "route_type": "ssg",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 26,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/blog/oak-lawn-property-tax-appeal-2026",
+      "required_disposition": "neutral_static_or_canonical_projection",
+      "route_type": "ssg",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 28,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/blog/rich-township-property-tax-appeal-2026",
+      "required_disposition": "neutral_static_or_canonical_projection",
+      "route_type": "ssg",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 30,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/blog/thornton-township-property-tax-appeal-2026",
+      "required_disposition": "neutral_static_or_canonical_projection",
+      "route_type": "ssg",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 31,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/blog/worth-township-property-tax-appeal-2026",
+      "required_disposition": "neutral_static_or_canonical_projection",
+      "route_type": "ssg",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 32,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/check",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "static-client-result",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 35,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/contact",
+      "required_disposition": "neutral_static_or_canonical_projection",
+      "route_type": "static",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 37,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/deadlines",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "static",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 46,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/resources/overtaxed-hoa-resident-resource.html",
+      "required_disposition": "withdrawn_or_regenerated_with_provenance_and_expiry",
+      "route_type": "download-html",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 47,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/resources/overtaxed-hoa-resident-resource.pdf",
+      "required_disposition": "withdrawn_or_regenerated_with_provenance_and_expiry",
+      "route_type": "download-pdf",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 50,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/barrington",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 51,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/berwyn",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 52,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/bloom",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 53,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/bremen",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 54,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/calumet",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 55,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/cicero",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 56,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/elk-grove",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 57,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/evanston",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 58,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/hanover",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 59,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/hyde-park",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 60,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/jefferson",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 61,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/lake",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 62,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/lake-view",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 63,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/lemont",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 64,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/leyden",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 65,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/lyons",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 66,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/maine",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 67,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/new-trier",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 68,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/niles",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 69,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/north-chicago",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 70,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/northfield",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 71,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/norwood-park",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 72,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/oak-park",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 73,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/orland",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 74,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/palatine",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 75,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/palos",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 76,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/proviso",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 77,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/rich",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 78,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/river-forest",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 79,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/riverside",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 80,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/rogers-park",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 81,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/schaumburg",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 82,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/south-chicago",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 83,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/stickney",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 84,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/thornton",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 85,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/west-chicago",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 86,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/wheeling",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 87,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/township/worth",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "dynamic-ssg-family",
+      "row_kind": "accepted_freshness_path"
+    },
+    {
+      "accepted_path_id": 88,
+      "assertion_ids": [
+        "freshness.single_canonical_state",
+        "freshness.render_time_projection",
+        "freshness.serving_age_lt_900s",
+        "failure.suppress_date",
+        "failure.suppress_countdown",
+        "failure.suppress_cta",
+        "failure.suppress_reminder",
+        "failure.suppress_checkout",
+        "metadata.no_unverified_deadline_claim",
+        "og.no_unverified_deadline_claim",
+        "jsonld.no_unverified_deadline_claim",
+        "copy.banned_claims_zero"
+      ],
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        307,
+        308,
+        404,
+        410
+      ],
+      "freshness_dependency": "official-feed+render-time",
+      "online_probe": true,
+      "path": "/townships",
+      "required_disposition": "canonical_dynamic_projection",
+      "route_type": "ssg-index",
+      "row_kind": "accepted_freshness_path"
+    }
+  ],
+  "artifact_acceptance_checks": [
+    {
+      "assert": "held/removed routes absent; every advertised indexable route intentional; no held checkout/success/admin/auth/protected route advertised",
+      "category": "sitemap",
+      "id": "ART-01"
+    },
+    {
+      "assert": "404 is 404+noindex; checkout and four success routes index:false; auth/admin/protected noindex; educational blogs dispositioned; noindex never substitutes for claim suppression",
+      "category": "indexability",
+      "id": "ART-02"
+    },
+    {
+      "assert": "rendered title/description/canonical/robots resolved at route boundary; exactly one OverTaxed IL per title; no duplicate title among indexable routes; no stale/generated deadline claim",
+      "category": "metadata",
+      "id": "ART-03"
+    },
+    {
+      "assert": "rendered OG/Twitter title/description/image output neutral on pending/failure; no stale date/status/service claim",
+      "category": "og-twitter",
+      "id": "ART-04"
+    },
+    {
+      "assert": "no deadline/service/FAQ deadline nodes on pending/failure; no aggregateRating/review; visible state parity",
+      "category": "json-ld",
+      "id": "ART-05"
+    },
+    {
+      "assert": "send-time canonical recheck; stale/pending/closed/future/hash/parse/schema/unresolved/missing-stage => zero sends, dates, CTA, schedule writes",
+      "category": "email-reminder",
+      "id": "ART-06"
+    },
+    {
+      "assert": "HOA HTML withdrawn or regenerated from approved copy with provenance+expiry; stale/current/open/generated claims absent",
+      "category": "download-html",
+      "id": "ART-07"
+    },
+    {
+      "assert": "HOA PDF withdrawn or regenerated; exact extracted/rendered bytes contain no stale deadline/held/unsupported claim and carry provenance+expiry if a date exists",
+      "category": "download-pdf",
+      "id": "ART-08"
+    },
+    {
+      "assert": "CC-10/12/13/17 before payment; all suppression fixtures provide typed reason and zero provider/DB calls; unsigned policy closed",
+      "category": "checkout-payload",
+      "id": "ART-09"
+    },
+    {
+      "assert": "CC required positives and banned lexicon checked after stripping only exact approved canonical strings; every BOR occurrence co-renders CC-11",
+      "category": "body",
+      "id": "ART-10"
+    }
+  ],
+  "authority": {
+    "acceptance_checklist_sha256": "3068389d99193856bd2f32f48acb245f8908c8058814c3499f1de615cae01dd1",
+    "base_sha": "40337808a63d5f666e2c4780e5b0a4d7ad7fa90f",
+    "canonical_copy_sha256": "a7577e68cdd07e79c16e6e53b786bbf579d73afd279e0e39c26ba2ad2932c499",
+    "contract_sha256": "0471d1bc0b531dfa13244acc156640b3cf58728f62d8ab52f70140af2fda5d25",
+    "failed_candidate_review_sha256": "15102fc8ae430376195bca0649349f16ebafacd8c52bda2e8ec230a433fefc8c",
+    "freshness_inventory_sha256": "9ef19c463f75fc97f25eb1dc305a5aa17bb049b82c58634db5a1f88774de889c",
+    "owner_decisions_sha256": "b716f5a08930665775f3bc3609066b28b6327b4f084760de4a6913ce8566b770"
+  },
+  "canonical_copy": {
+    "CC-02": "This free check compares available public Cook County records. It estimates whether the evidence appears to support closer review. It does not predict whether an appeal will succeed or reduce taxes.",
+    "CC-03": "Appears supportive of closer review",
+    "CC-04": "Does not presently appear supportive",
+    "CC-05": "Insufficient evidence",
+    "CC-06": "Unsupported property/stage"
+  },
+  "copy_placement": [
+    {
+      "checkout": "test-only eligible only with signed OD-2/OD-3 policy and fresh/open Assessor State A",
+      "forbidden": "split JSX/template reconstruction, score, gauge, grade, probability, ordinal, savings/merits threshold",
+      "placement": "same result container; CC-02 byte-exact node immediately above state heading/label",
+      "required_preceding_copy_id": "CC-02",
+      "required_preceding_text": "This free check compares available public Cook County records. It estimates whether the evidence appears to support closer review. It does not predict whether an appeal will succeed or reduce taxes.",
+      "state_id": "CC-03",
+      "state_text": "Appears supportive of closer review"
+    },
+    {
+      "checkout": "absent",
+      "forbidden": "split JSX/template reconstruction, score, gauge, grade, probability, ordinal, savings/merits threshold",
+      "placement": "same result container; CC-02 byte-exact node immediately above state heading/label",
+      "required_preceding_copy_id": "CC-02",
+      "required_preceding_text": "This free check compares available public Cook County records. It estimates whether the evidence appears to support closer review. It does not predict whether an appeal will succeed or reduce taxes.",
+      "state_id": "CC-04",
+      "state_text": "Does not presently appear supportive"
+    },
+    {
+      "checkout": "absent",
+      "forbidden": "split JSX/template reconstruction, score, gauge, grade, probability, ordinal, savings/merits threshold",
+      "placement": "same result container; CC-02 byte-exact node immediately above state heading/label",
+      "required_preceding_copy_id": "CC-02",
+      "required_preceding_text": "This free check compares available public Cook County records. It estimates whether the evidence appears to support closer review. It does not predict whether an appeal will succeed or reduce taxes.",
+      "state_id": "CC-05",
+      "state_text": "Insufficient evidence"
+    },
+    {
+      "checkout": "absent",
+      "forbidden": "split JSX/template reconstruction, score, gauge, grade, probability, ordinal, savings/merits threshold",
+      "placement": "same result container; CC-02 byte-exact node immediately above state heading/label",
+      "required_preceding_copy_id": "CC-02",
+      "required_preceding_text": "This free check compares available public Cook County records. It estimates whether the evidence appears to support closer review. It does not predict whether an appeal will succeed or reduce taxes.",
+      "state_id": "CC-06",
+      "state_text": "Unsupported property/stage"
+    }
+  ],
+  "counts": {
+    "accepted_freshness_paths": 53,
+    "fixtures": 10,
+    "named_surfaces": 22,
+    "non_township_paths": 14,
+    "township_detail_paths": 38,
+    "township_index_paths": 1
+  },
+  "generated_for": "Rex post-CC handoff read-only Preview QA",
+  "named_surfaces": [
+    {
+      "category": "trust/free-check",
+      "expectation": "CC-02 immediately above CC-03/04/05/06; unsigned policy => CC-05; no checkout",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": true,
+      "path": "/free-check",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-01"
+    },
+    {
+      "category": "trust/results",
+      "expectation": "controlled non-production four-state result; CC-02 immediately above state",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": true,
+      "path": "/results",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-02"
+    },
+    {
+      "category": "trust/pricing",
+      "expectation": "held $97, contingency, BOR offers absent; $69 co-renders CC-10",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": true,
+      "path": "/pricing",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-03"
+    },
+    {
+      "category": "trust/faq",
+      "expectation": "CC-12; BOR mention co-renders CC-11; no unsupported claims",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": true,
+      "path": "/faq",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-04"
+    },
+    {
+      "category": "trust/terms",
+      "expectation": "refund commitment exactly CC-13 or conflicting badge removed",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": true,
+      "path": "/terms",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-05"
+    },
+    {
+      "category": "trust/disclaimer",
+      "expectation": "CC-12; no outcome/freshness overclaim",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": true,
+      "path": "/disclaimer",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-06"
+    },
+    {
+      "category": "trust/404",
+      "expectation": "HTTP 404 + noindex + neutral metadata",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": true,
+      "path": "/404-probe-ot-qa",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-07"
+    },
+    {
+      "category": "protected/auth",
+      "expectation": "neutral metadata; no marketing claims",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": true,
+      "path": "/auth/signin",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-08"
+    },
+    {
+      "category": "checkout/ui",
+      "expectation": "index:false; CC-10/12/13/17 before payment; unreachable absent signed policy + fresh/open Assessor State A",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": true,
+      "path": "/checkout",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-09"
+    },
+    {
+      "category": "checkout/success",
+      "expectation": "index:false; no stale deadline claim",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": true,
+      "path": "/checkout/success",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-10"
+    },
+    {
+      "category": "checkout/success",
+      "expectation": "index:false; no stale deadline claim",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": true,
+      "path": "/appeal-packet/success",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-11"
+    },
+    {
+      "category": "held/success",
+      "expectation": "index:false; contingency offer absent",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": true,
+      "path": "/appeal-contingency/success",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-12"
+    },
+    {
+      "category": "customer/protected",
+      "expectation": "no Pay Now for held performance invoice; neutral metadata",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": true,
+      "path": "/account",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-13"
+    },
+    {
+      "category": "customer/protected",
+      "expectation": "no BOR product/staff filing; BOR mention co-renders CC-11; no stale calendar",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": true,
+      "path": "/appeals/new",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-14"
+    },
+    {
+      "category": "admin/protected",
+      "expectation": "auth preserved; invoice-create/performance eligibility control absent",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": true,
+      "path": "/admin/performance",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-15"
+    },
+    {
+      "category": "checkout/provider-boundary",
+      "expectation": "POST-only acceptance via implementation tests; rejected before unbounded parse/provider construction unless eligible",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": false,
+      "path": "/api/checkout/session",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-16"
+    },
+    {
+      "category": "held/api",
+      "expectation": "410/inert after required auth/rate limit ordering; zero writes/providers",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": false,
+      "path": "/api/contingency-intake",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-17"
+    },
+    {
+      "category": "held/api",
+      "expectation": "410/inert; zero Stripe construction/calls",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": false,
+      "path": "/api/billing/pay-invoice",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-18"
+    },
+    {
+      "category": "admin/held-api",
+      "expectation": "auth preserved then retired/no-op; zero provider calls",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": false,
+      "path": "/api/admin/create-performance-invoice",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-19"
+    },
+    {
+      "category": "cron/held-api",
+      "expectation": "auth preserved then retired/no-op; zero provider calls",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": false,
+      "path": "/api/cron/performance-invoices",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-20"
+    },
+    {
+      "category": "drip/held-api",
+      "expectation": "auth preserved then no-send response; zero Resend/customer calls",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": false,
+      "path": "/api/drip/send",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-21"
+    },
+    {
+      "category": "BOR/reminder-api",
+      "expectation": "no BOR waitlist; no unverified schedule promise; no unnecessary address/value propagation",
+      "expected_get_status": [
+        200,
+        301,
+        302,
+        303,
+        307,
+        308,
+        401,
+        403,
+        404,
+        405,
+        410
+      ],
+      "online_probe": false,
+      "path": "/api/township-alert",
+      "row_kind": "named_surface",
+      "surface_id": "SURF-22"
+    }
+  ],
+  "payment_provider_zero_call_assertions": [
+    {
+      "assert": "hold before import/acquire/construct Stripe; constructor=0, network=0, provider calls=0",
+      "boundary": "actual contingency Stripe helper",
+      "id": "ZC-01",
+      "precondition": "held product"
+    },
+    {
+      "assert": "Stripe constructor=0, session.create=0, customer=0, price.retrieve=0, DB writes=0",
+      "boundary": "checkout session",
+      "id": "ZC-02",
+      "precondition": "stale, closed, future, hash/parse/schema failure, unresolved township, missing stage, unsigned policy"
+    },
+    {
+      "assert": "Stripe constructor=0, invoice/customer/line-item/finalize/send=0, DB writes=0",
+      "boundary": "performance invoice/payment APIs",
+      "id": "ZC-03",
+      "precondition": "all requests"
+    },
+    {
+      "assert": "Resend/client construction=0, sends=0, queue writes=0, customer contacts=0",
+      "boundary": "drip/followup/reminder/open-notification",
+      "id": "ZC-04",
+      "precondition": "held or any freshness failure"
+    },
+    {
+      "assert": "no POST/PUT/PATCH/DELETE; no credentials read; no county/provider/customer/database calls; redirects to forbidden hosts blocked",
+      "boundary": "QA harness itself",
+      "id": "ZC-05",
+      "precondition": "offline/self-test/online GET audit"
+    }
+  ],
+  "policy": {
+    "OD-2": "UNSIGNED",
+    "OD-3": "UNSIGNED",
+    "default_paid_eligibility": false,
+    "default_source_ttl_hours": 24,
+    "same_day_chicago_when": [
+      "open",
+      "opens_today",
+      "closes_today",
+      "countdown",
+      "CTA",
+      "reminder",
+      "email",
+      "checkout"
+    ],
+    "serving_age_ceiling_seconds": 900
+  },
+  "schema_version": "ot-preview-qa-matrix/v1",
+  "synthetic_fixtures": [
+    {
+      "checkout": "reachable_in_instrumented_nonproduction_test_only",
+      "condition": "fresh/open Assessor State A with explicit test-only signed policy",
+      "deadline_projection": "visible_with_CC-08",
+      "expected_state": "CC-03",
+      "id": "FX-01-fresh-open-signed-synthetic",
+      "mutations": [],
+      "zero_calls": []
+    },
+    {
+      "checkout": "closed",
+      "condition": "retrievedAt exceeds 24h or prior Chicago day while open/countdown",
+      "deadline_projection": "suppressed",
+      "expected_state": "pending/unknown",
+      "id": "FX-02-stale",
+      "mutations": [
+        "retrievedAt stale"
+      ],
+      "zero_calls": [
+        "county",
+        "stripe_constructor",
+        "stripe",
+        "resend",
+        "database_write",
+        "email",
+        "customer"
+      ]
+    },
+    {
+      "checkout": "closed",
+      "condition": "verified Assessor window closed at render time",
+      "deadline_projection": "date/countdown/CTA/reminder/checkout suppressed",
+      "expected_state": "closed",
+      "id": "FX-03-closed",
+      "mutations": [
+        "evaluatedAt after lastFileDate"
+      ],
+      "zero_calls": [
+        "stripe_constructor",
+        "stripe",
+        "resend",
+        "email"
+      ]
+    },
+    {
+      "checkout": "closed",
+      "condition": "retrievedAt or sourceUpdatedAt materially after evaluatedAt",
+      "deadline_projection": "suppressed",
+      "expected_state": "pending/unknown",
+      "id": "FX-04-future",
+      "mutations": [
+        "future timestamp"
+      ],
+      "zero_calls": [
+        "county",
+        "stripe_constructor",
+        "stripe",
+        "resend",
+        "database_write",
+        "email"
+      ]
+    },
+    {
+      "checkout": "closed",
+      "condition": "snapshot content hash differs from independently computed exact bytes",
+      "deadline_projection": "suppressed",
+      "expected_state": "pending/unknown",
+      "id": "FX-05-hash-mismatch",
+      "mutations": [
+        "contentSha256 mismatch"
+      ],
+      "zero_calls": [
+        "county",
+        "stripe_constructor",
+        "stripe",
+        "resend",
+        "database_write",
+        "email"
+      ]
+    },
+    {
+      "checkout": "closed",
+      "condition": "source bytes cannot be parsed",
+      "deadline_projection": "suppressed",
+      "expected_state": "pending/unknown",
+      "id": "FX-06-parse-failure",
+      "mutations": [
+        "parseStatus=parse_error"
+      ],
+      "zero_calls": [
+        "stripe_constructor",
+        "stripe",
+        "resend",
+        "database_write",
+        "email"
+      ]
+    },
+    {
+      "checkout": "closed",
+      "condition": "parsed snapshot violates exact schema",
+      "deadline_projection": "suppressed",
+      "expected_state": "pending/unknown",
+      "id": "FX-07-schema-failure",
+      "mutations": [
+        "parseStatus=schema_error"
+      ],
+      "zero_calls": [
+        "stripe_constructor",
+        "stripe",
+        "resend",
+        "database_write",
+        "email"
+      ]
+    },
+    {
+      "checkout": "closed",
+      "condition": "address/PIN lacks official_property_record township resolution",
+      "deadline_projection": "suppressed",
+      "expected_state": "CC-06 or pending/unknown by surface",
+      "id": "FX-08-unresolved-township",
+      "mutations": [
+        "township resolution absent"
+      ],
+      "zero_calls": [
+        "stripe_constructor",
+        "stripe",
+        "resend",
+        "database_write",
+        "email"
+      ]
+    },
+    {
+      "checkout": "closed",
+      "condition": "resolved township snapshot lacks requested Assessor/BOR stage",
+      "deadline_projection": "suppressed",
+      "expected_state": "pending/unknown",
+      "id": "FX-09-missing-stage",
+      "mutations": [
+        "stage row absent"
+      ],
+      "zero_calls": [
+        "stripe_constructor",
+        "stripe",
+        "resend",
+        "database_write",
+        "email"
+      ]
+    },
+    {
+      "checkout": "closed",
+      "condition": "fresh/open source but OD-2 or OD-3 policy version/signature absent",
+      "deadline_projection": "fresh deadline may render only with CC-08; commerce suppressed",
+      "expected_state": "CC-05",
+      "id": "FX-10-unsigned-policy",
+      "mutations": [
+        "eligibilityPolicy=null"
+      ],
+      "zero_calls": [
+        "stripe_constructor",
+        "stripe",
+        "database_write",
+        "customer"
+      ]
+    }
+  ],
+  "verdict_model": {
+    "offline_manifest_valid": "internal structure only; not candidate-ready",
+    "preview_executed": "GET-only route observations plus separately supplied instrumented fixture/provider evidence",
+    "release_ready": "never granted by this harness; Gate B/C, owner decisions, same-day official source, deploy/public/payment approvals remain separate"
+  }
+}

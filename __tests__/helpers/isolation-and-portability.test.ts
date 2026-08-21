@@ -21,6 +21,7 @@ import {
   lexiconPath,
   qaPacketDir,
   readAcceptanceMatrix,
+  repoWriteViolation,
   withFixtureRoot,
   writeFixtureFile,
 } from "./governance-fixtures.test"
@@ -29,6 +30,13 @@ describe("frozen artefacts resolve portably", () => {
   it("finds the QA packet without naming a user, home directory or absolute prefix", () => {
     const dir = qaPacketDir()
     expect(existsSync(join(dir, "acceptance-matrix.json"))).toBe(true)
+  })
+
+  it("binds the self-contained matrix fixture to the authoritative frozen hash", () => {
+    const bytes = readFileSync(join(qaPacketDir(), "acceptance-matrix.json"))
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+      "6473de57f64a9fef778694c138ece2e0d3d50ac6ed670a6a5ce6b71c797f297b",
+    )
   })
 
   it("no governance suite names an absolute local path", () => {
@@ -103,25 +111,30 @@ describe("resolution fails closed", () => {
   })
 
   it("an environment override pointing nowhere is an error, not a silent fallback", () => {
-    const previous = process.env.OT_QA_PACKET_DIR
-    process.env.OT_QA_PACKET_DIR = join(tmpdir(), "ot-definitely-not-here")
+    const previous = process.env.OT_QA_MATRIX_PATH
+    process.env.OT_QA_MATRIX_PATH = join(tmpdir(), "ot-definitely-not-here")
     try {
       expect(() => qaPacketDir()).toThrow(/is set to .* but nothing exists there/)
     } finally {
-      if (previous === undefined) delete process.env.OT_QA_PACKET_DIR
-      else process.env.OT_QA_PACKET_DIR = previous
+      if (previous === undefined) delete process.env.OT_QA_MATRIX_PATH
+      else process.env.OT_QA_MATRIX_PATH = previous
     }
   })
 
   it("an environment override is honoured when it does exist", async () => {
-    const previous = process.env.OT_QA_PACKET_DIR
+    const previous = process.env.OT_QA_MATRIX_PATH
     await withFixtureRoot("override", (root) => {
-      process.env.OT_QA_PACKET_DIR = root
+      const matrix = writeFixtureFile(
+        root,
+        "acceptance-matrix.json",
+        JSON.stringify({ accepted_routes: [], named_surfaces: [] }),
+      )
+      process.env.OT_QA_MATRIX_PATH = matrix
       try {
         expect(qaPacketDir()).toBe(root)
       } finally {
-        if (previous === undefined) delete process.env.OT_QA_PACKET_DIR
-        else process.env.OT_QA_PACKET_DIR = previous
+        if (previous === undefined) delete process.env.OT_QA_MATRIX_PATH
+        else process.env.OT_QA_MATRIX_PATH = previous
       }
     })
   })
@@ -170,28 +183,28 @@ describe("fixture trees clean up after themselves", () => {
 })
 
 describe("the repository write boundary is enforced, not merely intended", () => {
-  it("rejects a write to a real source file and allows the identical write into a fixture", async () => {
-    const probeFile = join(REPO_ROOT, "content/blog/zz-guard-probe.md")
-    const probeDir = join(REPO_ROOT, "app/zz-guard-route")
-    const restore = installRepoWriteGuard()
-    try {
-      expect(() => writeFileSync(probeFile, "x", "utf8")).toThrow(
-        /Repository write boundary violated: writeFileSync\("content\/blog\/zz-guard-probe\.md"\)/,
-      )
-      expect(() => rmSync(join(REPO_ROOT, "app/privacy/page.tsx"))).toThrow(/write boundary violated: rmSync/)
-      expect(() => mkdirSync(probeDir, { recursive: true })).toThrow(/write boundary violated: mkdirSync/)
-    } finally {
-      restore()
-      // Belt and braces: if the guard is ever broken, these calls *succeed* and
-      // this test is the thing that would have littered the checkout. Clean up
-      // with the restored, unguarded fs so a guard regression fails loudly
-      // without also leaving a probe behind for another suite to trip over.
-      rmSync(probeFile, { force: true })
-      rmSync(probeDir, { recursive: true, force: true })
-    }
-    expect(existsSync(probeFile)).toBe(false)
-    expect(existsSync(probeDir)).toBe(false)
-    expect(existsSync(join(REPO_ROOT, "app/privacy/page.tsx"))).toBe(true)
+  it("rejects writes inside a simulated repository without touching the real checkout", async () => {
+    await withFixtureRoot("guard-repo", (root) => {
+      const fakeRepo = join(root, "repo")
+      const probeFile = writeFixtureFile(fakeRepo, "content/blog/existing.md", "sentinel")
+      const privacy = writeFixtureFile(fakeRepo, "app/privacy/page.tsx", "sentinel")
+      const probeDir = join(fakeRepo, "app/zz-guard-route")
+      const restore = installRepoWriteGuard(fakeRepo)
+      try {
+        expect(() => writeFileSync(probeFile, "changed", "utf8")).toThrow(
+          /Repository write boundary violated: writeFileSync\("content\/blog\/existing\.md"\)/,
+        )
+        expect(() => rmSync(privacy)).toThrow(/write boundary violated: rmSync/)
+        expect(() => mkdirSync(probeDir, { recursive: true })).toThrow(/write boundary violated: mkdirSync/)
+      } finally {
+        restore()
+      }
+      expect(readFileSync(probeFile, "utf8")).toBe("sentinel")
+      expect(readFileSync(privacy, "utf8")).toBe("sentinel")
+      expect(existsSync(probeDir)).toBe(false)
+      expect(repoWriteViolation(probeFile, fakeRepo)).toBe("content/blog/existing.md")
+      expect(repoWriteViolation(join(root, "outside.md"), fakeRepo)).toBeNull()
+    })
   })
 
   it("still permits reads of the repository, which every derivation depends on", () => {

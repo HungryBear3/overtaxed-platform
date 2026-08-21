@@ -70,28 +70,18 @@ export const GOVERNANCE_SUITE_FILES = [
 /* ── Portable resolution of frozen external artefacts ─────────────────────── */
 
 /**
- * Where the frozen controller packet sits relative to a checkout.
+ * Self-contained, exact-byte test fixtures.
  *
- * The worktree lives at `<workspace>/worktrees/<name>` and the packet at
- * `<workspace>/handoffs/<rebuild>/qa`, so walking up from the repository root
- * finds it without naming a user, a home directory or an absolute prefix.
+ * The authoritative controller packet remains external and read-only. Tests use
+ * exact-byte fixture copies pinned to the authoritative source hashes, so a Git
+ * archive or checkout at any path has everything needed to run. Operators still
+ * verify the live controller packet separately with its own checksums/runner.
  */
-const QA_PACKET_SUFFIX = join("handoffs", "ot-minimum-postable-rebuild-20260819", "qa")
-const LEXICON_SUFFIX = join("research", "ot-gate-a-cowork-20260818", "04-CANONICAL-COPY-AND-BANNED-CLAIMS.md")
+const GOVERNANCE_FIXTURES = join(REPO_ROOT, "__tests__/fixtures/governance")
+const QA_MATRIX_FIXTURE = join(GOVERNANCE_FIXTURES, "acceptance-matrix.json")
+const LEXICON_FIXTURE = join(GOVERNANCE_FIXTURES, "04-CANONICAL-COPY-AND-BANNED-CLAIMS.md")
 
-/** Every ancestor of `from`, nearest first, including `from` itself. */
-function ancestors(from: string): string[] {
-  const out: string[] = []
-  let dir = resolve(from)
-  for (;;) {
-    out.push(dir)
-    const parent = dirname(dir)
-    if (parent === dir) return out
-    dir = parent
-  }
-}
-
-function resolveRelativeArtefact(suffix: string, envVar: string, what: string): string {
+function resolveFixture(defaultPath: string, envVar: string, what: string): string {
   const override = process.env[envVar]
   if (override) {
     if (!existsSync(override)) {
@@ -102,26 +92,24 @@ function resolveRelativeArtefact(suffix: string, envVar: string, what: string): 
     }
     return override
   }
-  const searched = ancestors(REPO_ROOT).map((dir) => join(dir, suffix))
-  const found = searched.find((candidate) => existsSync(candidate))
-  if (!found) {
+  if (!existsSync(defaultPath)) {
     throw new Error(
-      `${what}: not found. Set ${envVar} to its location, or place it at "${suffix}" ` +
-        `beside the checkout. Searched ${searched.length} ancestor path(s) of the repository root, ` +
-        `nearest first:\n  ${searched.join("\n  ")}`,
+      `${what}: self-contained test fixture is missing at "${defaultPath}". ` +
+        `Restore the hash-pinned fixture or set ${envVar} to an explicit test fixture.`,
     )
   }
-  return found
+  return defaultPath
 }
 
 /** The frozen QA packet directory. Read-only; never written, copied or re-stamped. */
 export function qaPacketDir(): string {
-  return resolveRelativeArtefact(QA_PACKET_SUFFIX, "OT_QA_PACKET_DIR", "Frozen QA packet")
+  const matrix = resolveFixture(QA_MATRIX_FIXTURE, "OT_QA_MATRIX_PATH", "Frozen QA matrix")
+  return dirname(matrix)
 }
 
 /** The canonical banned-claims document the lexicon is bound to. */
 export function lexiconPath(): string {
-  return resolveRelativeArtefact(LEXICON_SUFFIX, "OT_LEXICON_PATH", "Canonical banned-claims lexicon")
+  return resolveFixture(LEXICON_FIXTURE, "OT_LEXICON_PATH", "Canonical banned-claims lexicon")
 }
 
 export type AcceptanceMatrix = {
@@ -238,11 +226,11 @@ const WRITE_METHODS = [
 /** Paths a write may legitimately touch inside the repository root. */
 const WRITE_ALLOWED = [`${sep}node_modules${sep}`, `${sep}.next${sep}`, `${sep}.git${sep}`, `${sep}.swc${sep}`]
 
-function offendsRepo(target: unknown): string | null {
+export function repoWriteViolation(target: unknown, repoRoot: string = REPO_ROOT): string | null {
   if (typeof target !== "string") return null
   const abs = resolve(target)
-  const rel = relative(REPO_ROOT, abs)
-  if (rel.startsWith("..") || rel === "" || resolve(REPO_ROOT, rel) !== abs) return null
+  const rel = relative(repoRoot, abs)
+  if (rel.startsWith("..") || rel === "" || resolve(repoRoot, rel) !== abs) return null
   if (WRITE_ALLOWED.some((allowed) => `${sep}${rel}`.includes(allowed))) return null
   return rel
 }
@@ -256,7 +244,7 @@ function offendsRepo(target: unknown): string | null {
  * file, instead of silently reintroducing the race for another suite to trip
  * over. Installed for the whole file by `guardRepoWrites()`.
  */
-export function installRepoWriteGuard(): () => void {
+export function installRepoWriteGuard(repoRoot: string = REPO_ROOT): () => void {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const fs = require("node:fs") as Record<string, unknown>
   const original = new Map<string, unknown>()
@@ -279,7 +267,7 @@ export function installRepoWriteGuard(): () => void {
         method === "copyFileSync" ? [args[1]] : method === "renameSync" ? [args[0], args[1]] : [args[0]]
       if (method !== "writeSync") {
         for (const target of written) {
-          const offender = offendsRepo(target)
+          const offender = repoWriteViolation(target, repoRoot)
           if (offender) {
             throw new Error(
               `Repository write boundary violated: ${method}("${offender}"). ` +
