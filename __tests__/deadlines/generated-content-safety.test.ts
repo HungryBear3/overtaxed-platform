@@ -23,11 +23,17 @@
  * together with the absence of any rewrite or route that could reconstruct the
  * path, is the whole proof. No network call is made or needed.
  */
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
+
+import { CC_11 } from "@/lib/copy/canonical"
+import { BANNED_LEXICON, readable } from "../lexicon/banned-claims.test"
+import { guardRepoWrites, withFixtureRoot } from "../helpers/governance-fixtures.test"
 
 const ROOT = resolve(__dirname, "../..")
 const PUBLIC_DIR = join(ROOT, "public")
+
+guardRepoWrites()
 const RETIRED_DIR = join(ROOT, "docs/retired-resources")
 
 const RETIRED_BASENAMES = [
@@ -197,5 +203,433 @@ describe("the five accepted blog artifacts publish no deadline of their own", ()
     })
     // And the warning must sit with a pointer to the authority that owns it.
     expect(text).toContain("cookcountyassessoril.gov")
+  })
+})
+
+/* ── The widened row-14 sweep ─────────────────────────────────────────────── */
+
+/**
+ * Why this section exists.
+ *
+ * The sweep above proved two named HOA artifacts were gone from `/resources/`.
+ * That satisfied map row 14 *as written* — "HOA HTML/PDF and five blogs" — and
+ * contract §E is broader than the row. While the row passed, five other
+ * appeal-domain documents sat in `public/downloads/`, crawlable, carrying
+ * unsourced filing windows for ten counties, a "no extensions" finality warning
+ * attached to their own dates, a Board-of-Review filing recommendation with no
+ * CC-11, "You have nothing to lose by filing", a per-county "Estimated Annual
+ * Tax Savings" table, "saved an average of $1,200+ per year", and a live $37
+ * Etsy offer.
+ *
+ * The lexicon did not catch any of them, and that is the second lesson. Every
+ * one of those strings passes all 22 `BANNED_LEXICON` rows: BL-B1 matches
+ * "save an average of" but the document said "sav**ed** an average of"; BL-B5
+ * matches "risk-free" but the document said "nothing to lose"; BL-C2 matches
+ * "worth appealing" but the document said "Worth it for". A guard built on the
+ * lexicon alone would have passed this tree unchanged — which is the same
+ * defect as a guard that counts filenames.
+ *
+ * So the rules below are written against what the withdrawn documents actually
+ * said, the lexicon is applied *in addition*, and the sweep covers the whole
+ * served tree rather than a named prefix. `servedAppealDomainViolations` is a
+ * pure function so it can be aimed at synthetic content and proven to fail.
+ */
+
+/** LegalKits is a separate product line, excluded from this finding by the controlling review. */
+const LEGALKITS_DIRS = [
+  "divorce-prep",
+  "expungement",
+  "landlord-notices",
+  "small-claims",
+  "ticket-dispute",
+] as const
+
+/** Served files that carry no readable text. Pinned so a new binary cannot appear silently. */
+const NON_TEXT_SERVED = [
+  "/.gitkeep",
+  "/apple-icon.png",
+  "/forms/cook-county-auth-form.pdf",
+  "/icon-dark-32x32.png",
+  "/icon-light-32x32.png",
+  "/icon.svg",
+  "/logo.svg",
+  "/placeholder-logo.png",
+  "/placeholder-logo.svg",
+  "/placeholder-user.jpg",
+  "/placeholder.jpg",
+  "/placeholder.svg",
+]
+
+const SCANNABLE = /\.(md|markdown|html?|txt|json|csv)$/i
+
+const MONTH = "January|February|March|April|May|June|July|August|September|October|November|December"
+const NON_COOK_COUNTIES =
+  /\b(DuPage|Lake County|Will County|Kane|McHenry|Sangamon|Winnebago|Peoria|Madison County|St\.? Clair)\b/gi
+
+type ServedRule = { id: string; why: string; hit: (text: string, raw: string) => boolean }
+
+const SERVED_RULES: ServedRule[] = [
+  {
+    id: "SD-1 board-of-review without CC-11",
+    why: "BL-F5. The Board is the one stage OverTaxed cannot serve; naming it obliges the disclosure.",
+    hit: (text, raw) => /board of review/i.test(text) && !raw.includes(CC_11),
+  },
+  {
+    id: "SD-2 dollar savings claim",
+    why: "BL-B1/B3. A served document may not tell a reader what they will save.",
+    hit: (text) =>
+      /\$\s?\d[\d,]*(\s*[–—-]\s*\$?\s?\d[\d,]*)?\s*(\/|\bper\b)?\s*(year|yr|annually)/i.test(text) ||
+      /\bsaved?\s+an\s+average\s+of\b/i.test(text) ||
+      /\bestimated\s+annual\s+tax\s+savings\b/i.test(text) ||
+      /\bhow\s+much\s+can\s+you\s+save\b/i.test(text) ||
+      /\baverages?d?\b[^.]{0,24}\bsavings\b/i.test(text),
+  },
+  {
+    id: "SD-3 states a filing date or window of its own",
+    why: "OD-4. A fixed document outlives the window it names; dates come from the canonical snapshot.",
+    hit: (text) =>
+      new RegExp(`\\b(${MONTH})\\s+\\d{1,2},?\\s+(19|20)\\d{2}\\b`).test(text) ||
+      new RegExp(`\\b(${MONTH})\\s*[–—-]\\s*(${MONTH})\\b`).test(text) ||
+      /\b(19|20)\d{2}-\d{2}-\d{2}\b/.test(text) ||
+      /\b\d{1,2}\/\d{1,2}\/(19|20)\d{2}\b/.test(text),
+  },
+  {
+    id: "SD-4 finality warning",
+    why: "BL-D3. Permitted only beside an official feed, never on a document's own date.",
+    hit: (text) => /\bno extensions\b|\bhard deadline\b|\bno grace period\b|\blate filings are not accepted\b/i.test(text),
+  },
+  {
+    id: "SD-5 non-canonical host",
+    why: "Controller hostname ruling: cookcountyassessoril.gov is canonical.",
+    hit: (text, raw) => /cookcountyassessor\.com/i.test(raw) || /cookcountyassessor\.com/i.test(text),
+  },
+  {
+    id: "SD-6 external paid offer",
+    why: "A served document may not carry a purchase funnel; pricing is an owner decision surface.",
+    hit: (text, raw) =>
+      /\betsy\.com\b|\bgumroad\.com\b/i.test(raw) ||
+      /\[[^\]]*\$\s?\d[^\]]*\]\(https?:\/\//.test(raw) ||
+      /\b(buy|purchase|order)\b[^.]{0,40}\$\s?\d/i.test(text),
+  },
+  {
+    id: "SD-7 implies coverage outside Cook",
+    why: "BL-E3. OverTaxed serves Cook County; a multi-county table claims otherwise.",
+    hit: (text) =>
+      /\ball illinois counties\b|\ball other il counties\b/i.test(text) ||
+      (text.match(NON_COOK_COUNTIES) ?? []).length >= 2,
+  },
+  {
+    id: "SD-8 nothing-to-lose guarantee",
+    why: "BL-B5 in substance. The lexicon matches 'risk-free'; the live document said this instead.",
+    hit: (text) => /\bnothing to lose\b|\bnothing to risk\b/i.test(text),
+  },
+  {
+    id: "SD-9 overpayment or merits finding",
+    why: "BL-C2/C3 in substance.",
+    hit: (text) =>
+      /\bstop overpaying\b|\byou'?re overpaying\b|\byou are overpaying\b|\blikely overpaying\b/i.test(text) ||
+      /\bfree money\b/i.test(text) ||
+      /\bworth it for\b/i.test(text),
+  },
+  {
+    id: "SD-10 frozen banned-claims lexicon",
+    why: "The frozen rows, applied in addition to the rules above.",
+    hit: (text) => BANNED_LEXICON.some(([, pattern]) => pattern.test(text)),
+  },
+]
+
+/** Every rule a served document trips. Pure, so it can be aimed at a fixture. */
+export function servedAppealDomainViolations(raw: string): string[] {
+  const text = readable(raw)
+  return SERVED_RULES.filter((rule) => rule.hit(text, raw)).map((rule) => rule.id)
+}
+
+/** Served paths, site-root relative, excluding the LegalKits product line. */
+/**
+ * Served paths under a public root.
+ *
+ * `publicDir` is a parameter so the planting proof below can walk a temporary
+ * fixture instead of writing into the real `public/` — the shared-worktree
+ * mutation pattern that made `npx jest` nondeterministic under parallel workers.
+ */
+function servedAppealDomainPaths(publicDir: string = PUBLIC_DIR): string[] {
+  return walk(publicDir)
+    .map((f) => f.slice(publicDir.length).replace(/\\/g, "/"))
+    .filter((p) => !LEGALKITS_DIRS.some((dir) => p.startsWith(`/downloads/${dir}/`)))
+}
+
+const RETIRED_APPEAL_DOWNLOADS = [
+  "/downloads/county-deadline-calendar.md",
+  "/downloads/filing-instructions.md",
+  "/downloads/faq.md",
+  "/downloads/cover-letter-template.md",
+  "/downloads/homestead-exemption/homestead-exemption-guide.md",
+]
+
+describe("the appeal-domain downloads are no longer public", () => {
+  const served = walk(PUBLIC_DIR).map((f) => f.slice(PUBLIC_DIR.length).replace(/\\/g, "/"))
+
+  it.each(RETIRED_APPEAL_DOWNLOADS)("%s is not in the served tree", (path) => {
+    expect(existsSync(join(PUBLIC_DIR, path))).toBe(false)
+    expect(served).not.toContain(path)
+  })
+
+  it("serves nothing at all under /downloads/homestead-exemption", () => {
+    expect(served.filter((p) => p.startsWith("/downloads/homestead-exemption"))).toEqual([])
+  })
+
+  it("keeps every withdrawn document, rather than deleting it", () => {
+    const dir = join(RETIRED_DIR, "appeal-downloads")
+    for (const path of RETIRED_APPEAL_DOWNLOADS) {
+      expect(existsSync(join(dir, path.split("/").pop() as string))).toBe(true)
+    }
+    expect(existsSync(join(dir, "README.md"))).toBe(true)
+  })
+
+  it("is referenced by no rendered surface", () => {
+    const sources = [
+      ...walk(join(ROOT, "app")),
+      ...walk(join(ROOT, "components")),
+      ...walk(join(ROOT, "lib")),
+      ...walk(join(ROOT, "content")),
+    ].filter((f) => /\.(ts|tsx|md|json)$/.test(f))
+
+    const names = RETIRED_APPEAL_DOWNLOADS.map((p) => p.split("/").pop() as string)
+    const offenders = sources.filter((f) => {
+      const src = readFileSync(f, "utf8")
+      return names.some((n) => src.includes(`/downloads/${n}`) || src.includes(`homestead-exemption/${n}`))
+    })
+    expect(offenders.map((f) => f.slice(ROOT.length))).toEqual([])
+  })
+
+  it("still carries the claims that made them unservable", () => {
+    // Asserted on the retired copies. If one is moved back, this names what has
+    // to be gone first.
+    const dir = join(RETIRED_DIR, "appeal-downloads")
+    expect(readFileSync(join(dir, "county-deadline-calendar.md"), "utf8")).toContain("no extensions")
+    expect(readFileSync(join(dir, "faq.md"), "utf8")).toContain("nothing to lose")
+    expect(readFileSync(join(dir, "homestead-exemption-guide.md"), "utf8")).toContain("etsy.com")
+    expect(readFileSync(join(dir, "README.md"), "utf8")).toMatch(/withdrawal/i)
+  })
+})
+
+describe("the served appeal-domain tree carries no unsafe claim", () => {
+  it.each(servedAppealDomainPaths().filter((p) => SCANNABLE.test(p)))(
+    "%s trips no served-tree rule",
+    (path) => {
+      const raw = readFileSync(join(PUBLIC_DIR, path), "utf8")
+      expect({ path, violations: servedAppealDomainViolations(raw) }).toEqual({ path, violations: [] })
+    },
+  )
+
+  it("scans every served text file outside the LegalKits product line", () => {
+    // The sweep is only as good as its reach. If a new served text file appears
+    // and the walker does not see it, this is the test that notices.
+    const scanned = servedAppealDomainPaths().filter((p) => SCANNABLE.test(p))
+    expect(scanned).toContain("/downloads/evidence-checklist.md")
+    expect(scanned.length).toBeGreaterThan(0)
+  })
+
+  it("pins the LegalKits exclusion, so it cannot grow to cover a violation", () => {
+    expect([...LEGALKITS_DIRS].sort()).toEqual([
+      "divorce-prep",
+      "expungement",
+      "landlord-notices",
+      "small-claims",
+      "ticket-dispute",
+    ])
+  })
+
+  it("pins the non-text served files, so a new binary cannot arrive unread", () => {
+    const nonText = servedAppealDomainPaths().filter((p) => !SCANNABLE.test(p))
+    expect(nonText.sort()).toEqual([...NON_TEXT_SERVED].sort())
+  })
+})
+
+describe("the served-tree guard can actually fail", () => {
+  /** Every rule, fired by the exact string the withdrawn documents used. */
+  const FIXTURES: Array<[string, string]> = [
+    ["SD-1 board-of-review without CC-11", "File your appeal at the Cook County Board of Review."],
+    ["SD-2 dollar savings claim", "Estimated Annual Tax Savings of $600–$1,500/year."],
+    ["SD-3 states a filing date or window of its own", "The window runs September – November."],
+    ["SD-4 finality warning", "Appeal window closes. Hard deadline — no extensions."],
+    ["SD-5 non-canonical host", "Look it up at cookcountyassessor.com today."],
+    ["SD-6 external paid offer", "[Illinois Property Tax Appeal Packet — $37](https://www.etsy.com/listing/4478290255)"],
+    ["SD-7 implies coverage outside Cook", "Covers DuPage, Lake County, Will County and more."],
+    ["SD-8 nothing-to-lose guarantee", "You have nothing to lose by filing."],
+    ["SD-9 overpayment or merits finding", "Stop Overpaying Property Taxes — you may be missing free money."],
+    ["SD-10 frozen banned-claims lexicon", "We file your appeal for you."],
+  ]
+
+  /**
+   * The two variants added to the frozen lexicon in this commit, proven through
+   * SD-10 — a third consumer, and a served-tree shape rather than a rendered
+   * page or a markdown post. Both strings are verbatim from the withdrawn
+   * documents, so this is also the retroactive proof for the widening itself.
+   */
+  const NEW_LEXICON_FIXTURES: Array<[string, string]> = [
+    ["BL-B1 averaged savings, inflected", "the same steps used by homeowners who've saved an average of $1,200+ per year"],
+    ["BL-B5 guarantee, nothing to lose", "You have nothing to lose by filing."],
+  ]
+
+  it.each(NEW_LEXICON_FIXTURES)("SD-10 carries the new %s variant into the served tree", (_id, fixture) => {
+    expect(servedAppealDomainViolations(fixture)).toContain("SD-10 frozen banned-claims lexicon")
+  })
+
+  it.each(NEW_LEXICON_FIXTURES)("%s is a matcher on the frozen lexicon, not a local rule", (id) => {
+    // If someone deletes the widening from the lexicon module, SD-10 stops
+    // catching these and this names why.
+    expect(BANNED_LEXICON.map(([label]) => label)).toContain(id)
+  })
+
+  it.each(FIXTURES)("%s fires on the string that was actually live", (id, fixture) => {
+    expect(servedAppealDomainViolations(fixture)).toContain(id)
+  })
+
+  it("passes content that is merely informational", () => {
+    const benign = readFileSync(join(PUBLIC_DIR, "downloads/evidence-checklist.md"), "utf8")
+    expect(servedAppealDomainViolations(benign)).toEqual([])
+  })
+
+  it("fails when a forbidden fixture is introduced under a served path", async () => {
+    // The rules firing is not the same claim as the sweep reaching them. This
+    // plants a file in a temporary public root, re-walks it with the same
+    // `servedAppealDomainPaths` the real sweep uses, and proves the violation is
+    // found at its served path. The fixture root is used rather than the real
+    // `public/` so a parallel worker can never observe a half-planted tree.
+    await withFixtureRoot("served-tree", (root) => {
+      const publicDir = join(root, "public")
+      mkdirSync(join(publicDir, "downloads"), { recursive: true })
+      // A benign neighbour, so the assertion below is a filter and not a tautology.
+      writeFileSync(
+        join(publicDir, "downloads", "benign.md"),
+        readFileSync(join(PUBLIC_DIR, "downloads/evidence-checklist.md"), "utf8"),
+        "utf8",
+      )
+      writeFileSync(
+        join(publicDir, "downloads", "__served_tree_guard_fixture__.md"),
+        "# Fixture\n\nHard deadline — no extensions. File at the Cook County Board of Review.\n",
+        "utf8",
+      )
+
+      const found = servedAppealDomainPaths(publicDir)
+        .filter((p) => SCANNABLE.test(p))
+        .map((p) => ({ path: p, violations: servedAppealDomainViolations(readFileSync(join(publicDir, p), "utf8")) }))
+        .filter((r) => r.violations.length > 0)
+
+      expect(found.map((r) => r.path)).toEqual(["/downloads/__served_tree_guard_fixture__.md"])
+      expect(found[0].violations).toEqual(
+        expect.arrayContaining([
+          "SD-1 board-of-review without CC-11",
+          "SD-4 finality warning",
+        ]),
+      )
+    })
+    // Nothing was ever planted in the real served tree.
+    expect(existsSync(join(PUBLIC_DIR, "downloads", "__served_tree_guard_fixture__.md"))).toBe(false)
+  })
+
+  it.each(RETIRED_APPEAL_DOWNLOADS.map((p) => p.split("/").pop() as string))(
+    "would have caught %s, the document that was actually served",
+    (basename) => {
+      // The retroactive proof. These five sat in the served tree through every
+      // prior correction round. A guard that cannot flag them is decoration.
+      const raw = readFileSync(join(RETIRED_DIR, "appeal-downloads", basename), "utf8")
+      const violations = servedAppealDomainViolations(raw)
+      expect({ basename, caught: violations.length > 0 }).toEqual({ basename, caught: true })
+    },
+  )
+
+  it("names, per withdrawn document, exactly why it could not stay", () => {
+    const read = (n: string) =>
+      servedAppealDomainViolations(readFileSync(join(RETIRED_DIR, "appeal-downloads", n), "utf8"))
+
+    expect(read("county-deadline-calendar.md")).toEqual(
+      expect.arrayContaining([
+        "SD-1 board-of-review without CC-11",
+        "SD-3 states a filing date or window of its own",
+        "SD-4 finality warning",
+        "SD-5 non-canonical host",
+        "SD-7 implies coverage outside Cook",
+        "SD-9 overpayment or merits finding",
+      ]),
+    )
+    expect(read("faq.md")).toEqual(
+      expect.arrayContaining(["SD-1 board-of-review without CC-11", "SD-8 nothing-to-lose guarantee"]),
+    )
+    expect(read("filing-instructions.md")).toEqual(
+      expect.arrayContaining(["SD-1 board-of-review without CC-11"]),
+    )
+    expect(read("cover-letter-template.md")).toEqual(
+      expect.arrayContaining(["SD-1 board-of-review without CC-11"]),
+    )
+    expect(read("homestead-exemption-guide.md")).toEqual(
+      expect.arrayContaining([
+        "SD-2 dollar savings claim",
+        "SD-5 non-canonical host",
+        "SD-6 external paid offer",
+        "SD-9 overpayment or merits finding",
+      ]),
+    )
+  })
+
+  it("does not fire on a LegalKits document, which is a separate product line", () => {
+    // Excluded by path, not by pretending the content is clean.
+    const excluded = servedAppealDomainPaths().filter((p) => p.startsWith("/downloads/small-claims/"))
+    expect(excluded).toEqual([])
+  })
+})
+
+/* ── The whole blog corpus ────────────────────────────────────────────────── */
+
+/**
+ * The blog corpus moved out of this file.
+ *
+ * A previous commit swept all 18 posts here and pinned the nine that carried
+ * banned claims into an exact ledger, because rewriting nine marketing posts was
+ * owner judgment and the alternative was leaving thirteen posts unswept. That
+ * ledger was containment, not a fix, and it is now gone: eleven posts are
+ * retired to `docs/retired-resources/blog-claims/`, seven remain live, and the
+ * live corpus is required to be clean with no ledger, exemption or
+ * accepted-failure count anywhere.
+ *
+ * Governance now lives in `__tests__/blog/served-blog-governance.test.ts`, which
+ * derives the served set from `lib/blog` — the loader the dynamic route, the
+ * `/blog` listing, `rss.xml` and the sitemap all share — rather than from a list
+ * maintained here. What remains below is the one assertion this file still owns:
+ * that the accepted five are among the live set and clean, so the two suites
+ * cannot silently disagree about the corpus.
+ */
+
+const ACCEPTED_BLOG_SLUGS = [
+  "cook-county-property-tax-appeal-deadline-2026-by-township",
+  "oak-lawn-property-tax-appeal-2026",
+  "rich-township-property-tax-appeal-2026",
+  "thornton-township-property-tax-appeal-2026",
+  "worth-township-property-tax-appeal-2026",
+] as const
+
+function blogBody(slug: string): string {
+  const raw = readFileSync(join(ROOT, "content/blog", `${slug}.md`), "utf8")
+  return raw.startsWith("---") ? raw.slice(raw.indexOf("\n---", 3) + 4) : raw
+}
+
+describe("the accepted blog rows are still served and still clean", () => {
+  it.each([...ACCEPTED_BLOG_SLUGS])("%s is still in content/blog", (slug) => {
+    expect(existsSync(join(ROOT, "content/blog", `${slug}.md`))).toBe(true)
+  })
+
+  it.each([...ACCEPTED_BLOG_SLUGS])("%s trips no lexicon row", (slug) => {
+    const text = readable(blogBody(slug))
+    const violations = BANNED_LEXICON.filter(([, p]) => p.test(text)).map(([label]) => label)
+    expect({ slug, violations }).toEqual({ slug, violations: [] })
+  })
+
+  it("carries no violation ledger for public content", () => {
+    // The ledger this file used to hold is closed. If one is reintroduced here,
+    // the name will show up in this file's own source.
+    const self = readFileSync(join(ROOT, "__tests__/deadlines/generated-content-safety.test.ts"), "utf8")
+    const declarations = [...self.matchAll(/\b(?:const|let|var)\s+([A-Z][A-Z0-9_]*)\s*[:=]/g)].map((m) => m[1])
+    expect(declarations.filter((n) => /UNGOVERNED|VIOLATION|ALLOW|EXEMPT|BASELINE/.test(n))).toEqual([])
   })
 })

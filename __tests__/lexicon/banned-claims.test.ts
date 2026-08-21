@@ -14,10 +14,10 @@
  * suite, so the file carries its own tests rather than being a bare helper —
  * and the thing worth testing about a lexicon is exactly its completeness.
  */
+import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
+import { lexiconPath } from "../helpers/governance-fixtures.test"
 
-const LEXICON_PATH =
-  "/Users/abigailclaw/.openclaw/workspace/rex/research/ot-gate-a-cowork-20260818/04-CANONICAL-COPY-AND-BANNED-CLAIMS.md"
 
 /** Frozen source SHA-256, per the rebuild contract. */
 export const LEXICON_SHA256 = "a7577e68cdd07e79c16e6e53b786bbf579d73afd279e0e39c26ba2ad2932c499"
@@ -52,6 +52,29 @@ export const BANNED_LEXICON: Array<[string, RegExp]> = [
   ["BL-E1 neighborhood eligibility", /\byour neighborhood determines your (deadline|eligibility)\b/i],
   ["BL-E2 scope overreach", /\b(condos?, multi-unit,? and commercial|any property type)\b/i],
   ["BL-E3 outside Cook", /\ball illinois counties\b/i],
+
+  /* ── Semantic variants of rows already frozen above ───────────────────────
+   *
+   * These are additional matchers for rows the frozen document already defines,
+   * not new rows. Their IDs are `BL-B1` and `BL-B5` because that is the
+   * prohibited semantics they encode; the binding tests below therefore still
+   * hold, and no controller edit is implied or required.
+   *
+   * They exist because the original patterns were narrower than the prose they
+   * encode, and the gap was not hypothetical. Every one of the five withdrawn
+   * public downloads passed all 22 rows above. The strings that slipped through:
+   *
+   *   "homeowners who've SAVED an average of $1,200+ per year"  — BL-B1 matched
+   *       only the infinitive, "save an average of".
+   *   "You have NOTHING TO LOSE by filing."                     — BL-B5 matched
+   *       only "risk-free" and "no risk".
+   *
+   * Nothing above is removed, narrowed, renamed or loosened. */
+
+  /** BL-B1, past/continuous/third-person. "saved an average of $1,200+ per year". */
+  ["BL-B1 averaged savings, inflected", /\bsav(?:ed|es|ing)\s+an\s+average\s+of\b/i],
+  /** BL-B5, the no-risk guarantee stated as an absence of downside. */
+  ["BL-B5 guarantee, nothing to lose", /\bnothing\s+to\s+(?:lose|risk)\b/i],
 ]
 
 /**
@@ -97,8 +120,102 @@ export function expectNoBannedClaim(html: string, where: string): void {
 
 /* ── Binding ──────────────────────────────────────────────────────────────── */
 
+/**
+ * The original 22 rows, pinned.
+ *
+ * The follow-up that added the inflected BL-B1 and the "nothing to lose" BL-B5
+ * was permitted to *extend* this lexicon and forbidden to weaken it. Prose
+ * cannot enforce that. These three tests can: the first 22 entries must remain
+ * the same rows in the same order, their patterns must hash to the same digest,
+ * and anything after them must reuse an ID the frozen document already defines.
+ *
+ * A narrowed pattern, a renamed row, a reordering, or a silent replacement all
+ * change the digest. A new row invented without controller authority fails the
+ * binding test below instead.
+ */
+describe("the original 22 rows are intact", () => {
+  const ORIGINAL_22 = [
+    "BL-A1 we file",
+    "BL-A2 BOR handling",
+    "BL-A3 filing authorization",
+    "BL-A4 representation",
+    "BL-A5 we win",
+    "BL-A6 done-for-you",
+    "BL-A7 BOR waitlist",
+    "BL-B1 averaged savings",
+    "BL-B2 success rate",
+    "BL-B3 dollar savings",
+    "BL-B4 keep your savings",
+    "BL-B5 guarantee",
+    "BL-B6 1:1 bill equivalence",
+    "BL-C1 strong case",
+    "BL-C2 you should appeal",
+    "BL-C3 overassessed finding",
+    "BL-C5 what the Board reads",
+    "BL-D2 unqualified freshness",
+    "BL-D5 internal modeling",
+    "BL-E1 neighborhood eligibility",
+    "BL-E2 scope overreach",
+    "BL-E3 outside Cook",
+  ]
+
+  /** SHA-256 over `label source flags` for the first 22 rows, joined by `|`. */
+  const ORIGINAL_22_DIGEST = "b20be2a008ef7dead60fb771e7b6f22c119ba95c6e8d6c20558f40037bde1472"
+
+  it("keeps the original rows, in order, ahead of every addition", () => {
+    expect(BANNED_LEXICON.slice(0, 22).map(([label]) => label)).toEqual(ORIGINAL_22)
+  })
+
+  it("has not narrowed, renamed, replaced or reordered any original pattern", () => {
+    const digest = createHash("sha256")
+      .update(
+        BANNED_LEXICON.slice(0, 22)
+          .map(([label, pattern]) => label + " " + pattern.source + " " + pattern.flags)
+          .join("|"),
+      )
+      .digest("hex")
+    expect(digest).toBe(ORIGINAL_22_DIGEST)
+  })
+
+  it("adds only, and every addition reuses a row the frozen document defines", () => {
+    const doc = readFileSync(lexiconPath(), "utf8")
+    const documented = new Set([...doc.matchAll(/\bBL-([A-F]\d+)\b/g)].map((m) => `BL-${m[1]}`))
+    const additions = BANNED_LEXICON.slice(22)
+
+    expect(additions.length).toBeGreaterThan(0)
+    for (const [label] of additions) {
+      const id = label.split(" ")[0]
+      expect({ label, id, documented: documented.has(id) }).toEqual({ label, id, documented: true })
+    }
+  })
+
+  it("still catches everything the original rows caught", () => {
+    // One live string per original row family, so "extended" cannot quietly
+    // mean "the old matchers stopped being consulted".
+    const cases: Array<[string, string]> = [
+      ["BL-A1 we file", "We file your appeal for you."],
+      ["BL-A6 done-for-you", "Done-For-You filing from $97"],
+      ["BL-A7 BOR waitlist", "Join the waitlist for the Board of Review"],
+      ["BL-B1 averaged savings", "Homeowners save an average of $1,200."],
+      ["BL-B2 success rate", "Our success rate speaks for itself."],
+      ["BL-B3 dollar savings", "Est. overpayment ~$1,420/year"],
+      ["BL-B5 guarantee", "Filing is risk-free."],
+      ["BL-C1 strong case", "You have a strong case."],
+      ["BL-C2 you should appeal", "This is worth appealing."],
+      ["BL-C3 overassessed finding", "You're overpaying on your taxes."],
+      ["BL-D5 internal modeling", "Source: internal modeling."],
+      ["BL-E3 outside Cook", "We serve all Illinois counties."],
+    ]
+    for (const [id, claim] of cases) {
+      const rule = BANNED_LEXICON.find(([label]) => label === id)
+      expect({ id, present: Boolean(rule) }).toEqual({ id, present: true })
+      expect({ id, claim, caught: rule![1].test(claim) }).toEqual({ id, claim, caught: true })
+    }
+  })
+})
+
 describe("the lexicon binds to its frozen source", () => {
-  const doc = readFileSync(LEXICON_PATH, "utf8")
+  const doc = readFileSync(lexiconPath(), "utf8")
 
   it("covers every BL row in the frozen document", () => {
     const documented = [...doc.matchAll(/\bBL-([A-F]\d+)\b/g)].map((m) => `BL-${m[1]}`)

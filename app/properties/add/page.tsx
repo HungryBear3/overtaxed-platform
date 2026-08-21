@@ -214,7 +214,7 @@ export default function AddPropertyPage() {
                   Dashes are added automatically as you type
                 </p>
                 <p className="mt-1 text-xs text-gray-500">
-                  Example: 16-01-216-001-0000 — find your PIN on your tax bill or at <a href="https://www.cookcountyassessor.com" target="_blank" rel="noopener noreferrer" className="underline">cookcountyassessor.com</a>
+                  Example: 16-01-216-001-0000 — find your PIN on your tax bill or at <a href="https://www.cookcountyassessoril.gov" target="_blank" rel="noopener noreferrer" className="underline">cookcountyassessoril.gov</a>
                 </p>
               </div>
 
@@ -272,7 +272,7 @@ export default function AddPropertyPage() {
                   <span>
                     The{" "}
                     <a
-                      href="https://www.cookcountyassessor.com/address-search"
+                      href="https://www.cookcountyassessoril.gov/address-search"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-blue-600 hover:underline"

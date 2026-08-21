@@ -34,9 +34,8 @@ import {
 } from "@/lib/deadlines/official-source-state"
 import type { TownshipResolution } from "@/lib/deadlines/township-resolution"
 import { expectNoBannedClaim, readable } from "../lexicon/banned-claims.test"
+import { readAcceptanceMatrix } from "../helpers/governance-fixtures.test"
 
-const MATRIX_PATH =
-  "/Users/abigailclaw/.openclaw/workspace/rex/handoffs/ot-minimum-postable-rebuild-20260819/qa/acceptance-matrix.json"
 
 type AcceptedRoute = {
   accepted_path_id: number
@@ -44,7 +43,7 @@ type AcceptedRoute = {
   route_type: string
 }
 
-const matrix = JSON.parse(readFileSync(MATRIX_PATH, "utf8")) as {
+const matrix = readAcceptanceMatrix() as {
   accepted_routes: AcceptedRoute[]
   named_surfaces: Array<{ path: string; category: string }>
   canonical_copy: Record<string, string>

@@ -19,7 +19,7 @@ export default function HomesteadExemptionPage() {
     {
       heading: "How much it can be worth",
       body:
-        "Savings depend on your county tax rate and the reduction amount in effect that year. Cook County publishes the current General Homestead Exemption amount and how it applies; see cookcountyassessor.com/exemptions for the figures that apply to your bill.",
+        "Savings depend on your county tax rate and the reduction amount in effect that year. Cook County publishes the current General Homestead Exemption amount and how it applies; see cookcountyassessoril.gov for the figures that apply to your bill.",
     },
     {
       heading: "How to check in 5 minutes",
@@ -39,7 +39,7 @@ export default function HomesteadExemptionPage() {
     {
       heading: "How to claim back years",
       body:
-        "In Cook County you may be able to recover up to 3 prior years of missed exemptions through a Certificate of Error process. Check cookcountyassessor.com for current eligibility rules.",
+        "In Cook County you may be able to recover up to 3 prior years of missed exemptions through a Certificate of Error process. Check cookcountyassessoril.gov for current eligibility rules.",
     },
   ]
 
@@ -48,8 +48,8 @@ export default function HomesteadExemptionPage() {
       <SiteHeader />
 
       <section className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-10 text-center bg-white">
-        <div className="inline-block bg-green-100 text-green-800 text-sm font-semibold px-4 py-1.5 rounded-full mb-6">
-          FREE GUIDE — No email required
+        <div className="inline-block bg-gray-100 text-gray-700 text-sm font-semibold px-4 py-1.5 rounded-full mb-6">
+          GUIDE WITHDRAWN
         </div>
         <h1 className="text-4xl sm:text-5xl font-extrabold text-gray-900 mb-6 leading-tight">
           Are you missing the Illinois<br className="hidden sm:block" />
@@ -58,15 +58,10 @@ export default function HomesteadExemptionPage() {
         <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
           The General Homestead Exemption reduces your assessed value if you own and live in your Illinois home. Many homeowners never claim it. Takes about 5 minutes to check.
         </p>
-        <a
-          href="/downloads/homestead-exemption/homestead-exemption-guide.md"
-          download
-          className="inline-block bg-green-600 hover:bg-green-700 text-white font-bold text-lg px-10 py-4 rounded-xl shadow-lg transition-colors"
-        >
-          Download free guide
-        </a>
-        <p className="mt-3 text-sm text-gray-500">
-          Instant download · No signup · Informational only — not legal or tax advice
+        <p className="inline-block bg-gray-50 border border-gray-200 text-gray-700 text-base px-6 py-4 rounded-xl max-w-xl">
+          The downloadable guide has been withdrawn pending verification against
+          the county source. Exemption amounts and eligibility rules are published
+          by your county assessor; check your own property record there.
         </p>
       </section>
 
@@ -92,12 +87,12 @@ export default function HomesteadExemptionPage() {
             <li>
               Cook County —{" "}
               <a
-                href="https://www.cookcountyassessor.com/exemptions"
+                href="https://www.cookcountyassessoril.gov/address-search"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-blue-600 underline"
               >
-                cookcountyassessor.com/exemptions
+                cookcountyassessoril.gov/address-search
               </a>
             </li>
             <li>DuPage, Lake, Will, Kane, McHenry — see your local county assessor site</li>
