@@ -17,8 +17,9 @@ All are optional. If none are set, analytics components render nothing.
 - **AnalyticsProvider** wraps the app in `app/layout.tsx`; loads GA4, Google Ads, and Meta Pixel when IDs are set
 - **UTM capture:** Automatic on page load; stored in localStorage for attribution
 - **Page views:** Tracked on client-side navigation via `usePathname` / `useSearchParams`
-- **Events:** `lib/analytics/events.ts` — signUp, login, propertyAdded, appealStarted, appealFiled, checkoutStarted, subscriptionComplete, diyPurchase, pdfDownload, contactFormSubmit
-- **CheckoutSuccessTracker:** In account layout; fires purchase events when `?checkout=success` or `?checkout=diy_success`
+- **Events:** `lib/analytics/events.ts` — signUp, login, propertyAdded, appealStarted, appealFiled, checkoutStarted, pdfDownload, contactFormSubmit
+- **Purchases:** Current purchase reporting is server-side only for the OT `T2`/`T3` checkout flow, after durable order and exact Stripe settlement verification via Measurement Protocol.
+- **Legacy billing:** Subscription checkout, add-slots, invoice checkout, and other older billing purchase analytics remain deliberately untracked until their durable settlement contracts are hardened.
 
 ## Troubleshooting: "Your Google tag wasn't detected" (GA4)
 
@@ -44,6 +45,5 @@ See `../newstart-il/LESSONS_LEARNED.md` § "Analytics Setup and Tracking Prevent
 - `components/analytics/google-analytics.tsx`
 - `components/analytics/meta-pixel.tsx`
 - `components/analytics/analytics-provider.tsx`
-- `components/analytics/checkout-success-tracker.tsx`
 - `lib/analytics/events.ts`
 - `lib/analytics/utm-tracking.ts`

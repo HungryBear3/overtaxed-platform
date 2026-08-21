@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
 import { Suspense } from "react";
 import { ReferralCapture } from "@/components/ReferralCapture";
+import { AnalyticsProviderWithSuspense } from "@/components/analytics";
+import { GoogleAnalytics } from "@/components/analytics";
 import { UtmFirstTouchCapture } from "@/components/analytics/utm-first-touch";
 import { isProductionMarketingRuntime } from "@/lib/marketing/preview-gate";
 import "./globals.css";
@@ -80,7 +82,8 @@ export default function RootLayout({
             <ReferralCapture />
           </Suspense>
         )}
-        {children}
+        {liveMarketing && <GoogleAnalytics measurementId={process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID} />}
+        <AnalyticsProviderWithSuspense>{children}</AnalyticsProviderWithSuspense>
         {liveMarketing && <Analytics />}
       </body>
     </html>

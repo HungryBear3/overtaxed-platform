@@ -3,6 +3,7 @@ import Link from "next/link"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { RiskReversalBadge } from "@/components/ot-design/SiteChrome"
+import { getAnonymousGaIdentifiersForRequest } from "@/lib/analytics/ga4"
 import { isClientPreviewStubMode } from "@/lib/marketing/preview-gate-client"
 
 /**
@@ -100,6 +101,7 @@ export default function CheckoutPage({ initialPlan = "diy" }: { initialPlan?: Pl
     setLoading(true)
     setError(null)
     try {
+      const gaIdentifiers = getAnonymousGaIdentifiersForRequest()
       const res = await fetch("/api/checkout/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -116,6 +118,7 @@ export default function CheckoutPage({ initialPlan = "diy" }: { initialPlan?: Pl
           ...(showNoticeForm && noticeDate && noticeAddress
             ? { reassessmentNoticeDate: noticeDate, reassessmentNoticeAddress: noticeAddress }
             : {}),
+          ...gaIdentifiers,
         }),
       })
       const data = (await res.json()) as GateState & { url?: string }

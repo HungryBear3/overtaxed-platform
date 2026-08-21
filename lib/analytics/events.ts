@@ -5,11 +5,16 @@
 
 import { trackMetaEvent, trackMetaCustomEvent } from "@/components/analytics/meta-pixel"
 import { trackGoogleAdsConversion } from "@/components/analytics/google-analytics"
+import { buildSanitizedPageContext, sanitizeGaEventParams } from "./ga4"
 import { getStoredUTMParams } from "./utm-tracking"
 
 export function trackGA4Event(eventName: string, params?: Record<string, unknown>): void {
   if (typeof window !== "undefined" && window.gtag) {
-    window.gtag("event", eventName, params)
+    const pageContext = buildSanitizedPageContext({
+      locationHref: window.location.href,
+      referrer: document.referrer,
+    })
+    window.gtag("event", eventName, sanitizeGaEventParams({ ...params, ...pageContext }))
   }
 }
 
@@ -56,26 +61,6 @@ export const analytics = {
   checkoutStarted: (plan: string, value?: number) => {
     trackEvent("begin_checkout", { plan, value })
     trackMetaEvent("InitiateCheckout", { content_name: plan, value })
-  },
-
-  subscriptionComplete: (plan: string, value: number, transactionId?: string) => {
-    trackEvent("purchase", {
-      currency: "USD",
-      value,
-      items: [{ item_name: plan }],
-      transaction_id: transactionId,
-    })
-    trackMetaEvent("Purchase", { value, currency: "USD", content_name: plan })
-  },
-
-  diyPurchase: (value: number, transactionId?: string) => {
-    trackEvent("purchase", {
-      currency: "USD",
-      value,
-      items: [{ item_name: "DIY" }],
-      transaction_id: transactionId,
-    })
-    trackMetaEvent("Purchase", { value, currency: "USD", content_name: "DIY" })
   },
 
   pdfDownload: (appealId: string) => {
