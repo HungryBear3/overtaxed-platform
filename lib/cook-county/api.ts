@@ -119,7 +119,16 @@ async function fetchSocrataData<T>(
     if (response.ok) return response.json()
 
     const errorBody = await response.text()
-    console.error('Socrata API error:', { status: response.status, datasetId, url, body: errorBody.slice(0, 500) })
+    // The query string carries the caller's address or PIN, so the URL is
+    // logged without it. A dataset id and a status are enough to diagnose a
+    // Socrata failure; a homeowner's street address in a log line is not
+    // something this route is allowed to create.
+    console.error('Socrata API error:', {
+      status: response.status,
+      datasetId,
+      url: url.split('?')[0],
+      body: errorBody.slice(0, 500),
+    })
 
     if (response.status === 404 && url.startsWith(BASE_URL)) {
       lastError = new Error(`Socrata API error: ${response.status} ${response.statusText}`)
@@ -545,25 +554,77 @@ export async function getPropertyByPIN(
 }
 
 /**
+ * Sentinel `error` value meaning "we could not reach the county", as distinct
+ * from "the county has no such address".
+ *
+ * The two used to be indistinguishable: every dataset call was wrapped in its
+ * own `catch`, and a total outage returned `{ success: true, data: [] }` — which
+ * the free-check route rendered as "No Cook County property found for this
+ * address. Try your 14-digit PIN instead." A provider failure was reported to
+ * the homeowner as a fact about their address.
+ */
+export const ADDRESS_LOOKUP_UNAVAILABLE = 'address_lookup_unavailable'
+
+/**
+ * Strip everything a Socrata `LIKE` literal has no business carrying.
+ *
+ * The doubled quote is what actually closes the injection — inside an escaped
+ * literal a comment marker is only data. A run of hyphens is collapsed anyway:
+ * no Cook County address carries one, and leaving `--` in a query string that
+ * gets logged and read by people invites the wrong conclusion about whether it
+ * was contained.
+ */
+function likeLiteral(value: string): string {
+  return value
+    .trim()
+    .replace(/'/g, "''")
+    .replace(/[^A-Za-z0-9 %#/'-]/g, ' ')
+    .replace(/-{2,}/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
  * Search properties by address.
  *
- * Strategy:
+ * Strategy, per attempt:
  *  1. PIN_ADDRESS_INDEX (c49d-89sn) — fast, has property_address / property_city columns.
  *  2. If 0 results, fall back to archived Parcel Universe (tx2p-k2g9) which stores address
  *     in prop_address_full / prop_address_city_name. Dedupes by PIN (dataset has one row per
  *     tax year so the same PIN can appear multiple times).
+ *
+ * `options.fragments` supplies progressively wider `LIKE` fragments — see
+ * `buildQueryFragments` in `lib/free-check-address.ts` — which are tried in
+ * order after the caller's own string and stop at the first that returns rows.
+ * A caller that passes none gets exactly the single-attempt behaviour this
+ * function has always had.
  *
  * Both datasets include a `pin` (14-digit) field used by the caller to drive getPropertyByPIN.
  */
 export async function searchPropertiesByAddress(
   address: string,
   city?: string,
-  limit: number = 10
+  limit: number = 10,
+  options: { fragments?: string[] } = {}
 ): Promise<CookCountyApiResponse<ParcelUniverseRecord[]>> {
-  try {
-    const addrSafe = address.trim().replace(/'/g, "''")
-    const citySafe = city?.trim().replace(/'/g, "''") ?? ""
+  const citySafe = likeLiteral(city ?? '')
 
+  const attempts: string[] = []
+  for (const raw of [address, ...(options.fragments ?? [])]) {
+    const safe = likeLiteral(raw ?? '')
+    if (safe && !attempts.includes(safe)) attempts.push(safe)
+  }
+  if (attempts.length === 0) {
+    return { success: true, data: [], error: null, source: 'Cook County Open Data - PIN Address Index' }
+  }
+
+  // Every dataset call that threw. Only when *nothing* answered — no rows and no
+  // successful response — does this become a service failure rather than a miss.
+  let attemptsMade = 0
+  let attemptsFailed = 0
+  let lastError: unknown = null
+
+  for (const addrSafe of attempts) {
     // ── Primary: PIN_ADDRESS_INDEX (c49d-89sn) ──────────────────────────────
     // Columns: property_address, property_city, property_zip, pin, latitude, longitude, township_name, nbhd
     let whereClause = `upper(property_address) like upper('%${addrSafe}%')`
@@ -574,10 +635,13 @@ export async function searchPropertiesByAddress(
 
     let results: ParcelUniverseRecord[] = []
     let source = 'Cook County Open Data - PIN Address Index'
+    attemptsMade++
     try {
       results = await fetchSocrataData<ParcelUniverseRecord>(DATASETS.PIN_ADDRESS_INDEX, query, 7000)
     } catch (err) {
-      console.warn('[searchPropertiesByAddress] PIN_ADDRESS_INDEX failed, will try archived dataset', err)
+      attemptsFailed++
+      lastError = err
+      console.warn('[searchPropertiesByAddress] PIN_ADDRESS_INDEX failed, will try archived dataset')
     }
 
     // ── Fallback: archived Parcel Universe (tx2p-k2g9) ──────────────────────
@@ -589,6 +653,7 @@ export async function searchPropertiesByAddress(
         ? `upper(prop_address_full) like upper('%${addrSafe}%') AND upper(prop_address_city_name) like upper('%${citySafe}%')`
         : `upper(prop_address_full) like upper('%${addrSafe}%')`
       const archQuery = `$where=${encodeURIComponent(archWhereClause)}&$limit=${limit * 3}&$order=year DESC`
+      attemptsMade++
       try {
         const archResults = await fetchSocrataData<Record<string, unknown>>(
           DATASETS.PARCEL_UNIVERSE,
@@ -617,24 +682,35 @@ export async function searchPropertiesByAddress(
           source = 'Cook County Open Data - Parcel Universe (archived)'
         }
       } catch (archErr) {
-        console.warn('[searchPropertiesByAddress] archived Parcel Universe fallback failed', archErr)
+        attemptsFailed++
+        lastError = archErr
+        console.warn('[searchPropertiesByAddress] archived Parcel Universe fallback failed')
       }
     }
 
-    return {
-      success: true,
-      data: results,
-      error: null,
-      source,
+    if (results.length > 0) {
+      return { success: true, data: results, error: null, source }
     }
-  } catch (error) {
-    console.error('Error searching properties:', error)
+  }
+
+  // Nothing matched. Whether that is a miss or an outage is the difference
+  // between telling the homeowner their address is not on file and telling them
+  // to come back later, so it is decided here rather than guessed downstream.
+  if (attemptsFailed > 0 && attemptsFailed === attemptsMade) {
+    console.error('[searchPropertiesByAddress] every dataset attempt failed', lastError)
     return {
       success: false,
       data: null,
-      error: error instanceof Error ? error.message : 'Failed to search properties',
+      error: ADDRESS_LOOKUP_UNAVAILABLE,
       source: 'Cook County Open Data',
     }
+  }
+
+  return {
+    success: true,
+    data: [],
+    error: null,
+    source: 'Cook County Open Data - PIN Address Index',
   }
 }
 
@@ -1032,7 +1108,9 @@ export async function getComparableEquity(
     }
 
     if (parcels.length === 0) {
-      console.log('[comps-equity] No parcels found', { propertyPin, nbhd: nbhd || '(none)', source: 'neighborhood+township' })
+      // The neighbourhood code and the fallback path are what make this
+      // diagnosable; the subject PIN identifies the homeowner and is left out.
+      console.log('[comps-equity] No parcels found', { nbhd: nbhd || '(none)', source: 'neighborhood+township' })
       const emptyResp: CookCountyApiResponse<EquityRecord[]> & { _debug?: EquityDebugInfo } = {
         success: true,
         data: [],

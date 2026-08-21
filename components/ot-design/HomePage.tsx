@@ -31,7 +31,14 @@ interface ResultOutcome {
   headline: string;
   allowCheckout: boolean;
   reason: string | null;
+  /** Assessment-level figures — the ratios against a market value. */
   showFigures: boolean;
+  /**
+   * The public-record assessed-value comparison. Separate gate: a subject the
+   * county carries no market value for has no assessment *level*, and that used
+   * to suppress the assessed values themselves along with it.
+   */
+  showRecordComparison: boolean;
 }
 
 type Result = {
@@ -48,6 +55,8 @@ type Result = {
   overpayPerYear: number | null;
   overpay3Year: number | null;
   comps: number;
+  /** How the route selected the comparables, when it said. Never inferred. */
+  compsLabel: string | null;
   /** The route's single evaluated outcome. Null only for a malformed response. */
   outcome: ResultOutcome | null;
   /** CC-02, from the route. Rendered above every state. */
@@ -72,6 +81,7 @@ type RawCheckResult = Partial<Result> & {
   potentialOverpaymentPerYear?: number | null;
   potentialOverpayment3Year?: number | null;
   compCount?: number | null;
+  compSelection?: { basis?: string | null; distanceRanked?: boolean | null; label?: string | null } | null;
   appealWindowStatus?: {
     township?: string | null;
     status?: WindowStatus | null;
@@ -147,6 +157,7 @@ function normalizeCheckResult(
     overpayPerYear: asFiniteNumber(r.potentialOverpaymentPerYear ?? r.overpayPerYear),
     overpay3Year: asFiniteNumber(r.potentialOverpayment3Year ?? r.overpay3Year),
     comps: asFiniteNumber(r.compCount ?? r.comps) ?? 0,
+    compsLabel: typeof r.compSelection?.label === "string" ? r.compSelection.label : null,
     outcome: (r.outcome as ResultOutcome | undefined) ?? null,
     disclosure: typeof r.disclosure === "string" ? r.disclosure : null,
     preview,
@@ -182,28 +193,31 @@ function HeroNarrative() {
       <h1 className="ot-h1">
         Is Cook County <em>over-assessing</em> your home?
       </h1>
-      <p className="ot-hero-subhead">See where your assessed value lands against comparable nearby homes.</p>
+      {/* "nearby" is gone from all three of these. Nothing in the free check
+          computes a distance: comparables are selected from the subject's CCAO
+          neighbourhood and building class and ordered by sale date, widening to
+          the township when that cohort is thin. */}
+      <p className="ot-hero-subhead">See where your assessed value lands against comparable Cook County homes.</p>
       <p className="ot-hero-valueprop">
         Plain math on Cook County&apos;s own public records — no signup, no
         credit card. If you&apos;re fairly assessed, we&apos;ll tell you.
       </p>
       <ul className="ot-hero-deliverables">
+        {/* The "estimated annual + 3-year overpayment in dollars" line that
+            stood first is gone. The route computes neither figure on any path
+            and sends both as null — it was a promise of a number this product
+            deliberately no longer produces, made at the top of the page. */}
         <li>
           <span className="ot-tick">✓</span>
           <span>
-            Estimated <strong>annual + 3-year overpayment</strong> in dollars
+            Your assessed value vs. <strong>comparable properties</strong> on Cook County&apos;s public record
           </span>
         </li>
         <li>
           <span className="ot-tick">✓</span>
           <span>
-            Your assessed value vs. <strong>3 nearby comps</strong>
-          </span>
-        </li>
-        <li>
-          <span className="ot-tick">✓</span>
-          <span>
-            Your assessment level vs. <strong>similar nearby homes</strong> and Cook County&apos;s 10% residential target
+            Your assessment level, where the county publishes a market value, against its{" "}
+            <strong>10% residential target</strong>
           </span>
         </li>
         <li>
@@ -297,6 +311,31 @@ function TownshipDeadline({
   );
 }
 
+/**
+ * One public-record parcel offered back when an address resolves to several.
+ * These fields are the Assessor's own, published against that PIN; the card
+ * says which parcels exist, never which one is the reader's.
+ */
+type HeroAddressCandidate = {
+  pin: string;
+  address: string;
+  city: string;
+  zipCode: string;
+  unit: string | null;
+};
+
+function isHeroAddressCandidate(value: unknown): value is HeroAddressCandidate {
+  if (!value || typeof value !== "object") return false;
+  const c = value as Record<string, unknown>;
+  return (
+    typeof c.pin === "string" && c.pin.trim() !== "" &&
+    typeof c.address === "string" &&
+    typeof c.city === "string" &&
+    typeof c.zipCode === "string" &&
+    (c.unit === null || typeof c.unit === "string")
+  );
+}
+
 function HeroCheckCard({
   result,
   error,
@@ -312,30 +351,66 @@ function HeroCheckCard({
   const [mode, setMode] = useState<"address" | "pin">("address");
   const [address, setAddress] = useState("");
   const [loading, setLoading] = useState(false);
+  // The selection step, raised by the route rather than resolved by it when an
+  // address stands for more than one parcel. Empty on every other path.
+  const [candidates, setCandidates] = useState<HeroAddressCandidate[]>([]);
+  const [candidateTotal, setCandidateTotal] = useState(0);
 
   const handlePinChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setPin(formatPinDisplay(e.target.value));
   }, []);
 
-  const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
+  const runCheck = useCallback(
+    async (selectedPin?: string) => {
       setLoading(true);
       onError("");
+      if (!selectedPin) {
+        setCandidates([]);
+        setCandidateTotal(0);
+      }
       try {
         const submittedInput = mode === "pin" ? pin : address;
         const res = await fetch("/api/free-check", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ address, pin, mode }),
+          body: JSON.stringify({ address, pin, mode, ...(selectedPin ? { selectedPin } : {}) }),
         });
         const data = await res.json().catch(() => null);
         setLoading(false);
         if (res.ok === false) {
           onResult(null);
-          onError(data?.error ?? "We couldn't find a Cook County property for that input. Try your 14-digit PIN instead.");
+          // A building with several parcels is a question, not a failure. The
+          // route refuses to answer it and hands back the public-record
+          // fragments; picking one is the reader's call and only theirs.
+          if (res.status === 409 && data?.code === "ADDRESS_AMBIGUOUS") {
+            const offered = Array.isArray(data.candidates)
+              ? data.candidates.filter(isHeroAddressCandidate)
+              : [];
+            if (offered.length > 0) {
+              setCandidates(offered);
+              setCandidateTotal(
+                typeof data.candidateCount === "number" ? data.candidateCount : offered.length,
+              );
+              onError("");
+              return;
+            }
+          }
+          setCandidates([]);
+          setCandidateTotal(0);
+          // A 503 is our records provider, not their address. The fallback
+          // sentence below told every failing lookup to go find a PIN, which
+          // for a provider outage is a statement about the reader's property
+          // that nothing established.
+          onError(
+            data?.error ??
+              (res.status === 503
+                ? "We couldn't reach the Cook County records service. Please try again shortly — this is on our side."
+                : "We couldn't find a Cook County property for that input. Try your 14-digit PIN instead."),
+          );
           return;
         }
+        setCandidates([]);
+        setCandidateTotal(0);
         const isPreview = Boolean(data?.preview || data?.mode === "preview_noop" || data?.source === "preview-noop");
         const normalized = normalizeCheckResult(data?.result ?? data, isPreview, submittedInput);
         onResult(normalized);
@@ -361,7 +436,15 @@ function HeroCheckCard({
         onError("We couldn't complete the lookup. Please try again, or enter your 14-digit PIN.");
       }
     },
-    [address, pin, mode, onResult],
+    [address, pin, mode, onResult, onError],
+  );
+
+  const handleSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      await runCheck();
+    },
+    [runCheck],
   );
 
   if (result) {
@@ -418,10 +501,48 @@ function HeroCheckCard({
             onChange={(e) => setAddress(e.target.value)}
             className="ot-input"
           />
+          {/* "automatically" is now conditional, and says so. Where a building
+              has one parcel it still is; where it has several the card asks. */}
           <span className="ot-field-hint">
-            We&apos;ll find your PIN automatically
+            We&apos;ll find your PIN from the county record, or ask you to pick if the
+            address covers more than one parcel
           </span>
         </label>
+      )}
+
+      {candidates.length > 0 && (
+        <div className="ot-check-candidates" role="group" aria-labelledby="hero-address-selection">
+          <div id="hero-address-selection" className="ot-field-label">
+            More than one Cook County property matches that address
+          </div>
+          <div className="ot-field-hint">
+            {candidateTotal > candidates.length
+              ? `Showing ${candidates.length} of ${candidateTotal} parcels as published by the Cook County Assessor. Pick yours, or switch to PIN entry.`
+              : `These parcels are published by the Cook County Assessor at that address. Pick yours, or switch to PIN entry.`}
+          </div>
+          <ul className="ot-check-candidate-list">
+            {candidates.map((candidate) => (
+              <li key={candidate.pin}>
+                <button
+                  type="button"
+                  disabled={loading}
+                  className="ot-check-candidate"
+                  onClick={() => runCheck(candidate.pin.replace(/\D/g, ""))}
+                >
+                  <span className="ot-check-candidate-addr">
+                    {[candidate.address, candidate.unit ? `Unit ${candidate.unit}` : null]
+                      .filter(Boolean)
+                      .join(" · ") || "Address not on file"}
+                  </span>
+                  <span className="ot-check-candidate-meta">
+                    {[candidate.city, candidate.zipCode].filter(Boolean).join(" ")}
+                    {candidate.city || candidate.zipCode ? " · " : ""}PIN {candidate.pin}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {error && (
@@ -484,7 +605,12 @@ function HeroCheckResult({
   // route's call, not this component's — the surface renders the decision, it
   // does not re-make it.
   const showFigures = result.outcome?.showFigures ?? false;
-  const hasGap = showFigures && result.yourAssessed !== null && result.compsAvg !== null;
+  // The assessed-value comparison rides its own gate, because the assessment
+  // level it used to share one with needs a market value the county often does
+  // not publish — and a blank market-value column withheld assessed values that
+  // were on file, validated, and the entire point of the check.
+  const showRecordComparison = result.outcome?.showRecordComparison ?? false;
+  const hasGap = showRecordComparison && result.yourAssessed !== null && result.compsAvg !== null;
   const gap = hasGap ? result.yourAssessed! - result.compsAvg! : null;
   const gapPct =
     gap !== null && result.compsAvg! > 0 ? ((gap / result.compsAvg!) * 100).toFixed(1) : null;
@@ -539,7 +665,7 @@ function HeroCheckResult({
         )}
       </div>
       {result.preview && <div className="ot-result-sample-strip">SAMPLE DATA</div>}
-      {showFigures && (
+      {showRecordComparison && (
         <div className={`ot-result-table${result.preview ? " ot-result-table--sample" : ""}`}>
           {result.yourAssessed !== null && (
             <div className="ot-result-row">
@@ -549,7 +675,9 @@ function HeroCheckResult({
           )}
           {result.compsAvg !== null && (
             <div className="ot-result-row">
-              <span className="ot-result-row-key">Avg of {result.comps} nearby comps</span>
+              <span className="ot-result-row-key">
+                Avg of {result.comps} comparable{result.comps !== 1 ? "s" : ""} on record
+              </span>
               <span className="ot-result-row-val">{fmtUSD(result.compsAvg)}</span>
             </div>
           )}
@@ -562,11 +690,14 @@ function HeroCheckResult({
               </span>
             </div>
           )}
-          {result.assessmentLevel !== null && (
+          {showFigures && result.assessmentLevel !== null && (
             <div className="ot-result-row">
               <span className="ot-result-row-key">Assessment level</span>
               <span className="ot-result-row-val">{result.assessmentLevel.toFixed(1)}%</span>
             </div>
+          )}
+          {result.compsLabel && (
+            <div className="ot-result-altline" role="note">{result.compsLabel}</div>
           )}
         </div>
       )}
@@ -840,11 +971,17 @@ function SampleReportPreview() {
           <div className="ot-sample-addr">1234 S Sample Ave, La Grange IL 60526</div>
           <div className="ot-sample-meta">Synthetic sample PIN · Cicero Township</div>
         </div>
-        <div className="ot-sample-savings">
-          <div className="ot-sample-savings-key">Estimated annual overpayment</div>
-          <div className="ot-sample-savings-val">$1,420<span>/yr</span></div>
-          <div className="ot-sample-savings-3yr">≈ $4,260 over the 3-year cycle</div>
-        </div>
+        {/* The "$1,420/yr — ≈ $4,260 over the 3-year cycle" block that stood
+            here is removed. It is the same pair of seed figures the route, the
+            preview sample and the result component each stopped producing, and
+            this was the last place on the homepage still rendering them as what
+            a free check hands back. The route sends
+            `potentialOverpaymentPerYear` and `potentialOverpayment3Year` as null
+            on every path, so a sample showing them is a sample of nothing. The
+            assessed-value bars below are what a real check does return.
+            NOTE: the window line at the foot of this card still asserts an open
+            Cicero window through a fixed 2026 date. That is a deadline claim and
+            deadlines are outside this change; it is recorded in the handoff. */}
         <div className="ot-sample-bars">
           <div className="ot-sample-bar-row ot-sample-bar-row-you">
             <span className="ot-sample-bar-key">Your assessed value</span>
@@ -901,15 +1038,20 @@ function SampleReportSection() {
             A one-page report — your assessed value, your comps, and where every number came from.
           </h2>
           <p className="ot-sample-section-lede">
-            Your assessed value, three nearby comps, your assessment level against
-            Cook County&apos;s 10% residential target, and the uniformity gap vs. similar homes. Every
-            number is sourced from public CCAO records you can verify yourself.
+            Your assessed value, up to three comparable properties from the Cook County
+            record, and — where the county publishes a market value — your assessment
+            level against its 10% residential target. Every number is sourced from public
+            CCAO records you can verify yourself.
           </p>
+          {/* Two claims left this list. The overpayment figure is not computed on
+              any path and both fields are sent as null. "3 nearby comps" was a
+              distance claim over a cohort-and-recency selection, and a promise of
+              three where the route sends however many survive validation. */}
           <ul className="ot-sample-section-list">
-            <li><strong>Estimated annual + 3-year overpayment</strong> in dollars</li>
-            <li><strong>3 nearby comps</strong>, picked from your neighborhood code</li>
-            <li><strong>Assessment level + uniformity gap</strong> vs. Cook County&apos;s 10% residential target and nearby comps</li>
-            <li><strong>Township appeal window</strong> with the close date</li>
+            <li><strong>Up to 3 comparable properties</strong>, selected from your CCAO neighborhood code</li>
+            <li><strong>Your assessed value beside their average</strong>, and the difference between them</li>
+            <li><strong>Assessment level</strong> vs. Cook County&apos;s 10% residential target, where a market value is on file</li>
+            <li><strong>Township appeal window</strong>, with the close date where the county has published one</li>
           </ul>
         </div>
         <div className="ot-sample-section-vis">
@@ -952,9 +1094,14 @@ function SpecificityBar() {
 function MethodologyCard() {
   const steps = [
     { num: "01", h: "Pull your record", p: "Your PIN returns your assessed value, market value, square footage, year built, and property class — straight from CCAO records." },
-    { num: "02", h: "Find three comparables", p: "We search your neighborhood code for properties of similar size, age, and class — the same logic the Board of Review applies to comparable-sales appeals." },
-    { num: "03", h: "Check level and uniformity", p: "For class 2 residential property, Cook County targets an assessed value near 10% of market value. We separately compare your assessment level with similar nearby homes so the appeal argument is about both statutory level and uniformity." },
-    { num: "04", h: "Estimate the overpayment", p: "Gap × your township's effective tax rate × the 3-year triennial window. The arithmetic is shown on your result page — copy it into your appeal verbatim." },
+    { num: "02", h: "Select comparable properties", p: "We search your CCAO neighborhood code for properties of similar size, age, and class, taking the most recent qualifying records first and widening to the township when that cohort is thin. Selection is by cohort and recency — we do not rank comparables by distance." },
+    { num: "03", h: "Check level and uniformity", p: "For class 2 residential property, Cook County targets an assessed value near 10% of market value. Where the county publishes a market value for your property and for a comparable, we show both assessment levels; where it does not, we show the assessed values and say the level is unavailable." },
+    // Step 04 used to read "Estimate the overpayment — Gap × your township's
+    // effective tax rate × the 3-year triennial window. The arithmetic is shown
+    // on your result page." No such arithmetic is performed and no such figure
+    // is returned; the multiplication was removed and this description of it was
+    // not. What the check actually ends with is a stated outcome and a window.
+    { num: "04", h: "Report what the record shows", p: "You get the assessed-value comparison, the township's filing window where the county's calendar has been verified, and a plain statement of what this check did and did not establish. No savings projection — we do not forecast a tax bill that has not been issued." },
   ];
   return (
     <section id="method" className="ot-method">
@@ -1055,7 +1202,7 @@ const PRICING_PLANS = [
     cta: "Get the DIY Packet",
     features: [
       { label: "Pre-written appeal argument", ok: true, detail: "Tailored to assessment level + comp uniformity" },
-      { label: "3 nearby comparables", ok: true, detail: "Prepared for an Assessor-stage appeal" },
+      { label: "Up to 3 comparable properties", ok: true, detail: "Prepared for an Assessor-stage appeal" },
       { label: "Step-by-step filing instructions", ok: true, detail: "Specific to your township" },
       { label: "Deadline reminders", ok: true, detail: "For a future eligible window" },
       { label: "You file it yourself", ok: true, detail: "We prepare it; you review, sign, and file" },
@@ -1405,39 +1552,17 @@ function HeroPreviewCard() {
       >
         1234 S Sample Ave · Cicero Township · synthetic sample
       </div>
-      <div
-        style={{
-          fontSize: 11,
-          color: "var(--muted-foreground)",
-          marginBottom: 2,
-        }}
-      >
-        Estimated annual overpayment
-      </div>
-      <div
-        style={{
-          fontSize: 28,
-          fontWeight: 800,
-          color: "var(--foreground)",
-          lineHeight: 1.1,
-        }}
-      >
-        $1,420
-        <span
-          style={{
-            fontSize: 14,
-            fontWeight: 500,
-            color: "var(--muted-foreground)",
-          }}
-        >
-          /yr
-        </span>
-      </div>
-
+      {/* The "$1,420/yr Estimated annual overpayment" headline is gone.
+          This card is titled "What your check returns", and the check returns
+          neither figure on any path — `potentialOverpaymentPerYear` and
+          `potentialOverpayment3Year` are null in every response the route can
+          write. A synthetic label does not make a false description of the
+          product's output true; it makes it a false description with a badge on
+          it. The rows below are the ones a real check does return. */}
       <div style={{ marginTop: 14, display: "grid", gap: 0 }}>
         <Row label="Your assessed value" value="$42,500" />
-        <Row label="Avg of 3 nearby comps" value="$35,100" />
-        <Row label="Assessment gap" value="+$7,400 (21%)" emph />
+        <Row label="Avg of 3 comparables on record" value="$35,100" />
+        <Row label="Difference in assessed value" value="+$7,400 (21%)" emph />
         <Row label="Assessment level" value="12.1% vs. 10% residential target" />
       </div>
 

@@ -76,6 +76,16 @@ export type Result = {
   propertyCharacteristics: PropertyCharacteristics | null
   noAssessedValue?: boolean
   message?: string
+  /**
+   * How the route actually chose the comparables. Absent on a payload written
+   * by an older build, in which case the surface says nothing about selection
+   * rather than inventing a rule for it.
+   */
+  compSelection?: {
+    basis?: string | null
+    distanceRanked?: boolean | null
+    label?: string | null
+  } | null
   source: string
   /** CC-02, mandated verbatim above the result on every state. */
   disclosure?: string | null
@@ -100,7 +110,10 @@ export type ResultOutcome = {
   /** CC-03…CC-06, byte-exact. Rendered as given. */
   headline: string
   allowCheckout: boolean
+  /** Assessment-level figures — the ratios against a market value. */
   showFigures: boolean
+  /** The public-record assessed-value comparison. Implied by `showFigures`. */
+  showRecordComparison: boolean
   reason?: string | null
 }
 
@@ -134,6 +147,16 @@ export function isCanonicalResultOutcome(value: unknown): value is ResultOutcome
     typeof outcome.headline !== "string" ||
     typeof outcome.allowCheckout !== "boolean" ||
     typeof outcome.showFigures !== "boolean" ||
+    // Required, not defaulted. A payload written before the assessed-value
+    // comparison had its own gate cannot be told apart from one that decided to
+    // withhold it, and guessing in either direction is a decision this boundary
+    // has no standing to make. Absent means untrusted, and untrusted resolves
+    // to CC-05 with nothing shown.
+    typeof outcome.showRecordComparison !== "boolean" ||
+    // The narrower gate cannot be open while the wider one is shut: an
+    // assessment level released without the assessed values it was computed
+    // from is a ratio with nothing behind it.
+    (outcome.showFigures === true && outcome.showRecordComparison !== true) ||
     !("reason" in outcome) ||
     (outcome.reason !== null && typeof outcome.reason !== "string")
   ) return false
@@ -162,7 +185,11 @@ export function isCanonicalResultOutcome(value: unknown): value is ResultOutcome
   if (outcome.code === "insufficient_evidence") {
     return reasonKnownFor("insufficient_evidence")
   }
-  return outcome.showFigures === false && reasonKnownFor("unsupported_property")
+  return (
+    outcome.showFigures === false &&
+    outcome.showRecordComparison === false &&
+    reasonKnownFor("unsupported_property")
+  )
 }
 
 interface Props {
@@ -206,6 +233,13 @@ export function FreeCheckResult({ result }: Props) {
     : null
   const headline = outcome?.headline ?? CC_05
   const showFigures = outcome?.showFigures ?? false
+  // The assessed-value comparison. Separate from `showFigures` because a
+  // missing market value withholds the assessment *level*, not the published
+  // assessed values the level would have been computed against. This card used
+  // to disappear entirely when the county carried no market value for the
+  // subject or for any comparable, which is the common case for a recently
+  // transferred parcel and for most of the equity comps.
+  const showRecordComparison = outcome?.showRecordComparison ?? false
   const canOffer = outcome?.allowCheckout === true
 
   // The generated appeal argument, and only when the route released figures.
@@ -222,7 +256,7 @@ export function FreeCheckResult({ result }: Props) {
   // This is a description of two published numbers, not a conclusion about the
   // reader, and it is shown only when the route released the figures.
   const hasGap =
-    showFigures &&
+    showRecordComparison &&
     result.avgComparableAssessedValue != null &&
     (result.subject.assessedTotalValue ?? 0) > result.avgComparableAssessedValue
 
@@ -385,7 +419,14 @@ export function FreeCheckResult({ result }: Props) {
           <p className="text-sm text-gray-500 mb-6">{result.sourceCaveat}</p>
         )}
 
-        {/* Value cards */}
+        {/* Value cards.
+            Gated, not merely fed. These three read straight off `result` and
+            rendered whatever the payload carried — safe only because the route
+            blanks those fields itself when the comparison is withheld. This
+            component is also fed from `sessionStorage`, where a stale or
+            hand-edited entry can carry populated figures beside a withholding
+            outcome, and the capability is the thing with standing to decide. */}
+        {showRecordComparison && (
         <div className="flex flex-wrap gap-4 justify-center mb-4">
           <div className="rounded-xl bg-gray-50 border border-gray-200 p-4 flex-1 min-w-[10rem] max-w-xs">
             <p className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Your assessed value</p>
@@ -394,8 +435,16 @@ export function FreeCheckResult({ result }: Props) {
             </p>
           </div>
           <div className="rounded-xl bg-blue-50 border border-blue-200 p-4 flex-1 min-w-[10rem] max-w-xs">
+            {/* "nearby" was a distance claim and nothing computes a distance.
+                `getComparableSales` matches the subject's CCAO neighbourhood
+                code and building class and orders by sale date, widening to a
+                three-year window and then to the whole township when the cohort
+                is thin — a parcel from the far side of the township outranks the
+                house next door if it sold more recently. The label now says what
+                the selection is, and the count is the number that survived
+                validation rather than a promised three. */}
             <p className="text-sm font-semibold text-blue-700 uppercase tracking-wide mb-2">
-              Avg of {result.compCount} nearby comp{result.compCount !== 1 ? "s" : ""}
+              Avg of {result.compCount} comparable{result.compCount !== 1 ? "s" : ""} on record
             </p>
             <p className="text-xl font-bold text-blue-900">
               {result.avgComparableAssessedValue != null ? formatCurrency(result.avgComparableAssessedValue) : "—"}
@@ -413,6 +462,7 @@ export function FreeCheckResult({ result }: Props) {
             </p>
           </div>
         </div>
+        )}
 
         {/* ── Standing disclosure ────────────────────────────────────────────
             Three mutually exclusive verdicts stood here — "An appeal could
@@ -437,7 +487,11 @@ export function FreeCheckResult({ result }: Props) {
       </div>
 
       {/* ── Equity Analysis ─────────────────────────────────────────────── */}
-      {!result.noAssessedValue && result.subject.assessedTotalValue != null && result.avgComparableAssessedValue != null && (
+      {/* Gated on the assessed-value comparison, not on the assessment level.
+          The two rows that need a market value carry their own null checks
+          below, so a subject the county has no market value for still gets the
+          assessed-value rows it does have. */}
+      {showRecordComparison && !result.noAssessedValue && result.subject.assessedTotalValue != null && result.avgComparableAssessedValue != null && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
           <h3 className="text-base font-bold text-gray-900 mb-1">Equity analysis</h3>
           <p className="text-sm text-gray-500 mb-4">
@@ -450,7 +504,7 @@ export function FreeCheckResult({ result }: Props) {
                 <tr className="text-xs text-gray-500 uppercase border-b border-gray-100">
                   <th className="text-left pb-2 pr-4 font-semibold"></th>
                   <th className="text-right pb-2 pr-4 font-semibold">Your Property</th>
-                  <th className="text-right pb-2 font-semibold">Neighborhood Avg</th>
+                  <th className="text-right pb-2 font-semibold">Comparable avg</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -487,8 +541,14 @@ export function FreeCheckResult({ result }: Props) {
                         {result.equityRatio.toFixed(1)}%
                       </span>
                     </td>
+                    {/* An em dash, not "10.0% (target)". The county's statutory
+                        target is a policy number; printing it in the column
+                        headed with the comparables reported it as what the
+                        comparables measured, for a subject where no comparable
+                        carried a market value at all. The target is stated in
+                        the caption above, where it belongs. */}
                     <td className="py-2 text-right font-medium text-gray-700">
-                      {result.avgCompEquityRatio != null ? `${result.avgCompEquityRatio.toFixed(1)}%` : "10.0% (target)"}
+                      {result.avgCompEquityRatio != null ? `${result.avgCompEquityRatio.toFixed(1)}%` : "—"}
                     </td>
                   </tr>
                 )}
@@ -496,7 +556,7 @@ export function FreeCheckResult({ result }: Props) {
                   <tr>
                     <td className="py-2 pr-4 text-gray-600">Assessment gap</td>
                     <td className="py-2 pr-4 text-right font-bold text-amber-800" colSpan={2}>
-                      +{formatCurrency(result.assessmentGap)} above neighborhood avg
+                      +{formatCurrency(result.assessmentGap)} above the comparable average
                     </td>
                   </tr>
                 )}
@@ -507,7 +567,7 @@ export function FreeCheckResult({ result }: Props) {
       )}
 
       {/* ── Comparable Properties ────────────────────────────────────────── */}
-      {result.comps && result.comps.length > 0 && (
+      {showRecordComparison && result.comps && result.comps.length > 0 && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
           <button
             onClick={() => setShowComps(!showComps)}
@@ -518,7 +578,10 @@ export function FreeCheckResult({ result }: Props) {
             </h3>
             <span className="text-sm text-blue-600 font-semibold">{showComps ? "Hide ↑" : "Show ↓"}</span>
           </button>
-          <p className="text-sm text-gray-500 mt-1">These are the comparable properties used in the assessment-level comparison above.</p>
+          <p className="text-sm text-gray-500 mt-1">
+            {result.compSelection?.label ??
+              "These are the comparable properties used in the comparison above."}
+          </p>
 
           {showComps && (
             <div className="mt-4 space-y-3">

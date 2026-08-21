@@ -92,6 +92,7 @@ describe("OT home free-check flow", () => {
         allowCheckout: true,
         reason: null,
         showFigures: true,
+        showRecordComparison: true,
       },
       subject: {
         address: "5236 N KENMORE AVE",
@@ -150,6 +151,7 @@ describe("OT home free-check flow", () => {
           allowCheckout: false,
           reason: "below_evidence_threshold",
           showFigures: true,
+          showRecordComparison: true,
         },
         compCount: 3,
         avgComparableAssessedValue: 36396,

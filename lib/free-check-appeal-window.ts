@@ -196,8 +196,29 @@ export interface FreeCheckOutcome {
   allowCheckout: boolean;
   /** Null only when `code` is `supportive` and checkout is open. */
   reason: FreeCheckOutcomeReason | null;
-  /** Whether any figure may be shown at all. */
+  /**
+   * Whether the assessment-*level* figures may be shown — the subject's
+   * assessed-to-market ratio and the comparable ratio it is measured against.
+   * These exist only when a market value is on file for the subject and for at
+   * least one comparable.
+   */
   showFigures: boolean;
+  /**
+   * Whether the public-record assessed-value comparison may be shown — the
+   * subject's assessed value, the accepted comparables, their average, and the
+   * difference between them.
+   *
+   * Separate from [[showFigures]] because it is a different kind of statement.
+   * Assessed values are what the county published about specific parcels; the
+   * assessment level is a ratio against a market value the county may simply
+   * not carry. Collapsing the two meant a missing `marketValue` field — on the
+   * subject or on every comparable — resolved to `no_comparable_level` and
+   * suppressed the entire comparison, including assessed values that were
+   * present, validated, and the whole point of the check.
+   *
+   * `showFigures` implies this. The reverse does not hold.
+   */
+  showRecordComparison: boolean;
 }
 
 /**
@@ -226,7 +247,25 @@ export function evaluateFreeCheckOutcome(args: {
     headline: string,
     reason: FreeCheckOutcomeReason,
     showFigures: boolean,
-  ): FreeCheckOutcome => ({ code, headline, allowCheckout: false, reason, showFigures });
+    showRecordComparison: boolean = showFigures,
+  ): FreeCheckOutcome => ({
+    code,
+    headline,
+    allowCheckout: false,
+    reason,
+    showFigures,
+    showRecordComparison,
+  });
+
+  /**
+   * The assessed-value comparison stands on the subject's own assessed value
+   * and at least one accepted comparable. Nothing about a market value enters
+   * it, which is exactly why it is computed separately from `showFigures`.
+   */
+  const recordComparisonAvailable =
+    e.assessedTotalValue !== null &&
+    Number.isFinite(e.assessedTotalValue) &&
+    e.compCount >= 1;
 
   // 1. Unsupported property or stage. Strongest statement, so it resolves first:
   //    telling someone their evidence is thin when we do not serve their
@@ -256,7 +295,16 @@ export function evaluateFreeCheckOutcome(args: {
     !Number.isFinite(e.avgCompEquityRatio) ||
     e.avgCompEquityRatio <= 0
   ) {
-    return closed("insufficient_evidence", CC_05, "no_comparable_level", false);
+    // No assessment *level* — but the assessed values that produced this branch
+    // are on file and validated. The level figures stay withheld; the public
+    // record comparison is released.
+    return closed(
+      "insufficient_evidence",
+      CC_05,
+      "no_comparable_level",
+      false,
+      recordComparisonAvailable,
+    );
   }
 
   // 3. The merits threshold is OD-3 and OD-3 is unsigned. Without it there is no
@@ -281,10 +329,10 @@ export function evaluateFreeCheckOutcome(args: {
   //    from an official property record — the evidence and the window are
   //    separate gates and neither substitutes for the other.
   if (aw.status !== "open") {
-    return { code: "supportive", headline: CC_03, allowCheckout: false, reason: "window_not_open", showFigures: true };
+    return { code: "supportive", headline: CC_03, allowCheckout: false, reason: "window_not_open", showFigures: true, showRecordComparison: true };
   }
   if (!aw.allowCheckout) {
-    return { code: "supportive", headline: CC_03, allowCheckout: false, reason: "window_unverified", showFigures: true };
+    return { code: "supportive", headline: CC_03, allowCheckout: false, reason: "window_unverified", showFigures: true, showRecordComparison: true };
   }
-  return { code: "supportive", headline: CC_03, allowCheckout: true, reason: null, showFigures: true };
+  return { code: "supportive", headline: CC_03, allowCheckout: true, reason: null, showFigures: true, showRecordComparison: true };
 }

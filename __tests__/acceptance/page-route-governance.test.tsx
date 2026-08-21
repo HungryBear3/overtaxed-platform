@@ -305,7 +305,16 @@ describe("the neutralized claims are gone and their replacements are live", () =
     // remediation was a claim swap and not a redesign.
     const home = readable(await render("/"))
     expect(home).toMatch(/What you(&#x27;|')ll get/)
-    expect(home).toContain("Estimated annual + 3-year overpayment")
+    // The anchor here used to be "Estimated annual + 3-year overpayment", the
+    // first item in the homepage deliverables list. It is gone deliberately:
+    // the free-check route computes no overpayment on any path and sends both
+    // `potentialOverpaymentPerYear` and `potentialOverpayment3Year` as null, so
+    // the line promised, at the top of the page, a figure the product does not
+    // produce. The intactness check anchors on a deliverable the check really
+    // returns, and the removal is pinned so it cannot quietly come back.
+    expect(home).toContain("Township appeal window")
+    expect(home).not.toContain("Estimated annual + 3-year overpayment")
+    expect(home).not.toMatch(/Estimated annual overpayment/i)
     const bor = readable(await render("/board-of-review"))
     expect(bor).toContain("Large commercial property owners use both")
     expect(bor).toContain("Available now")

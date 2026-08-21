@@ -19,13 +19,28 @@ import { CC_02, CC_03, CC_04, CC_05, CC_06, CC_07 } from "@/lib/copy/canonical"
  */
 
 const OUTCOMES: Record<string, ResultOutcome> = {
-  A: { code: "supportive", headline: CC_03, allowCheckout: true, showFigures: true, reason: null },
-  B: { code: "not_supportive", headline: CC_04, allowCheckout: false, showFigures: true, reason: null },
+  A: {
+    code: "supportive",
+    headline: CC_03,
+    allowCheckout: true,
+    showFigures: true,
+    showRecordComparison: true,
+    reason: null,
+  },
+  B: {
+    code: "not_supportive",
+    headline: CC_04,
+    allowCheckout: false,
+    showFigures: true,
+    showRecordComparison: true,
+    reason: null,
+  },
   C: {
     code: "insufficient_evidence",
     headline: CC_05,
     allowCheckout: false,
     showFigures: false,
+    showRecordComparison: false,
     reason: "eligibility_policy_unsigned",
   },
   D: {
@@ -33,7 +48,23 @@ const OUTCOMES: Record<string, ResultOutcome> = {
     headline: CC_06,
     allowCheckout: false,
     showFigures: false,
+    showRecordComparison: false,
     reason: "property_class_unsupported",
+  },
+  /**
+   * The fifth shape the evaluator can produce, and the one this file had no
+   * case for: the county published no market value, so there is no assessment
+   * *level* — but the assessed values on both sides are on file. The four-state
+   * verdict is still CC-05 and the offer is still closed; what changed is that
+   * the public-record comparison is no longer suppressed along with the ratio.
+   */
+  E: {
+    code: "insufficient_evidence",
+    headline: CC_05,
+    allowCheckout: false,
+    showFigures: false,
+    showRecordComparison: true,
+    reason: "no_comparable_level",
   },
 }
 
@@ -113,8 +144,8 @@ describe("free-check result — four-state contract", () => {
     }
   })
 
-  it("offers no paid entry point in states B, C, or D", () => {
-    for (const key of ["B", "C", "D"] as const) {
+  it("offers no paid entry point in states B, C, D, or E", () => {
+    for (const key of ["B", "C", "D", "E"] as const) {
       const { container, unmount } = render(<FreeCheckResult result={buildResult(OUTCOMES[key])} />)
       expect(container.querySelectorAll('a[href^="/auth/signup"]')).toHaveLength(0)
       expect(container.querySelectorAll('a[href^="/pricing"]')).toHaveLength(0)

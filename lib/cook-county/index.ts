@@ -4,6 +4,7 @@
 export {
   getPropertyByPIN,
   searchPropertiesByAddress,
+  ADDRESS_LOOKUP_UNAVAILABLE,
   getComparableSales,
   getComparableEquity,
   getAddressByPIN,
