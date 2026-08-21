@@ -1,160 +1,111 @@
 /**
- * Cook County's 38 townships, organized by triennial reassessment cycle.
+ * Cook County's 38 townships as a descriptive roster.
  *
- * Ported from /Users/abigailclaw/.openclaw/workspace/rex/ot-design-fetch-.../project/townships-data.js
+ * This file used to carry a second appeal calendar: a hand-typed `openDate`
+ * and `closeDate` for every township — including 2027 and 2028 windows the
+ * county has not published — plus a `REFERENCE_DATE` pinned to a single
+ * afternoon in May 2026 that every "open / opening-soon / closed" badge and
+ * every "closes in N days" countdown on the site was computed against. The
+ * header said so out loud, and promised a follow-up pass to "swap this for
+ * Date.now() once Rex confirms operator behavior at year boundaries".
  *
- * REFERENCE_DATE pins "open / opening-soon / closed" deterministically for
- * the design's reference state. In a follow-up pass we can swap this for
- * Date.now() once Rex confirms operator behavior at year boundaries.
+ * Swapping in `Date.now()` would have been the wrong fix. The defect was never
+ * that the clock was frozen; it was that this file answered a question it had
+ * no evidence for. A design-seed date run against a live clock produces a
+ * countdown that is wrong and moving, which is worse than one that is wrong and
+ * still. Those dates are gone rather than re-timed.
+ *
+ * What is left is the part that was always true and never needed a source: the
+ * roster. Which townships exist, what they are called, which URL slug each one
+ * owns, which triennial district and cycle year it belongs to, and which
+ * neighbours to cross-link. None of that expires, so none of it needs
+ * provenance. Every date and every status now comes from the canonical state in
+ * [[lib/deadlines/official-source-state]], reached through
+ * [[lib/appeals/township-deadlines]].
  *
  * Schema:
  *   slug          — URL-safe identifier (used for /township/[slug] pages)
  *   name          — Display name (no "Township" suffix; UI adds it)
  *   district      — "south-west-suburbs" | "north-suburbs" | "chicago"
  *   cycleYear     — Year this township is in active triennial reassessment
- *   openDate      — ISO date the appeal window opens
- *   closeDate     — ISO date the window closes
  *   neighbors     — 3-4 nearby townships (for cross-linking)
- *   avgAssessed   — Sample county data: average assessed value (rounded)
- *   avgReduction  — Sample data: average successful appeal reduction (%)
- *   avgSavings    — Sample data: typical first-year savings ($)
+ *
+ * The three `avg*` fields — `avgAssessed`, `avgReduction`, `avgSavings` — are
+ * gone too. They were design-set sample figures, as this header used to say out
+ * loud, and the township page rendered all three under the heading
+ * "Public-record context" over the source line "Cook County public records and
+ * internal modeling", on 38 indexable pages. `avgSavings` is an averaged
+ * savings figure, which BL-B1 bans outright; `avgAssessed` was invented and
+ * attributed to the county. Suppressing the render alone would have left the
+ * numbers one JSX line away from returning, so the fields are removed with it.
+ * Real measured figures, if they are ever published, need provenance these
+ * never had.
  */
 
-export type TownshipStatus = "open" | "opening-soon" | "closed";
+import { describeTownshipCalendar } from "@/lib/appeals/township-deadlines";
+
 export type TownshipDistrict =
   | "south-west-suburbs"
   | "north-suburbs"
   | "chicago";
 
-export interface RawTownship {
+/**
+ * One roster row. Carries no window, status, or countdown by construction —
+ * ask [[projectTownshipDeadline]] for those, and be ready for it to say no.
+ */
+export interface Township {
   slug: string;
   name: string;
   district: TownshipDistrict;
   cycleYear: number;
-  openDate: string;
-  closeDate: string;
   neighbors: string[];
-  avgAssessed: number;
-  avgReduction: number;
-  avgSavings: number;
 }
 
-export interface Township extends RawTownship {
-  status: TownshipStatus;
-  daysUntilOpen: number;
-  daysUntilClose: number;
-  openDateLong: string;
-  closeDateLong: string;
-  openDateShort: string;
-  closeDateShort: string;
-}
-
-export const REFERENCE_DATE = new Date("2026-05-12T12:00:00Z");
-
-const RAW_TOWNSHIPS: RawTownship[] = [
-  // ───── 2026 cycle: South & West Suburbs (currently in appeal season) ─────
-  { slug: "berwyn",       name: "Berwyn",       district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-04-15", closeDate: "2026-05-19", neighbors: ["cicero", "riverside", "stickney"],            avgAssessed: 28400, avgReduction: 11.2, avgSavings: 980 },
-  { slug: "bloom",        name: "Bloom",        district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-04-22", closeDate: "2026-05-26", neighbors: ["bremen", "rich", "thornton"],                avgAssessed: 19800, avgReduction: 13.6, avgSavings: 1240 },
-  { slug: "bremen",       name: "Bremen",       district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-04-08", closeDate: "2026-05-12", neighbors: ["bloom", "orland", "thornton"],               avgAssessed: 22600, avgReduction: 12.8, avgSavings: 1120 },
-  { slug: "calumet",      name: "Calumet",      district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-05-04", closeDate: "2026-06-08", neighbors: ["thornton", "worth", "bremen"],               avgAssessed: 18200, avgReduction: 14.1, avgSavings: 1310 },
-  { slug: "cicero",       name: "Cicero",       district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-04-15", closeDate: "2026-05-19", neighbors: ["berwyn", "stickney", "proviso"],             avgAssessed: 26900, avgReduction: 10.9, avgSavings: 940 },
-  { slug: "lemont",       name: "Lemont",       district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-05-13", closeDate: "2026-06-15", neighbors: ["palos", "orland", "lyons"],                  avgAssessed: 38100, avgReduction: 9.7,  avgSavings: 1180 },
-  { slug: "lyons",        name: "Lyons",        district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-05-06", closeDate: "2026-06-09", neighbors: ["riverside", "proviso", "lemont"],            avgAssessed: 31200, avgReduction: 11.4, avgSavings: 1090 },
-  { slug: "oak-park",     name: "Oak Park",     district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-04-29", closeDate: "2026-06-02", neighbors: ["proviso", "river-forest", "berwyn"],         avgAssessed: 51400, avgReduction: 10.2, avgSavings: 1620 },
-  { slug: "orland",       name: "Orland",       district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-05-20", closeDate: "2026-06-23", neighbors: ["palos", "bremen", "lemont"],                 avgAssessed: 36700, avgReduction: 10.8, avgSavings: 1240 },
-  { slug: "palos",        name: "Palos",        district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-05-13", closeDate: "2026-06-15", neighbors: ["orland", "worth", "lemont"],                 avgAssessed: 33800, avgReduction: 10.4, avgSavings: 1130 },
-  { slug: "proviso",      name: "Proviso",      district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-04-22", closeDate: "2026-05-26", neighbors: ["oak-park", "river-forest", "lyons"],         avgAssessed: 27300, avgReduction: 11.7, avgSavings: 1010 },
-  { slug: "rich",         name: "Rich",         district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-04-29", closeDate: "2026-06-02", neighbors: ["bloom", "bremen", "thornton"],               avgAssessed: 21400, avgReduction: 13.2, avgSavings: 1190 },
-  { slug: "river-forest", name: "River Forest", district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-04-29", closeDate: "2026-06-02", neighbors: ["oak-park", "proviso", "lyons"],              avgAssessed: 64200, avgReduction: 9.4,  avgSavings: 1820 },
-  { slug: "riverside",    name: "Riverside",    district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-05-06", closeDate: "2026-06-09", neighbors: ["berwyn", "lyons", "stickney"],               avgAssessed: 42800, avgReduction: 10.1, avgSavings: 1380 },
-  { slug: "stickney",     name: "Stickney",     district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-04-15", closeDate: "2026-05-19", neighbors: ["cicero", "berwyn", "riverside"],             avgAssessed: 24100, avgReduction: 11.0, avgSavings: 920 },
-  { slug: "thornton",     name: "Thornton",     district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-05-04", closeDate: "2026-06-08", neighbors: ["calumet", "bloom", "rich"],                  avgAssessed: 17900, avgReduction: 14.3, avgSavings: 1280 },
-  { slug: "worth",        name: "Worth",        district: "south-west-suburbs", cycleYear: 2026, openDate: "2026-05-20", closeDate: "2026-06-23", neighbors: ["palos", "calumet", "orland"],                avgAssessed: 28800, avgReduction: 11.2, avgSavings: 1040 },
+export const TOWNSHIPS: Township[] = [
+  // ───── 2026 cycle: South & West Suburbs ─────
+  { slug: "berwyn",       name: "Berwyn",       district: "south-west-suburbs", cycleYear: 2026, neighbors: ["cicero", "riverside", "stickney"] },
+  { slug: "bloom",        name: "Bloom",        district: "south-west-suburbs", cycleYear: 2026, neighbors: ["bremen", "rich", "thornton"] },
+  { slug: "bremen",       name: "Bremen",       district: "south-west-suburbs", cycleYear: 2026, neighbors: ["bloom", "orland", "thornton"] },
+  { slug: "calumet",      name: "Calumet",      district: "south-west-suburbs", cycleYear: 2026, neighbors: ["thornton", "worth", "bremen"] },
+  { slug: "cicero",       name: "Cicero",       district: "south-west-suburbs", cycleYear: 2026, neighbors: ["berwyn", "stickney", "proviso"] },
+  { slug: "lemont",       name: "Lemont",       district: "south-west-suburbs", cycleYear: 2026, neighbors: ["palos", "orland", "lyons"] },
+  { slug: "lyons",        name: "Lyons",        district: "south-west-suburbs", cycleYear: 2026, neighbors: ["riverside", "proviso", "lemont"] },
+  { slug: "oak-park",     name: "Oak Park",     district: "south-west-suburbs", cycleYear: 2026, neighbors: ["proviso", "river-forest", "berwyn"] },
+  { slug: "orland",       name: "Orland",       district: "south-west-suburbs", cycleYear: 2026, neighbors: ["palos", "bremen", "lemont"] },
+  { slug: "palos",        name: "Palos",        district: "south-west-suburbs", cycleYear: 2026, neighbors: ["orland", "worth", "lemont"] },
+  { slug: "proviso",      name: "Proviso",      district: "south-west-suburbs", cycleYear: 2026, neighbors: ["oak-park", "river-forest", "lyons"] },
+  { slug: "rich",         name: "Rich",         district: "south-west-suburbs", cycleYear: 2026, neighbors: ["bloom", "bremen", "thornton"] },
+  { slug: "river-forest", name: "River Forest", district: "south-west-suburbs", cycleYear: 2026, neighbors: ["oak-park", "proviso", "lyons"] },
+  { slug: "riverside",    name: "Riverside",    district: "south-west-suburbs", cycleYear: 2026, neighbors: ["berwyn", "lyons", "stickney"] },
+  { slug: "stickney",     name: "Stickney",     district: "south-west-suburbs", cycleYear: 2026, neighbors: ["cicero", "berwyn", "riverside"] },
+  { slug: "thornton",     name: "Thornton",     district: "south-west-suburbs", cycleYear: 2026, neighbors: ["calumet", "bloom", "rich"] },
+  { slug: "worth",        name: "Worth",        district: "south-west-suburbs", cycleYear: 2026, neighbors: ["palos", "calumet", "orland"] },
 
   // ───── 2027 cycle: North Suburbs ─────
-  { slug: "barrington",   name: "Barrington",   district: "north-suburbs", cycleYear: 2027, openDate: "2027-04-21", closeDate: "2027-05-25", neighbors: ["palatine", "hanover", "wheeling"],            avgAssessed: 71200, avgReduction: 8.9,  avgSavings: 1640 },
-  { slug: "elk-grove",    name: "Elk Grove",    district: "north-suburbs", cycleYear: 2027, openDate: "2027-05-05", closeDate: "2027-06-08", neighbors: ["schaumburg", "wheeling", "leyden"],           avgAssessed: 36800, avgReduction: 10.3, avgSavings: 1190 },
-  { slug: "evanston",     name: "Evanston",     district: "north-suburbs", cycleYear: 2027, openDate: "2027-05-19", closeDate: "2027-06-22", neighbors: ["new-trier", "niles", "northfield"],          avgAssessed: 48600, avgReduction: 9.6,  avgSavings: 1480 },
-  { slug: "hanover",      name: "Hanover",      district: "north-suburbs", cycleYear: 2027, openDate: "2027-04-21", closeDate: "2027-05-25", neighbors: ["barrington", "schaumburg", "palatine"],      avgAssessed: 33400, avgReduction: 10.7, avgSavings: 1110 },
-  { slug: "leyden",       name: "Leyden",       district: "north-suburbs", cycleYear: 2027, openDate: "2027-05-12", closeDate: "2027-06-15", neighbors: ["norwood-park", "elk-grove", "maine"],        avgAssessed: 32600, avgReduction: 10.5, avgSavings: 1080 },
-  { slug: "maine",        name: "Maine",        district: "north-suburbs", cycleYear: 2027, openDate: "2027-05-12", closeDate: "2027-06-15", neighbors: ["niles", "leyden", "norwood-park"],           avgAssessed: 41800, avgReduction: 9.8,  avgSavings: 1240 },
-  { slug: "new-trier",    name: "New Trier",    district: "north-suburbs", cycleYear: 2027, openDate: "2027-05-26", closeDate: "2027-06-29", neighbors: ["evanston", "northfield", "niles"],           avgAssessed: 92400, avgReduction: 8.2,  avgSavings: 1980 },
-  { slug: "niles",        name: "Niles",        district: "north-suburbs", cycleYear: 2027, openDate: "2027-05-19", closeDate: "2027-06-22", neighbors: ["evanston", "maine", "norwood-park"],         avgAssessed: 39200, avgReduction: 10.0, avgSavings: 1200 },
-  { slug: "northfield",   name: "Northfield",   district: "north-suburbs", cycleYear: 2027, openDate: "2027-05-26", closeDate: "2027-06-29", neighbors: ["new-trier", "evanston", "wheeling"],         avgAssessed: 86700, avgReduction: 8.4,  avgSavings: 1860 },
-  { slug: "norwood-park", name: "Norwood Park", district: "north-suburbs", cycleYear: 2027, openDate: "2027-05-12", closeDate: "2027-06-15", neighbors: ["niles", "maine", "leyden"],                  avgAssessed: 37300, avgReduction: 10.1, avgSavings: 1130 },
-  { slug: "palatine",     name: "Palatine",     district: "north-suburbs", cycleYear: 2027, openDate: "2027-04-28", closeDate: "2027-06-01", neighbors: ["barrington", "schaumburg", "wheeling"],      avgAssessed: 44800, avgReduction: 9.7,  avgSavings: 1290 },
-  { slug: "schaumburg",   name: "Schaumburg",   district: "north-suburbs", cycleYear: 2027, openDate: "2027-04-28", closeDate: "2027-06-01", neighbors: ["palatine", "hanover", "elk-grove"],          avgAssessed: 41200, avgReduction: 9.9,  avgSavings: 1220 },
-  { slug: "wheeling",     name: "Wheeling",     district: "north-suburbs", cycleYear: 2027, openDate: "2027-05-05", closeDate: "2027-06-08", neighbors: ["palatine", "northfield", "elk-grove"],       avgAssessed: 42600, avgReduction: 9.7,  avgSavings: 1240 },
+  { slug: "barrington",   name: "Barrington",   district: "north-suburbs", cycleYear: 2027, neighbors: ["palatine", "hanover", "wheeling"] },
+  { slug: "elk-grove",    name: "Elk Grove",    district: "north-suburbs", cycleYear: 2027, neighbors: ["schaumburg", "wheeling", "leyden"] },
+  { slug: "evanston",     name: "Evanston",     district: "north-suburbs", cycleYear: 2027, neighbors: ["new-trier", "niles", "northfield"] },
+  { slug: "hanover",      name: "Hanover",      district: "north-suburbs", cycleYear: 2027, neighbors: ["barrington", "schaumburg", "palatine"] },
+  { slug: "leyden",       name: "Leyden",       district: "north-suburbs", cycleYear: 2027, neighbors: ["norwood-park", "elk-grove", "maine"] },
+  { slug: "maine",        name: "Maine",        district: "north-suburbs", cycleYear: 2027, neighbors: ["niles", "leyden", "norwood-park"] },
+  { slug: "new-trier",    name: "New Trier",    district: "north-suburbs", cycleYear: 2027, neighbors: ["evanston", "northfield", "niles"] },
+  { slug: "niles",        name: "Niles",        district: "north-suburbs", cycleYear: 2027, neighbors: ["evanston", "maine", "norwood-park"] },
+  { slug: "northfield",   name: "Northfield",   district: "north-suburbs", cycleYear: 2027, neighbors: ["new-trier", "evanston", "wheeling"] },
+  { slug: "norwood-park", name: "Norwood Park", district: "north-suburbs", cycleYear: 2027, neighbors: ["niles", "maine", "leyden"] },
+  { slug: "palatine",     name: "Palatine",     district: "north-suburbs", cycleYear: 2027, neighbors: ["barrington", "schaumburg", "wheeling"] },
+  { slug: "schaumburg",   name: "Schaumburg",   district: "north-suburbs", cycleYear: 2027, neighbors: ["palatine", "hanover", "elk-grove"] },
+  { slug: "wheeling",     name: "Wheeling",     district: "north-suburbs", cycleYear: 2027, neighbors: ["palatine", "northfield", "elk-grove"] },
 
   // ───── 2028 cycle: City of Chicago ─────
-  { slug: "hyde-park",    name: "Hyde Park",    district: "chicago", cycleYear: 2028, openDate: "2028-05-15", closeDate: "2028-06-19", neighbors: ["lake", "south-chicago", "lake-view"],         avgAssessed: 39600, avgReduction: 10.4, avgSavings: 1180 },
-  { slug: "jefferson",    name: "Jefferson",    district: "chicago", cycleYear: 2028, openDate: "2028-05-01", closeDate: "2028-06-05", neighbors: ["lake-view", "rogers-park", "north-chicago"], avgAssessed: 41200, avgReduction: 10.2, avgSavings: 1210 },
-  { slug: "lake",         name: "Lake",         district: "chicago", cycleYear: 2028, openDate: "2028-05-15", closeDate: "2028-06-19", neighbors: ["hyde-park", "south-chicago", "west-chicago"], avgAssessed: 28700, avgReduction: 11.4, avgSavings: 1080 },
-  { slug: "lake-view",    name: "Lake View",    district: "chicago", cycleYear: 2028, openDate: "2028-05-08", closeDate: "2028-06-12", neighbors: ["jefferson", "north-chicago", "hyde-park"],   avgAssessed: 56800, avgReduction: 9.4,  avgSavings: 1520 },
-  { slug: "north-chicago",name: "North Chicago",district: "chicago", cycleYear: 2028, openDate: "2028-05-08", closeDate: "2028-06-12", neighbors: ["lake-view", "rogers-park", "west-chicago"],  avgAssessed: 48200, avgReduction: 9.7,  avgSavings: 1380 },
-  { slug: "rogers-park",  name: "Rogers Park",  district: "chicago", cycleYear: 2028, openDate: "2028-05-01", closeDate: "2028-06-05", neighbors: ["jefferson", "north-chicago", "lake-view"],   avgAssessed: 33400, avgReduction: 10.8, avgSavings: 1110 },
-  { slug: "south-chicago",name: "South Chicago",district: "chicago", cycleYear: 2028, openDate: "2028-05-22", closeDate: "2028-06-26", neighbors: ["hyde-park", "lake", "west-chicago"],        avgAssessed: 24800, avgReduction: 12.0, avgSavings: 1020 },
-  { slug: "west-chicago", name: "West Chicago", district: "chicago", cycleYear: 2028, openDate: "2028-05-22", closeDate: "2028-06-26", neighbors: ["lake", "north-chicago", "south-chicago"],   avgAssessed: 31600, avgReduction: 11.0, avgSavings: 1060 },
+  { slug: "hyde-park",    name: "Hyde Park",    district: "chicago", cycleYear: 2028, neighbors: ["lake", "south-chicago", "lake-view"] },
+  { slug: "jefferson",    name: "Jefferson",    district: "chicago", cycleYear: 2028, neighbors: ["lake-view", "rogers-park", "north-chicago"] },
+  { slug: "lake",         name: "Lake",         district: "chicago", cycleYear: 2028, neighbors: ["hyde-park", "south-chicago", "west-chicago"] },
+  { slug: "lake-view",    name: "Lake View",    district: "chicago", cycleYear: 2028, neighbors: ["jefferson", "north-chicago", "hyde-park"] },
+  { slug: "north-chicago",name: "North Chicago",district: "chicago", cycleYear: 2028, neighbors: ["lake-view", "rogers-park", "west-chicago"] },
+  { slug: "rogers-park",  name: "Rogers Park",  district: "chicago", cycleYear: 2028, neighbors: ["jefferson", "north-chicago", "lake-view"] },
+  { slug: "south-chicago",name: "South Chicago",district: "chicago", cycleYear: 2028, neighbors: ["hyde-park", "lake", "west-chicago"] },
+  { slug: "west-chicago", name: "West Chicago", district: "chicago", cycleYear: 2028, neighbors: ["lake", "north-chicago", "south-chicago"] },
 ];
-
-export function daysBetween(a: Date, b: Date): number {
-  return Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
-}
-
-export function formatDateLong(iso: string): string {
-  const d = new Date(iso + "T12:00:00Z");
-  return d.toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-}
-
-export function formatDateShort(iso: string): string {
-  const d = new Date(iso + "T12:00:00Z");
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
-}
-
-export const TOWNSHIPS: Township[] = RAW_TOWNSHIPS.map((t) => {
-  const open = new Date(t.openDate + "T12:00:00Z");
-  const close = new Date(t.closeDate + "T12:00:00Z");
-  const daysUntilOpen = daysBetween(REFERENCE_DATE, open);
-  const daysUntilClose = daysBetween(REFERENCE_DATE, close);
-
-  let status: TownshipStatus;
-  if (REFERENCE_DATE >= open && REFERENCE_DATE <= close) status = "open";
-  else if (daysUntilOpen > 0 && daysUntilOpen <= 30) status = "opening-soon";
-  else status = "closed";
-
-  return {
-    ...t,
-    status,
-    daysUntilOpen,
-    daysUntilClose,
-    openDateLong: formatDateLong(t.openDate),
-    closeDateLong: formatDateLong(t.closeDate),
-    openDateShort: formatDateShort(t.openDate),
-    closeDateShort: formatDateShort(t.closeDate),
-  };
-});
-
-export const TOWNSHIP_STATUS_COUNTS: Record<TownshipStatus | "total", number> =
-  TOWNSHIPS.reduce(
-    (acc, t) => {
-      acc[t.status] = (acc[t.status] || 0) + 1;
-      acc.total = (acc.total || 0) + 1;
-      return acc;
-    },
-    { open: 0, "opening-soon": 0, closed: 0, total: 0 } as Record<
-      TownshipStatus | "total",
-      number
-    >,
-  );
 
 export const TOWNSHIPS_BY_SLUG: Record<string, Township> = Object.fromEntries(
   TOWNSHIPS.map((t) => [t.slug, t]),
@@ -168,51 +119,74 @@ export function getTownshipBySlug(slug: string): Township | undefined {
   return TOWNSHIPS_BY_SLUG[slug];
 }
 
-
-function pluralizeDay(n: number): string {
-  return `${n} day${n === 1 ? "" : "s"}`;
+/**
+ * Render an ISO calendar day as "July 6, 2026".
+ *
+ * A formatter, not a source. It is kept here because the roster is where the
+ * site's date presentation was already standardised, and it is safe to keep for
+ * the same reason the roster is: it invents nothing. Give it a day that came
+ * from the canonical state.
+ */
+export function formatDateLong(iso: string): string {
+  const d = new Date(iso + "T12:00:00Z");
+  return d.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 }
 
-function openedLabel(n: number): string {
-  if (n <= 0) return "opened today";
-  return `opened ${pluralizeDay(n)} ago`;
+/** As [[formatDateLong]], abbreviated: "Jul 6". */
+export function formatDateShort(iso: string): string {
+  const d = new Date(iso + "T12:00:00Z");
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 }
 
-function closesLabel(n: number): string {
-  if (n < 0) return "closed";
-  if (n === 0) return "closes today";
-  return `closes in ${pluralizeDay(n)}`;
-}
+/**
+ * The standing ticker line, shown when there is nothing verified to announce.
+ *
+ * The previous fallback read "Township schedules checked regularly · see
+ * current schedule →". Nothing in the codebase checked anything regularly, and
+ * a reader who trusted that sentence would have had no way to find out. This
+ * one only points at the page.
+ */
+export const TICKER_STANDING_ITEM =
+  "Cook County appeal deadlines vary by township · see the deadline calendar →";
 
-function opensLabel(n: number): string {
-  if (n <= 0) return "opens today";
-  return `opens in ${pluralizeDay(n)}`;
-}
-
-/** Ticker items derived only from verifiable township deadline data. */
-export function buildTickerItems(): string[] {
-  const open = TOWNSHIPS.filter((t) => t.status === "open");
-  const openingSoon = TOWNSHIPS.filter((t) => t.status === "opening-soon");
+/**
+ * Ticker items for the site header.
+ *
+ * The ticker renders on every public page, to a reader whose property we have
+ * not identified. That puts it at the informational tier: it may describe what
+ * the Assessor published, and it may not run a countdown, imply eligibility, or
+ * push a deadline-driven CTA. So each item here names a township and a verified
+ * Last File Date, and nothing else — no "closes in 6 days", no "act now".
+ *
+ * A township only appears if the canonical state actually verified a window for
+ * it. When none has, the ticker carries the standing item alone. That is the
+ * intended resting state of an un-refreshed deployment, not a failure mode: an
+ * empty ticker is a page that isn't claiming anything.
+ *
+ * `now` is injectable for deterministic tests.
+ */
+export function buildTickerItems(now: Date = new Date()): string[] {
+  const at = now.toISOString();
   const items: string[] = [];
 
-  if (open.length) {
-    const opened = [...open].sort(
-      (a, b) => Math.abs(a.daysUntilOpen) - Math.abs(b.daysUntilOpen),
-    )[0];
-    const n = Math.abs(opened.daysUntilOpen);
-    items.push(`${opened.name} window ${openedLabel(n)}`);
-
-    const soonest = [...open].sort(
-      (a, b) => a.daysUntilClose - b.daysUntilClose,
-    )[0];
-    items.push(`${soonest.name} ${closesLabel(soonest.daysUntilClose)}`);
+  for (const township of TOWNSHIPS) {
+    if (items.length >= 3) break;
+    const projection = describeTownshipCalendar(township.name, at);
+    if (!projection.available || projection.status !== "open") continue;
+    items.push(
+      `${township.name} — Assessor window open, last file date ${formatDateLong(projection.lastFileDate)}`,
+    );
   }
 
-  if (openingSoon.length) {
-    const next = [...openingSoon].sort((a, b) => a.daysUntilOpen - b.daysUntilOpen)[0];
-    items.push(`${next.name} ${opensLabel(next.daysUntilOpen)}`);
-  }
-
-  items.push("Township schedules checked regularly · see current schedule →");
+  items.push(TICKER_STANDING_ITEM);
   return items;
 }

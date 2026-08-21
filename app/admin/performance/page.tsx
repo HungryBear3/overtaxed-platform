@@ -1,68 +1,20 @@
 import Link from "next/link"
-import { prisma } from "@/lib/db"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { PerformanceAdminClient } from "./PerformanceAdminClient"
-import {
-  getPerformancePlanWindow,
-  getThreeYearSavings,
-  shouldCreatePerformanceInvoice,
-} from "@/lib/billing/performance-fee"
+
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
 export const dynamic = "force-dynamic"
 
+/**
+ * Contingency fee review — WITHDRAWN.
+ *
+ * The 22% contingency service and its performance-fee invoicing are held. This
+ * page previously computed each user's granted savings and fee, then mounted an
+ * invoice-create control gated on that eligibility. Both the computation and
+ * the control are removed: an operator affordance that says "eligible to
+ * invoice" is itself a held-product entry point, even when the API behind it
+ * refuses. No contingency user data is read while the hold stands.
+ */
 export default async function AdminPerformancePage() {
-  const performanceUsers = await prisma.user.findMany({
-    where: { subscriptionTier: "PERFORMANCE" },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      performancePlanStartDate: true,
-      performancePlanPaymentOption: true,
-      invoices: {
-        where: { invoiceType: "PERFORMANCE_FEE" },
-        select: { id: true, status: true, amount: true, dueDate: true },
-      },
-    },
-  })
-
-  const userData = await Promise.all(
-    performanceUsers.map(async (u) => {
-      const window = await getPerformancePlanWindow(u.id)
-      const savings = await getThreeYearSavings(u.id)
-      const invoiceCheck = await shouldCreatePerformanceInvoice(u.id)
-      return {
-        id: u.id,
-        email: u.email,
-        name: u.name,
-        performancePlanStartDate: u.performancePlanStartDate?.toISOString() ?? null,
-        performancePlanPaymentOption: u.performancePlanPaymentOption,
-        invoices: u.invoices.map((i) => ({
-          id: i.id,
-          status: i.status,
-          amount: Number(i.amount),
-          dueDate: i.dueDate.toISOString(),
-        })),
-        window: window
-          ? {
-              startYear: window.startYear,
-              endYear: window.endYear,
-              endDate: window.endDate.toISOString(),
-            }
-          : null,
-        savings: savings
-          ? {
-              totalSavings: savings.totalSavings,
-              feeAmount: savings.feeAmount,
-              appealCount: savings.appealIds.length,
-            }
-          : null,
-        canCreateInvoice: invoiceCheck.should,
-        invoiceReason: !invoiceCheck.should ? invoiceCheck.reason : null,
-      }
-    })
-  )
-
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
       <div className="mb-6 flex items-center gap-4">
@@ -71,50 +23,21 @@ export default async function AdminPerformancePage() {
         </Link>
       </div>
       <h1 className="text-2xl font-bold text-gray-900 mb-2">Contingency Fee Review</h1>
-      <p className="text-gray-600 mb-8">
-        Users on contingency plans. Verify granted first-year savings and explicit authorization before creating invoices.
-      </p>
 
-      <div className="space-y-4">
-        {userData.length === 0 ? (
-          <p className="text-gray-500">No contingency users.</p>
-        ) : (
-          userData.map((u) => (
-            <Card key={u.id}>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">
-                  {u.name ?? u.email}
-                  <span className="ml-2 text-sm font-normal text-gray-500">({u.email})</span>
-                </CardTitle>
-                <CardDescription>
-                  Plan start: {u.performancePlanStartDate ?? "—"} · Payment:{" "}
-                  {u.performancePlanPaymentOption ?? "—"} · Window:{" "}
-                  {u.window ? `${u.window.startYear}–${u.window.endYear}` : "—"}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {u.savings && (
-                  <p className="text-sm">
-                    <strong>3-year savings:</strong> ${u.savings.totalSavings.toFixed(2)} → Fee: $
-                    {u.savings.feeAmount.toFixed(2)} ({u.savings.appealCount} appeals)
-                  </p>
-                )}
-                {u.invoices.length > 0 && (
-                  <p className="text-sm">
-                    <strong>Invoices:</strong>{" "}
-                    {u.invoices.map((i) => `${i.status} $${i.amount.toFixed(2)}`).join(", ")}
-                  </p>
-                )}
-                <PerformanceAdminClient
-                  userId={u.id}
-                  canCreate={u.canCreateInvoice}
-                  reason={u.invoiceReason ?? undefined}
-                />
-              </CardContent>
-            </Card>
-          ))
-        )}
-      </div>
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">This review surface is withdrawn</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm text-gray-700">
+          <p>
+            The contingency service and contingency fee invoicing are held products. Fee
+            eligibility is not calculated and no invoice can be created from this console.
+          </p>
+          <p className="text-gray-500">
+            Restoring this surface requires lifting the product hold, not a change here.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   )
 }

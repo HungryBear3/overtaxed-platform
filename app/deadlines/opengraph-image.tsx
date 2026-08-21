@@ -1,5 +1,24 @@
 import { ImageResponse } from "next/og";
-import { TOWNSHIP_STATUS_COUNTS } from "@/lib/townships";
+import { TOWNSHIPS } from "@/lib/townships";
+
+/**
+ * Open Graph card for /deadlines.
+ *
+ * This image used to print three live-looking numbers — N open now, N opening
+ * soon, N closed — from `TOWNSHIP_STATUS_COUNTS`, a tally computed against a
+ * hard-coded reference date, over a footer that read "Updated weekly".
+ *
+ * An OG card is the worst possible place for a count like that. It is rendered
+ * once at build time and then cached by Facebook, Slack, LinkedIn, and every
+ * other unfurler that touches the link, for as long as each of them feels like
+ * keeping it. There is no revalidation path and no way to recall it. Even a
+ * count derived correctly from the canonical state would be a claim frozen at
+ * deploy and re-served for months.
+ *
+ * So the card carries only what does not expire: how many townships there are,
+ * and what the page is. The live counts live on the page itself, where they can
+ * be re-derived on every request and suppressed when nothing is verified.
+ */
 
 export const alt =
   "Cook County property tax appeal deadlines — township calendar";
@@ -38,7 +57,7 @@ export default async function OG() {
               textTransform: "uppercase",
             }}
           >
-            All 38 Cook County townships
+            All {TOWNSHIPS.length} Cook County townships
           </div>
           <div
             style={{
@@ -52,25 +71,8 @@ export default async function OG() {
           >
             Property tax appeal deadlines.
           </div>
-          <div style={{ display: "flex", gap: 48, marginTop: 8 }}>
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              <div style={{ display: "flex", fontSize: 64, fontWeight: 700, color: "#1F8A5B" }}>
-                {TOWNSHIP_STATUS_COUNTS.open}
-              </div>
-              <div style={{ display: "flex", fontSize: 24, color: "#5A5048" }}>open now</div>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              <div style={{ display: "flex", fontSize: 64, fontWeight: 700, color: "#D97757" }}>
-                {TOWNSHIP_STATUS_COUNTS["opening-soon"]}
-              </div>
-              <div style={{ display: "flex", fontSize: 24, color: "#5A5048" }}>opening soon</div>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              <div style={{ display: "flex", fontSize: 64, fontWeight: 700, color: "#5A5048" }}>
-                {TOWNSHIP_STATUS_COUNTS.closed}
-              </div>
-              <div style={{ display: "flex", fontSize: 24, color: "#5A5048" }}>closed</div>
-            </div>
+          <div style={{ display: "flex", fontSize: 30, color: "#5A5048", marginTop: 8 }}>
+            Check the current filing window for your township.
           </div>
         </div>
         <div
@@ -83,7 +85,6 @@ export default async function OG() {
           }}
         >
           <div style={{ display: "flex" }}>overtaxed-il.com/deadlines</div>
-          <div style={{ display: "flex" }}>Updated weekly</div>
         </div>
       </div>
     ),

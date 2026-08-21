@@ -1,11 +1,12 @@
-// Cron: create contingency fee invoices for eligible users.
-// GET /api/cron/performance-invoices - requires CRON_SECRET
+// Cron: contingency fee invoicing — WITHDRAWN.
+//
+// Contingency performance-fee invoicing is a held product. The CRON_SECRET
+// check is preserved and still runs first, so an unauthorised caller cannot use
+// this endpoint to probe subscriber state; an authorised caller receives the
+// withdrawal without any user enumeration or invoice creation.
 import { NextRequest, NextResponse } from "next/server"
-import { prisma } from "@/lib/db"
-import {
-  shouldCreatePerformanceInvoice,
-  createPerformanceFeeInvoice,
-} from "@/lib/billing/performance-fee"
+
+import { heldProductResponse } from "@/lib/products/held-response"
 
 export const dynamic = "force-dynamic"
 
@@ -16,42 +17,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const performanceUsers = await prisma.user.findMany({
-    where: { subscriptionTier: "PERFORMANCE" },
-    select: { id: true },
-  })
-
-  const created: string[] = []
-  const skipped: { userId: string; reason: string }[] = []
-  const errors: { userId: string; error: string }[] = []
-
-  for (const u of performanceUsers) {
-    try {
-      const check = await shouldCreatePerformanceInvoice(u.id)
-      if (!check.should) {
-        skipped.push({ userId: u.id, reason: check.reason ?? "unknown" })
-        continue
-      }
-      const { invoiceIds } = await createPerformanceFeeInvoice(
-        u.id,
-        check.savings,
-        check.paymentOption
-      )
-      created.push(...invoiceIds)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      errors.push({ userId: u.id, error: msg })
-    }
-  }
-
-  return NextResponse.json({
-    success: true,
-    performanceUsersChecked: performanceUsers.length,
-    invoicesCreated: created.length,
-    invoiceIds: created,
-    skipped: skipped.length,
-    skippedDetails: skipped,
-    errors: errors.length,
-    errorDetails: errors,
+  return heldProductResponse("PERFORMANCE_INVOICE", "api/cron/performance-invoices", {
+    performanceUsersChecked: 0,
+    invoicesCreated: 0,
+    invoiceIds: [],
   })
 }

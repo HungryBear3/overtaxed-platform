@@ -177,7 +177,12 @@ describe("preview gate — route handlers do not call live services", () => {
     expect(dbModule.prisma.referral.upsert).not.toHaveBeenCalled();
   });
 
-  it("/api/contingency-intake returns preview_noop and never writes DB/Resend", async () => {
+  // This previously asserted preview_noop — a 200 that captured nothing in
+  // preview but would capture a contingency lead in production. The 22%
+  // contingency product is held, so the endpoint is withdrawn in every
+  // environment. preview_noop is no longer the interesting property; failing
+  // closed regardless of preview mode is.
+  it("/api/contingency-intake is withdrawn and never writes DB/Resend", async () => {
     const res = await contingencyPOST(
       mkReq("/api/contingency-intake", {
         fullName: "Test",
@@ -188,9 +193,10 @@ describe("preview gate — route handlers do not call live services", () => {
       }),
     );
     const json = await res.json();
-    expect(res.status).toBe(200);
-    expect(json.ok).toBe(true);
-    expect(json.mode).toBe("preview_noop");
+    expect(res.status).toBe(410);
+    expect(json.code).toBe("PRODUCT_HELD");
+    expect(json.product).toBe("CONTINGENCY");
+    expect(json.ok).toBeUndefined();
     expect(dbModule.prisma.contingencyLead.create).not.toHaveBeenCalled();
     expect(resendModule.Resend).not.toHaveBeenCalled();
   });
@@ -258,12 +264,16 @@ describe("source-level guards", () => {
     expect(earlyReturnIdx).toBeLessThan(fetchIdx);
   });
 
-  it("/pricing routes Buy Now into gated intake and never POSTs directly to checkout", () => {
+  it("/pricing routes Buy Now to the one offered plan and never POSTs directly to checkout", () => {
     const src = readSrc("app/pricing/page.tsx");
     expect(src).toMatch(/preview-gate-client/);
     expect(src).toMatch(/Preview checkout disabled/);
-    expect(src).toContain('"/checkout?plan=done-for-you"');
     expect(src).toContain('"/checkout?plan=diy"');
+    // The held-tier entry point is gone, not merely unreachable: there is no
+    // ?plan=done-for-you or ?plan=contingency link left to follow.
+    // Quoted route literals only — the page comment explaining what was
+    // removed names the old URL, and that is documentation, not a link.
+    expect(src).not.toMatch(/["'`]\/checkout\?plan=(?!diy)/);
     expect(src).not.toContain('fetch("/api/checkout/session"');
   });
 });

@@ -1,0 +1,21 @@
+{
+  "sourceDocument": "04-CANONICAL-COPY-AND-BANNED-CLAIMS.md",
+  "sourceSha256": "a7577e68cdd07e79c16e6e53b786bbf579d73afd279e0e39c26ba2ad2932c499",
+  "strings": {
+    "CC-01": "OverTaxed IL analyzes public Cook County records and prepares a defined Assessor-stage appeal packet. You review it, sign it, and file it yourself.",
+    "CC-02": "This free check compares available public Cook County records. It estimates whether the evidence appears to support closer review. It does not predict whether an appeal will succeed or reduce taxes.",
+    "CC-03": "Appears supportive of closer review",
+    "CC-04": "Does not presently appear supportive",
+    "CC-05": "Insufficient evidence",
+    "CC-06": "Unsupported property/stage",
+    "CC-07": "Public records may be incomplete, out of date, or inconsistent. This analysis uses only what was retrievable at the time shown, and cannot account for condition, interior finish, or other facts the public record does not carry.",
+    "CC-09": "Your township is resolved from your address and PIN in the county's own records, not from your neighbourhood name. Chicago neighbourhoods can span more than one assessment township, and townships have different deadlines.",
+    "CC-10": "The $69 packet is a preparation service. We prepare it; you review it, sign it, and file it with the county yourself.",
+    "CC-11": "OverTaxed IL does not file, sign, prepare, handle, or represent anyone at the Cook County Board of Review. Under the Board's own rules, only a licensed attorney or the taxpayer personally may practise before it. If we ever offer anything at that stage, it would be attorney-led. Do not wait for us — confirm your own deadline with the county.",
+    "CC-12": "OverTaxed IL is not a law firm and does not provide legal or tax advice. We do not guarantee a reduction. County decisions are final, and a change in assessed value does not produce an equal change in a tax bill.",
+    "CC-13": "We refund in full if we do not deliver, or if the packet has a material defect we cannot correct. We do not charge at all if we cannot produce what we promised. No county outcome — granted, denied, or partial — creates a refund right.",
+    "CC-14": "Support covers how the packet works, where each figure came from, and corrections. It does not cover advice on whether to file or on the merits of your property. Up to two email exchanges within 14 days of delivery.",
+    "CC-15": "We can't advise you on that. Whether to appeal is your decision, and we're not able to weigh in on the merits of a specific property. The county publishes the records and the filing route free, and both are linked here.",
+    "CC-17": "We only sell a packet when the Assessor window is open for your resolved township, your property is class 2 residential in Cook County with a single PIN, and our sources were complete and current at the time of the check. If any of those is not true, checkout is closed and you are not charged."
+  }
+}

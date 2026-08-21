@@ -25,10 +25,18 @@ const howItWorks = [
       "We generate a comp report using recent sales of similar properties — the strongest evidence in any Cook County appeal.",
   },
   {
+    // "We monitor your township's calendar and notify you before your window
+    // closes" was a promise on two systems that do not exist. There is no
+    // monitor — `lib/deadlines/official-source-state.ts` refuses the committed
+    // snapshot outright, so no township has a verified window today — and there
+    // is no notifier: `app/api/cron/township-alerts` is retired and
+    // `/api/reminder` reports `stored: false, scheduled: false`. Promising to
+    // watch a deadline for someone is worse than saying nothing, because the
+    // reasonable response to it is to stop watching it themselves.
     icon: Bell,
-    title: "We track your deadlines",
+    title: "We show you where the deadline comes from",
     description:
-      "Cook County appeal windows vary by township. We monitor your township's calendar and notify you before your window closes.",
+      "Cook County appeal windows vary by township and are revised through the year. Where we can verify a township's window against the county's published calendar, we show you the date and when we read it. Where we cannot, we show no date and say so — and we point you at the county, which is the only source that can answer it today. Confirm your own filing deadline before you file.",
   },
   {
     icon: DollarSign,
@@ -59,7 +67,13 @@ export default function AboutPage() {
             Most Cook County homeowners don&apos;t know they can appeal their property tax assessment — and those who do often don&apos;t know where to start. The appeal process is time-sensitive, data-heavy, and easy to get wrong without the right tools.
           </p>
           <p className="text-gray-700 text-lg leading-relaxed">
-            OverTaxed IL was built to fix that. We pull your assessment data, generate a comparable sales packet, and give you everything you need to file a strong appeal — built around Cook County Assessor + Board of Review public records.
+            {/* Two changes. "a strong appeal" characterises the merits of a
+                case the county has not seen, which is the same claim class as
+                a success rate (BL-B2). And the Board of Review is dropped from
+                the provenance line: the packet is built from Assessor records
+                for an Assessor-stage appeal, so naming the Board here claimed
+                a source we do not use for a stage we do not serve. */}
+            OverTaxed IL was built to fix that. We pull your assessment data, generate a comparable sales packet, and give you the materials to prepare and file your own appeal — built around Cook County Assessor public records.
           </p>
         </div>
 

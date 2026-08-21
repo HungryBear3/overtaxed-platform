@@ -138,8 +138,8 @@ export function FreeCheckForm({ onResult, onReset }: Props) {
           <p className="text-xs text-gray-400 mt-1">Dashes are added automatically as you type</p>
           <p className="text-xs text-gray-500 mt-1">
             Find your PIN at{" "}
-            <a href="https://www.cookcountyassessor.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-              cookcountyassessor.com
+            <a href="https://www.cookcountyassessoril.gov" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+              cookcountyassessoril.gov
             </a>
           </p>
         </div>

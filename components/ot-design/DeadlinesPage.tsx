@@ -6,23 +6,60 @@ import { TOWNSHIPS, TOWNSHIPS_BY_SLUG } from "@/lib/townships";
 import { OT_PUBLIC_CONTACT } from "@/components/ot-design/SiteChrome";
 import {
   OFFICIAL_DEADLINE_SOURCES,
-  DEADLINE_VERIFY_NOTICE,
+  DEADLINE_PENDING_NOTICE,
   ASSESSOR_CALENDAR_URL,
 } from "@/lib/deadline-sources";
 import { analytics } from "@/lib/analytics/events";
-import { TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED } from "@/lib/appeals/township-deadlines";
+import { cc08 } from "@/lib/copy/canonical";
 import {
   buildTownship2026Views,
   count2026Views,
+  official2026Provenance,
   type Deadline2026Status,
   type Township2026View,
 } from "@/lib/deadlines-2026";
 
-// Built once from official Tax Year 2026 data. Townships without a published
-// Assessor Last File Date are "pending" and never show a specific date.
+// One evaluated state array for the whole page. The hero counts, the map dots,
+// the table, and the grid all read this — they used to be able to disagree,
+// because each derived its own notion of open from the same seed dates.
+//
+// A township with no verified state is "pending" and never shows a date. One
+// with a window the county has published but not yet opened is "upcoming",
+// which is a fact about the calendar; "pending" is a fact about us.
 const VIEWS: Township2026View[] = buildTownship2026Views();
 const COUNTS = count2026Views(VIEWS);
+const PROVENANCE = official2026Provenance(VIEWS);
 const PENDING_LABEL = "Pending official date";
+
+/**
+ * Reasons that are about *our* source, not about the county's calendar.
+ *
+ * The distinction is load-bearing in the copy below. "The Assessor has not
+ * posted this township yet" is a claim about the county, and it is only true
+ * when we read the calendar and the row was absent. When the snapshot itself
+ * is synthetic, stale, unfetched, or unparsed, we do not know what the county
+ * has posted, and saying otherwise attributes our own gap to them.
+ */
+const SOURCE_LEVEL_PENDING_REASONS = new Set([
+  "source_unavailable",
+  "synthetic_source",
+  "source_stale",
+  "source_from_future",
+  "parse_failed",
+]);
+
+/** True when nothing on this page is backed by a reading of the calendar. */
+const NOTHING_VERIFIED = COUNTS.official === 0;
+
+/** True when every pending row is pending because of our source, not the county's. */
+const ALL_PENDING_AT_SOURCE =
+  COUNTS.pending > 0 &&
+  VIEWS.every(
+    (v) =>
+      v.official ||
+      (v.pendingReason !== undefined &&
+        SOURCE_LEVEL_PENDING_REASONS.has(v.pendingReason)),
+  );
 const MAP_BBOX = "-88.45,41.45,-87.2055556,42.15";
 const MAP_IMAGE_SIZE = "1600,900";
 const SATELLITE_MAP_URL =
@@ -79,12 +116,25 @@ const MAP_DOTS: MapDot[] = [
   { name: "Worth", x: 56.7, y: 65.7 },
 ];
 
+/**
+ * Narrow the view status to what the analytics event contract accepts.
+ *
+ * `lib/analytics/events.ts` types this field as `open | closed | pending` and
+ * is outside the authorized file set for this change, so `upcoming` is reported
+ * as `pending` here. That under-reports one telemetry field — it never affects
+ * anything a reader sees — and widening the event union is left as a separate
+ * authorized change.
+ */
+function analyticsStatus(status: Deadline2026Status): "open" | "closed" | "pending" {
+  return status === "open" || status === "closed" ? status : "pending";
+}
+
 function trackingPayloadForTownship(t: Township2026View, source: "reminder_dropdown" | "township_grid" | "township_table" | "map_dot") {
   return {
     source,
     townshipSlug: t.slug,
     townshipName: t.name,
-    status: t.status,
+    status: analyticsStatus(t.status),
   } as const;
 }
 
@@ -105,6 +155,9 @@ function StatusPill({
 }) {
   const map: Record<Deadline2026Status, { label: string; cls: string; dot?: string }> = {
     open: { label: "Open", cls: "is-open" },
+    // Not open. It carries no CTA and no countdown, so it takes the closed
+    // treatment rather than the open one.
+    upcoming: { label: "Not yet open", cls: "is-closed", dot: "var(--ink-soft, #9a8f80)" },
     closed: { label: "Closed", cls: "is-closed" },
     pending: { label: "Pending date", cls: "is-closed", dot: "var(--ink-soft, #9a8f80)" },
   };
@@ -127,10 +180,21 @@ function DeadlinesHero() {
           <span className="ot-page-h1-tail">appeal deadlines.</span>
         </h1>
         <p className="ot-page-sub">
-          The {COUNTS.official} township{COUNTS.official === 1 ? "" : "s"} with a published
-          2026 filing deadline, straight from the Cook County Assessor&apos;s calendar. The rest
-          are marked pending until the Assessor posts them — we don&apos;t guess. Always confirm
-          your exact deadline with the county before filing.
+          {NOTHING_VERIFIED ? (
+            <>
+              We have not verified any township&apos;s 2026 filing deadline against the Cook
+              County Assessor&apos;s published calendar, so this page shows none. Every township
+              below is marked pending — we don&apos;t guess. Confirm your exact deadline with the
+              county before filing.
+            </>
+          ) : (
+            <>
+              The {COUNTS.official} township{COUNTS.official === 1 ? "" : "s"} with a 2026 filing
+              deadline we verified against the Cook County Assessor&apos;s calendar. The rest are
+              marked pending — we don&apos;t guess. Always confirm your exact deadline with the
+              county before filing.
+            </>
+          )}
         </p>
         <div className="ot-status-summary">
           <div className="ot-status-summary-item">
@@ -149,7 +213,9 @@ function DeadlinesHero() {
           </div>
         </div>
         <div className="ot-page-hero-meta">
-          Source: Cook County Assessor 2026 calendar, last updated {TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED}. Confirm with the county before filing.
+          {PROVENANCE
+            ? cc08({ source: PROVENANCE.source, timestamp: PROVENANCE.retrievedAt })
+            : "No township deadline on this page has been verified against the Cook County Assessor's published calendar, so none is shown. Confirm your filing deadline with the county before you file."}
         </div>
       </div>
     </section>
@@ -159,7 +225,7 @@ function DeadlinesHero() {
 function PageReminderCapture() {
   const [email, setEmail] = useState("");
   const [slug, setSlug] = useState("");
-  const [submitted, setSubmitted] = useState(false);
+  const [outcome, setOutcome] = useState<"idle" | "scheduled" | "recorded">("idle");
   const selectedView = VIEWS.find((t) => t.slug === slug);
 
   function selectTownship(nextSlug: string) {
@@ -170,12 +236,19 @@ function PageReminderCapture() {
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!email.trim() || !slug) return;
+    // Confirm what the endpoint reports doing, not that the request returned.
+    // `/api/reminder` is a preview stub: it stores nothing and schedules
+    // nothing, and it reports both. "You're set" over a discarded address is
+    // the one outcome a reader cannot detect for themselves.
+    let scheduled = false;
     try {
-      await fetch("/api/reminder", {
+      const res = await fetch("/api/reminder", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, townshipSlug: slug }),
       });
+      const data = (await res.json()) as { scheduled?: boolean };
+      scheduled = data?.scheduled === true;
     } catch {
       /* preview stub */
     }
@@ -183,22 +256,33 @@ function PageReminderCapture() {
       analytics.deadlineReminderSignup({
         townshipSlug: selectedView.slug,
         townshipName: selectedView.name,
-        status: selectedView.status,
+        status: analyticsStatus(selectedView.status),
       });
     }
-    setSubmitted(true);
+    setOutcome(scheduled ? "scheduled" : "recorded");
   }
 
-  if (submitted) {
+  if (outcome !== "idle") {
     const t = TOWNSHIPS_BY_SLUG[slug];
     return (
       <div className="ot-reminder-block ot-reminder-block-done">
         <div className="ot-reminder-block-check">✓</div>
-        <div className="ot-reminder-block-title">You&apos;re set.</div>
-        <p>
-          We&apos;ll email you when <strong>{t?.name} Township</strong>&apos;s official 2026
-          appeal deadline is posted by the Assessor, and again before it closes. Nothing else.
-        </p>
+        <div className="ot-reminder-block-title">
+          {outcome === "scheduled" ? "You're set." : "Request received."}
+        </div>
+        {outcome === "scheduled" ? (
+          <p>
+            We&apos;ll email you when <strong>{t?.name} Township</strong>&apos;s official
+            appeal deadline is posted by the Assessor, and again before it closes. Nothing else.
+          </p>
+        ) : (
+          <p>
+            We&apos;ve recorded your request, but reminder mail is not running yet —
+            so do not wait to hear from us. Confirm{" "}
+            <strong>{t?.name} Township</strong>&apos;s filing deadline with the Cook
+            County Assessor before you file.
+          </p>
+        )}
       </div>
     );
   }
@@ -210,8 +294,9 @@ function PageReminderCapture() {
         Get a reminder when your township&apos;s official deadline is posted.
       </h2>
       <p className="ot-reminder-block-body">
-        We&apos;ll email you when the Assessor publishes your township&apos;s 2026 deadline and
-        again before it closes. Nothing else.
+        Tell us where to write and we&apos;ll use it only for appeal-deadline
+        updates. Confirm your own filing deadline with the county in the
+        meantime — it is the only source that is authoritative today.
       </p>
       <form className="ot-reminder-block-form" onSubmit={submit}>
         <input
@@ -245,9 +330,11 @@ function PageReminderCapture() {
 
 const SORTERS: Record<string, (a: Township2026View, b: Township2026View) => number> = {
   soonest: (a, b) => {
-    // Official open windows first (soonest deadline), then closed, then pending.
+    // Open windows first (soonest deadline), then published-but-not-yet-open,
+    // then closed, then pending.
     const score = (t: Township2026View) => {
       if (t.status === "open") return t.daysUntilLastFile ?? 0;
+      if (t.status === "upcoming") return 50000;
       if (t.status === "closed") return 100000 + (t.daysUntilLastFile ?? 0);
       return 1000000; // pending — no date, sort last
     };
@@ -362,6 +449,7 @@ function TownshipsTable() {
   const filterButtons: Array<{ id: "all" | Deadline2026Status; label: string; count: number }> = [
     { id: "all", label: "All", count: VIEWS.length },
     { id: "open", label: "Open now", count: COUNTS.open },
+    { id: "upcoming", label: "Not yet open", count: COUNTS.upcoming },
     { id: "pending", label: "Pending date", count: COUNTS.pending },
     { id: "closed", label: "Closed", count: COUNTS.closed },
   ];
@@ -374,6 +462,7 @@ function TownshipsTable() {
       const d = t.daysUntilLastFile ?? 0;
       return d === 0 ? "closes today" : `${d} day${d === 1 ? "" : "s"} left`;
     }
+    if (t.status === "upcoming") return "not yet open";
     if (t.status === "closed") return "deadline passed";
     return "—";
   };
@@ -385,8 +474,19 @@ function TownshipsTable() {
           <h2 className="ot-h2">Official 2026 township deadlines.</h2>
           <p className="ot-tbl-note" style={{ fontSize: 14, color: "var(--ink-soft, #6b6258)", margin: "4px 0 0", maxWidth: "62ch" }}>
             Dates shown are the Cook County Assessor&apos;s official 2026 Last File Date.
-            Townships marked &ldquo;{PENDING_LABEL}&rdquo; have not been posted yet — we don&apos;t
-            estimate them. Confirm any date on the{" "}
+            {ALL_PENDING_AT_SOURCE ? (
+              <>
+                {" "}Townships marked &ldquo;{PENDING_LABEL}&rdquo; are ones we have not read
+                from the Assessor&apos;s calendar — we don&apos;t estimate them, and we don&apos;t
+                know whether the county has posted them.
+              </>
+            ) : (
+              <>
+                {" "}Townships marked &ldquo;{PENDING_LABEL}&rdquo; have not been posted yet — we
+                don&apos;t estimate them.
+              </>
+            )}{" "}
+            Confirm any date on the{" "}
             <a href={ASSESSOR_CALENDAR_URL} target="_blank" rel="noopener noreferrer">
               official Cook County Assessor calendar
             </a>{" "}
@@ -511,14 +611,16 @@ function BottomCheckCta() {
  * "Pending official date" — never an inferred window.
  */
 function TownshipGrid() {
-  const order: Deadline2026Status[] = ["open", "closed", "pending"];
+  const order: Deadline2026Status[] = ["open", "upcoming", "closed", "pending"];
   const heads: Record<Deadline2026Status, string> = {
     open: "Open now",
+    upcoming: "Not yet open",
     closed: "Closed",
     pending: "Pending official date",
   };
   const groups: Record<Deadline2026Status, Township2026View[]> = {
     open: VIEWS.filter((t) => t.status === "open"),
+    upcoming: VIEWS.filter((t) => t.status === "upcoming"),
     closed: VIEWS.filter((t) => t.status === "closed"),
     pending: VIEWS.filter((t) => t.status === "pending"),
   };
@@ -530,7 +632,11 @@ function TownshipGrid() {
             <h2 className="ot-h2">Township deadlines at a glance.</h2>
             <p className="ot-fullmap-sub">
               Grouped by the Assessor&apos;s official 2026 status. &ldquo;{PENDING_LABEL}&rdquo;
-              means the county hasn&apos;t posted that township yet — confirm yours before filing.
+              means{" "}
+              {ALL_PENDING_AT_SOURCE
+                ? "we have not read that township from the Assessor's calendar"
+                : "the county hasn't posted that township yet"}{" "}
+              — confirm yours before filing.
             </p>
           </div>
         </div>
@@ -583,7 +689,7 @@ function VerifyAndSources() {
         <h2 id="ot-verify-heading" className="ot-h2" style={{ marginTop: 0 }}>
           Verify your deadline before you file.
         </h2>
-        <p style={{ maxWidth: "60ch" }}>{DEADLINE_VERIFY_NOTICE}</p>
+        <p style={{ maxWidth: "60ch" }}>{DEADLINE_PENDING_NOTICE}</p>
         <ul className="ot-deadline-source-list">
           {OFFICIAL_DEADLINE_SOURCES.map((s) => (
             <li key={s.href} className="ot-deadline-source-item">
@@ -615,7 +721,9 @@ export default function DeadlinesPage() {
       openCount: COUNTS.open,
       closedCount: COUNTS.closed,
       pendingCount: COUNTS.pending,
-      sourceUpdated: TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED,
+      // The real retrieval backing the oldest date on the page, or empty when
+      // nothing verified. Never the day a constant was last edited.
+      sourceUpdated: PROVENANCE?.retrievedAt ?? "",
     });
   }, []);
 

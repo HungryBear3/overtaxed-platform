@@ -39,8 +39,11 @@ export default async function OG() {
               textTransform: "uppercase",
             }}
           >
-            Cook County · 2024–2026 cycle
+            Cook County property tax appeals
           </div>
+          {/* "Cook County is probably over-assessing your home" asserted an
+              outcome about a specific reader's property before any check has
+              run. The headline states what the check does instead. */}
           <div
             style={{
               display: "flex",
@@ -51,10 +54,13 @@ export default async function OG() {
               maxWidth: 900,
             }}
           >
-            Cook County is probably over-assessing your home.
+            See how your assessment compares to similar homes.
           </div>
+          {/* "We file the appeal for $97" prices and describes a held product
+              and is BL-A1/BL-A6; "free if we don't reduce your bill" is BL-A5
+              — an outcome-conditioned fee on a decision the county makes. */}
           <div style={{ display: "flex", fontSize: 36, color: "#5A5048", maxWidth: 900 }}>
-            Free 30-second check. We file the appeal for $97 — or free if we don&apos;t reduce your bill.
+            Free check. The $69 packet is a preparation service — we prepare it, you file it yourself.
           </div>
         </div>
         <div

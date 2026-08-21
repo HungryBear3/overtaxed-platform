@@ -5,8 +5,16 @@ import { z } from "zod"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
 import { getPropertyByPIN, normalizePIN } from "@/lib/cook-county"
-import { getFreeCheckAppealWindowStatus } from "@/lib/free-check-appeal-window"
-import { ASSESSOR_CALENDAR_URL, TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED } from "@/lib/appeals/township-deadlines"
+import deadlineSnapshot from "@/data/deadlines/cook-county.json"
+import {
+  evaluateOfficialDeadlineState,
+  type OfficialDeadlineSnapshot,
+} from "@/lib/deadlines/official-source-state"
+import {
+  RESOLUTION_SOURCE,
+  townshipKeyFromName,
+  type TownshipResolution,
+} from "@/lib/deadlines/township-resolution"
 
 const Body = z.object({
   action: z.enum(["approve", "reject", "revalidate"]),
@@ -14,16 +22,43 @@ const Body = z.object({
 
 const SAFE_REVIEW_STATUSES = new Set(["NOTICE_REVIEW_REQUIRED", "CHECKOUT_PENDING", "CHECKOUT_FAILED"])
 
-function snapshotForTownship(township: string) {
-  const window = getFreeCheckAppealWindowStatus(township)
+function snapshotForTownship(input: { township: string; pin: string; evaluatedAt: string }) {
+  const identity: TownshipResolution = {
+    inputKind: "pin",
+    normalizedPin: normalizePIN(input.pin),
+    normalizedAddress: null,
+    townshipKey: townshipKeyFromName(input.township),
+    townshipName: input.township,
+    resolutionSource: RESOLUTION_SOURCE,
+    resolvedAt: input.evaluatedAt,
+  }
+  const state = evaluateOfficialDeadlineState({
+    snapshot: deadlineSnapshot as unknown as OfficialDeadlineSnapshot,
+    township: identity,
+    stage: "assessor",
+    evaluatedAt: input.evaluatedAt,
+  })
+  if (state.kind === "pending") {
+    return {
+      township: input.township,
+      status: "unknown" as const,
+      openDate: null,
+      closeDate: null,
+      sourceUpdated: null,
+      sourceUrl: state.provenance?.sourceUrl ?? null,
+      verifiedAt: null,
+      pendingReason: state.reason,
+    }
+  }
   return {
-    township: window.township,
-    status: window.status,
-    openDate: window.openDate,
-    closeDate: window.closeDate,
-    sourceUpdated: TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED,
-    sourceUrl: ASSESSOR_CALENDAR_URL,
-    verifiedAt: `${TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED}T12:00:00.000Z`,
+    township: state.township.townshipName,
+    status: state.status,
+    openDate: state.openDate,
+    closeDate: state.lastFileDate,
+    sourceUpdated: state.provenance.sourceUpdatedAt,
+    sourceUrl: state.provenance.sourceUrl,
+    verifiedAt: state.evaluatedAt,
+    pendingReason: null,
   }
 }
 
@@ -72,7 +107,19 @@ export async function POST(request: NextRequest, context: { params: Promise<{ or
   if (parsed.data.action === "revalidate") {
     const property = order.propertyPin ? await getPropertyByPIN(normalizePIN(order.propertyPin)) : null
     const township = String(property && "data" in property && property.data ? ((property.data as unknown as Record<string, unknown>).township ?? order.township ?? "") : order.township ?? "")
-    const snapshot = snapshotForTownship(township)
+    const evaluatedAt = new Date().toISOString()
+    const snapshot = order.propertyPin && township
+      ? snapshotForTownship({ township, pin: order.propertyPin, evaluatedAt })
+      : {
+          township,
+          status: "unknown" as const,
+          openDate: null,
+          closeDate: null,
+          sourceUpdated: null,
+          sourceUrl: null,
+          verifiedAt: null,
+          pendingReason: "township_unresolved" as const,
+        }
     const updated = await prisma.oTOrder.updateMany({
       where: reviewCasWhere as any,
       data: {
@@ -81,7 +128,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ or
         windowOpenDate: snapshot.openDate ? new Date(`${snapshot.openDate}T12:00:00Z`) : null,
         windowCloseDate: snapshot.closeDate ? new Date(`${snapshot.closeDate}T12:00:00Z`) : null,
         windowSourceUpdated: snapshot.sourceUpdated,
-        windowVerifiedAt: new Date(snapshot.verifiedAt),
+        windowVerifiedAt: snapshot.verifiedAt ? new Date(snapshot.verifiedAt) : null,
         eligibilitySnapshot: snapshot,
         noticeReviewStatus: "REVALIDATED",
         noticeReviewActionAt: new Date(),

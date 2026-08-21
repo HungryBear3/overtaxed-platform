@@ -14,8 +14,22 @@ import { buttonVariants } from "@/components/ui/button";
 import { Check } from "lucide-react";
 import { isClientPreviewStubMode } from "@/lib/marketing/preview-gate-client";
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
+import { CC_10, CC_11, CC_12 } from "@/lib/copy/canonical";
 import "../ot-design.css";
 
+/**
+ * One tier, because only one is offered.
+ *
+ * The $97 "Done-For-You" and 22% "Contingency" tiers are removed rather than
+ * marked unavailable. Both were held products, and both described a service
+ * posture that is not merely paused but barred: "We submit the Board of Review
+ * forms" is BL-A2 — Board Rule 1 permits only a licensed attorney or the
+ * taxpayer personally to practise there, so that line could not be honoured at
+ * any price. "Full appeal management" and "Dedicated case manager" are BL-A6.
+ *
+ * Leaving them on the page greyed out would keep making the claim while
+ * removing only the ability to pay for it.
+ */
 const tiers = [
   {
     id: "T2",
@@ -34,41 +48,6 @@ const tiers = [
     href: null,
     popular: true,
   },
-  {
-    id: "T3",
-    name: "Done-For-You",
-    price: "$97",
-    priceSub: "one-time",
-    description: "We prepare the packet and submit the appeal after you sign authorization.",
-    features: [
-      "Everything in DIY Appeal Packet",
-      "Explicit filing authorization at checkout",
-      "We submit the Board of Review forms",
-      "Status tracking through decision",
-      "Phone + email support",
-    ],
-    cta: "Buy Now",
-    href: null,
-    popular: false,
-  },
-  {
-    id: "T4",
-    name: "Contingency",
-    price: "22%",
-    priceSub: "of first-year savings · $0 upfront · $50 minimum",
-    description:
-      "We handle everything. You pay only if the county reduces your assessment.",
-    features: [
-      "Everything in Done-For-You",
-      "No upfront cost",
-      "Fee applies only to granted savings",
-      "Full appeal management",
-      "Dedicated case manager",
-    ],
-    cta: "Request contingency review",
-    href: "/appeal-contingency",
-    popular: false,
-  },
 ];
 
 export default function PricingPage() {
@@ -83,7 +62,10 @@ export default function PricingPage() {
       return;
     }
     setError(null);
-    router.push(tierId === "T3" ? "/checkout?plan=done-for-you" : "/checkout?plan=diy");
+    // The T3 branch previously routed to /checkout?plan=done-for-you. There is
+    // no held-tier branch here any more: the only reachable plan is the packet.
+    void tierId;
+    router.push("/checkout?plan=diy");
   }
 
   return (
@@ -93,32 +75,20 @@ export default function PricingPage() {
       {/* Hero */}
       <section className="bg-white border-b border-gray-100 py-16 px-4 text-center">
         <h1 className="text-4xl font-bold text-gray-900 max-w-3xl mx-auto leading-tight">
-          Three clear ways to file your Cook County appeal
+          One way to file your Cook County appeal
         </h1>
         <p className="mt-4 text-lg text-gray-500 max-w-xl mx-auto">
-          DIY Appeal Packet ($69), Done-For-You filing ($97), or Contingency (22% of first-year savings only if the county grants a reduction). Every option is built around Cook County Assessor + Board of Review public records. We don&apos;t guarantee a reduction — county decisions are final.
+          {CC_10} {CC_12}
         </p>
       </section>
 
       {/* Pricing Grid */}
       <section className="max-w-6xl mx-auto px-4 py-16">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {/* One card, centred. "Most Popular" is also gone: with a single tier
+            it would be a comparative claim with nothing to compare against. */}
+        <div className="mx-auto max-w-sm">
           {tiers.map((tier) => (
-            <Card
-              key={tier.id}
-              className={`relative flex flex-col ${
-                tier.popular
-                  ? "border-blue-500 border-2 shadow-lg"
-                  : "border-gray-200"
-              }`}
-            >
-              {tier.popular && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                  <span className="bg-blue-500 text-white text-xs font-semibold px-3 py-1 rounded-full">
-                    Most Popular
-                  </span>
-                </div>
-              )}
+            <Card key={tier.id} className="relative flex flex-col border-blue-500 border-2 shadow-lg">
               <CardHeader className="pb-4">
                 <CardTitle className="text-lg font-bold text-gray-900">
                   {tier.name}
@@ -180,72 +150,24 @@ export default function PricingPage() {
         )}
       </section>
 
-      {/* Illustrative cost comparison */}
+      {/* The "How a flat packet compares to an attorney contingency" table is
+          removed, not relabelled. Every cell in its third column was a dollar
+          savings figure — "$2,000 if granted", "$1,903–$1,931 if granted" —
+          which BL-B3 bans outright, and calling it illustrative does not stop a
+          reader treating it as what they would get. It also equated a $2,000
+          assessment reduction with $2,000 kept, the exact one-to-one
+          assessment-to-bill equivalence BL-B6 bans and that CC-12, rendered on
+          this same page, explicitly denies. There is no version of this table
+          that keeps its point without making the claim. */}
+
       <section className="bg-white border-t border-gray-100 py-12 px-4">
         <div className="max-w-2xl mx-auto text-center">
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">
-            How a flat packet compares to an attorney contingency
+          <h2 className="text-2xl font-bold text-gray-900 mb-3">
+            What the packet is, and what it is not
           </h2>
-          <p className="text-gray-500 mb-2 text-sm">
-            Illustrative example only — your actual savings depend on the
-            reduction granted by the county and your township tax rate.
-          </p>
-          <div className="overflow-x-auto mt-6">
-            <table className="w-full text-sm border-collapse">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="text-left p-3 font-semibold text-gray-700 border border-gray-200">
-                    Option
-                  </th>
-                  <th className="text-right p-3 font-semibold text-gray-700 border border-gray-200">
-                    Cost
-                  </th>
-                  <th className="text-right p-3 font-semibold text-gray-700 border border-gray-200">
-                    You keep on a $2,000 illustrative reduction
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td className="p-3 border border-gray-200 text-gray-600">
-                    DIY filing (no help)
-                  </td>
-                  <td className="p-3 border border-gray-200 text-right text-gray-600">
-                    $0
-                  </td>
-                  <td className="p-3 border border-gray-200 text-right text-gray-600">
-                    $2,000 if granted
-                  </td>
-                </tr>
-                <tr className="bg-blue-50">
-                  <td className="p-3 border border-gray-200 font-semibold text-blue-800">
-                    OverTaxed IL DIY packet ($69) or DFY ($97)
-                  </td>
-                  <td className="p-3 border border-gray-200 text-right font-semibold text-blue-800">
-                    Flat $69 or $97
-                  </td>
-                  <td className="p-3 border border-gray-200 text-right font-semibold text-blue-800">
-                    $1,903–$1,931 if granted
-                  </td>
-                </tr>
-                <tr>
-                  <td className="p-3 border border-gray-200 text-gray-600">
-                    Attorney contingency
-                  </td>
-                  <td className="p-3 border border-gray-200 text-right text-gray-600">
-                    Percentage of savings (varies by firm)
-                  </td>
-                  <td className="p-3 border border-gray-200 text-right text-gray-600">
-                    Whatever the contingency leaves you with
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p className="text-xs text-gray-400 mt-4">
-            OverTaxed IL is not a law firm. Attorney fees vary widely — check
-            your attorney&apos;s engagement letter for their actual rate.
-          </p>
+          <p className="text-gray-600 text-sm mb-3">{CC_10}</p>
+          <p className="text-gray-600 text-sm mb-3">{CC_12}</p>
+          <p className="text-gray-600 text-sm">{CC_11}</p>
         </div>
       </section>
 

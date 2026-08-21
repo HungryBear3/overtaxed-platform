@@ -1,34 +1,89 @@
 // Email templates – return { subject, text, html }
 
+import { cc08 } from "@/lib/copy/canonical"
+
+/** The one authorized spelling of the Assessor calendar host. */
+const ASSESSOR_SOURCE_NAME = "the Cook County Assessor"
+
+/**
+ * Render a canonical last-filing day for a reader.
+ *
+ * Noon UTC and an explicit UTC time zone, so a `yyyy-mm-dd` the county
+ * published never slips a day on the way into a mailbox.
+ */
+function formatCountyDate(lastFileDate: string): string {
+  return new Date(`${lastFileDate}T12:00:00Z`).toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  })
+}
+
+/**
+ * The appeal-deadline reminder.
+ *
+ * Every date-bearing field here now arrives from the canonical projection and
+ * from nowhere else. The previous version took a `deadline: Date` read straight
+ * off `appeal.filingDeadline` — a column a customer typed into a form, or that
+ * the app derived as "notice date + 30 days" — plus a `daysRemaining` the
+ * caller computed by subtracting today from it. It then published both, to a
+ * named homeowner, with no source and no retrieval timestamp.
+ *
+ * `lastFileDate`, `daysRemaining`, `officialSourceUrl` and `retrievedAt` are
+ * therefore all required and all non-nullable: there is no shape of this
+ * template that renders a date without the provenance BL-F4 requires, and no
+ * shape that renders a countdown the projection did not compute. A caller with
+ * only a persisted date cannot construct the arguments.
+ */
 export function deadlineReminderTemplate(args: {
-  userEmail: string
   userName?: string | null
   propertyAddress: string
   pin: string
-  township?: string | null
+  township: string
   taxYear: number
-  deadline: Date
+  /** Canonical last filing day (`yyyy-mm-dd`) from the projection. */
+  lastFileDate: string
+  /** Render-time countdown from the projection. Never a local subtraction. */
   daysRemaining: number
+  /** The authority page the date was published on. */
+  officialSourceUrl: string
+  /** When that page was retrieved. */
+  retrievedAt: string
   appealLink: string
 }): { subject: string; text: string; html: string } {
-  const { userName, propertyAddress, pin, township, taxYear, deadline, daysRemaining, appealLink } = args
-  const formattedDeadline = deadline.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+  const {
+    userName,
+    propertyAddress,
+    pin,
+    township,
+    taxYear,
+    lastFileDate,
+    daysRemaining,
+    officialSourceUrl,
+    retrievedAt,
+    appealLink,
+  } = args
 
-  const subject = `[Action Required] ${daysRemaining} day${daysRemaining !== 1 ? "s" : ""} left to file your ${taxYear} appeal`
+  const formattedDeadline = formatCountyDate(lastFileDate)
+  const dayWord = daysRemaining === 1 ? "day" : "days"
+  const freshness = cc08({ source: ASSESSOR_SOURCE_NAME, timestamp: retrievedAt })
 
-  const townshipLine = township ? `Township: ${township}\n` : ""
+  const subject = `[Action Required] ${daysRemaining} ${dayWord} left to file your ${taxYear} appeal`
 
   const text = `Hi${userName ? ` ${userName}` : ""},
 
 Your ${taxYear} property tax appeal deadline is approaching.
 
 Property: ${propertyAddress} (PIN ${pin})
-${townshipLine}Deadline: ${formattedDeadline} (${daysRemaining} days remaining)
+Township: ${township}
+Deadline: ${formattedDeadline} (${daysRemaining} ${dayWord} remaining)
 
 Log in to complete and file your appeal:
 ${appealLink}
 
-You can also sign up for Cook County's reassessment notifications: https://www.cookcountyassessor.com/assessment-calendar-and-deadlines
+${freshness}
+${officialSourceUrl}
 
 – The OverTaxed IL Team
 `
@@ -37,11 +92,11 @@ You can also sign up for Cook County's reassessment notifications: https://www.c
 <p>Your <strong>${taxYear} property tax appeal</strong> deadline is approaching.</p>
 <table cellpadding="4" style="margin:16px 0">
 <tr><td style="color:#6b7280">Property:</td><td><strong>${propertyAddress}</strong> (PIN ${pin})</td></tr>
-${township ? `<tr><td style="color:#6b7280">Township:</td><td><strong>${township}</strong></td></tr>` : ""}
-<tr><td style="color:#6b7280">Deadline:</td><td><strong>${formattedDeadline}</strong> (${daysRemaining} days remaining)</td></tr>
+<tr><td style="color:#6b7280">Township:</td><td><strong>${township}</strong></td></tr>
+<tr><td style="color:#6b7280">Deadline:</td><td><strong>${formattedDeadline}</strong> (${daysRemaining} ${dayWord} remaining)</td></tr>
 </table>
 <p><a href="${appealLink}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">View Your Appeal</a></p>
-<p><a href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines">Sign up for Cook County&apos;s reassessment notifications</a></p>
+<p style="color:#6b7280;font-size:13px">${freshness} <a href="${officialSourceUrl}">${officialSourceUrl}</a></p>
 <p>— The OverTaxed IL Team</p>`
 
   return { subject, text, html }
@@ -148,7 +203,7 @@ ${startAppealLink}
 
 View the full calendar: ${calendarUrl}
 
-Sign up for Cook County's reassessment notifications: https://www.cookcountyassessor.com/assessment-calendar-and-deadlines
+Sign up for Cook County's reassessment notifications: https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines
 
 – The OverTaxed IL Team
 `
@@ -163,7 +218,7 @@ Sign up for Cook County's reassessment notifications: https://www.cookcountyasse
 <p>You don't have an appeal started yet for this property. Start one now to meet the deadline.</p>
 <p><a href="${startAppealLink}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">Start Appeal</a></p>
 <p><a href="${calendarUrl}">View full calendar</a></p>
-<p><a href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines">Sign up for Cook County&apos;s reassessment notifications</a></p>
+<p><a href="https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines">Sign up for Cook County&apos;s reassessment notifications</a></p>
 <p>— The OverTaxed IL Team</p>`
 
   return { subject, text, html }
@@ -335,55 +390,31 @@ ${accountLink}
   return { subject, text, html }
 }
 
-const SITE_URL = "https://www.overtaxed-il.com"
-const MEANINGFUL_SAVINGS_THRESHOLD = 100
-
-// Pure helper — testable without DB
+/**
+ * The free-check follow-up email is withdrawn.
+ *
+ * What stood here composed, from a `MEANINGFUL_SAVINGS_THRESHOLD = 100` gate,
+ * a message whose subject line was "Your free check result: $X/year in
+ * potential savings" and whose body told the reader their property "appears to
+ * be over-assessed" and that they "may be overpaying by approximately $X/year
+ * — that's $Y over a typical 3-year assessment cycle", above a "Start Your
+ * Appeal — no attorney required" button and a scarcity line about windows
+ * opening once a year.
+ *
+ * Every one of those is a banned claim: an averaged savings figure and a
+ * dollar projection (BL-B1/B3), a merits finding about the reader's property
+ * (BL-C3), an urgency-to-file CTA (BL-C2), and an unsigned eligibility
+ * threshold the four-state contract forbids. The template had no production
+ * caller, so nothing is being taken away from a live path — but leaving a
+ * ready-made banned-claims email in the module is an invitation to wire it.
+ *
+ * `shouldSendFreeCheckFollowup` is kept and always refuses, so a caller that
+ * is added later fails closed instead of finding no gate at all. Reinstating a
+ * follow-up needs approved copy and a signed eligibility policy (OD-2/OD-3).
+ */
 export function shouldSendFreeCheckFollowup(
-  potentialSavings: number | null | undefined,
-  followupStep: number,
+  _potentialSavings: number | null | undefined,
+  _followupStep: number,
 ): boolean {
-  return (potentialSavings ?? 0) >= MEANINGFUL_SAVINGS_THRESHOLD && followupStep === 0
-}
-
-export function freeCheckFollowupTemplate(args: {
-  address: string
-  potentialSavings: number
-}): { subject: string; text: string; html: string } {
-  const { address, potentialSavings } = args
-  const fmt = (n: number) =>
-    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)
-
-  const ctaUrl = `${SITE_URL}/auth/signup`
-  const subject = `Your free check result: ${fmt(potentialSavings)}/year in potential savings`
-
-  const text = [
-    `Your property at ${address} appears to be over-assessed.`,
-    ``,
-    `Based on comparable properties in your area, you may be overpaying by approximately ${fmt(potentialSavings)}/year — that's ${fmt(potentialSavings * 3)} over a typical 3-year assessment cycle.`,
-    ``,
-    `Start your appeal — no attorney required, takes about 5 minutes:`,
-    `${ctaUrl}`,
-    ``,
-    `Appeal windows are 30–90 days and only open once a year. Acting now means you won't miss it.`,
-    ``,
-    `— The OverTaxed IL Team`,
-    ``,
-    `To unsubscribe from these emails, reply with "unsubscribe".`,
-  ].join("\n")
-
-  const html = `
-    <div style="font-family:sans-serif;max-width:540px;margin:0 auto;color:#1f2937;line-height:1.6;">
-      <p style="font-size:22px;font-weight:700;color:#92400e;margin:0 0 4px;">${fmt(potentialSavings)}/year in potential savings</p>
-      <p style="margin:0 0 16px;color:#6b7280;font-size:14px;">${address}</p>
-      <p style="margin:0 0 16px;">Your property appears to be <strong>over-assessed</strong> compared to similar properties nearby. Based on that analysis, you may be overpaying by approximately <strong>${fmt(potentialSavings)}/year</strong> — <strong>${fmt(potentialSavings * 3)}</strong> over a typical 3-year assessment cycle.</p>
-      <p style="margin:0 0 20px;">An appeal takes about 5 minutes to start. No attorney required.</p>
-      <a href="${ctaUrl}" style="display:inline-block;padding:12px 28px;background:#1e40af;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:16px;">Start Your Appeal →</a>
-      <p style="margin:20px 0 0;font-size:13px;color:#6b7280;">Appeal windows are 30–90 days and open once a year — don't miss yours.</p>
-      <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
-      <p style="font-size:12px;color:#9ca3af;">OverTaxed IL · 1028 W Leland Ave, Chicago IL 60640<br/>To unsubscribe, reply to this email.</p>
-    </div>
-  `.trim()
-
-  return { subject, text, html }
+  return false
 }

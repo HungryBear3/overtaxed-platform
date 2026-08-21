@@ -5,7 +5,30 @@
 
 import type { Prisma } from "@prisma/client"
 import { prisma } from "@/lib/db"
-import { createAndSendStripeInvoice } from "@/lib/billing/stripe-invoice"
+import { isHeldProduct } from "@/lib/products/held"
+
+/**
+ * The contingency fee is a held product. The Stripe invoice helper is NOT
+ * imported at module scope, because doing so pulled the provider client into
+ * this module's import graph ahead of any hold assertion. It is dynamically
+ * imported only after a hold check passes.
+ */
+const BOUNDARY = "lib/billing/performance-fee"
+
+/**
+ * Dynamically acquires the contingency invoice helper. Only reachable after the
+ * caller's own hold assertion; the helper re-asserts its own hold as well.
+ */
+async function sendContingencyInvoice(args: {
+  ourInvoiceId: string
+  userId: string
+  amount: number
+  invoiceNumber: string
+  description?: string
+}) {
+  const { createAndSendStripeInvoice } = await import("@/lib/billing/stripe-invoice")
+  return createAndSendStripeInvoice(args)
+}
 
 const FEE_PERCENTAGE = 0.22
 
@@ -106,6 +129,11 @@ export async function shouldCreatePerformanceInvoice(
   | { should: true; savings: ThreeYearSavingsResult; paymentOption: "UPFRONT" | "INSTALLMENTS" }
   | { should: false; reason?: string }
 > {
+  // Held: refuse before computing any contingency eligibility or reading appeals.
+  if (isHeldProduct("PERFORMANCE_INVOICE")) {
+    return { should: false, reason: `product_held:${BOUNDARY}` }
+  }
+
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
@@ -186,6 +214,11 @@ export async function createPerformanceFeeInvoice(
   savings: ThreeYearSavingsResult,
   paymentOption: "UPFRONT" | "INSTALLMENTS"
 ): Promise<{ invoiceIds: string[] }> {
+  // Held: refuse before creating any invoice row or acquiring a provider.
+  if (isHeldProduct("PERFORMANCE_INVOICE")) {
+    return { invoiceIds: [] }
+  }
+
   const invoiceIds: string[] = []
   const dueOffsetDays = 30
 
@@ -236,7 +269,7 @@ export async function createPerformanceFeeInvoice(
       },
     })
     invoiceIds.push(invoice.id)
-    const stripeResult = await createAndSendStripeInvoice({
+    const stripeResult = await sendContingencyInvoice({
       ourInvoiceId: invoice.id,
       userId,
       amount: savings.feeAmount,
@@ -281,7 +314,7 @@ export async function createPerformanceFeeInvoice(
       },
     })
     invoiceIds.push(inv.id)
-    const stripeResult = await createAndSendStripeInvoice({
+    const stripeResult = await sendContingencyInvoice({
       ourInvoiceId: inv.id,
       userId,
       amount,

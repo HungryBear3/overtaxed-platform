@@ -14,6 +14,8 @@
 import fs from "fs";
 import path from "path";
 
+import { CC_12 } from "@/lib/copy/canonical";
+
 const ROOT = path.resolve(__dirname, "../..");
 
 function read(rel: string): string {
@@ -132,8 +134,11 @@ describe("OT v2 marketing — funnel CTAs", () => {
 
   it("homepage PIN hint no longer uses href=\"#\"", () => {
     const src = read("components/ot-design/HomePage.tsx");
-    // The PIN hint block must not be a no-op link anymore.
-    expect(src).toMatch(/cookcountyassessor\.com\/address-search/);
+    // The PIN hint block must not be a no-op link anymore, and it must point
+    // at the one host the controller authorized on 2026-08-19. Both halves are
+    // asserted: a real destination, and the canonical spelling of it.
+    expect(src).toMatch(/cookcountyassessoril\.gov\/address-search/);
+    expect(src).not.toMatch(/cookcountyassessor\.com/);
     expect(src).not.toMatch(/href="#" onClick=\{\(e\) => e\.preventDefault\(\)\}/);
   });
 });
@@ -164,9 +169,16 @@ describe("OT v2 marketing — legal copy disclaimers", () => {
     expect(src).toMatch(/not a law firm/i);
   });
 
-  it("/pricing keeps the not-a-law-firm disclaimer", () => {
+  // /pricing no longer carries the disclaimer as a literal in its own source.
+  // It renders canonical CC-12, which is the single definition of that
+  // sentence; a raw-source grep would now fail on a page that satisfies the
+  // requirement more strictly than before. The assertion follows the string to
+  // where it is defined rather than asserting a duplicate exists.
+  it("/pricing renders the canonical not-a-law-firm disclaimer", () => {
     const src = read("app/pricing/page.tsx");
-    expect(src).toMatch(/not a law firm/i);
+    expect(src).toMatch(/import\s*\{[^}]*\bCC_12\b[^}]*\}\s*from\s*"@\/lib\/copy\/canonical"/);
+    expect(src).toContain("{CC_12}");
+    expect(CC_12).toMatch(/not a law firm/i);
   });
 
   it("/homestead-exemption keeps the not-a-law-firm + no-guarantee disclaimer", () => {
@@ -241,11 +253,24 @@ describe("OT v2 marketing — township deadline source of truth", () => {
   it("/townships renders from lib/townships instead of a duplicate hardcoded dataset", () => {
     const src = read("app/townships/page.tsx");
     expect(src).toMatch(/from\s+["']@\/lib\/townships["']/);
-    expect(src).toMatch(/TOWNSHIP_STATUS_COUNTS/);
+    // Was `TOWNSHIP_STATUS_COUNTS` — a status tally this page kept for itself,
+    // computed from the seed dates in lib/townships.ts. Counts now come from
+    // the same canonical view model /deadlines reads, which is what stops the
+    // two pages from disagreeing.
+    expect(src).not.toMatch(/TOWNSHIP_STATUS_COUNTS/);
+    expect(src).toMatch(/count2026Views/);
+    expect(src).toMatch(/from\s+["']@\/lib\/deadlines-2026["']/);
     expect(src).not.toMatch(/const townships = \[/);
     expect(src).not.toMatch(/Northwest District/);
     expect(src).not.toMatch(/Berwyn[\s\S]{0,240}2028/);
     expect(src).not.toMatch(/Oak Park[\s\S]{0,240}2028/);
+  });
+
+  it("/townships attributes its dates or shows none", () => {
+    const src = read("app/townships/page.tsx");
+    // CC-08: a source and a retrieval instant wherever a deadline appears.
+    expect(src).toMatch(/official2026Provenance/);
+    expect(src).toMatch(/cc08/);
   });
 
   it("home sample and pricing copy no longer references Jefferson or equity-ratio language", () => {
@@ -311,18 +336,44 @@ describe("OT v2 marketing — launch-blocker copy guards", () => {
     expect(src).not.toMatch(/PIN 18-06-214-011-0000/);
   });
 
-  it("ticker copy never renders a 0-days deadline state", () => {
+  it("the ticker runs no countdown and holds no date of its own", () => {
     const src = read("lib/townships.ts");
-    expect(src).toMatch(/closes today/);
-    expect(src).not.toMatch(/closes in \$\{[^}]+\} day/);
-    expect(src).toMatch(/Township schedules checked regularly/);
+    // Was: require the string "closes today" (the 0-day special case) and the
+    // standing line "Township schedules checked regularly". Both are gone. The
+    // countdown is gone because the ticker renders to an anonymous reader —
+    // the informational tier never counts down — and the standing line is gone
+    // because nothing checked anything regularly.
+    // Read past the doc comments — they quote the removed copy in order to
+    // record what was removed and why, which is evidence, not behaviour.
+    const body = src
+      .replace(/\/\*\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
+    expect(body).not.toMatch(/closes today/);
+    expect(body).not.toMatch(/closes in \$\{[^}]+\} day/);
+    expect(body).not.toMatch(/Township schedules checked regularly/);
+    // And the roster carries no date literal at all, so no future edit can
+    // rebuild a countdown from it without re-adding the data.
+    expect(body).not.toMatch(/\b(19|20)\d{2}-\d{2}-\d{2}\b/);
+    expect(body).not.toMatch(/REFERENCE_DATE/);
+  });
+
+  it("the ticker announces only windows the canonical state verified", () => {
+    const src = read("lib/townships.ts");
+    expect(src).toMatch(/describeTownshipCalendar/);
+    expect(src).toMatch(/projection\.status !== "open"/);
   });
 
   it("flat-fee FAQ states the $69 fee is paid regardless of outcome", () => {
     const src = read("components/ot-design/HomePage.tsx");
-    expect(src).toMatch(/\$69 DIY packet is a flat service fee/);
-    expect(src).toMatch(/paid regardless of outcome/);
-    expect(src).toMatch(/procedural error causes the county to reject/);
+    expect(src).toMatch(/\$69 packet is a flat fee/);
+    expect(src).toMatch(/paid regardless of what the county decides/);
+    // The third assertion used to require the homepage FAQ to restate the
+    // Terms of Service refund rule ("procedural error causes the county to
+    // reject"). That rule is an owner policy term (OD-5, unsigned) and having
+    // two copies of it in two places is how the two drift apart. The homepage
+    // renders CC-12 instead, which is the canonical statement of what we do
+    // and do not promise about the county's decision.
+    expect(src).toMatch(/\$\{CC_12\}/);
   });
 
   it("legacy packet and contingency pages use OT chrome and Cook County-scoped copy", () => {
@@ -334,13 +385,30 @@ describe("OT v2 marketing — launch-blocker copy guards", () => {
       expect(src).toMatch(/SiteFooter/);
       expect(src).toMatch(/ot-root/);
       expect(src).toMatch(/Cook County/);
-      expect(src).toMatch(/not legal advice|not a law firm/i);
     }
+
+    expect(packet).toMatch(/not legal advice|not a law firm/i);
+
+    // /appeal-contingency no longer carries the disclaimer as a literal. It
+    // renders canonical CC-12, the single definition of that sentence, so the
+    // assertion follows the string to where it is defined rather than
+    // requiring a duplicate copy to exist in the page source.
+    expect(contingency).toMatch(
+      /import\s*\{[^}]*\bCC_12\b[^}]*\}\s*from\s*"@\/lib\/copy\/canonical"/,
+    );
+    expect(contingency).toContain("{CC_12}");
+    expect(CC_12).toMatch(/not a law firm/i);
 
     expect(packet).not.toMatch(/Works for all Illinois counties|County Deadline Calendar|Illinois Homeowners|⚡|🏠|🔁/);
     expect(contingency).not.toMatch(/You only pay if\s+we win|Get My Free Assessment|placeholder="Jane Smith"|propertyPin/);
-    expect(contingency).toMatch(/If the Board of Review grants a reduction/);
-    expect(contingency).toMatch(/22% of first-year tax savings/);
+
+    // These two used to require the contingency terms to be *stated* on the
+    // page — a sound guard while the product was offered, and exactly
+    // backwards now that it is withdrawn. A page that still names the 22% and
+    // the "if the Board grants a reduction" condition is still making the
+    // offer, however the surrounding copy is framed.
+    expect(contingency).not.toMatch(/If the Board of Review grants a reduction/);
+    expect(contingency).not.toMatch(/22% of first-year tax savings/);
   });
 
   it("free-check sample address returns an illustrative sample instead of a silent 400", () => {

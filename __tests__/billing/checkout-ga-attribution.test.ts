@@ -83,7 +83,7 @@ describe("legacy billing checkout creators do not claim GA purchase support", ()
     }))
   })
 
-  it("does not bind GA identifiers on contingency invoice checkout metadata", async () => {
+  it("rejects held contingency invoice checkout before Stripe or GA metadata", async () => {
     const { POST } = await import("@/app/api/billing/pay-invoice/route")
     const response = await POST(new Request("https://www.overtaxed-il.com/api/billing/pay-invoice", {
       method: "POST",
@@ -96,19 +96,12 @@ describe("legacy billing checkout creators do not claim GA purchase support", ()
       }),
     }) as never)
 
-    expect(response.status).toBe(200)
-    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
-      metadata: expect.objectContaining({
-        invoiceId: "inv_1",
-      }),
-    }))
-    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
-      metadata: expect.not.objectContaining({
-        gaClientId: expect.anything(),
-        gaSessionId: expect.anything(),
-        gaSessionNumber: expect.anything(),
-      }),
-    }))
+    expect(response.status).toBe(410)
+    expect(await response.json()).toMatchObject({
+      code: "PRODUCT_HELD",
+      product: "PERFORMANCE_INVOICE",
+    })
+    expect(createMock).not.toHaveBeenCalled()
   })
 
   it("leaves no invoice-page GA metadata plumbing in source", () => {
@@ -117,6 +110,7 @@ describe("legacy billing checkout creators do not claim GA purchase support", ()
 
     expect(pendingInvoicesSource).not.toContain("getAnonymousGaIdentifiersForRequest")
     expect(pendingInvoicesSource).not.toContain("gaClientId")
-    expect(pendingInvoicesSource).toContain("body: JSON.stringify({ invoiceId })")
+    expect(pendingInvoicesSource).not.toContain("fetch(")
+    expect(pendingInvoicesSource).toContain("return null")
   })
 })

@@ -77,8 +77,12 @@ describe("/hoa copy + contract stance", () => {
         pattern: /may find appeal opportunities they otherwise would have missed/i,
       },
       {
-        label: "states 'Updated for 2026 Cook County appeal windows'",
-        pattern: /Updated for 2026 Cook County appeal windows/i,
+        label: "names the county as the authority on filing dates",
+        pattern: /confirm (yours|it) (directly )?at https:\/\/www\.cookcountyassessoril\.gov/i,
+      },
+      {
+        label: "says the deadline pages show a date only where it was verified",
+        pattern: /verified against the county's calendar/i,
       },
       { label: "declares 'no vendor agreement'", pattern: /no vendor agreement/i },
       { label: "declares 'no referral fees'", pattern: /no referral fees/i },
@@ -90,6 +94,16 @@ describe("/hoa copy + contract stance", () => {
         expect(text).toMatch(pattern);
       });
     }
+
+    it("makes no standing currency claim about the appeal windows", () => {
+      // Was a required assertion: "Updated for 2026 Cook County appeal
+      // windows". A board pastes this notice into a newsletter that is read
+      // months later, so the sentence outlives whatever was true when it was
+      // written — and with no verified snapshot it was never true at all.
+      expect(text).not.toMatch(/Updated for 2026 Cook County appeal windows/i);
+      expect(text).not.toMatch(/refreshed (monthly|weekly|daily)/i);
+      expect(text).not.toMatch(/current appeal windows/i);
+    });
   });
 
   describe("notice templates", () => {
@@ -138,30 +152,42 @@ describe("/hoa copy + contract stance", () => {
     });
   });
 
-  describe("resident-resource flyer download", () => {
-    it("renders a PDF download link to the resource asset", () => {
-      expect(html).toMatch(/href="\/resources\/overtaxed-hoa-resident-resource\.pdf"/);
+  describe("resident-resource flyer withdrawal", () => {
+    // These five cases previously asserted that the page served
+    // `/resources/overtaxed-hoa-resident-resource.{pdf,html}` from two
+    // surfaces. The flyer carries a standing "Current appeal windows" badge, a
+    // "Refreshed monthly" line, and a description of /deadlines as a table of
+    // open and close dates for all 38 townships — none of which is true, and
+    // none of which can be corrected, because the JSX it was rendered from is
+    // not in this repository. A printed sheet pinned in a lobby is the worst
+    // carrier in the product for a date we cannot attribute, so the surface is
+    // withdrawn rather than disclaimed.
+    it("serves no flyer asset from any surface", () => {
+      expect(html).not.toMatch(/overtaxed-hoa-resident-resource\.pdf/);
+      expect(html).not.toMatch(/overtaxed-hoa-resident-resource\.html/);
+      expect(html).not.toMatch(/data-action="download-hoa-resource"/);
     });
-    it("renders an HTML preview link to the resource asset", () => {
-      expect(html).toMatch(/href="\/resources\/overtaxed-hoa-resident-resource\.html"/);
-    });
-    it("download buttons surface BOTH from hero and from resident_notice_section", () => {
+
+    it("offers the live deadlines page from both surfaces instead", () => {
       const sources = [
-        ...html.matchAll(/data-action="download-hoa-resource"\s+data-format="(?:html|pdf)"\s+data-source="(hero|resident_notice_section)"/g),
+        ...html.matchAll(
+          /data-action="hoa-resource-deadlines"\s+data-source="(hero|resident_notice_section)"/g,
+        ),
       ].map((m) => m[1]);
-      // Each surface should have BOTH format buttons (html + pdf).
-      const hero = sources.filter((s) => s === "hero").length;
-      const notice = sources.filter((s) => s === "resident_notice_section").length;
-      expect(hero).toBe(2);
-      expect(notice).toBe(2);
+      expect(sources).toContain("hero");
+      expect(sources).toContain("resident_notice_section");
     });
-    it("uses the brief's quiet CTA + secondary helper text", () => {
-      expect(text).toMatch(/Download the resident resource flyer/);
+
+    it("links the county calendar at the canonical .gov host, in a new tab", () => {
+      expect(html).toMatch(
+        /href="https:\/\/www\.cookcountyassessoril\.gov\/assessment-calendar-and-deadlines"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/,
+      );
+      expect(html).not.toContain("cookcountyassessor.com");
+    });
+
+    it("says plainly that the printable flyer is no longer published", () => {
+      expect(text).toMatch(/no longer publish a printable deadline flyer/i);
       expect(text).toMatch(/Prefer to copy-paste\? Use the notices below\./);
-    });
-    it("the HTML preview link opens in a new tab with rel=noopener", () => {
-      // Avoids window.opener leak when residents click through.
-      expect(html).toMatch(/href="\/resources\/overtaxed-hoa-resident-resource\.html"[^>]*target="_blank"[^>]*rel="noopener"/);
     });
   });
 

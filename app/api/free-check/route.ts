@@ -16,7 +16,13 @@ import {
 } from "@/lib/cook-county"
 import type { PropertyData, SalesRecord, EquityRecord } from "@/lib/cook-county"
 import { rateLimit, getClientIdentifier } from "@/lib/rate-limit"
-import { getFreeCheckAppealWindowStatus } from "@/lib/free-check-appeal-window"
+import {
+  getFreeCheckAppealWindowStatus,
+  evaluateFreeCheckOutcome,
+  type FreeCheckEvidence,
+  type FreeCheckOutcome,
+} from "@/lib/free-check-appeal-window"
+import { CC_02, CC_05, CC_07 } from "@/lib/copy/canonical"
 import { normalizeFreeCheckSearchInput } from "@/lib/free-check-address"
 import {
   hostFromRequest,
@@ -83,19 +89,44 @@ const PREVIEW_FREE_CHECK_SAMPLE = {
   avgComparableAssessedValue: 35100,
   equityRatio: 12.1,
   targetEquityRatio: 10.0,
-  avgCompEquityRatio: 10.0,
+  avgCompEquityRatio: 10.3,
   assessmentGap: 7400,
-  potentialOverpaymentPerYear: 1420,
-  potentialOverpayment3Year: 4260,
-  appealArgumentText:
-    "[preview sample — illustrative only] The subject property's assessment exceeds comparable Cicero Township properties.",
+  // No projected overpayment. The sample used to carry $1,420/yr and $4,260 over
+  // three years, and those two figures escaped: `components/ot-design/HomePage.tsx`
+  // spread this object as the base of every normalized result, so a real check
+  // missing a field inherited them and displayed them as its own.
+  potentialOverpaymentPerYear: null,
+  potentialOverpayment3Year: null,
+  appealArgumentText: null,
+  disclosure: CC_02,
+  sourceCaveat: CC_07,
+  // The sample tracks what production can actually produce. It used to assert an
+  // open Cicero window with concrete June/July 2026 dates — dates taken from the
+  // design seed, never retrieved from anyone — while the canonical state refuses
+  // the committed snapshot outright, so no township resolves to `open` today. A
+  // preview fixture that is easier to sell than production is not a preview of
+  // production, and this one was the sole surviving place those seed dates were
+  // still rendered as a filing window.
   appealWindowStatus: {
     township: "Cicero",
-    status: "open" as const,
-    openDate: "2026-06-17",
-    closeDate: "2026-07-31",
+    status: "unknown" as const,
+    openDate: null,
+    closeDate: null,
     filingUrl: "https://www.cookcountyassessoril.gov/online-appeals",
-    note: "Preview sample — Cicero Township is in an open 2026 Assessor window. Verify exact dates at the Cook County Assessor calendar before filing.",
+    note: "Preview sample — no county retrieval was performed. Check https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines for your township's appeal dates.",
+    pendingReason: "synthetic_source" as const,
+    allowCheckout: false,
+    showDates: false,
+    showCountdown: false,
+    allowDeadlineCta: false,
+    allowReminderSignup: false,
+  },
+  outcome: {
+    code: "insufficient_evidence" as const,
+    headline: CC_05,
+    allowCheckout: false,
+    reason: "eligibility_policy_unsigned" as const,
+    showFigures: true,
   },
   propertyCharacteristics: null,
   source: "preview-noop",
@@ -131,8 +162,7 @@ function buildAppealArgument(
   marketValue: number | null,
   township: string | null,
   neighborhoodCode: string | null,
-  equityRatio: number | null,
-  potentialOverpaymentPerYear: number
+  equityRatio: number | null
 ): string {
   const gap = subjectAV - avgCompAV
   const targetAV = avgCompAV
@@ -145,7 +175,7 @@ function buildAppealArgument(
 
 Comparable properties in ${townshipStr} average $${Math.round(avgCompAV).toLocaleString()} in assessed value, giving a separate uniformity benchmark for similar homes.
 
-Under Illinois law (35 ILCS 200/9-5) and the Cook County Assessor's rules, property assessments should reflect 10% of fair market value and be uniform with comparable properties. This property's assessment exceeds comparable properties by approximately $${Math.round(gap).toLocaleString()}, resulting in an estimated overpayment of $${potentialOverpaymentPerYear.toLocaleString()}/year.
+Under Illinois law (35 ILCS 200/9-5) and the Cook County Assessor's rules, property assessments should reflect 10% of fair market value and be uniform with comparable properties. This property's assessment exceeds comparable properties by approximately $${Math.round(gap).toLocaleString()} in assessed value.
 
 We request a reduction in the assessed value to $${Math.round(targetAV).toLocaleString()}, consistent with the ${mvStr} market value and comparable properties in the neighborhood.`
 }
@@ -258,10 +288,25 @@ export async function POST(req: NextRequest) {
       note: "These are the characteristics on file with the CCAO. Errors in square footage, bedroom count, or property class can support an appeal.",
     } : null
 
-    // If no assessed value on file, return property info without overpayment estimate
+    // If no assessed value on file, return property info without overpayment estimate.
+    // This is CC-05, not a softer variant of it: the check ran and established
+    // nothing, and `noAssessedValue` alone left that to the caller to interpret.
     if (subjectAV <= 0) {
+      const noValueWindow = getFreeCheckAppealWindowStatus(propertyData.township)
+      const noValueOutcome = evaluateFreeCheckOutcome({
+        window: noValueWindow,
+        evidence: evidenceFor(propertyData, {
+          assessedTotalValue: null,
+          equityRatio: null,
+          avgCompEquityRatio: null,
+          compCount: 0,
+        }),
+      })
       return NextResponse.json({
         success: true,
+        disclosure: CC_02,
+        sourceCaveat: CC_07,
+        outcome: noValueOutcome,
         subject: {
           pin: formatPIN(propertyData.pin),
           address: propertyData.address,
@@ -283,10 +328,10 @@ export async function POST(req: NextRequest) {
         potentialOverpaymentPerYear: null,
         potentialOverpayment3Year: null,
         appealArgumentText: null,
-        appealWindowStatus: getFreeCheckAppealWindowStatus(propertyData.township),
+        appealWindowStatus: noValueWindow,
         propertyCharacteristics,
         noAssessedValue: true,
-        message: "We found your property but the Cook County Assessor hasn't published an assessed value for this PIN yet. This can happen with recently transferred properties or during reassessment. Visit cookcountyassessor.com to check your assessment status.",
+        message: "We found your property but the Cook County Assessor hasn't published an assessed value for this PIN yet. This can happen with recently transferred properties or during reassessment. Check your assessment status at https://www.cookcountyassessoril.gov/address-search.",
         source: "Cook County Open Data",
       })
     }
@@ -368,26 +413,54 @@ export async function POST(req: NextRequest) {
         compEquityRatios.push(c.assessedValue / c.marketValue)
       }
     })
+    // No comparable had both a market and an assessed value, so there is no
+    // comparable assessment level. This used to fall back to the literal 10.0 —
+    // the county's statutory target — which meant a subject with no usable
+    // comparables was silently measured against a policy number and reported as
+    // if it had been compared with its neighbours. Absence stays absent.
     const avgCompEquityRatio =
       compEquityRatios.length > 0
         ? Math.round((compEquityRatios.reduce((a, b) => a + b, 0) / compEquityRatios.length) * 1000) / 10
-        : (avgCompAV != null ? 10.0 : null)  // CCAO target is 10%, use as default if no data
+        : null
 
     const assessmentGap = avgCompAV != null ? Math.round(subjectAV - avgCompAV) : null
 
-    // ── Overpayment estimate ─────────────────────────────────────────────────
-    const taxRate = propertyData.taxRate ?? 0.07
-    const equalizer = propertyData.stateEqualizer ?? 3.0
-    const potentialOverpaymentPerYear =
-      avgCompAV != null && subjectAV > avgCompAV
-        ? Math.round((subjectAV - avgCompAV) * equalizer * taxRate)
-        : 0
+    // ── No overpayment estimate is computed ──────────────────────────────────
+    //
+    // This block used to multiply the assessed-value gap by `taxRate ?? 0.07`
+    // and `stateEqualizer ?? 3.0`, so a parcel whose record carried neither
+    // still produced a precise dollar figure, rendered as "$1,420/yr" with no
+    // indication that both multiplicands were invented. Removing the defaults
+    // was not enough: even from real factors the product is a savings claim
+    // about the reader's property, which BL-B1/B3 bans outright and which no
+    // signed eligibility policy stands behind. The figure is not computed at
+    // all now, so there is nothing for a later consumer to reach for.
+
+    // ── The single evaluated outcome ─────────────────────────────────────────
+    //
+    // `MEANINGFUL_SAVINGS_THRESHOLD = 100` is gone. It decided, from a dollar
+    // estimate built on two possibly-invented factors, whether the reader was
+    // told anything at all — and two more copies of the same constant made the
+    // same call independently in the result component and the email templates,
+    // so the three could disagree about the same property. The decision is made
+    // once, here, against the assessment evidence rather than a derived dollar
+    // figure, and every surface renders what comes back.
+    const appealWindowStatus = getFreeCheckAppealWindowStatus(propertyData.township)
+    const outcome: FreeCheckOutcome = evaluateFreeCheckOutcome({
+      window: appealWindowStatus,
+      evidence: evidenceFor(propertyData, {
+        assessedTotalValue: subjectAV,
+        equityRatio,
+        avgCompEquityRatio,
+        compCount: compValues.length,
+      }),
+    })
 
     // ── Appeal argument text ─────────────────────────────────────────────────
-    // Only generate for meaningfully positive cases — tiny estimates are likely noise
-    const MEANINGFUL_SAVINGS_THRESHOLD = 100
+    // Generated only for a supportive outcome. Argument text for a property we
+    // have not concluded anything about reads as a conclusion.
     const appealArgumentText =
-      potentialOverpaymentPerYear >= MEANINGFUL_SAVINGS_THRESHOLD && avgCompAV != null
+      outcome.code === "supportive" && avgCompAV != null
         ? buildAppealArgument(
             propertyData.address,
             propertyData.city,
@@ -396,13 +469,27 @@ export async function POST(req: NextRequest) {
             subjectMarketValue,
             propertyData.township,
             neighborhoodCode,
-            equityRatio,
-            potentialOverpaymentPerYear
+            equityRatio
           )
         : null
 
+    // Two different gates, because these are two different kinds of number.
+    //
+    // The assessment comparison — assessed value, comparable average, ratio —
+    // is a description of the public record, and it survives `showFigures`.
+    //
+    // The projected annual overpayment is not a record. It is a forecast of a
+    // tax bill that has not been issued, from an assessment the county has not
+    // been asked to change. It is the figure a reader remembers, and it is
+    // therefore released only for a supportive outcome. Shown beside
+    // "Insufficient evidence" it simply overrides the words next to it.
+    const showFigures = outcome.showFigures
+
     return NextResponse.json({
       success: true,
+      disclosure: CC_02,
+      sourceCaveat: CC_07,
+      outcome,
       subject: {
         pin: formatPIN(propertyData.pin),
         address: propertyData.address,
@@ -415,24 +502,59 @@ export async function POST(req: NextRequest) {
         marketValue: propertyData.marketValue,
       },
       compCount: compValues.length,
-      comps: compDetails,
-      avgComparableAssessedValue: avgCompAV,
-      equityRatio,
+      comps: showFigures ? compDetails : [],
+      avgComparableAssessedValue: showFigures ? avgCompAV : null,
+      equityRatio: showFigures ? equityRatio : null,
       targetEquityRatio: 10.0,
-      avgCompEquityRatio,
-      assessmentGap,
-      potentialOverpaymentPerYear: potentialOverpaymentPerYear > 0 ? potentialOverpaymentPerYear : null,
-      potentialOverpayment3Year: potentialOverpaymentPerYear > 0 ? potentialOverpaymentPerYear * 3 : null,
+      avgCompEquityRatio: showFigures ? avgCompEquityRatio : null,
+      assessmentGap: showFigures ? assessmentGap : null,
+      // Never released. A per-year or three-year dollar projection is a savings
+      // claim about the reader's property (BL-B1/B3) and a merits
+      // characterization (BL-C3), and no signed eligibility policy (OD-2/OD-3)
+      // stands behind one. The assessment comparison above is the public
+      // record; this was arithmetic performed on top of it and presented as an
+      // outcome. It is computed no further and sent as null on every path.
+      potentialOverpaymentPerYear: null,
+      potentialOverpayment3Year: null,
       appealArgumentText,
-      appealWindowStatus: getFreeCheckAppealWindowStatus(propertyData.township),
+      appealWindowStatus,
       propertyCharacteristics,
       source: salesRes.source ?? "Cook County Open Data",
     })
   } catch (error) {
     console.error("[free-check] error:", error)
     return NextResponse.json(
-      { error: "Something went wrong. Try again or use your PIN from cookcountyassessor.com." },
+      {
+        error:
+          "Something went wrong. Try again, or use your PIN from https://www.cookcountyassessoril.gov/address-search.",
+      },
       { status: 500 }
     )
+  }
+}
+
+/**
+ * Assemble the evidence record the outcome is evaluated from.
+ *
+ * Kept in one place so the no-assessed-value branch and the main branch cannot
+ * describe the same property differently. `pinCount` is 1 by construction on
+ * both paths: this route resolves exactly one PIN, and a multi-PIN subject is
+ * rejected earlier rather than averaged.
+ */
+function evidenceFor(
+  propertyData: PropertyData,
+  measured: Pick<
+    FreeCheckEvidence,
+    "assessedTotalValue" | "equityRatio" | "avgCompEquityRatio" | "compCount"
+  >,
+): FreeCheckEvidence {
+  return {
+    propertyClass: propertyData.buildingClass,
+    pinCount: 1,
+    // Checked rather than assumed. The lookup is a Cook County dataset, but an
+    // address search can return a record whose county field says otherwise, and
+    // the packet is defined for Cook County only.
+    inCookCounty: (propertyData.county ?? "").trim().toLowerCase().startsWith("cook"),
+    ...measured,
   }
 }

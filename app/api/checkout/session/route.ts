@@ -5,14 +5,16 @@ import { z } from "zod"
 import { prisma } from "@/lib/db"
 import { getPropertyByPIN, normalizePIN, searchPropertiesByAddress } from "@/lib/cook-county"
 import { normalizeFreeCheckSearchInput } from "@/lib/free-check-address"
-import { getFreeCheckAppealWindowStatus } from "@/lib/free-check-appeal-window"
 import { getClientIdentifier, rateLimit } from "@/lib/rate-limit"
+import { projectTownshipDeadline } from "@/lib/appeals/township-deadlines"
 import {
-  ASSESSOR_CALENDAR_URL,
-  TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED,
-} from "@/lib/appeals/township-deadlines"
+  RESOLUTION_SOURCE,
+  townshipKeyFromName,
+} from "@/lib/deadlines/township-resolution"
 import {
   type CheckoutWindowSnapshot,
+  checkoutSnapshotFromProjection,
+  otSnapshotIdentity,
   issueAnalysisAcknowledgmentToken,
   verifyAnalysisAcknowledgmentToken,
 } from "@/lib/checkout/window-gate-token"
@@ -24,9 +26,9 @@ import {
   buildOtContractKey,
   canonicalJson,
   dateKey,
-  isWindowSnapshotFresh,
   normalizeEmail,
   normalizeWhitespace,
+  signedPolicyVersion,
 } from "@/lib/checkout/ot-contract"
 import {
   hostFromRequest,
@@ -34,12 +36,23 @@ import {
   marketingGateReason,
   previewNoopResponseBody,
 } from "@/lib/marketing/preview-gate"
+import { isHeldProduct } from "@/lib/products/held"
+import { heldProductResponse } from "@/lib/products/held-response"
 import { sanitizeAnonymousGaIdentifiers } from "@/lib/analytics/ga4"
 
 const PRICE_MAP: Record<"T2" | "T3", string | undefined> = {
   T2: process.env.STRIPE_PRICE_T2_DIY_PRO?.trim(),
   T3: process.env.STRIPE_PRICE_T3_DFY?.trim(),
 }
+
+/** Maps a checkout tier onto the product whose hold governs it. */
+const TIER_PRODUCT_IDS: Record<"T2" | "T3", string> = {
+  T2: "T2_PACKET",
+  T3: "T3_DFY",
+}
+
+/** Upper bound on the accepted checkout request body. */
+const MAX_CHECKOUT_BODY_BYTES = 16 * 1024
 
 const PAID_STATUSES = ["PAID", "PAID_RECOVERY_REQUIRED"] as const
 const isPaidStatus = (status: string | null | undefined) =>
@@ -86,8 +99,13 @@ function checkoutContractMatches(
     order.windowStatus === snapshot.status &&
     dateKey(order.windowOpenDate) === snapshot.openDate &&
     dateKey(order.windowCloseDate) === snapshot.closeDate &&
-    dateKey(order.windowSourceUpdated) === dateKey(snapshot.sourceUpdated) &&
-    canonicalJson(order.eligibilitySnapshot) === canonicalJson(snapshot) &&
+    dateKey(order.windowSourceUpdated) === dateKey(snapshot.retrievedAt) &&
+    // Identity, not the whole snapshot: the persisted copy was written on an
+    // earlier request and carries that request's `freshnessExpiresAt`, so a
+    // whole-snapshot comparison reads every legitimate retry as a key
+    // conflict. Freshness is enforced live, above, before this runs.
+    canonicalJson(otSnapshotIdentity(order.eligibilitySnapshot as CheckoutWindowSnapshot)) ===
+      canonicalJson(otSnapshotIdentity(snapshot)) &&
     Boolean(order.analysisAcknowledgedAt) === input.analysisAcknowledged &&
     dateKey(order.reassessmentNoticeDate) === input.reassessmentNoticeDate &&
     (order.reassessmentNoticeAddress ?? null) === input.reassessmentNoticeAddress &&
@@ -130,8 +148,13 @@ function checkoutNoticeIdentityMatches(
     order.windowStatus === snapshot.status &&
     dateKey(order.windowOpenDate) === snapshot.openDate &&
     dateKey(order.windowCloseDate) === snapshot.closeDate &&
-    dateKey(order.windowSourceUpdated) === dateKey(snapshot.sourceUpdated) &&
-    canonicalJson(order.eligibilitySnapshot) === canonicalJson(snapshot) &&
+    dateKey(order.windowSourceUpdated) === dateKey(snapshot.retrievedAt) &&
+    // Identity, not the whole snapshot: the persisted copy was written on an
+    // earlier request and carries that request's `freshnessExpiresAt`, so a
+    // whole-snapshot comparison reads every legitimate retry as a key
+    // conflict. Freshness is enforced live, above, before this runs.
+    canonicalJson(otSnapshotIdentity(order.eligibilitySnapshot as CheckoutWindowSnapshot)) ===
+      canonicalJson(otSnapshotIdentity(snapshot)) &&
     dateKey(order.reassessmentNoticeDate) === input.reassessmentNoticeDate &&
     (order.reassessmentNoticeAddress ?? null) === input.reassessmentNoticeAddress
 }
@@ -243,39 +266,51 @@ async function resolveProperty(address: string, selectedPin?: string) {
   return { property: result.data }
 }
 
-function currentCookCountyDate(now: Date = new Date()): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Chicago",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now)
-  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]))
-  return `${value.year}-${value.month}-${value.day}`
-}
+/**
+ * Re-evaluate the canonical state for the confirmed property, right now.
+ *
+ * Two things changed here, and both were payment-affecting.
+ *
+ * The township used to be established by name — `getFreeCheckAppealWindowStatus`
+ * takes a string, and a string is not proof of where the buyer's property sits.
+ * The PIN has already been confirmed against the county record by
+ * [[resolveProperty]] before this runs, so the resolution is built from that
+ * record and carries `official_property_record` as its source. That is what
+ * makes this the eligibility tier rather than the informational one, and it is
+ * the only tier from which `allowCheckout` can ever be true.
+ *
+ * And freshness is no longer measured against a minted `verifiedAt`. The
+ * evaluation happens at the instant of the call, so the 24-hour default, the
+ * same-day rule, and the 900-second serving ceiling all apply to *this*
+ * request. There is no persisted snapshot standing in for a current check.
+ */
+function snapshotFor(property: Record<string, unknown>, now: Date = new Date()): CheckoutWindowSnapshot {
+  const townshipName = String(property.township ?? "").trim()
+  const pin = normalizePIN(String(property.pin ?? ""))
+  const at = now.toISOString()
 
-function snapshotFor(property: Record<string, unknown>): CheckoutWindowSnapshot {
-  const township = String(property.township ?? "").trim() || "Unknown"
-  const window = getFreeCheckAppealWindowStatus(township)
-  const verifiedAt = `${TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED}T12:00:00.000Z`
-  const baseSnapshot: CheckoutWindowSnapshot = {
-    pin: normalizePIN(String(property.pin ?? "")),
-    township: window.township,
-    status: window.status,
-    openDate: window.openDate,
-    closeDate: window.closeDate,
-    sourceUpdated: TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED,
-    sourceUrl: ASSESSOR_CALENDAR_URL,
-    verifiedAt,
-  }
-  const status = window.status === "open" && !isWindowSnapshotFresh(baseSnapshot) ? "unknown" : window.status
-  return {
-    ...baseSnapshot,
-    township: window.township,
-    status,
-    openDate: status === "unknown" ? null : baseSnapshot.openDate,
-    closeDate: status === "unknown" ? null : baseSnapshot.closeDate,
-  }
+  const projection = projectTownshipDeadline({
+    township: townshipName && pin
+      ? {
+          inputKind: "pin",
+          normalizedPin: pin,
+          normalizedAddress: null,
+          townshipKey: townshipKeyFromName(townshipName),
+          townshipName,
+          resolutionSource: RESOLUTION_SOURCE,
+          resolvedAt: at,
+        }
+      : null,
+    stage: "assessor",
+    at,
+  })
+
+  return checkoutSnapshotFromProjection({
+    pin,
+    fallbackTownshipName: townshipName || "Unknown",
+    projection,
+    policyVersion: signedPolicyVersion(),
+  })
 }
 
 function publicWindow(snapshot: CheckoutWindowSnapshot) {
@@ -284,9 +319,9 @@ function publicWindow(snapshot: CheckoutWindowSnapshot) {
     status: snapshot.status,
     openDate: snapshot.openDate,
     closeDate: snapshot.closeDate,
-    sourceUpdated: snapshot.sourceUpdated,
     sourceUrl: snapshot.sourceUrl,
-    verifiedAt: snapshot.verifiedAt,
+    retrievedAt: snapshot.retrievedAt,
+    pendingReason: snapshot.pendingReason,
   }
 }
 
@@ -312,11 +347,46 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const parsed = CheckoutInput.safeParse(await req.json().catch(() => null))
+  // Bound the body before parsing it. An unauthenticated payment endpoint must
+  // not accept an arbitrarily large document just to discover the tier is held.
+  const declaredLength = Number(req.headers.get("content-length") ?? "0")
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_CHECKOUT_BODY_BYTES) {
+    return NextResponse.json(
+      { error: "Check the checkout details and try again.", code: "CHECKOUT_BODY_TOO_LARGE" },
+      { status: 413 },
+    )
+  }
+
+  const rawBody = await req.text().catch(() => null)
+  if (rawBody === null || rawBody.length > MAX_CHECKOUT_BODY_BYTES) {
+    return NextResponse.json(
+      { error: "Check the checkout details and try again.", code: "CHECKOUT_BODY_TOO_LARGE" },
+      { status: 413 },
+    )
+  }
+
+  const parsed = CheckoutInput.safeParse(
+    (() => {
+      try {
+        return JSON.parse(rawBody) as unknown
+      } catch {
+        return null
+      }
+    })(),
+  )
   if (!parsed.success) {
     return NextResponse.json({ error: "Check the checkout details and try again.", code: "INVALID_CHECKOUT_INPUT" }, { status: 400 })
   }
   const input = parsed.data
+
+  // Held products fail closed before a provider client is constructed. This is
+  // the tier boundary; it does not depend on a Price being absent from the
+  // environment, which is configuration rather than a hold.
+  const tierProductId = TIER_PRODUCT_IDS[input.tier]
+  if (isHeldProduct(tierProductId)) {
+    return heldProductResponse(tierProductId, "api/checkout/session")
+  }
+
   const gaIdentifiers = sanitizeAnonymousGaIdentifiers(input)
   const normalizedEmail = normalizeEmail(input.email)
   const priceId = PRICE_MAP[input.tier]
@@ -342,6 +412,31 @@ export async function POST(req: NextRequest) {
     ? normalizeWhitespace(input.reassessmentNoticeAddress)
     : null
   let approvedNoticeOrder: Record<string, unknown> | null = null
+
+  // The single payment gate, before any order row is written and before the
+  // provider is asked for a Price.
+  //
+  // `allowCheckout` is true only when the canonical state verified a fresh,
+  // open Assessor window for a township established by the county's own
+  // property record AND a signed eligibility policy is in force. OD-2 and OD-3
+  // are unsigned, so this closes today and will keep closing until an owner
+  // decision lands in the signed-policy registry. That is the intended state:
+  // paid eligibility must not be reachable by default.
+  //
+  // Nothing downstream may re-open it. There is no acknowledgment, token,
+  // notice override, or persisted snapshot that reaches past this point.
+  if (!snapshot.allowCheckout) {
+    return NextResponse.json(
+      {
+        error: snapshot.status === "closed"
+          ? "The Assessor filing window for your township is closed. We are not selling a packet for a closed window, and you have not been charged."
+          : "We could not confirm a currently open Assessor filing window for your property, so checkout is closed. You have not been charged.",
+        code: "CHECKOUT_ELIGIBILITY_CLOSED",
+        window,
+      },
+      { status: 409 },
+    )
+  }
 
   if (input.tier === "T3" && snapshot.status !== "open") {
     if (input.reassessmentNoticeDate && input.reassessmentNoticeAddress) {
@@ -381,8 +476,8 @@ export async function POST(req: NextRequest) {
           windowStatus: snapshot.status,
           windowOpenDate: snapshot.openDate ? new Date(`${snapshot.openDate}T12:00:00Z`) : null,
           windowCloseDate: snapshot.closeDate ? new Date(`${snapshot.closeDate}T12:00:00Z`) : null,
-          windowSourceUpdated: snapshot.sourceUpdated,
-          windowVerifiedAt: new Date(snapshot.verifiedAt),
+          windowSourceUpdated: snapshot.retrievedAt,
+          windowVerifiedAt: snapshot.retrievedAt ? new Date(snapshot.retrievedAt) : null,
           eligibilitySnapshot: snapshot,
           reassessmentNoticeDate: noticeReassessmentDate,
           reassessmentNoticeAddress: normalizedNoticeAddress,
@@ -455,8 +550,8 @@ export async function POST(req: NextRequest) {
             windowStatus: snapshot.status,
             windowOpenDate: snapshot.openDate ? new Date(`${snapshot.openDate}T12:00:00Z`) : null,
             windowCloseDate: snapshot.closeDate ? new Date(`${snapshot.closeDate}T12:00:00Z`) : null,
-            windowSourceUpdated: snapshot.sourceUpdated,
-            eligibilitySnapshot: { equals: snapshot },
+            windowSourceUpdated: snapshot.retrievedAt,
+            eligibilitySnapshot: { equals: noticeOrder.eligibilitySnapshot as never },
             analysisAcknowledgedAt: null,
             reassessmentNoticeDate: noticeReassessmentDate,
             reassessmentNoticeAddress: normalizedNoticeAddress,
@@ -480,8 +575,22 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // The T2 analysis-only acknowledgment.
+  //
+  // This block used to run only when the window was NOT open, and a valid token
+  // then let the request continue to payment. The acknowledgment was, in
+  // effect, the buyer's own permission to sell them a packet for a window the
+  // county had closed or that we could not verify — an acknowledgment cannot
+  // authorize that, and the window gate above now refuses those requests
+  // outright.
+  //
+  // What remains is the acknowledgment doing its actual job: CC-10's statement
+  // that this is a preparation service the buyer files themselves. It is
+  // required on every T2 checkout, and because a token can only be minted
+  // against a snapshot that already cleared the gate, presenting one can never
+  // widen eligibility.
   let acknowledgedAt: Date | null = null
-  if (input.tier === "T2" && snapshot.status !== "open") {
+  if (input.tier === "T2") {
     const validAcknowledgment = Boolean(
       input.analysisAcknowledged &&
       input.acknowledgmentToken &&
@@ -489,9 +598,7 @@ export async function POST(req: NextRequest) {
     )
     if (!validAcknowledgment) {
       return NextResponse.json({
-        error: snapshot.status === "closed"
-          ? "Your township window is closed. Confirm analysis-only service to continue."
-          : "Your township's official date is pending. Confirm analysis-only service to continue.",
+        error: "Confirm that OverTaxed IL prepares the packet and that you review, sign, and file it yourself.",
         code: "T2_ACKNOWLEDGMENT_REQUIRED",
         window,
         acknowledgmentToken: issueAnalysisAcknowledgmentToken(input.checkoutKey, snapshot),
@@ -576,8 +683,8 @@ export async function POST(req: NextRequest) {
             windowStatus: snapshot.status,
             windowOpenDate: snapshot.openDate ? new Date(`${snapshot.openDate}T12:00:00Z`) : null,
             windowCloseDate: snapshot.closeDate ? new Date(`${snapshot.closeDate}T12:00:00Z`) : null,
-            windowSourceUpdated: snapshot.sourceUpdated,
-            eligibilitySnapshot: { equals: snapshot },
+            windowSourceUpdated: snapshot.retrievedAt,
+            eligibilitySnapshot: { equals: approvedNoticeOrder.eligibilitySnapshot },
             reassessmentNoticeDate: noticeReassessmentDate,
             reassessmentNoticeAddress: normalizedNoticeAddress,
             noticeReviewStatus: "APPROVED",
@@ -627,8 +734,8 @@ export async function POST(req: NextRequest) {
           windowStatus: snapshot.status,
           windowOpenDate: snapshot.openDate ? new Date(`${snapshot.openDate}T12:00:00Z`) : null,
           windowCloseDate: snapshot.closeDate ? new Date(`${snapshot.closeDate}T12:00:00Z`) : null,
-          windowSourceUpdated: snapshot.sourceUpdated,
-          windowVerifiedAt: new Date(snapshot.verifiedAt),
+          windowSourceUpdated: snapshot.retrievedAt,
+          windowVerifiedAt: snapshot.retrievedAt ? new Date(snapshot.retrievedAt) : null,
           eligibilitySnapshot: snapshot,
           analysisAcknowledgedAt: acknowledgedAt,
           acknowledgmentVersion: acknowledgedAt ? OT_ANALYSIS_ACK_VERSION : null,
@@ -683,8 +790,12 @@ export async function POST(req: NextRequest) {
           windowStatus: snapshot.status,
           windowOpenDate: snapshot.openDate ? new Date(`${snapshot.openDate}T12:00:00Z`) : null,
           windowCloseDate: snapshot.closeDate ? new Date(`${snapshot.closeDate}T12:00:00Z`) : null,
-          windowSourceUpdated: snapshot.sourceUpdated,
-          eligibilitySnapshot: { equals: snapshot },
+          windowSourceUpdated: snapshot.retrievedAt,
+          // The row as it was read, not a freshly evaluated snapshot: this is
+          // an optimistic-concurrency check ("nothing changed since I looked"),
+          // and the persisted copy carries the `freshnessExpiresAt` of the
+          // request that wrote it, which a re-evaluation never reproduces.
+          eligibilitySnapshot: { equals: order.eligibilitySnapshot },
           status: "NOTICE_REVIEW_REQUIRED",
         },
         data: { status: "NOTICE_REVIEW_REQUIRED" },
@@ -754,8 +865,10 @@ export async function POST(req: NextRequest) {
       windowStatus: snapshot.status,
       windowOpenDate: snapshot.openDate ? new Date(`${snapshot.openDate}T12:00:00Z`) : null,
       windowCloseDate: snapshot.closeDate ? new Date(`${snapshot.closeDate}T12:00:00Z`) : null,
-      windowSourceUpdated: snapshot.sourceUpdated,
-      eligibilitySnapshot: { equals: snapshot },
+      windowSourceUpdated: snapshot.retrievedAt,
+      // As above: bind the row as read, so a retry of the same purchase can
+      // still claim its own order.
+      eligibilitySnapshot: { equals: order.eligibilitySnapshot },
       analysisAcknowledgedAt: acknowledgedAt ? { not: null } : null,
       reassessmentNoticeDate: approvedNoticeOrder ? noticeReassessmentDate : null,
       reassessmentNoticeAddress: approvedNoticeOrder ? normalizedNoticeAddress : null,
@@ -791,7 +904,7 @@ export async function POST(req: NextRequest) {
         orderId: order.id,
         tier: input.tier,
         windowStatus: snapshot.status,
-        windowSourceUpdated: snapshot.sourceUpdated,
+        windowRetrievedAt: snapshot.retrievedAt ?? "",
         ...gaIdentifiers,
       },
     }, { idempotencyKey: `ot:${(order as { contractKey?: string }).contractKey}:${(order as { attempt?: number }).attempt ?? 0}` })

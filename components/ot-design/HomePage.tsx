@@ -7,31 +7,56 @@ import {
   LiveTicker,
 } from "@/components/ot-design/SiteChrome";
 import { analytics } from "@/lib/analytics/events";
+import { CC_01, CC_10, CC_11, CC_12 } from "@/lib/copy/canonical";
 
-/* ── Sample result returned by /api/check stub ─────────────────────────── */
-const SAMPLE_RESULT = {
-  address: "Sample result — not your submitted address",
-  township: "Cicero",
-  windowStatus: "open" as const,
-  windowCloses: "Window closes Jul 31, 2026",
-  windowDaysRemaining: 17,
-  yourAssessed: 42500,
-  compsAvg: 35100,
-  assessmentLevel: 12.1,
-  overpayPerYear: 1420,
-  overpay3Year: 4260,
-  comps: 3,
-};
+/*
+ * The local `SAMPLE_RESULT` is gone.
+ *
+ * It held Cicero, an open window closing "Jul 31, 2026" with 17 days left, and
+ * $1,420/yr — $4,260 over three years — and `normalizeCheckResult` spread it as
+ * the *base object* of every result it produced. Any field the real response
+ * did not carry was therefore filled in from the sample and rendered with no
+ * mark distinguishing it, so a genuine Cook County lookup that came back thin
+ * displayed a stranger's township, a fabricated deadline, a countdown, and a
+ * dollar figure, and the surface had no way to tell that had happened.
+ *
+ * Absent data is now null and renders as absent.
+ */
 
-type WindowStatus = "open" | "closed" | "future_cycle" | "unknown";
+type WindowStatus = "open" | "closed" | "upcoming" | "unknown";
 
-type Result = Omit<typeof SAMPLE_RESULT, "windowStatus"> & {
+/** Mirrors `FreeCheckOutcome` in `lib/free-check-appeal-window.ts`. */
+interface ResultOutcome {
+  code: "supportive" | "not_supportive" | "insufficient_evidence" | "unsupported_property";
+  headline: string;
+  allowCheckout: boolean;
+  reason: string | null;
+  showFigures: boolean;
+}
+
+type Result = {
+  address: string;
+  township: string | null;
   windowStatus: WindowStatus;
-  windowOpens?: string;
+  windowCloses: string | null;
+  windowOpens: string | null;
+  /** Null unless the window verified open. Never defaulted. */
+  windowDaysRemaining: number | null;
+  yourAssessed: number | null;
+  compsAvg: number | null;
+  assessmentLevel: number | null;
+  overpayPerYear: number | null;
+  overpay3Year: number | null;
+  comps: number;
+  /** The route's single evaluated outcome. Null only for a malformed response. */
+  outcome: ResultOutcome | null;
+  /** CC-02, from the route. Rendered above every state. */
+  disclosure: string | null;
   preview?: boolean;
   submittedInput?: string;
   source?: string;
 };
+
 type RawCheckResult = Partial<Result> & {
   equityRatio?: number | null;
   subject?: {
@@ -52,13 +77,16 @@ type RawCheckResult = Partial<Result> & {
     status?: WindowStatus | null;
     openDate?: string | null;
     closeDate?: string | null;
+    pendingReason?: string | null;
+    allowCheckout?: boolean | null;
   } | null;
   source?: string | null;
   mode?: string | null;
 };
 
-function asFiniteNumber(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+/** Null, not a fallback. A number we do not have must not become one we do. */
+function asFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function formatIsoDateLabel(iso?: string | null): string | null {
@@ -68,12 +96,18 @@ function formatIsoDateLabel(iso?: string | null): string | null {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function daysUntilIso(iso?: string | null): number {
-  if (!iso) return 0;
+/**
+ * Days remaining, derived at render rather than trusted from the payload.
+ *
+ * Null when there is no verified close date. It used to return 0 in that case,
+ * which the countdown rendered as "0 days left" — a deadline claim, and the most
+ * alarming one available, produced by the absence of a deadline.
+ */
+function daysUntilIso(iso?: string | null): number | null {
+  if (!iso) return null;
   const close = new Date(`${iso}T23:59:59`);
-  if (Number.isNaN(close.getTime())) return 0;
-  const now = new Date();
-  return Math.max(0, Math.ceil((close.getTime() - now.getTime()) / 86_400_000));
+  if (Number.isNaN(close.getTime())) return null;
+  return Math.max(0, Math.ceil((close.getTime() - Date.now()) / 86_400_000));
 }
 
 function normalizeCheckResult(
@@ -84,36 +118,37 @@ function normalizeCheckResult(
   const r = raw ?? {};
   const subject = r.subject;
   const aw = r.appealWindowStatus;
-  const isFreeCheckShape = Boolean(subject);
-  const township = aw?.township ?? subject?.township ?? r.township ?? SAMPLE_RESULT.township;
+  const township = aw?.township ?? subject?.township ?? r.township ?? null;
   const closeLabel = formatIsoDateLabel(aw?.closeDate);
   const openLabel = formatIsoDateLabel(aw?.openDate);
+
+  // Unrecognized statuses resolve to "unknown". This previously resolved to
+  // "open" — the one value that unlocks the deadline CTA — so a status the
+  // client did not recognize became the most permissive state it had.
   const status: WindowStatus =
-    aw?.status === "closed" || aw?.status === "unknown" || aw?.status === "future_cycle" ? aw.status : "open";
+    aw?.status === "open" || aw?.status === "closed" || aw?.status === "upcoming"
+      ? aw.status
+      : "unknown";
+
+  const verifiedOpen = status === "open" && Boolean(aw?.closeDate);
 
   return {
-    ...SAMPLE_RESULT,
-    ...(!isFreeCheckShape ? r : {}),
     address: subject
       ? [subject.address, subject.city, subject.zipCode].filter(Boolean).join(", ")
-      : (r.address ?? SAMPLE_RESULT.address),
+      : (r.address ?? "This property"),
     township,
     windowStatus: status,
-    windowCloses: closeLabel
-      ? `${township} window closes ${closeLabel}`
-      : (isFreeCheckShape ? "Exact appeal dates unavailable" : (r.windowCloses ?? SAMPLE_RESULT.windowCloses)),
-    windowOpens: openLabel ? `Opens ${openLabel}` : undefined,
-    windowDaysRemaining: asFiniteNumber(r.windowDaysRemaining, status === "unknown" || status === "future_cycle" ? 0 : daysUntilIso(aw?.closeDate)),
-    yourAssessed: asFiniteNumber(subject?.assessedTotalValue ?? r.yourAssessed, SAMPLE_RESULT.yourAssessed),
-    compsAvg: asFiniteNumber(r.avgComparableAssessedValue ?? r.compsAvg, SAMPLE_RESULT.compsAvg),
-    assessmentLevel: asFiniteNumber(r.equityRatio ?? r.assessmentLevel, SAMPLE_RESULT.assessmentLevel),
-    overpayPerYear: isFreeCheckShape
-      ? asFiniteNumber(r.potentialOverpaymentPerYear, 0)
-      : asFiniteNumber(r.potentialOverpaymentPerYear ?? r.overpayPerYear, SAMPLE_RESULT.overpayPerYear),
-    overpay3Year: isFreeCheckShape
-      ? asFiniteNumber(r.potentialOverpayment3Year, 0)
-      : asFiniteNumber(r.potentialOverpayment3Year ?? r.overpay3Year, SAMPLE_RESULT.overpay3Year),
-    comps: asFiniteNumber(r.compCount ?? r.comps, SAMPLE_RESULT.comps),
+    windowCloses: closeLabel && township ? `${township} window closes ${closeLabel}` : null,
+    windowOpens: openLabel ? `Opens ${openLabel}` : null,
+    windowDaysRemaining: verifiedOpen ? daysUntilIso(aw?.closeDate) : null,
+    yourAssessed: asFiniteNumber(subject?.assessedTotalValue ?? r.yourAssessed),
+    compsAvg: asFiniteNumber(r.avgComparableAssessedValue ?? r.compsAvg),
+    assessmentLevel: asFiniteNumber(r.equityRatio ?? r.assessmentLevel),
+    overpayPerYear: asFiniteNumber(r.potentialOverpaymentPerYear ?? r.overpayPerYear),
+    overpay3Year: asFiniteNumber(r.potentialOverpayment3Year ?? r.overpay3Year),
+    comps: asFiniteNumber(r.compCount ?? r.comps) ?? 0,
+    outcome: (r.outcome as ResultOutcome | undefined) ?? null,
+    disclosure: typeof r.disclosure === "string" ? r.disclosure : null,
     preview,
     submittedInput: submittedInput.trim(),
     source: typeof r.source === "string" ? r.source : undefined,
@@ -182,26 +217,43 @@ function HeroNarrative() {
   );
 }
 
+/**
+ * The window strip under a check result.
+ *
+ * Every field is nullable now, which is the point: the old signature required a
+ * township name, a close date, and a day count, so the only way to render an
+ * unverified window was to invent all three. The `unknown` arm previously
+ * printed `closeDate` — a value it had just been told did not exist — into the
+ * slot where a date belongs, and the right-hand cell fell through to the same
+ * string. A row with no verified date now says so and sends the reader to the
+ * county, which is the only source that can answer it today.
+ */
 function TownshipDeadline({
   township,
   daysRemaining,
   closeDate,
   openDate,
-  status = "open",
+  status = "unknown",
   sticky = false,
 }: {
-  township: string;
-  daysRemaining: number;
-  closeDate: string;
-  openDate?: string;
+  township: string | null;
+  daysRemaining: number | null;
+  closeDate: string | null;
+  openDate?: string | null;
   status?: WindowStatus;
   sticky?: boolean;
 }) {
-  let tier: "info" | "urgent" | "soon" | "future" | "unknown" = "info";
-  if (status === "future_cycle") tier = "future";
+  // A day count is only meaningful beside a verified close date. Without one,
+  // urgency is a claim about a schedule we have not read.
+  const verified =
+    status === "open" && closeDate !== null && daysRemaining !== null;
+
+  let tier: "info" | "urgent" | "soon" | "future" | "unknown" = "unknown";
+  if (status === "upcoming") tier = "future";
   else if (status === "unknown" || status === "closed") tier = "unknown";
-  else if (status === "open" && daysRemaining < 7) tier = "urgent";
-  else if (status === "open" && daysRemaining < 30) tier = "soon";
+  else if (verified && daysRemaining! < 7) tier = "urgent";
+  else if (verified && daysRemaining! < 30) tier = "soon";
+  else if (status === "open") tier = "info";
 
   const stickyClass = sticky && tier === "urgent" ? "is-sticky" : "";
 
@@ -212,23 +264,35 @@ function TownshipDeadline({
     >
       <div className="ot-deadline-l">
         <span className="ot-deadline-dot" />
-        <strong>{township} Township</strong>
+        <strong>{township ? `${township} Township` : "Township not established"}</strong>
       </div>
       <div className="ot-deadline-c">
         {status === "closed" ? (
           <><strong>Closed</strong><span>Appeal window closed</span></>
-        ) : status === "unknown" ? (
-          <><strong>Unknown</strong><span>{closeDate}</span></>
-        ) : status === "future_cycle" ? (
-          <><strong>Future cycle</strong><span>{openDate ?? "Appeal window not open"}</span></>
-        ) : (
+        ) : status === "upcoming" ? (
+          <><strong>Not open yet</strong><span>{openDate ?? "Opening date not published"}</span></>
+        ) : verified ? (
           <>
-            <strong>{daysRemaining <= 0 ? "Closes today" : `${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`}</strong>
-            <span>{daysRemaining <= 0 ? "appeal window closes" : "until close"}</span>
+            <strong>{daysRemaining! <= 0 ? "Closes today" : `${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`}</strong>
+            <span>{daysRemaining! <= 0 ? "appeal window closes" : "until close"}</span>
           </>
+        ) : (
+          <><strong>No verified date</strong><span>Confirm with the county</span></>
         )}
       </div>
-      <div className="ot-deadline-r">{status === "unknown" ? "Check dates →" : closeDate}</div>
+      <div className="ot-deadline-r">
+        {verified || status === "upcoming" ? (
+          closeDate ?? openDate ?? ""
+        ) : (
+          <a
+            href="https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            County calendar →
+          </a>
+        )}
+      </div>
     </div>
   );
 }
@@ -275,7 +339,15 @@ function HeroCheckCard({
         const isPreview = Boolean(data?.preview || data?.mode === "preview_noop" || data?.source === "preview-noop");
         const normalized = normalizeCheckResult(data?.result ?? data, isPreview, submittedInput);
         onResult(normalized);
-        if (!normalized.preview && normalized.overpayPerYear > 0) {
+        // Absent data is null and stays null. A qualified event carries a real
+        // township and a real dollar figure or it is not sent; nothing here
+        // substitutes a placeholder to satisfy the event shape.
+        if (
+          !normalized.preview &&
+          normalized.township !== null &&
+          normalized.overpayPerYear !== null &&
+          normalized.overpayPerYear > 0
+        ) {
           analytics.freeCheckQualified({
             township: normalized.township,
             windowStatus: normalized.windowStatus,
@@ -328,11 +400,11 @@ function HeroCheckCard({
           <span id="pin-hint" className="ot-field-hint">
             14 digits · dashes added as you type · find yours at{" "}
             <a
-              href="https://www.cookcountyassessor.com/address-search"
+              href="https://www.cookcountyassessoril.gov/address-search"
               target="_blank"
               rel="noopener noreferrer"
             >
-              cookcountyassessor.com
+              cookcountyassessoril.gov
             </a>
           </span>
         </label>
@@ -408,11 +480,23 @@ function HeroCheckResult({
   result: Result;
   onReset: () => void;
 }) {
-  const gap = result.yourAssessed - result.compsAvg;
-  const gapPct = result.compsAvg > 0 ? ((gap / result.compsAvg) * 100).toFixed(1) : "0.0";
-  const gapDisplay = `${gap >= 0 ? "+" : ""}${fmtUSD(gap)}`;
-  const resultOpportunity = result.overpayPerYear > 0;
-  const resultWindowOpen = result.windowStatus === "open";
+  // Every figure is conditional on actually having it. `showFigures` is the
+  // route's call, not this component's — the surface renders the decision, it
+  // does not re-make it.
+  const showFigures = result.outcome?.showFigures ?? false;
+  const hasGap = showFigures && result.yourAssessed !== null && result.compsAvg !== null;
+  const gap = hasGap ? result.yourAssessed! - result.compsAvg! : null;
+  const gapPct =
+    gap !== null && result.compsAvg! > 0 ? ((gap / result.compsAvg!) * 100).toFixed(1) : null;
+  const gapDisplay = gap === null ? null : `${gap >= 0 ? "+" : ""}${fmtUSD(gap)}`;
+
+  // The only gate on the offer. It is the route's `allowCheckout`, which already
+  // requires a supportive outcome, a window the canonical state verified open
+  // for an official property record, and a signed eligibility policy. This used
+  // to be `overpayPerYear > 0 && windowStatus === "open"`, both of which the
+  // client derived for itself from values it had defaulted.
+  const canOffer = result.outcome?.allowCheckout === true;
+  const projection = showFigures ? result.overpayPerYear : null;
   return (
     <div className="ot-check-card ot-check-result">
       <div className="ot-result-head">
@@ -429,42 +513,63 @@ function HeroCheckResult({
           Live public-record results run only on the production domain.
         </div>
       )}
+      {/* CC-02 sits above the outcome on every state, not beneath the figures
+          where it read as a footnote to a number. */}
+      {result.disclosure && (
+        <p className="ot-result-altline" role="note">{result.disclosure}</p>
+      )}
+
       <div className={`ot-result-savings${result.preview ? " ot-result-savings--sample" : ""}`}>
+        {/* The headline is CC-03…CC-06, byte-exact, chosen by the route. */}
         <div className="ot-result-savings-label">
-          {resultOpportunity ? "Estimated annual overpayment found" : "No overpayment flagged"}
+          {result.outcome?.headline ?? "We could not complete this check."}
         </div>
-        <div className="ot-result-savings-amount">
-          {fmtUSD(result.overpayPerYear)}
-          <span>/yr</span>
-        </div>
-        <div className="ot-result-savings-3yr">
-          ≈ {fmtUSD(result.overpay3Year)} over the 3-year cycle
-        </div>
+        {projection !== null && (
+          <>
+            <div className="ot-result-savings-amount">
+              {fmtUSD(projection)}
+              <span>/yr</span>
+            </div>
+            {result.overpay3Year !== null && (
+              <div className="ot-result-savings-3yr">
+                ≈ {fmtUSD(result.overpay3Year)} over the 3-year cycle
+              </div>
+            )}
+          </>
+        )}
       </div>
       {result.preview && <div className="ot-result-sample-strip">SAMPLE DATA</div>}
-      <div className={`ot-result-table${result.preview ? " ot-result-table--sample" : ""}`}>
-        <div className="ot-result-row">
-          <span className="ot-result-row-key">Your assessed value</span>
-          <span className="ot-result-row-val">{fmtUSD(result.yourAssessed)}</span>
+      {showFigures && (
+        <div className={`ot-result-table${result.preview ? " ot-result-table--sample" : ""}`}>
+          {result.yourAssessed !== null && (
+            <div className="ot-result-row">
+              <span className="ot-result-row-key">Your assessed value</span>
+              <span className="ot-result-row-val">{fmtUSD(result.yourAssessed)}</span>
+            </div>
+          )}
+          {result.compsAvg !== null && (
+            <div className="ot-result-row">
+              <span className="ot-result-row-key">Avg of {result.comps} nearby comps</span>
+              <span className="ot-result-row-val">{fmtUSD(result.compsAvg)}</span>
+            </div>
+          )}
+          {gapDisplay !== null && (
+            <div className="ot-result-row ot-result-row-emph">
+              <span className="ot-result-row-key">Assessment gap</span>
+              <span className="ot-result-row-val">
+                {gapDisplay}
+                {gapPct !== null && <> <span className="ot-result-pct">({gapPct}%)</span></>}
+              </span>
+            </div>
+          )}
+          {result.assessmentLevel !== null && (
+            <div className="ot-result-row">
+              <span className="ot-result-row-key">Assessment level</span>
+              <span className="ot-result-row-val">{result.assessmentLevel.toFixed(1)}%</span>
+            </div>
+          )}
         </div>
-        <div className="ot-result-row">
-          <span className="ot-result-row-key">Avg of {result.comps} nearby comps</span>
-          <span className="ot-result-row-val">{fmtUSD(result.compsAvg)}</span>
-        </div>
-        <div className="ot-result-row ot-result-row-emph">
-          <span className="ot-result-row-key">Assessment gap</span>
-          <span className="ot-result-row-val">
-            {gapDisplay}{" "}
-            <span className="ot-result-pct">({gapPct}%)</span>
-          </span>
-        </div>
-        <div className="ot-result-row">
-          <span className="ot-result-row-key">Assessment level</span>
-          <span className="ot-result-row-val">
-            {result.assessmentLevel.toFixed(1)}%
-          </span>
-        </div>
-      </div>
+      )}
 
       <TownshipDeadline
         township={result.township}
@@ -474,24 +579,30 @@ function HeroCheckResult({
         status={result.windowStatus}
       />
 
-      {resultOpportunity && resultWindowOpen ? (
+      {canOffer ? (
         <>
+          {/* One option, because one is offered. The Done-For-You and
+              Contingency CTAs are removed rather than disabled: a held product
+              presented as a choice is still an offer. BL-F3 requires CC-10
+              wherever $69 appears, so it renders directly beneath the price. */}
           <div className="ot-result-tier-actions" aria-label="Filing options">
-            <a href="/checkout?plan=diy" className="ot-cta ot-cta-block ot-result-tier-cta">DIY $69</a>
-            <a href="/checkout?plan=done-for-you" className="ot-cta ot-cta-block ot-result-tier-cta">Done-For-You $97</a>
-            <a href="/appeal-contingency" className="ot-cta ot-cta-block ot-result-tier-cta ot-result-tier-cta-secondary">Contingency</a>
+            <a href="/checkout?plan=diy" className="ot-cta ot-cta-block ot-result-tier-cta">DIY Appeal Packet $69</a>
           </div>
-          <div className="ot-result-altline">
-            Pick a filing option if the check shows a real opportunity · no account required to review
-          </div>
+          <div className="ot-result-altline">{CC_10}</div>
         </>
-      ) : resultOpportunity ? (
-        <div className="ot-result-altline" role="status">
-          This property shows a potential over-assessment, but {result.township} Township is not currently in an open appeal window. Save this check and verify filing dates before buying a filing package.
-        </div>
       ) : (
         <div className="ot-result-altline" role="status">
-          This property does not show a clear over-assessment from the available public-record comps. No filing package is recommended from this free check.
+          {/* One closed branch, not two. The old pair split on "is there an
+              opportunity" and then on "is the window open", so a reader whose
+              check established nothing was still told a filing package was "not
+              recommended" — a conclusion about their property drawn from the
+              absence of one. This says what is true in every closed case. */}
+          We are not offering a filing package from this check.{" "}
+          <a href="https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines" target="_blank" rel="noopener noreferrer">
+            Confirm your own filing deadline with the county
+          </a>{" "}
+          — your right to appeal is not affected by anything on this page, and you can file on your
+          own with the county at no cost.
         </div>
       )}
       {!result.preview && (
@@ -919,50 +1030,35 @@ function Testimonials() {
   );
 }
 
+/**
+ * One plan, because one is offered.
+ *
+ * The Done-For-You and Contingency cards are removed, not disabled. Beyond
+ * pricing held products they carried the lexicon's most severe claims:
+ * "We prepare and submit the appeal" and "we file for you" (BL-A1), "you just
+ * sign the authorization" (BL-A3), "Tracked through BoR decision" (BL-A2 —
+ * Board Rule 1 bars us from practising there at any price), and "only if
+ * granted" (BL-A5).
+ *
+ * The surviving card is also corrected: "keep 100% of your savings" is BL-B4,
+ * and the packet's comparables are prepared for the Assessor stage, which is
+ * the stage OverTaxed IL operates at — labelling them "Formatted for Board of
+ * Review" described the one stage we cannot serve.
+ */
 const PRICING_PLANS = [
   {
     id: "diy", name: "DIY Appeal Packet", price: "$69",
-    priceNote: "one-time · keep 100% of your savings",
+    priceNote: "one-time",
     summary: "Everything you need to file the appeal yourself in your township.",
-    tag: "Recommended",
+    tag: null,
     href: "/checkout",
     cta: "Get the DIY Packet",
     features: [
       { label: "Pre-written appeal argument", ok: true, detail: "Tailored to assessment level + comp uniformity" },
-      { label: "3 nearby comparables", ok: true, detail: "Formatted for Board of Review" },
+      { label: "3 nearby comparables", ok: true, detail: "Prepared for an Assessor-stage appeal" },
       { label: "Step-by-step filing instructions", ok: true, detail: "Specific to your township" },
-      { label: "Deadline reminders", ok: true, detail: "2026 window + 2027 second pass" },
-      { label: "We submit on your behalf", ok: false, detail: "You file yourself (~15 min)" },
-    ],
-  },
-  {
-    id: "dfy", name: "Done-For-You", price: "$97",
-    priceNote: "one-time · we file and follow up",
-    summary: "We prepare and submit the appeal — you just sign the authorization.",
-    tag: null,
-    href: "/checkout",
-    cta: "Choose Done-For-You",
-    features: [
-      { label: "Pre-written appeal argument", ok: true, detail: "Tailored to assessment level + comp uniformity" },
-      { label: "3 nearby comparables", ok: true, detail: "Formatted for Board of Review" },
-      { label: "Step-by-step filing instructions", ok: true, detail: "Or skip — we file for you" },
-      { label: "Deadline reminders", ok: true, detail: "2026 window + 2027 second pass" },
-      { label: "We submit on your behalf", ok: true, detail: "Tracked through BoR decision" },
-    ],
-  },
-  {
-    id: "contingency", name: "Contingency", price: "22%",
-    priceNote: "of first-year savings · only if granted",
-    summary: "For larger potential reductions: no upfront service fee, reviewed before acceptance.",
-    tag: "No upfront fee",
-    href: "/appeal-contingency",
-    cta: "Request contingency review",
-    features: [
-      { label: "Pre-written appeal argument", ok: true, detail: "Built after case review" },
-      { label: "3 nearby comparables", ok: true, detail: "Formatted for Board of Review" },
-      { label: "Step-by-step filing instructions", ok: false, detail: "We handle accepted cases" },
-      { label: "Deadline reminders", ok: true, detail: "Tracked through decision" },
-      { label: "We submit on your behalf", ok: true, detail: "After explicit authorization" },
+      { label: "Deadline reminders", ok: true, detail: "For a future eligible window" },
+      { label: "You file it yourself", ok: true, detail: "We prepare it; you review, sign, and file" },
     ],
   },
 ];
@@ -972,8 +1068,12 @@ function PricingCompare() {
     <section id="pricing" className="ot-pcompare">
       <div className="ot-pcompare-inner">
         <div className="ot-pcompare-head">
-          <div className="ot-eyebrow">Three ways to file</div>
-          <h2 className="ot-h2">Same outcome. Pick flat-fee help or contingency review.</h2>
+          <div className="ot-eyebrow">One way to file</div>
+          {/* "Same outcome" claimed the county decides identically whichever
+              tier you buy — an outcome claim about a decision that is not
+              ours. With one plan there is nothing left to compare anyway. */}
+          <h2 className="ot-h2">The DIY Appeal Packet.</h2>
+          <p className="ot-pcompare-sub">{CC_10}</p>
         </div>
         <div className="ot-pcompare-grid">
           {PRICING_PLANS.map((plan) => (
@@ -1014,38 +1114,48 @@ function PricingCompare() {
 const FAQ_ITEMS = [
   {
     id: "deadline",
+    // The cycle-year schedule ("2026 triennial covers the South and West
+    // Suburbs first ... 2027 and 2028") was a hard-coded window status with no
+    // source and no retrieval timestamp, restated on the busiest page on the
+    // site and never refreshed. The answer now points at the one surface that
+    // carries provenance instead of holding a second, drifting copy.
     q: "When is the deadline to file an appeal?",
-    a: "Each Cook County township has its own appeal window. The county runs on a rolling 3-year triennial cycle, and only about a third of townships are open at any given time. Once you enter your address, we show your specific township's window and exact close date. The 2026 triennial covers the South and West Suburbs first; North Suburbs and the City of Chicago follow in 2027 and 2028.",
+    a: "Each Cook County township has its own appeal window, and the county opens them on a rolling schedule. Enter your address and we show your township's status as published by the county, with the source and the time we retrieved it. Confirm your filing deadline with the county before you file.",
     expanded: true,
   },
   {
     id: "after-check",
     q: "What happens after I submit my free check?",
-    a: "You'll see your full report on the next screen — assessed value vs. comparable properties, assessment-level gap, estimated annual and 3-year overpayment, and your township's appeal window status. No signup, no credit card. If your check shows over-assessment, you can pick the DIY Appeal Packet ($69), Done-For-You ($97), or request contingency review for larger cases. If your numbers don't suggest an appeal, we'll tell you that too.",
+    // "estimated annual and 3-year overpayment" put a dollar figure on a
+    // decision the county has not made (BL-B3). The report describes the
+    // comparison it actually performed.
+    a: "You'll see your full report on the next screen — assessed value against comparable properties, the assessment-level gap, and your township's appeal window status as published by the county. No signup, no credit card. If the evidence appears to support closer review and your window is open, you can order the $69 DIY Appeal Packet. If it does not, we'll tell you that too.",
     expanded: true,
   },
   {
     id: "data",
     q: "Where does your data come from? How fresh is it?",
-    a: "Cook County Assessor and Board of Review public records. We check township schedules regularly and avoid publishing outcome claims until they are verified. It's the same public-record base the Board of Review uses to decide appeals.",
+    a: "Cook County Assessor public records. Every deadline we show carries the source it came from and the time we retrieved it, and we publish no outcome claims.",
     expanded: true,
   },
   {
     id: "win-rate",
     q: "What if my appeal isn't successful?",
-    a: "Cook County doesn't penalize you for filing — you keep the assessed value on file. The $69 DIY packet is a flat service fee for preparing your appeal materials and is paid regardless of outcome. A refund applies only if an OverTaxed IL procedural error causes the county to reject the filing.",
+    // The refund rule is a Terms of Service term and an owner policy decision
+    // (OD-5, unsigned), so it is not restated or reworded here. CC-12 replaces
+    // only the outcome framing.
+    a: `Cook County doesn't penalize you for filing — you keep the assessed value on file. The $69 packet is a flat fee for preparing your appeal materials and is paid regardless of what the county decides. ${CC_12}`,
     expanded: true,
   },
-  {
-    id: "diy-vs-dfy",
-    q: "DIY Packet vs Done-For-You — which should I pick?",
-    a: "Most homeowners pick the $69 DIY Appeal Packet when they want us to build the comp package and they are comfortable filing it themselves. Done-For-You at $97 is for homeowners who want us to submit after they sign explicit filing authorization.",
-    expanded: true,
-  },
+  // The "DIY Packet vs Done-For-You" entry is removed. It compared the packet
+  // against a held product, and opened with "Most homeowners pick..." (BL-B2).
   {
     id: "law-firm",
     q: "Are you a law firm?",
-    a: "No. OverTaxed IL is not a law firm and does not provide legal advice. We help you organize public records into the format the Board of Review accepts.",
+    // "the format the Board of Review accepts" described our packet as built
+    // for the one stage we cannot serve. Every Board of Review mention has to
+    // co-render CC-11, and this is the answer where that belongs.
+    a: `${CC_12} ${CC_01} ${CC_11}`,
     expanded: true,
   },
 ];

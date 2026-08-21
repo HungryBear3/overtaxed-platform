@@ -10,7 +10,9 @@ export const metadata: Metadata = {
 
 const nextSteps = [
   "Check your email for packet access or preview follow-up instructions.",
-  "Confirm your township appeal window before filing anything with the Board of Review.",
+  // Assessor, not Board of Review: this is the stage the packet is prepared
+  // for, and the stage whose window the reader is being told to confirm.
+  "Confirm your township appeal window with the Cook County Assessor before you file.",
   "Use the packet as methodology support, not as a guarantee of a lower assessment.",
 ];
 
@@ -25,7 +27,7 @@ export default function AppealPacketSuccessPage() {
             <p className="ot-eyebrow">Packet request received</p>
             <h1 className="ot-h2">Your Cook County appeal packet request is queued.</h1>
             <p className="ot-sublead">
-              We keep this launch flow Cook County-specific: public Assessor records, Board of Review filing steps, township windows, and residential assessment-level context.
+              We keep this launch flow Cook County-specific: public Assessor records, Assessor filing steps, township windows, and residential assessment-level context.
             </p>
             <div className="ot-hero-actions">
               <Link href="/deadlines" className="ot-cta ot-cta-primary">

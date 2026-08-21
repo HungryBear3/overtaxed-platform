@@ -24,12 +24,18 @@ describe("/deadlines lead tracking", () => {
   it("tracks deadline map page views with official count context", () => {
     render(<DeadlinesPage />);
 
+    // Was: 16 official / 5 open / 11 closed / 22 pending, and `sourceUpdated:
+    // "2026-07-23"` — the day a developer last edited a constant, reported to
+    // analytics as though it were a retrieval. The counts now come from the
+    // canonical view model, which verifies nothing against the committed
+    // synthetic snapshot, and `sourceUpdated` carries a real retrieval instant
+    // or nothing at all.
     expect(analytics.deadlineMapView).toHaveBeenCalledWith({
-      officialCount: 16,
-      openCount: 5,
-      closedCount: 11,
-      pendingCount: 22,
-      sourceUpdated: "2026-07-23",
+      officialCount: 0,
+      openCount: 0,
+      closedCount: 0,
+      pendingCount: 38,
+      sourceUpdated: "",
     });
   });
 
@@ -42,7 +48,7 @@ describe("/deadlines lead tracking", () => {
       source: "reminder_dropdown",
       townshipSlug: "cicero",
       townshipName: "Cicero",
-      status: "open",
+      status: "pending",
     });
   });
 
@@ -57,7 +63,7 @@ describe("/deadlines lead tracking", () => {
     expect(analytics.deadlineReminderSignup).toHaveBeenCalledWith({
       townshipSlug: "palos",
       townshipName: "Palos",
-      status: "closed",
+      status: "pending",
     });
     expect(JSON.stringify((analytics.deadlineReminderSignup as jest.Mock).mock.calls)).not.toContain("owner@example.com");
   });

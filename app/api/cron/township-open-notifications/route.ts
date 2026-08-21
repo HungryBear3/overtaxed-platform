@@ -5,7 +5,11 @@ import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/db"
 import { sendEmail, townshipOpenNotificationTemplate } from "@/lib/email"
 import { formatPIN } from "@/lib/cook-county"
-import { TOWNSHIP_DEADLINES_2025, ASSESSOR_CALENDAR_URL } from "@/lib/appeals/township-deadlines"
+import {
+  ASSESSOR_CALENDAR_URL,
+  OFFICIAL_DEADLINE_SNAPSHOT,
+  describeTownshipCalendar,
+} from "@/lib/appeals/township-deadlines"
 import { normalizeTownshipForMatch } from "@/lib/monitoring/schedule"
 
 export const dynamic = "force-dynamic"
@@ -15,35 +19,50 @@ const TAX_YEAR = 2025
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization")
   const expectedKey = process.env.CRON_SECRET
-  if (expectedKey && authHeader !== `Bearer ${expectedKey}`) {
+  if (!expectedKey || authHeader !== `Bearer ${expectedKey}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const today = new Date().toISOString().slice(0, 10)
+  const evaluatedAt = new Date().toISOString()
 
-  // Townships whose notice date is today (window just opened)
-  const townshipsOpeningToday: string[] = []
-  for (const [townshipKey, dates] of Object.entries(TOWNSHIP_DEADLINES_2025)) {
-    if (dates.noticeDate === today) {
-      townshipsOpeningToday.push(townshipKey)
-    }
+  // Which townships opened today, according to the canonical state and nothing
+  // else. This used to read a hard-coded 2025 map and compare its notice dates
+  // to today's date — a schedule that had been over a year out of date and
+  // still decided who got mail. Now a township qualifies only if its projection
+  // verifies, clears deadline email, and names today as the day the window
+  // opened. Every unverified or unavailable state contributes zero sends.
+  const openingToday: Array<{
+    townshipKey: string
+    townshipName: string
+    noticeDate: string
+    lastFileDate: string
+  }> = []
+
+  for (const [townshipKey, row] of Object.entries(OFFICIAL_DEADLINE_SNAPSHOT.townships ?? {})) {
+    const projection = describeTownshipCalendar(row.townshipName, evaluatedAt)
+    if (!projection.available || !projection.allowDeadlineEmail) continue
+    if (projection.status !== "open") continue
+    if (projection.openDate !== evaluatedAt.slice(0, 10)) continue
+    openingToday.push({
+      townshipKey,
+      townshipName: row.townshipName,
+      noticeDate: projection.noticeDate ?? projection.openDate,
+      lastFileDate: projection.lastFileDate,
+    })
   }
 
-  if (townshipsOpeningToday.length === 0) {
+  if (openingToday.length === 0) {
     return NextResponse.json({
       success: true,
       emailsSent: 0,
-      reason: "No townships opening today",
+      reason: "No townships with a verified opening today",
     })
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
   let sent = 0
 
-  for (const townshipKey of townshipsOpeningToday) {
-    const dates = TOWNSHIP_DEADLINES_2025[townshipKey]
-    if (!dates) continue
-
+  for (const township of openingToday) {
     // Find properties in this township (normalized match) with monitoring enabled
     const properties = await prisma.property.findMany({
       where: {
@@ -61,24 +80,19 @@ export async function GET(request: NextRequest) {
 
     for (const prop of properties) {
       const propTownshipNorm = normalizeTownshipForMatch(prop.township)
-      if (!propTownshipNorm || propTownshipNorm !== townshipKey) continue
+      if (!propTownshipNorm || propTownshipNorm !== township.townshipKey) continue
 
       // Skip if user already has an appeal for this property for this year
       if (prop.appeals.length > 0) continue
-
-      const townshipDisplay = townshipKey
-        .split(" ")
-        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-        .join(" ")
 
       const template = townshipOpenNotificationTemplate({
         userName: prop.user.name,
         propertyAddress: `${prop.address}, ${prop.city}, ${prop.state}`,
         pin: formatPIN(prop.pin),
-        township: townshipDisplay,
+        township: township.townshipName,
         taxYear: TAX_YEAR,
-        noticeDate: dates.noticeDate,
-        lastFileDate: dates.lastFileDate,
+        noticeDate: township.noticeDate,
+        lastFileDate: township.lastFileDate,
         startAppealLink: `${appUrl}/appeals/new?propertyId=${prop.id}`,
         calendarUrl: ASSESSOR_CALENDAR_URL,
       })

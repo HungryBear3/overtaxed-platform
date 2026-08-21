@@ -201,15 +201,21 @@ function generatedTitleExpressions(relativePath: string): string[] {
 describe("root-template metadata titles", () => {
   it("brands the root page exactly once without applying its same-segment layout template", () => {
     const title = resolvedStaticRouteTitle("/", "app/page.tsx");
-    expect(title).toBe(
-      "OverTaxed IL — Cook County property tax appeals, from $69",
-    );
+    // ", from $69" is gone with the tiers it was counting from: one price is
+    // not a range to start at, and "from" invites a reader to expect a cheaper
+    // entry point that does not exist. The property this test guards — one
+    // correctly cased brand on a title the layout template does not wrap — is
+    // unchanged.
+    expect(title).toBe("OverTaxed IL — Cook County property tax appeals");
     expect(title.match(/OverTaxed IL/g) ?? []).toHaveLength(1);
   });
 
   it("uses a nested default and template to brand both contingency routes exactly once", () => {
+    // The old default advertised the held product in every browser tab and in
+    // search results. The route family is withdrawn and de-indexed; it exists
+    // to catch stale inbound links, so its title says so.
     expect(exportedMetadataTitle("app/appeal-contingency/layout.tsx")).toEqual({
-      default: "Contingency Property Tax Appeal Review",
+      default: "Contingency Review Withdrawn",
       template: "%s | OverTaxed IL",
     });
 

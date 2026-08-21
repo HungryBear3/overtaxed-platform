@@ -1,12 +1,14 @@
 import Link from "next/link"
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
-import { BoardOfReviewWaitlist } from "@/components/board-of-review/BoardOfReviewWaitlist"
+import { CC_11 } from "@/lib/copy/canonical"
 import "../ot-design.css"
 
 export const metadata = {
+  // No brand suffix here: the root layout applies `%s | OverTaxed IL`, and
+  // BL-F6 requires exactly one "OverTaxed IL" in every <title>.
   title: "Cook County Board of Review Appeals",
   description:
-    "The Board of Review is the second level of Cook County property tax appeals. OverTaxed IL is building homeowner-friendly support for it. Join the waitlist.",
+    "The Board of Review is the second level of Cook County property tax appeals. OverTaxed IL does not operate at that stage. Confirm your own deadline with the county.",
 }
 
 export default function BoardOfReviewPage() {
@@ -15,14 +17,16 @@ export default function BoardOfReviewPage() {
       <SiteHeader />
 
       <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12 bg-white">
-        {/* Badge */}
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-100 text-amber-800 text-sm font-medium mb-6">
-          Coming soon
-        </div>
-
+        {/* A "Coming soon" badge on a Board of Review page is BL-A7: it tells a
+            homeowner to wait for us on a stage we do not serve, against a live
+            statutory deadline. The page states the position instead. */}
         <h1 className="text-3xl font-bold text-gray-900 mb-4">
           The Cook County Board of Review
         </h1>
+
+        <p className="text-sm text-gray-700 border border-amber-300 bg-amber-50 rounded-xl p-4 mb-8">
+          {CC_11}
+        </p>
         <p className="text-lg text-gray-600 mb-8">
           Most homeowners don&apos;t know that Cook County has two separate levels of property
           tax appeal. Large commercial property owners use both — with attorneys. Most
@@ -51,7 +55,7 @@ export default function BoardOfReviewPage() {
               different process.
             </p>
             <span className="inline-block px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold">
-              ⏳ OverTaxed IL support coming
+              OverTaxed IL does not operate here
             </span>
           </div>
         </div>
@@ -59,7 +63,7 @@ export default function BoardOfReviewPage() {
         {/* The inequality section */}
         <div className="bg-gray-900 text-white rounded-2xl p-6 mb-10">
           <h2 className="text-xl font-bold mb-3">
-            Businesses have always used both levels. Now you will too.
+            Businesses have always used both levels.
           </h2>
           <p className="text-gray-300 text-sm mb-4">
             When a commercial property owner in Cook County gets a high assessment, their tax
@@ -72,7 +76,8 @@ export default function BoardOfReviewPage() {
             the exclusive domain of well-represented commercial interests.
           </p>
           <p className="text-white text-sm font-semibold">
-            OverTaxed IL is building Board of Review support to change that.
+            You can file at the Board of Review yourself. The Board publishes its own
+            rules, forms, and deadlines, and the taxpayer may appear personally.
           </p>
         </div>
 
@@ -109,10 +114,16 @@ export default function BoardOfReviewPage() {
         {/* What to do now */}
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-6 mb-10">
           <h2 className="text-lg font-semibold text-gray-900 mb-2">What to do right now</h2>
+          {/* "South-district townships are open now" was a hard-coded window
+              status with no source and no retrieval timestamp (BL-D2/BL-D4). It
+              is not restated with provenance here: this page is not a deadline
+              surface, so it links to the one that is rather than carrying a
+              second, independently-drifting copy of the status. */}
           <p className="text-sm text-gray-700 mb-4">
-            While we build Board of Review support, the highest-value action is filing your
-            Assessor appeal first. South-district townships are open now. A successful Assessor
-            appeal often eliminates the need to escalate to the Board of Review.
+            The Assessor stage is where OverTaxed IL operates, and it comes first. A
+            successful Assessor appeal can remove the reason to escalate to the Board of
+            Review. Check your township&apos;s current Assessor window before you rely on
+            either stage being open.
           </p>
           <div className="flex flex-col sm:flex-row gap-3">
             <Link
@@ -128,13 +139,19 @@ export default function BoardOfReviewPage() {
               See pricing
             </Link>
           </div>
+          {/* The "$97 done-for-you" half of this line priced a held product, and
+              "done-for-you" is itself BL-A6. The $69 packet price is not
+              repeated here because BL-F3 requires CC-10 wherever $69 appears,
+              and this box is not the place to carry it. */}
           <p className="text-xs text-gray-500 mt-3">
-            $69 DIY packet · $97 done-for-you · No attorney needed. OverTaxed IL is not a law firm.
+            OverTaxed IL is not a law firm.
           </p>
         </div>
 
-        {/* Waitlist */}
-        <BoardOfReviewWaitlist />
+        {/* The Board of Review waitlist is removed, not disabled. Collecting an
+            enrolment for a stage we do not serve asks a homeowner to wait on a
+            live statutory deadline (BL-A7). CC-11 above states the position and
+            points them at the county instead. */}
 
         <p className="text-xs text-gray-400 text-center mt-10">
           Questions?{" "}

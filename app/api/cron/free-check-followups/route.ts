@@ -3,7 +3,8 @@ import { prisma } from "@/lib/db/prisma";
 import { sendEmail } from "@/lib/email/send";
 import { followupDeliveryEnabled } from "@/lib/followups/config";
 import { buildFollowupEmail } from "@/lib/followups/templates";
-import { getOfficial2026Deadline } from "@/lib/appeals/township-deadlines";
+import { describeTownshipCalendar } from "@/lib/appeals/township-deadlines";
+import type { DeadlineProjection } from "@/lib/deadlines/official-source-state";
 
 export const dynamic = "force-dynamic";
 const BATCH_SIZE = 25;
@@ -13,13 +14,24 @@ function authorized(req: NextRequest): boolean {
   return Boolean(secret && req.headers.get("authorization") === `Bearer ${secret}`);
 }
 
-function deadlineIsOpen(township: string | null, now: Date): boolean {
-  const deadline = getOfficial2026Deadline(township);
-  if (!deadline) return false;
-  const today = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(now);
-  return today >= deadline.noticeDate && today <= deadline.lastFileDate;
+/**
+ * Re-evaluate the canonical state at the moment of delivery.
+ *
+ * A reminder is queued days ahead of its send, so the window that justified
+ * scheduling it is not evidence that the window is still open now. This asks
+ * the question again against the send clock; a state that has gone stale,
+ * closed, or unverifiable in the interval cancels the message rather than
+ * sending it with a disclaimer.
+ *
+ * The subscriber record carries a township *name*, not a PIN, so this is the
+ * informational tier: it can describe a published calendar but never
+ * establishes that this reader's parcel sits in that township. Deadline mail is
+ * an eligibility claim, so `allowDeadlineEmail` is false here by construction
+ * and every deadline-anchored step cancels. Re-establishing eligibility would
+ * require a stored official property record, which this model does not have.
+ */
+function deadlineForDelivery(township: string | null, now: Date): DeadlineProjection {
+  return describeTownshipCalendar(township, now.toISOString());
 }
 
 export async function GET(req: NextRequest) {
@@ -43,7 +55,7 @@ export async function GET(req: NextRequest) {
     for (const item of due) {
       if (item.subscriber.emailSuppressedAt) count("email_suppressed");
       else if (item.channel === "SMS" && (!item.subscriber.smsConsentAt || item.subscriber.smsSuppressedAt)) count("sms_suppressed");
-      else if (item.step !== "RESULT" && !deadlineIsOpen(item.subscriber.township, now)) count("deadline_not_open");
+      else if (item.step !== "RESULT" && !deadlineForDelivery(item.subscriber.township, now).allowDeadlineEmail) count("deadline_not_verified");
       else count("eligible");
     }
     return NextResponse.json({ status: "dry_run", due: due.length, reasons });
@@ -66,11 +78,12 @@ export async function GET(req: NextRequest) {
       where: { email: { equals: item.subscriber.emailNormalized, mode: "insensitive" }, status: { in: ["PAID", "COMPLETED", "FULFILLED"] } },
       select: { id: true },
     });
+    const deadline = deadlineForDelivery(item.subscriber.township, now);
     let skipReason: string | null = null;
     if (purchased) skipReason = "purchased";
     else if (item.channel === "EMAIL" && item.subscriber.emailSuppressedAt) skipReason = "email_suppressed";
     else if (item.channel === "SMS" && (!item.subscriber.smsConsentAt || item.subscriber.smsSuppressedAt)) skipReason = "sms_suppressed";
-    else if (item.step !== "RESULT" && !deadlineIsOpen(item.subscriber.township, now)) skipReason = "deadline_not_open";
+    else if (item.step !== "RESULT" && !deadline.allowDeadlineEmail) skipReason = "deadline_not_verified";
 
     if (skipReason) {
       await prisma.freeCheckFollowupMessage.update({
@@ -99,6 +112,7 @@ export async function GET(req: NextRequest) {
       address: item.subscriber.propertyAddress,
       resultUrl: new URL(item.subscriber.resultUrl, baseUrl).toString(),
       unsubscribeUrl: `${baseUrl}/api/followups/unsubscribe?token=${encodeURIComponent(item.subscriber.unsubscribeToken)}`,
+      deadline,
     });
     const ok = email ? await sendEmail({
       to: item.subscriber.email,

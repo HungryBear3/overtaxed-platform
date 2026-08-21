@@ -136,7 +136,13 @@ export default async function AccountPage() {
                 {user.subscriptionTier === "STARTER" && "Starter (1–2 properties, $149/property/year)"}
                 {user.subscriptionTier === "GROWTH" && "Growth (3–9 properties, $124/property/year)"}
                 {user.subscriptionTier === "PORTFOLIO" && "Portfolio (10–20 properties, $99/property/year)"}
-                {user.subscriptionTier === "PERFORMANCE" && "Contingency (22% of first-year savings, if granted)"}
+                {/* Same change as the dashboard label, for the same reason:
+                    the terms of a withdrawn arrangement are not a plan
+                    description, and what is owed on an existing account is an
+                    owner ruling (OD-5) rather than something this label may
+                    decide. The pending-invoice section below this renders
+                    nothing while the hold stands. */}
+                {user.subscriptionTier === "PERFORMANCE" && "Contingency (no longer offered)"}
               </p>
               {user.subscriptionTier !== "COMPS_ONLY" && user.subscriptionTier !== "PERFORMANCE" && (
                 <p className="text-xs text-gray-500 mt-1">

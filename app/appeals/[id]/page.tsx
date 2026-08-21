@@ -5,9 +5,9 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { AddCompsDialog } from "@/components/appeals/add-comps-dialog"
 import { PdfDownloadButton } from "@/components/appeals/pdf-download-button"
-import { FilingAuthorizationForm } from "@/components/appeals/filing-authorization-form"
 import { RavSuggestion } from "@/components/appeals/rav-suggestion"
 import { Textarea } from "@/components/ui/textarea"
+import { CC_11 } from "@/lib/copy/canonical"
 
 interface Appeal {
   id: string
@@ -894,7 +894,7 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                   </li>
                   <li>
                     Download your PDF above, then submit it yourself at the{" "}
-                    <a href="https://www.cookcountyassessor.com/file-appeal" target="_blank" rel="noopener noreferrer" className="underline font-medium">
+                    <a href="https://www.cookcountyassessoril.gov/file-appeal" target="_blank" rel="noopener noreferrer" className="underline font-medium">
                       Cook County Assessor portal
                     </a>.
                   </li>
@@ -931,14 +931,14 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                   </li>
                   <li>
                     <strong>Check your township&apos;s filing window</strong> - Appeals are only accepted during specific periods by township. Confirm your deadline at{" "}
-                    <a href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
-                      cookcountyassessor.com/assessment-calendar-and-deadlines
+                    <a href="https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                      cookcountyassessoril.gov/assessment-calendar-and-deadlines
                     </a>.
                   </li>
                   <li>
                     <strong>Go to the Cook County filing portal</strong> - Visit{" "}
-                    <a href="https://www.cookcountyassessor.com/online-appeals" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
-                      cookcountyassessor.com/online-appeals
+                    <a href="https://www.cookcountyassessoril.gov/online-appeals" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                      cookcountyassessoril.gov/online-appeals
                     </a>{" "}
                     or{" "}
                     <a href="https://propertytaxfilings.cookcountyil.gov" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
@@ -963,11 +963,11 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
                 </ol>
                 <p className="mt-4 text-xs text-gray-500">
                   Questions? See{" "}
-                  <a href="https://www.cookcountyassessor.com/form-document/online-appeals-guide" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                  <a href="https://www.cookcountyassessoril.gov/form-document/online-appeals-guide" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                     Cook County Online Appeals Guide
                   </a>{" "}
                   or{" "}
-                  <a href="https://www.cookcountyassessor.com/official-appeal-rules-cook-county-assessor" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                  <a href="https://www.cookcountyassessoril.gov/official-appeal-rules-cook-county-assessor" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                     Official Appeal Rules
                   </a>.
                 </p>
@@ -975,31 +975,22 @@ export default function AppealDetailPage({ params }: { params: Promise<{ id: str
               </details>
             )}
 
-            {/* Filing authorization (for staff-assisted filing) */}
+            {/* The filing-authorization panel is removed.
+                It headed itself "Authorize filing on your behalf", offered to
+                "authorize OverTaxed IL to file your appeal with Cook County",
+                and captured a drawn signature onto the county's official
+                Attorney/Representative form — BL-A1, BL-A3 and BL-A4 in one
+                control, for a representation CC-11 says we cannot undertake.
+                Staff-assisted filing is the held Done-For-You product, and the
+                two routes behind this form now return 410, so leaving the form
+                mounted would only produce a signature capture that fails after
+                the fact. It is removed rather than disabled: a disabled
+                "authorize us to file" panel still tells a customer that filing
+                on their behalf is something we do. */}
             {(appeal.status === "DRAFT" || appeal.status === "PENDING_FILING" || appeal.status === "PENDING_STAFF_FILING") && (
               <div className="bg-white rounded-lg shadow p-6 [color-scheme:light]">
-                <h2 className="text-lg font-semibold text-gray-900 mb-2">Authorize filing on your behalf</h2>
-                {appeal.status === "PENDING_STAFF_FILING" ? (
-                  <p className="text-sm text-gray-600 mb-4">
-                    Your appeal is in our filing queue. Our staff will file it with Cook County and notify you when it&apos;s submitted.
-                  </p>
-                ) : (
-                  <p className="text-sm text-gray-600 mb-4">
-                    Complete this form to authorize OverTaxed IL to file your appeal with Cook County. Required for staff-assisted filing.
-                  </p>
-                )}
-                <FilingAuthorizationForm
-                  appealId={appeal.id}
-                  property={{
-                    address: appeal.property.address,
-                    city: appeal.property.city,
-                    state: appeal.property.state,
-                    zipCode: appeal.property.zipCode,
-                  }}
-                  user={appeal.user ?? null}
-                  existingAuth={appeal.filingAuthorization ?? undefined}
-                  onSaved={() => fetchAppeal()}
-                />
+                <h2 className="text-lg font-semibold text-gray-900 mb-2">You file this appeal yourself</h2>
+                <p className="text-sm text-gray-600">{CC_11}</p>
               </div>
             )}
 

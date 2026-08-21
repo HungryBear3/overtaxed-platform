@@ -24,10 +24,32 @@ beforeEach(() => {
 })
 
 describe("OT checkout filing-window UI", () => {
-  it("honors a Done-For-You plan selected by the entry URL", () => {
-    render(<CheckoutPage initialPlan="dfy" />)
-    expect((document.querySelector('input[value="dfy"]') as HTMLInputElement).checked).toBe(true)
-    expect(screen.getAllByText("$97")).toHaveLength(2)
+  it("offers no held plan to select, whatever the entry URL asked for", () => {
+    // This previously asserted the opposite — that ?plan=dfy selected the $97
+    // tier and rendered its price twice. Both held plans are removed from the
+    // client, so there is no control to select and no price to render.
+    render(<CheckoutPage />)
+
+    expect(document.querySelector('input[value="dfy"]')).toBeNull()
+    expect(document.querySelector('input[value="contingency"]')).toBeNull()
+    expect(screen.queryAllByText("$97")).toHaveLength(0)
+    expect(screen.queryByText(/done-for-you/i)).toBeNull()
+    expect(screen.queryByText(/22%/)).toBeNull()
+  })
+
+  it("cannot be made to post a held tier to the checkout API", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(response(500, { error: "stop after payload capture" }))
+    global.fetch = fetchMock as jest.Mock
+
+    render(<CheckoutPage />)
+    fillDetails()
+    fireEvent.click(screen.getByRole("button", { name: /continue to payment/i }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    for (const call of fetchMock.mock.calls) {
+      const body = JSON.parse(call[1].body)
+      expect(body.tier).toBe("T2")
+    }
   })
 
   it("renders the server-required T2 pending acknowledgment and sends the bound token only after checking it", async () => {
@@ -61,23 +83,13 @@ describe("OT checkout filing-window UI", () => {
     })
   })
 
-  it("renders T3 blocking as a disabled payment control with a free-check fallback", async () => {
-    global.fetch = jest.fn().mockResolvedValue(response(409, {
-      code: "T3_WINDOW_BLOCKED",
-      error: "Full filing unavailable",
-      window: { township: "Jefferson", status: "closed" },
-    })) as jest.Mock
-
-    render(<CheckoutPage />)
-    fireEvent.click(document.querySelector('input[value="dfy"]') as HTMLInputElement)
-    fillDetails()
-    fireEvent.click(screen.getByRole("button", { name: /continue to payment/i }))
-
-    expect(await screen.findByText(/can't offer a full filing for this property right now/i)).toBeTruthy()
-    const unavailable = screen.getByRole("button", { name: "Payment unavailable" })
-    expect((unavailable as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.getByRole("link", { name: /check my township for free/i }).getAttribute("href")).toBe("/#free-check")
-  })
+  // The "renders T3 blocking as a disabled payment control with a free-check
+  // fallback" case is gone. It reached the T3_WINDOW_BLOCKED gate by clicking
+  // the dfy radio, which no longer exists — the client cannot select the tier
+  // that produces that gate. The route-level hold is covered directly in
+  // __tests__/checkout/session-approved-notice-conversion.test.ts and
+  // __tests__/checkout/session-contract-reuse.test.ts, which assert 410 before
+  // any provider or order-row access rather than a disabled button afterwards.
 
   it("shows address choices and does not retain a payment CTA while the property is ambiguous", async () => {
     global.fetch = jest.fn().mockResolvedValue(response(409, {

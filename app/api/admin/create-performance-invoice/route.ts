@@ -1,11 +1,14 @@
-// POST /api/admin/create-performance-invoice - Create contingency fee invoice(s) for a user
-// Admin-only. Use when conditions are met (3-year window ended for upfront, or first reduction for installments).
+// POST /api/admin/create-performance-invoice — WITHDRAWN.
+//
+// Contingency performance-fee invoicing is a held product. The authoritative
+// admin authorisation check is preserved and still runs first, so this remains
+// an admin-only endpoint rather than becoming an open information surface; only
+// then does it report the withdrawal. No body is parsed and no invoice is
+// created or eligibility computed.
 import { NextRequest, NextResponse } from "next/server"
+
 import { getSession } from "@/lib/auth/session"
-import {
-  shouldCreatePerformanceInvoice,
-  createPerformanceFeeInvoice,
-} from "@/lib/billing/performance-fee"
+import { heldProductResponse } from "@/lib/products/held-response"
 
 export const dynamic = "force-dynamic"
 
@@ -20,33 +23,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const body = await request.json()
-    const userId = body?.userId as string
-    if (!userId) {
-      return NextResponse.json({ error: "userId required" }, { status: 400 })
-    }
-
-    const check = await shouldCreatePerformanceInvoice(userId)
-    if (!check.should) {
-      return NextResponse.json(
-        { error: "Invoice not eligible", reason: check.reason ?? "unknown" },
-        { status: 400 }
-      )
-    }
-
-    const { invoiceIds } = await createPerformanceFeeInvoice(userId, check.savings, check.paymentOption)
-    return NextResponse.json({
-      success: true,
-      message: `Created ${invoiceIds.length} invoice(s)`,
-      invoiceIds,
-      totalSavings: check.savings.totalSavings,
-      feeAmount: check.savings.feeAmount,
+    return heldProductResponse("PERFORMANCE_INVOICE", "api/admin/create-performance-invoice", {
+      invoiceIds: [],
     })
   } catch (error) {
     console.error("[admin] create-performance-invoice error:", error)
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }

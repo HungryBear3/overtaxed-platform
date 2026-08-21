@@ -425,7 +425,15 @@ export default async function DashboardPage() {
                 {user.subscriptionTier === "STARTER" && (freshUser.subscriptionQuantity != null ? `Starter (${freshUser.subscriptionQuantity} slot${freshUser.subscriptionQuantity === 1 ? "" : "s"}, $149/property/year)` : "Starter (1–2 properties, $149/property/year)")}
                 {user.subscriptionTier === "GROWTH" && (freshUser.subscriptionQuantity != null ? `Growth (${freshUser.subscriptionQuantity} slots, $124/property/year)` : "Growth (3–9 properties, $124/property/year)")}
                 {user.subscriptionTier === "PORTFOLIO" && (freshUser.subscriptionQuantity != null ? `Portfolio (${freshUser.subscriptionQuantity} slots, $99/property/year)` : "Portfolio (10–20 properties, $99/property/year)")}
-                {user.subscriptionTier === "PERFORMANCE" && "Contingency (22% of first-year savings, if granted)"}
+                {/* The old label restated the arrangement's terms — a
+                    percentage of first-year savings, owed if the county
+                    granted a reduction — to a customer who can no longer
+                    enter it and can no longer be invoiced under it. It is
+                    replaced with the fact, not a new commitment: what is or
+                    is not owed on an existing account is an owner ruling
+                    (OD-5), so the label says only that the arrangement is
+                    withdrawn. */}
+                {user.subscriptionTier === "PERFORMANCE" && "Contingency (no longer offered)"}
               </p>
             </div>
             <div>
@@ -532,7 +540,7 @@ export default async function DashboardPage() {
             Sign up for Cook County&apos;s reassessment notice notifications to receive alerts when your township is reassessed.
           </p>
           <a
-            href="https://www.cookcountyassessor.com/assessment-calendar-and-deadlines"
+            href="https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm font-medium text-blue-600 hover:text-blue-700 underline"
