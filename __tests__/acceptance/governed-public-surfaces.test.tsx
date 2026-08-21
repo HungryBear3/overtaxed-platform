@@ -54,6 +54,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { createElement, type ReactElement } from "react"
 
 import { BANNED_LEXICON, readable } from "../lexicon/banned-claims.test"
+import { readAcceptanceMatrix } from "../helpers/governance-fixtures.test"
 
 const ROOT = resolve(__dirname, "../..")
 
@@ -161,12 +162,7 @@ const GOVERNED: Record<string, GovernedSurface> = {
 
 describe("additive governed-surface accounting", () => {
   it("is additive, and says so — the controller declaration is untouched", () => {
-    const matrix = JSON.parse(
-      readFileSync(
-        "/Users/abigailclaw/.openclaw/workspace/rex/handoffs/ot-minimum-postable-rebuild-20260819/qa/acceptance-matrix.json",
-        "utf8",
-      ),
-    ) as { accepted_routes: unknown[]; named_surfaces: unknown[] }
+    const matrix = readAcceptanceMatrix()
 
     // Controller-ratified, frozen, and not changed by this file.
     expect(matrix.accepted_routes).toHaveLength(53)
@@ -177,12 +173,7 @@ describe("additive governed-surface accounting", () => {
   })
 
   it("governs only surfaces the frozen declaration does not already cover", () => {
-    const matrix = JSON.parse(
-      readFileSync(
-        "/Users/abigailclaw/.openclaw/workspace/rex/handoffs/ot-minimum-postable-rebuild-20260819/qa/acceptance-matrix.json",
-        "utf8",
-      ),
-    ) as { accepted_routes: Array<{ path: string }>; named_surfaces: Array<{ path: string }> }
+    const matrix = readAcceptanceMatrix()
 
     const declared = new Set([
       ...matrix.accepted_routes.map((r) => r.path),

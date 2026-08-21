@@ -24,9 +24,15 @@ const APP_DIR = join(ROOT, "app")
 
 export const PAGE_FILES = ["page.tsx", "page.ts", "page.jsx", "page.js"]
 
-/** Prefixes `app/robots.ts` excludes from indexing. Read, never assumed. */
-export function robotsDisallow(): string[] {
-  const src = readFileSync(join(ROOT, "app/robots.ts"), "utf8")
+/**
+ * Prefixes `app/robots.ts` excludes from indexing. Read, never assumed.
+ *
+ * `root` defaults to the repository but is explicit so the mutation suites can
+ * point the identical derivation at a temporary fixture tree instead of editing
+ * the real checkout. See `governance-fixtures.test.ts` for why that matters.
+ */
+export function robotsDisallow(root: string = ROOT): string[] {
+  const src = readFileSync(join(root, "app/robots.ts"), "utf8")
   const block = src.slice(src.indexOf("disallow:"))
   return [...block.slice(0, block.indexOf("]")).matchAll(/"([^"]+)"/g)].map((m) => m[1]).sort()
 }
@@ -37,17 +43,17 @@ export function robotsDisallow(): string[] {
  * Route groups `(name)` contribute no path segment, which is why they are
  * stripped rather than treated as directories.
  */
-export function derivePageRoutes(): string[] {
+export function derivePageRoutes(root: string = ROOT): string[] {
   const out: string[] = []
   const walk = (dir: string) => {
-    const entries = readdirSync(join(ROOT, dir))
+    const entries = readdirSync(join(root, dir))
     if (entries.some((e) => PAGE_FILES.includes(e))) {
       const rel = dir.slice("app".length).replace(/\/\([^)]*\)/g, "") || "/"
       out.push(rel.startsWith("/") ? rel : `/${rel}`)
     }
     for (const entry of entries) {
       const child = `${dir}/${entry}`
-      if (statSync(join(ROOT, child)).isDirectory()) walk(child)
+      if (statSync(join(root, child)).isDirectory()) walk(child)
     }
   }
   walk("app")
@@ -195,10 +201,15 @@ export type RouteSets = {
   disallowed: string[]
 }
 
-/** Re-derived from disk each time, so a mutation is visible immediately. */
-export function classifyRoutes(): RouteSets {
-  const all = derivePageRoutes()
-  const disallowed = robotsDisallow()
+/**
+ * Re-derived from disk each time, so a mutation is visible immediately.
+ *
+ * `root` is a parameter rather than a module constant so a mutation proof can
+ * run the real derivation over a disposable fixture tree.
+ */
+export function classifyRoutes(root: string = ROOT): RouteSets {
+  const all = derivePageRoutes(root)
+  const disallowed = robotsDisallow(root)
   const isBlocked = (p: string) => disallowed.some((d) => p === d || p.startsWith(`${d}/`))
   const statics = all.filter((p) => !p.includes("["))
   return {

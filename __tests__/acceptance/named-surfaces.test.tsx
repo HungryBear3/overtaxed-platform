@@ -89,10 +89,8 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { createElement, type ReactElement } from "react"
 
 const ROOT = resolve(__dirname, "../..")
-const MATRIX_PATH =
-  "/Users/abigailclaw/.openclaw/workspace/rex/handoffs/ot-minimum-postable-rebuild-20260819/qa/acceptance-matrix.json"
 
-const matrix = JSON.parse(readFileSync(MATRIX_PATH, "utf8")) as {
+const matrix = readAcceptanceMatrix() as {
   accepted_routes: Array<{ accepted_path_id: number; path: string }>
   named_surfaces: Array<{ surface_id: string; path: string; category: string; expectation: string }>
 }
@@ -104,6 +102,7 @@ import {
   expectNoBannedClaim,
   readable,
 } from "../lexicon/banned-claims.test"
+import { readAcceptanceMatrix } from "../helpers/governance-fixtures.test"
 
 const DATE_CLAIM =
   /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+(19|20)\d{2}\b/

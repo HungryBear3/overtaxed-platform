@@ -46,13 +46,12 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { getAllPosts, getPostBySlug } from "@/lib/blog"
 import { BANNED_LEXICON, readable } from "../lexicon/banned-claims.test"
 import { publicBlogViolations } from "./blog-corpus-rules.test"
+import { readAcceptanceMatrix } from "../helpers/governance-fixtures.test"
 
 const ROOT = resolve(__dirname, "../..")
 const CONTENT_DIR = join(ROOT, "content/blog")
 const RETIRED_DIR = join(ROOT, "docs/retired-resources/blog-claims")
 
-const MATRIX_PATH =
-  "/Users/abigailclaw/.openclaw/workspace/rex/handoffs/ot-minimum-postable-rebuild-20260819/qa/acceptance-matrix.json"
 
 /* ── The one source ───────────────────────────────────────────────────────── */
 
@@ -65,7 +64,7 @@ function liveSlugs(): string[] {
 
 /** The controller's frozen blog rows, read from the packet rather than copied. */
 function controllerBlogSlugs(): string[] {
-  const matrix = JSON.parse(readFileSync(MATRIX_PATH, "utf8")) as {
+  const matrix = readAcceptanceMatrix() as {
     accepted_routes: Array<{ path: string }>
   }
   return matrix.accepted_routes

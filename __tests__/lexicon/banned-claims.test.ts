@@ -16,9 +16,8 @@
  */
 import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
+import { lexiconPath } from "../helpers/governance-fixtures.test"
 
-const LEXICON_PATH =
-  "/Users/abigailclaw/.openclaw/workspace/rex/research/ot-gate-a-cowork-20260818/04-CANONICAL-COPY-AND-BANNED-CLAIMS.md"
 
 /** Frozen source SHA-256, per the rebuild contract. */
 export const LEXICON_SHA256 = "a7577e68cdd07e79c16e6e53b786bbf579d73afd279e0e39c26ba2ad2932c499"
@@ -179,7 +178,7 @@ describe("the original 22 rows are intact", () => {
   })
 
   it("adds only, and every addition reuses a row the frozen document defines", () => {
-    const doc = readFileSync(LEXICON_PATH, "utf8")
+    const doc = readFileSync(lexiconPath(), "utf8")
     const documented = new Set([...doc.matchAll(/\bBL-([A-F]\d+)\b/g)].map((m) => `BL-${m[1]}`))
     const additions = BANNED_LEXICON.slice(22)
 
@@ -216,7 +215,7 @@ describe("the original 22 rows are intact", () => {
 })
 
 describe("the lexicon binds to its frozen source", () => {
-  const doc = readFileSync(LEXICON_PATH, "utf8")
+  const doc = readFileSync(lexiconPath(), "utf8")
 
   it("covers every BL row in the frozen document", () => {
     const documented = [...doc.matchAll(/\bBL-([A-F]\d+)\b/g)].map((m) => `BL-${m[1]}`)

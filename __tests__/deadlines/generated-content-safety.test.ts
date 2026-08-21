@@ -23,14 +23,17 @@
  * together with the absence of any rewrite or route that could reconstruct the
  * path, is the whole proof. No network call is made or needed.
  */
-import { existsSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 
 import { CC_11 } from "@/lib/copy/canonical"
 import { BANNED_LEXICON, readable } from "../lexicon/banned-claims.test"
+import { guardRepoWrites, withFixtureRoot } from "../helpers/governance-fixtures.test"
 
 const ROOT = resolve(__dirname, "../..")
 const PUBLIC_DIR = join(ROOT, "public")
+
+guardRepoWrites()
 const RETIRED_DIR = join(ROOT, "docs/retired-resources")
 
 const RETIRED_BASENAMES = [
@@ -342,9 +345,16 @@ export function servedAppealDomainViolations(raw: string): string[] {
 }
 
 /** Served paths, site-root relative, excluding the LegalKits product line. */
-function servedAppealDomainPaths(): string[] {
-  return walk(PUBLIC_DIR)
-    .map((f) => f.slice(PUBLIC_DIR.length).replace(/\\/g, "/"))
+/**
+ * Served paths under a public root.
+ *
+ * `publicDir` is a parameter so the planting proof below can walk a temporary
+ * fixture instead of writing into the real `public/` — the shared-worktree
+ * mutation pattern that made `npx jest` nondeterministic under parallel workers.
+ */
+function servedAppealDomainPaths(publicDir: string = PUBLIC_DIR): string[] {
+  return walk(publicDir)
+    .map((f) => f.slice(publicDir.length).replace(/\\/g, "/"))
     .filter((p) => !LEGALKITS_DIRS.some((dir) => p.startsWith(`/downloads/${dir}/`)))
 }
 
@@ -481,21 +491,30 @@ describe("the served-tree guard can actually fail", () => {
     expect(servedAppealDomainViolations(benign)).toEqual([])
   })
 
-  it("fails when a forbidden fixture is introduced under a served path", () => {
+  it("fails when a forbidden fixture is introduced under a served path", async () => {
     // The rules firing is not the same claim as the sweep reaching them. This
-    // writes a real file into `public/`, re-walks the served tree exactly as the
-    // sweep does, and proves the violation is found at its served path.
-    const planted = join(PUBLIC_DIR, "downloads", "__served_tree_guard_fixture__.md")
-    try {
+    // plants a file in a temporary public root, re-walks it with the same
+    // `servedAppealDomainPaths` the real sweep uses, and proves the violation is
+    // found at its served path. The fixture root is used rather than the real
+    // `public/` so a parallel worker can never observe a half-planted tree.
+    await withFixtureRoot("served-tree", (root) => {
+      const publicDir = join(root, "public")
+      mkdirSync(join(publicDir, "downloads"), { recursive: true })
+      // A benign neighbour, so the assertion below is a filter and not a tautology.
       writeFileSync(
-        planted,
+        join(publicDir, "downloads", "benign.md"),
+        readFileSync(join(PUBLIC_DIR, "downloads/evidence-checklist.md"), "utf8"),
+        "utf8",
+      )
+      writeFileSync(
+        join(publicDir, "downloads", "__served_tree_guard_fixture__.md"),
         "# Fixture\n\nHard deadline — no extensions. File at the Cook County Board of Review.\n",
         "utf8",
       )
 
-      const found = servedAppealDomainPaths()
+      const found = servedAppealDomainPaths(publicDir)
         .filter((p) => SCANNABLE.test(p))
-        .map((p) => ({ path: p, violations: servedAppealDomainViolations(readFileSync(join(PUBLIC_DIR, p), "utf8")) }))
+        .map((p) => ({ path: p, violations: servedAppealDomainViolations(readFileSync(join(publicDir, p), "utf8")) }))
         .filter((r) => r.violations.length > 0)
 
       expect(found.map((r) => r.path)).toEqual(["/downloads/__served_tree_guard_fixture__.md"])
@@ -505,10 +524,9 @@ describe("the served-tree guard can actually fail", () => {
           "SD-4 finality warning",
         ]),
       )
-    } finally {
-      if (existsSync(planted)) unlinkSync(planted)
-    }
-    expect(existsSync(planted)).toBe(false)
+    })
+    // Nothing was ever planted in the real served tree.
+    expect(existsSync(join(PUBLIC_DIR, "downloads", "__served_tree_guard_fixture__.md"))).toBe(false)
   })
 
   it.each(RETIRED_APPEAL_DOWNLOADS.map((p) => p.split("/").pop() as string))(

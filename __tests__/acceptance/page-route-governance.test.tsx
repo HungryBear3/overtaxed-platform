@@ -83,6 +83,7 @@ import {
   classifyRoutes,
   pageRouteViolations,
 } from "./page-route-rules.test"
+import { readAcceptanceMatrix } from "../helpers/governance-fixtures.test"
 
 const { all: ALL_PAGE_ROUTES, dynamic: DYNAMIC_ROUTES, authenticated: AUTHENTICATED, crawlable: CRAWLABLE, disallowed: DISALLOWED } = classifyRoutes()
 const isDisallowed = (p: string) => DISALLOWED.some((d) => p === d || p.startsWith(`${d}/`))
@@ -117,8 +118,6 @@ async function render(route: string): Promise<string> {
 
 const ROOT = resolve(__dirname, "../..")
 const APP_DIR = join(ROOT, "app")
-const MATRIX_PATH =
-  "/Users/abigailclaw/.openclaw/workspace/rex/handoffs/ot-minimum-postable-rebuild-20260819/qa/acceptance-matrix.json"
 
 /* ── Derivation is honest ─────────────────────────────────────────────────── */
 
@@ -185,7 +184,7 @@ describe("the route set is derived from what Next serves", () => {
 
 /** The controller's frozen declaration, read from the packet at run time. */
 function controllerDeclared(): Set<string> {
-  const m = JSON.parse(readFileSync(MATRIX_PATH, "utf8")) as {
+  const m = readAcceptanceMatrix() as {
     accepted_routes: Array<{ path: string }>
     named_surfaces: Array<{ path: string }>
   }
@@ -248,7 +247,7 @@ describe("every crawlable page route is governed exactly once", () => {
   })
 
   it("leaves the frozen controller declaration untouched at 53 / 22", () => {
-    const m = JSON.parse(readFileSync(MATRIX_PATH, "utf8")) as {
+    const m = readAcceptanceMatrix() as {
       accepted_routes: unknown[]
       named_surfaces: unknown[]
     }
