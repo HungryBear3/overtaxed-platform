@@ -8,6 +8,10 @@ import {
 } from "@/components/ot-design/SiteChrome";
 import { analytics } from "@/lib/analytics/events";
 import { CC_01, CC_10, CC_11, CC_12 } from "@/lib/copy/canonical";
+import {
+  isCanonicalFreeCheckOutcome,
+  type FreeCheckOutcome,
+} from "@/lib/free-check-outcome-contract";
 
 /*
  * The local `SAMPLE_RESULT` is gone.
@@ -25,21 +29,7 @@ import { CC_01, CC_10, CC_11, CC_12 } from "@/lib/copy/canonical";
 
 type WindowStatus = "open" | "closed" | "upcoming" | "unknown";
 
-/** Mirrors `FreeCheckOutcome` in `lib/free-check-appeal-window.ts`. */
-interface ResultOutcome {
-  code: "supportive" | "not_supportive" | "insufficient_evidence" | "unsupported_property";
-  headline: string;
-  allowCheckout: boolean;
-  reason: string | null;
-  /** Assessment-level figures — the ratios against a market value. */
-  showFigures: boolean;
-  /**
-   * The public-record assessed-value comparison. Separate gate: a subject the
-   * county carries no market value for has no assessment *level*, and that used
-   * to suppress the assessed values themselves along with it.
-   */
-  showRecordComparison: boolean;
-}
+type ResultOutcome = FreeCheckOutcome;
 
 type Result = {
   address: string;
@@ -158,7 +148,9 @@ function normalizeCheckResult(
     overpay3Year: asFiniteNumber(r.potentialOverpayment3Year ?? r.overpay3Year),
     comps: asFiniteNumber(r.compCount ?? r.comps) ?? 0,
     compsLabel: typeof r.compSelection?.label === "string" ? r.compSelection.label : null,
-    outcome: (r.outcome as ResultOutcome | undefined) ?? null,
+    // The homepage is a second consumer of the same response used by /check.
+    // It must not trust a capability tuple that the shared matrix rejects.
+    outcome: isCanonicalFreeCheckOutcome(r.outcome) ? r.outcome : null,
     disclosure: typeof r.disclosure === "string" ? r.disclosure : null,
     preview,
     submittedInput: submittedInput.trim(),

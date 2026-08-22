@@ -347,6 +347,20 @@ export async function POST(req: NextRequest) {
           ADDRESS_CANDIDATE_FETCH_LIMIT,
           searchOptions,
         )
+        if (!relaxedSearch.success) {
+          return NextResponse.json(
+            {
+              error:
+                "We could not reach the Cook County records service just now. Please try again in a few minutes — this is on our side, not your address.",
+              code:
+                relaxedSearch.error === ADDRESS_LOOKUP_UNAVAILABLE
+                  ? "ADDRESS_LOOKUP_UNAVAILABLE"
+                  : "ADDRESS_LOOKUP_FAILED",
+              retryable: true,
+            },
+            { status: 503 }
+          )
+        }
         if (relaxedSearch.success && (relaxedSearch.data?.length ?? 0) > 0) {
           search = relaxedSearch
         }

@@ -220,6 +220,26 @@ describe("address lookup — the widened query and the ranker", () => {
     )
   })
 
+  it("returns a retryable 503 when the city-relaxed provider attempt fails", async () => {
+    cookCounty.searchPropertiesByAddress
+      .mockResolvedValueOnce({ success: true, data: [], error: null, source: "x" })
+      .mockResolvedValueOnce({
+        success: false,
+        data: null,
+        error: "address_lookup_unavailable",
+        source: "Cook County Open Data",
+      })
+
+    const res = await POST(req({ address: SUBJECT_ADDRESS, city: "Chcago" }))
+    const body = await res.json()
+
+    expect(res.status).toBe(503)
+    expect(body.code).toBe("ADDRESS_LOOKUP_UNAVAILABLE")
+    expect(body.retryable).toBe(true)
+    expect(body.error).toMatch(/on our side, not your address/i)
+    expect(cookCounty.getPropertyByPIN).not.toHaveBeenCalled()
+  })
+
   it("does not let the city-relaxed retry create a cross-street match", async () => {
     cookCounty.searchPropertiesByAddress
       .mockResolvedValueOnce({ success: true, data: [], error: null, source: "x" })

@@ -112,6 +112,21 @@ The local built server was started with blank provider/database credentials and 
 3. Make browser tests wait for visible App Router `<main>` rather than reading during the loading spinner.
 4. Scope “nearby” assertions to unsupported comparable-product claims so accurate “Nearby Townships” navigation remains allowed.
 
+## Post-review linear child
+
+Independent review of `829dd131388376e5a74967a2ec449fe73d60bd60` found two blockers, both fixed in the next linear child:
+
+1. `HomePage.tsx` now validates `r.outcome` through `isCanonicalFreeCheckOutcome` before any homepage figure/comparison/offer capability is trusted. A contradictory `insufficient_evidence/no_assessed_value + allowCheckout/show* = true` fixture proves the homepage falls back with no figures or CTA.
+2. Strict-empty followed by a failed city-relaxed provider attempt now returns retryable 503 (`ADDRESS_LOOKUP_UNAVAILABLE` or `ADDRESS_LOOKUP_FAILED`) rather than false 404 address-not-found. A route test covers the exact sequence.
+
+Post-fix verification:
+
+- Focused blocker suite: 93/93 passed
+- Full Jest normal and serial: each 2,287 passed / 77 skipped
+- Build: PASS, 142/142 static pages
+- TypeScript: 85 baseline / 85 candidate / 0 introduced / 0 changed-file diagnostics
+- Playwright: 14/14 passed
+
 ## Residual risks
 
 - City-relaxed query remains intentionally bounded and runs only after strict empty results.
