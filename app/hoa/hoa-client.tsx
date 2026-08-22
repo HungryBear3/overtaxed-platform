@@ -197,7 +197,7 @@ const SHORT_NOTICE = (): string =>
     "",
     `The county publishes and revises those dates through the year, so confirm yours directly at ${COUNTY_CALENDAR_URL} before you rely on it.`,
     "",
-    `If you'd also like to look up your current assessment, there are free tools at ${APP_URL} — ${noticeUrl("/check")} compares your assessment against nearby properties, and ${noticeUrl("/deadlines")} shows a township's filing window where it has been verified against the county's calendar, and says so plainly where it has not.`,
+    `If you'd also like to look up your current assessment, there are free tools at ${APP_URL} — ${noticeUrl("/check")} compares your assessment against public-record comparable properties, and ${noticeUrl("/deadlines")} shows a township's filing window where it has been verified against the county's calendar, and says so plainly where it has not.`,
     "",
     "The board is sharing this resource only; there's no signup, no fee, and no commitment. Whether to appeal is each owner's decision.",
   ].join("\n");

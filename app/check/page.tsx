@@ -9,7 +9,7 @@ export const metadata = {
   // description is truncated by every consumer that displays it — so it cannot
   // carry a disclosure, only the claim that would need one.
   description:
-    "See how your Cook County assessed value compares to nearby properties. Free check — no signup. Built around Cook County Assessor public records.",
+    "See how your Cook County assessed value compares with comparable properties on the public record. Free check — no signup. Built around Cook County Assessor public records.",
   alternates: { canonical: "https://www.overtaxed-il.com/check" },
 }
 
@@ -27,7 +27,7 @@ export default function CheckPage() {
             Is Cook County over-assessing your property?
           </h1>
           <p className="text-lg text-gray-600">
-            Enter your PIN or address. We&apos;ll compare your assessed value to nearby
+            Enter your PIN or address. We&apos;ll compare your assessed value with
             comparable properties and show the assessment-level gap against Cook County&apos;s
             10% target, and your township&apos;s appeal-window status. No account, no card.
           </p>

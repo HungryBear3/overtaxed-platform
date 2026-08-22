@@ -275,6 +275,11 @@ describe("index and static routes", () => {
         headline: "Insufficient evidence",
         allowCheckout: false,
         showFigures: false,
+        // The assessed-value comparison now carries its own capability. Both
+        // are false here: this fixture asserts that an unverified window
+        // renders no deadline claim and no commerce, and nothing about that
+        // depends on releasing figures.
+        showRecordComparison: false,
         reason: "window_unverified",
       },
     }
