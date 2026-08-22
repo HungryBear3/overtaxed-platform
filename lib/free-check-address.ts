@@ -227,6 +227,7 @@ export function parseFreeCheckAddress(
 
   let directional: string | null = null
   let directionalDisplay: string | null = null
+  let directionalWasTrailing = false
   if (tokens.length > 1 && DIRECTIONALS[tokens[0]]) {
     directional = DIRECTIONALS[tokens[0]]
     directionalDisplay = display[0]
@@ -235,29 +236,43 @@ export function parseFreeCheckAddress(
 
   let suffix: string | null = null
   let suffixDisplay: string | null = null
-  if (tokens.length > 1 && SUFFIXES[tokens[tokens.length - 1]]) {
+  if (!directional && tokens.length > 2) {
+    const trailingDirectional = tokens[tokens.length - 1]
+    const trailingSuffix = tokens[tokens.length - 2]
+    if (DIRECTIONALS[trailingDirectional] && SUFFIXES[trailingSuffix]) {
+      directional = DIRECTIONALS[trailingDirectional]
+      directionalDisplay = display[display.length - 1]
+      directionalWasTrailing = true
+      take("back")
+      suffix = SUFFIXES[tokens[tokens.length - 1]]
+      suffixDisplay = display[display.length - 1]
+      take("back")
+    }
+  }
+
+  if (!suffix && tokens.length > 1 && SUFFIXES[tokens[tokens.length - 1]]) {
     suffix = SUFFIXES[tokens[tokens.length - 1]]
     suffixDisplay = display[display.length - 1]
     take("back")
   }
 
-  // A post-directional ("MAIN ST N") only after the suffix has been taken, and
-  // only when no pre-directional was found — otherwise "N MAIN N" would silently
-  // overwrite the first one.
+  // A post-directional ("MAIN N") is claimed only when no pre-directional was
+  // found. Otherwise a contradictory trailing token stays in the street name,
+  // which narrows matching instead of silently overwriting the earlier parse.
   if (!directional && tokens.length > 1 && DIRECTIONALS[tokens[tokens.length - 1]]) {
     directional = DIRECTIONALS[tokens[tokens.length - 1]]
     directionalDisplay = display[display.length - 1]
+    directionalWasTrailing = true
     take("back")
   }
 
   const streetName = tokens.map(normalizeOrdinal).join(" ")
   const street = [houseNumber, directional, streetName, suffix].filter(Boolean).join(" ")
-  const streetDisplay = [
-    houseNumberDisplay,
-    directionalDisplay,
-    display.join(" ") || null,
-    suffixDisplay,
-  ].filter(Boolean).join(" ")
+  const streetDisplay = directionalWasTrailing
+    ? [houseNumberDisplay, display.join(" ") || null, suffixDisplay, directionalDisplay]
+        .filter(Boolean).join(" ")
+    : [houseNumberDisplay, directionalDisplay, display.join(" ") || null, suffixDisplay]
+        .filter(Boolean).join(" ")
 
   return {
     raw,
@@ -336,6 +351,11 @@ export interface AddressCandidateRecord {
 export interface RankedAddressCandidate extends AddressCandidateRecord {
   /** Unit parsed out of the county's own address string, or null. */
   unit: string | null
+  houseNumber: string | null
+  directional: string | null
+  streetName: string
+  suffix: string | null
+  buildingIdentity: string
   /** Higher is a closer match. Composed only of the rules listed below. */
   score: number
   /** Which rules contributed, in order. Written to the response for audit. */
@@ -404,6 +424,12 @@ export function rankAddressCandidates(
       city: (candidate.city ?? "").trim(),
       zip: candidateZip,
       unit: record.unit,
+      houseNumber: record.houseNumber,
+      directional: record.directional,
+      streetName: record.streetName,
+      suffix: record.suffix,
+      buildingIdentity: [record.houseNumber, record.directional, record.streetName, record.suffix]
+        .filter(Boolean).join("|"),
       score,
       matchedOn,
     })
@@ -442,9 +468,24 @@ export function resolveAddressCandidates(
 
   if (survivors.length === 1) return { kind: "unique", candidate: survivors[0] }
 
-  const unitless = survivors.filter((c) => c.unit === null)
-  if (unitless.length > 1) {
-    return { kind: "ambiguous", candidates: survivors.slice(0, maxCandidates), total: survivors.length }
+  if (!parsed.unit) {
+    const unitBearingCounts = new Map<string, number>()
+    const unitlessCounts = new Map<string, number>()
+    for (const survivor of survivors) {
+      if (!survivor.buildingIdentity) continue
+      const counts = survivor.unit ? unitBearingCounts : unitlessCounts
+      counts.set(survivor.buildingIdentity, (counts.get(survivor.buildingIdentity) ?? 0) + 1)
+    }
+    // Conflicting locality fields cannot select between two explicit units or
+    // between two unitless parcels at one street identity. A mixed standalone
+    // parcel and a unit in a genuinely different locality may still be resolved
+    // by the city/ZIP score below.
+    if (
+      Array.from(unitBearingCounts.values()).some((count) => count > 1) ||
+      Array.from(unitlessCounts.values()).some((count) => count > 1)
+    ) {
+      return { kind: "ambiguous", candidates: survivors.slice(0, maxCandidates), total: survivors.length }
+    }
   }
 
   if (survivors[0].score > survivors[1].score) {
@@ -463,14 +504,26 @@ export function resolveAddressCandidates(
  */
 export function recordCorroboratesAddress(
   parsed: ParsedFreeCheckAddress,
+  selected: Pick<
+    RankedAddressCandidate,
+    "pin" | "houseNumber" | "directional" | "streetName" | "suffix" | "unit"
+  >,
+  recordPin: string | null | undefined,
   recordAddress: string,
   recordCity: string = "",
 ): boolean {
   const record = parseFreeCheckAddress(recordAddress ?? "", recordCity ?? "")
+  const normalizedRecordPin = String(recordPin ?? "").replace(/\D/g, "")
+  if (normalizedRecordPin.length !== 14 || normalizedRecordPin !== selected.pin) return false
   if (!record.streetName || !parsed.streetName) return false
-  if (record.streetName !== parsed.streetName) return false
+  if (record.streetName !== selected.streetName) return false
+  if (selected.houseNumber && record.houseNumber !== selected.houseNumber) return false
+  if (selected.directional && record.directional !== selected.directional) return false
+  if (selected.suffix && record.suffix !== selected.suffix) return false
+  if (selected.unit && record.unit !== selected.unit) return false
   if (parsed.houseNumber && record.houseNumber !== parsed.houseNumber) return false
   if (parsed.directional && record.directional && parsed.directional !== record.directional) return false
   if (parsed.suffix && record.suffix && parsed.suffix !== record.suffix) return false
+  if (parsed.unit && record.unit !== parsed.unit) return false
   return true
 }

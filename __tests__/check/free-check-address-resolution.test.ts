@@ -67,8 +67,22 @@ describe("parseFreeCheckAddress", () => {
   })
 
   it("reads a post-directional without overwriting a leading one", () => {
+    expect(parseFreeCheckAddress("1234 Sample St NW").street).toBe("1234 NW SAMPLE ST")
+    expect(parseFreeCheckAddress("1234 NW Sample St").street).toBe("1234 NW SAMPLE ST")
     expect(parseFreeCheckAddress("1234 Sample St NW").directional).toBe("NW")
-    expect(parseFreeCheckAddress("1234 N Sample St").directional).toBe("N")
+    expect(parseFreeCheckAddress("1234 Sample St NW").streetName).toBe("SAMPLE")
+    expect(parseFreeCheckAddress("1234 Sample St NW").suffix).toBe("ST")
+  })
+
+  it("reports the complete parsed identity for directional, unit, display, and fragments", () => {
+    const parsed = parseFreeCheckAddress("1234 Sample St NW Apt 3B, Chicago IL 60600")
+    expect(parsed.houseNumber).toBe("1234")
+    expect(parsed.directional).toBe("NW")
+    expect(parsed.streetName).toBe("SAMPLE")
+    expect(parsed.suffix).toBe("ST")
+    expect(parsed.unit).toBe("3B")
+    expect(parsed.streetDisplay).toBe("1234 Sample St NW")
+    expect(parsed.queryFragments).toEqual(["1234 NW SAMPLE ST", "1234 NW SAMPLE", "1234%SAMPLE"])
   })
 
   it("widens the query fragments from exact to house-number-plus-name", () => {
@@ -164,6 +178,14 @@ describe("resolveAddressCandidates", () => {
     expect(resolution.candidates).toHaveLength(8)
   })
 
+  it("never auto-selects between united parcels when the input omitted a unit", () => {
+    const resolution = resolveAddressCandidates(parsed, [
+      record({ pin: pinAt(40), address: "1234 N SAMPLE ST APT 3B", city: "Chicago", zip: "60600" }),
+      record({ pin: pinAt(41), address: "1234 N SAMPLE ST APT 4A", city: "Evanston", zip: "60201" }),
+    ])
+    expect(resolution.kind).toBe("ambiguous")
+  })
+
   it("does not let a stray city or ZIP score break a same-building tie", () => {
     const resolution = resolveAddressCandidates(parsed, [
       record({ pin: pinAt(50), zip: "60600" }),
@@ -211,17 +233,33 @@ describe("resolveAddressCandidates", () => {
 
 describe("recordCorroboratesAddress", () => {
   const parsed = parseFreeCheckAddress("1234 N Sample St, Chicago")
+  const selected = {
+    pin: pinAt(95),
+    houseNumber: "1234",
+    directional: "N",
+    streetName: "SAMPLE",
+    suffix: "ST",
+    unit: "3B",
+  }
 
   it("accepts the record the candidate promised", () => {
-    expect(recordCorroboratesAddress(parsed, "1234 N SAMPLE ST", "Chicago")).toBe(true)
+    expect(recordCorroboratesAddress(parsed, selected, pinAt(95), "1234 N SAMPLE ST APT 3B", "Chicago")).toBe(true)
   })
 
   it("refuses a record the second lookup returned for a different parcel", () => {
-    expect(recordCorroboratesAddress(parsed, "9876 S OTHER AVE", "Chicago")).toBe(false)
+    expect(recordCorroboratesAddress(parsed, selected, pinAt(95), "9876 S OTHER AVE", "Chicago")).toBe(false)
+  })
+
+  it("refuses a record whose unit disagrees with the selected candidate", () => {
+    expect(recordCorroboratesAddress(parsed, selected, pinAt(95), "1234 N SAMPLE ST APT 4A", "Chicago")).toBe(false)
+  })
+
+  it("refuses a record whose returned pin breaks the selected lineage", () => {
+    expect(recordCorroboratesAddress(parsed, selected, pinAt(96), "1234 N SAMPLE ST APT 3B", "Chicago")).toBe(false)
   })
 
   it("fails closed on an empty or unparseable record address", () => {
-    expect(recordCorroboratesAddress(parsed, "", "")).toBe(false)
-    expect(recordCorroboratesAddress(parsed, "   ", "Chicago")).toBe(false)
+    expect(recordCorroboratesAddress(parsed, selected, pinAt(95), "", "")).toBe(false)
+    expect(recordCorroboratesAddress(parsed, selected, pinAt(95), "   ", "Chicago")).toBe(false)
   })
 })

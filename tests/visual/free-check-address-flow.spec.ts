@@ -222,6 +222,8 @@ for (const viewport of VIEWPORTS) {
       expect(body).not.toMatch(/Estimated annual overpayment/i)
       expect(body).not.toMatch(/\bnearby comps?\b/i)
       expect(body).not.toMatch(/\bnearest\b/i)
+      expect(body).not.toMatch(/open through Jul 31, 2026/i)
+      expect(body).not.toMatch(/Over-assessed by 2\.1 percentage points/i)
       await shot(page, `home-${viewport.name}`)
     })
 
@@ -244,6 +246,31 @@ for (const viewport of VIEWPORTS) {
       await expect(resultPanel.getByText("$35,100")).toBeVisible()
       await expect(resultPanel.getByText(/Avg of 3 comparables on record/)).toBeVisible()
       await expect(resultPanel.getByText(/Assessment level/)).toHaveCount(0)
+    })
+  })
+
+  test.describe(`copy surfaces — ${viewport.name}`, () => {
+    test.use({ viewport: { width: viewport.width, height: viewport.height } })
+
+    test("/appeal-packet, /townships, and /hoa avoid nearby/distance claims", async ({ page }) => {
+      for (const route of ["/appeal-packet", "/townships", "/hoa"] as const) {
+        await page.goto(route, { waitUntil: "domcontentloaded" })
+        await expect(page.locator("main")).toBeVisible()
+        const body = await page.locator("body").innerText()
+        expect(body).not.toMatch(/\bnearest\b/i)
+        expect(body).not.toMatch(/\bdistance-ranked\b/i)
+        if (route === "/appeal-packet") {
+          expect(body).not.toMatch(/nearby Cook County comparables/i)
+          expect(body).toMatch(/public-record comparable properties/i)
+        } else if (route === "/townships") {
+          expect(body).not.toMatch(/similar nearby homes/i)
+          expect(body).toMatch(/comparable Cook County properties from the public record/i)
+        } else {
+          expect(body).not.toMatch(/assessment against nearby properties/i)
+          expect(body).toMatch(/assessment against public-record data/i)
+        }
+      }
+      await shot(page, `copy-surfaces-${viewport.name}`)
     })
   })
 }

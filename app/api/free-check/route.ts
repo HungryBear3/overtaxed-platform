@@ -313,11 +313,12 @@ export async function POST(req: NextRequest) {
 
       // The caller's own street line first, then the widening fragments — a
       // stored directional the homeowner omitted, a suffix they spelled out.
-      const search = await searchPropertiesByAddress(
+      const searchOptions = { fragments: parsed.queryFragments }
+      let search = await searchPropertiesByAddress(
         parsed.street,
         parsed.city || undefined,
         ADDRESS_CANDIDATE_FETCH_LIMIT,
-        { fragments: parsed.queryFragments }
+        searchOptions,
       )
 
       // A provider outage and an address that is not on file are different
@@ -337,6 +338,18 @@ export async function POST(req: NextRequest) {
           },
           { status: 503 }
         )
+      }
+
+      if ((search.data?.length ?? 0) === 0 && parsed.city.trim()) {
+        const relaxedSearch = await searchPropertiesByAddress(
+          parsed.street,
+          undefined,
+          ADDRESS_CANDIDATE_FETCH_LIMIT,
+          searchOptions,
+        )
+        if (relaxedSearch.success && (relaxedSearch.data?.length ?? 0) > 0) {
+          search = relaxedSearch
+        }
       }
 
       const candidates = (search.data ?? [])
@@ -401,7 +414,13 @@ export async function POST(req: NextRequest) {
       // this record. If what came back no longer describes the address that was
       // asked about, the two pieces of evidence disagree and the check stops —
       // an answer assembled from a mismatched parcel is worse than no answer.
-      if (!recordCorroboratesAddress(parsed, res.data.address, res.data.city)) {
+      if (!recordCorroboratesAddress(
+        parsed,
+        chosen,
+        res.data.pin,
+        res.data.address,
+        res.data.city,
+      )) {
         return NextResponse.json(
           {
             error:

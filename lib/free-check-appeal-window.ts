@@ -8,11 +8,16 @@ import type {
   PendingReason,
 } from "@/lib/deadlines/official-source-state";
 import type { TownshipIdentity } from "@/lib/deadlines/township-resolution";
-import { CC_03, CC_04, CC_05, CC_06 } from "@/lib/copy/canonical";
 import {
   resolveEligibilityPolicy,
   type EligibilityPolicy,
 } from "@/lib/checkout/ot-contract";
+import {
+  canonicalFreeCheckOutcome,
+  type FreeCheckOutcome,
+  type FreeCheckOutcomeCode,
+  type FreeCheckOutcomeReason,
+} from "@/lib/free-check-outcome-contract";
 
 /**
  * The free-check view of a township's filing window.
@@ -148,25 +153,6 @@ export function appealWindowForIdentity(
  * Resolution is ordered and fails closed. A state that cannot be established is
  * never resolved downward into a friendlier one.
  */
-export type FreeCheckOutcomeCode =
-  | "supportive"
-  | "not_supportive"
-  | "insufficient_evidence"
-  | "unsupported_property";
-
-/** Why checkout is closed, or why no conclusion was drawn. For logs and tests. */
-export type FreeCheckOutcomeReason =
-  | "property_class_unsupported"
-  | "multiple_pins"
-  | "outside_cook_county"
-  | "no_assessed_value"
-  | "no_comparables"
-  | "no_comparable_level"
-  | "window_unverified"
-  | "window_not_open"
-  | "eligibility_policy_unsigned"
-  | "below_evidence_threshold";
-
 export interface FreeCheckEvidence {
   /** Cook County class code for the subject PIN, if the record carried one. */
   propertyClass: string | null;
@@ -184,42 +170,7 @@ export interface FreeCheckEvidence {
   compCount: number;
 }
 
-export interface FreeCheckOutcome {
-  code: FreeCheckOutcomeCode;
-  /** CC-03…CC-06, byte-exact. Render this, do not compose your own. */
-  headline: string;
-  /**
-   * The only thing any surface may consult before offering to sell a packet.
-   * True requires all of: a supportive outcome, a window the canonical state
-   * verified as open for an official property record, and a signed policy.
-   */
-  allowCheckout: boolean;
-  /** Null only when `code` is `supportive` and checkout is open. */
-  reason: FreeCheckOutcomeReason | null;
-  /**
-   * Whether the assessment-*level* figures may be shown — the subject's
-   * assessed-to-market ratio and the comparable ratio it is measured against.
-   * These exist only when a market value is on file for the subject and for at
-   * least one comparable.
-   */
-  showFigures: boolean;
-  /**
-   * Whether the public-record assessed-value comparison may be shown — the
-   * subject's assessed value, the accepted comparables, their average, and the
-   * difference between them.
-   *
-   * Separate from [[showFigures]] because it is a different kind of statement.
-   * Assessed values are what the county published about specific parcels; the
-   * assessment level is a ratio against a market value the county may simply
-   * not carry. Collapsing the two meant a missing `marketValue` field — on the
-   * subject or on every comparable — resolved to `no_comparable_level` and
-   * suppressed the entire comparison, including assessed values that were
-   * present, validated, and the whole point of the check.
-   *
-   * `showFigures` implies this. The reverse does not hold.
-   */
-  showRecordComparison: boolean;
-}
+export type { FreeCheckOutcome, FreeCheckOutcomeCode, FreeCheckOutcomeReason }
 
 /**
  * Class 2 is Cook County's residential class. The packet is defined for class 2
@@ -244,18 +195,8 @@ export function evaluateFreeCheckOutcome(args: {
 
   const closed = (
     code: FreeCheckOutcomeCode,
-    headline: string,
     reason: FreeCheckOutcomeReason,
-    showFigures: boolean,
-    showRecordComparison: boolean = showFigures,
-  ): FreeCheckOutcome => ({
-    code,
-    headline,
-    allowCheckout: false,
-    reason,
-    showFigures,
-    showRecordComparison,
-  });
+  ): FreeCheckOutcome => canonicalFreeCheckOutcome(code, reason);
 
   /**
    * The assessed-value comparison stands on the subject's own assessed value
@@ -271,22 +212,22 @@ export function evaluateFreeCheckOutcome(args: {
   //    telling someone their evidence is thin when we do not serve their
   //    property at all sends them to gather more of it for nothing.
   if (!e.inCookCounty) {
-    return closed("unsupported_property", CC_06, "outside_cook_county", false);
+    return closed("unsupported_property", "outside_cook_county");
   }
   if (e.pinCount !== null && e.pinCount !== 1) {
-    return closed("unsupported_property", CC_06, "multiple_pins", false);
+    return closed("unsupported_property", "multiple_pins");
   }
   if (!isClass2Residential(e.propertyClass)) {
-    return closed("unsupported_property", CC_06, "property_class_unsupported", false);
+    return closed("unsupported_property", "property_class_unsupported");
   }
 
   // 2. Insufficient evidence. Each branch is a fact we do not have, not a fact
   //    that came back unfavourable — the two must not read alike to a homeowner.
   if (e.assessedTotalValue === null || !Number.isFinite(e.assessedTotalValue)) {
-    return closed("insufficient_evidence", CC_05, "no_assessed_value", false);
+    return closed("insufficient_evidence", "no_assessed_value");
   }
   if (e.compCount < 1) {
-    return closed("insufficient_evidence", CC_05, "no_comparables", false);
+    return closed("insufficient_evidence", "no_comparables");
   }
   if (
     e.equityRatio === null ||
@@ -295,16 +236,10 @@ export function evaluateFreeCheckOutcome(args: {
     !Number.isFinite(e.avgCompEquityRatio) ||
     e.avgCompEquityRatio <= 0
   ) {
-    // No assessment *level* — but the assessed values that produced this branch
-    // are on file and validated. The level figures stay withheld; the public
-    // record comparison is released.
-    return closed(
-      "insufficient_evidence",
-      CC_05,
-      "no_comparable_level",
-      false,
-      recordComparisonAvailable,
-    );
+    if (!recordComparisonAvailable) {
+      return closed("insufficient_evidence", "no_comparables");
+    }
+    return closed("insufficient_evidence", "no_comparable_level");
   }
 
   // 3. The merits threshold is OD-3 and OD-3 is unsigned. Without it there is no
@@ -312,27 +247,27 @@ export function evaluateFreeCheckOutcome(args: {
   //    CC-04 — including one whose figures look decisive. This is the state the
   //    system is in today, and it is deliberate.
   if (!policy.signed) {
-    return closed("insufficient_evidence", CC_05, "eligibility_policy_unsigned", true);
+    return closed("insufficient_evidence", "eligibility_policy_unsigned");
   }
 
   const { minRelativeAssessmentGap, minComparables } = policy.evidenceThreshold;
   if (e.compCount < minComparables) {
-    return closed("insufficient_evidence", CC_05, "no_comparables", true);
+    return closed("insufficient_evidence", "below_min_comparable_count");
   }
 
   const relativeGap = (e.equityRatio - e.avgCompEquityRatio) / e.avgCompEquityRatio;
   if (relativeGap < minRelativeAssessmentGap) {
-    return closed("not_supportive", CC_04, "below_evidence_threshold", true);
+    return closed("not_supportive", "below_evidence_threshold");
   }
 
   // 4. Supportive. Checkout still requires an open, verified window established
   //    from an official property record — the evidence and the window are
   //    separate gates and neither substitutes for the other.
   if (aw.status !== "open") {
-    return { code: "supportive", headline: CC_03, allowCheckout: false, reason: "window_not_open", showFigures: true, showRecordComparison: true };
+    return canonicalFreeCheckOutcome("supportive", "window_not_open");
   }
   if (!aw.allowCheckout) {
-    return { code: "supportive", headline: CC_03, allowCheckout: false, reason: "window_unverified", showFigures: true, showRecordComparison: true };
+    return canonicalFreeCheckOutcome("supportive", "window_unverified");
   }
-  return { code: "supportive", headline: CC_03, allowCheckout: true, reason: null, showFigures: true, showRecordComparison: true };
+  return canonicalFreeCheckOutcome("supportive", null);
 }

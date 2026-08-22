@@ -4,6 +4,7 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import HomePage from "@/components/ot-design/HomePage";
+import { CC_02 } from "@/lib/copy/canonical";
 
 const apiResultWithLegacyField = {
   address: "Sample result — not your submitted address",
@@ -85,7 +86,7 @@ describe("OT home free-check flow", () => {
     // that can no longer render one at all.
     mockFetch({
       success: true,
-      disclosure: "This free check compares available public Cook County records.",
+      disclosure: CC_02,
       outcome: {
         code: "supportive",
         headline: "Appears supportive of closer review",

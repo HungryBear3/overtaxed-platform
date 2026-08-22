@@ -305,7 +305,7 @@ export default function TownshipsPage() {
               <p className="text-sm font-semibold text-blue-700 mb-1">1. Check your assessment</p>
               <p className="text-sm text-gray-600">
                 Look up your current assessed value using your address or PIN, then compare it
-                with similar nearby homes.
+                with comparable Cook County properties from the public record.
               </p>
             </div>
             <div>

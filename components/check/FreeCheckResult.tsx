@@ -3,7 +3,11 @@
 import { useState } from "react"
 import Link from "next/link"
 
-import { CC_02, CC_03, CC_04, CC_05, CC_06, CC_12 } from "@/lib/copy/canonical"
+import { CC_02, CC_05, CC_12 } from "@/lib/copy/canonical"
+import {
+  isCanonicalFreeCheckOutcome,
+  type FreeCheckOutcome as SharedResultOutcome,
+} from "@/lib/free-check-outcome-contract"
 
 /** The canonical Assessor calendar host. See the controller ruling of 2026-08-19. */
 const ASSESSOR_SITE_URL = "https://www.cookcountyassessoril.gov"
@@ -105,33 +109,7 @@ export type Result = {
  * property from an unsigned threshold — exactly what OD-2/OD-3 have not
  * authorized — so the decision now arrives already made.
  */
-export type ResultOutcome = {
-  code: "supportive" | "not_supportive" | "insufficient_evidence" | "unsupported_property"
-  /** CC-03…CC-06, byte-exact. Rendered as given. */
-  headline: string
-  allowCheckout: boolean
-  /** Assessment-level figures — the ratios against a market value. */
-  showFigures: boolean
-  /** The public-record assessed-value comparison. Implied by `showFigures`. */
-  showRecordComparison: boolean
-  reason?: string | null
-}
-
-const OUTCOME_REASONS = {
-  supportive: new Set(["window_not_open", "window_unverified"]),
-  not_supportive: new Set(["below_evidence_threshold"]),
-  insufficient_evidence: new Set([
-    "no_assessed_value",
-    "no_comparables",
-    "no_comparable_level",
-    "eligibility_policy_unsigned",
-  ]),
-  unsupported_property: new Set([
-    "outside_cook_county",
-    "multiple_pins",
-    "property_class_unsupported",
-  ]),
-} as const
+export type ResultOutcome = SharedResultOutcome
 
 /**
  * Runtime trust boundary for route responses and sessionStorage payloads.
@@ -140,56 +118,7 @@ const OUTCOME_REASONS = {
  * four-state variants before any figure or offer may render.
  */
 export function isCanonicalResultOutcome(value: unknown): value is ResultOutcome {
-  if (!value || typeof value !== "object") return false
-  const outcome = value as Record<string, unknown>
-  if (
-    typeof outcome.code !== "string" ||
-    typeof outcome.headline !== "string" ||
-    typeof outcome.allowCheckout !== "boolean" ||
-    typeof outcome.showFigures !== "boolean" ||
-    // Required, not defaulted. A payload written before the assessed-value
-    // comparison had its own gate cannot be told apart from one that decided to
-    // withhold it, and guessing in either direction is a decision this boundary
-    // has no standing to make. Absent means untrusted, and untrusted resolves
-    // to CC-05 with nothing shown.
-    typeof outcome.showRecordComparison !== "boolean" ||
-    // The narrower gate cannot be open while the wider one is shut: an
-    // assessment level released without the assessed values it was computed
-    // from is a ratio with nothing behind it.
-    (outcome.showFigures === true && outcome.showRecordComparison !== true) ||
-    !("reason" in outcome) ||
-    (outcome.reason !== null && typeof outcome.reason !== "string")
-  ) return false
-
-  const expectedHeadline = {
-    supportive: CC_03,
-    not_supportive: CC_04,
-    insufficient_evidence: CC_05,
-    unsupported_property: CC_06,
-  }[outcome.code]
-  if (!expectedHeadline || outcome.headline !== expectedHeadline) return false
-
-  if (outcome.code === "supportive") {
-    if (outcome.showFigures !== true) return false
-    if (outcome.reason === null) return outcome.allowCheckout === true
-    return outcome.allowCheckout === false && OUTCOME_REASONS.supportive.has(outcome.reason)
-  }
-
-  if (outcome.allowCheckout !== false) return false
-  const reasonKnownFor = (state: keyof typeof OUTCOME_REASONS) =>
-    outcome.reason === null ||
-    (typeof outcome.reason === "string" && OUTCOME_REASONS[state].has(outcome.reason))
-  if (outcome.code === "not_supportive") {
-    return outcome.showFigures === true && reasonKnownFor("not_supportive")
-  }
-  if (outcome.code === "insufficient_evidence") {
-    return reasonKnownFor("insufficient_evidence")
-  }
-  return (
-    outcome.showFigures === false &&
-    outcome.showRecordComparison === false &&
-    reasonKnownFor("unsupported_property")
-  )
+  return isCanonicalFreeCheckOutcome(value)
 }
 
 interface Props {

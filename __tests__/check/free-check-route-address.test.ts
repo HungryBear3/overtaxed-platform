@@ -183,6 +183,61 @@ describe("address lookup — the widened query and the ranker", () => {
     expect(options.fragments).toEqual(["1234 N SAMPLE ST", "1234 N SAMPLE", "1234%SAMPLE"])
   })
 
+  it("retries once without the city when the strict search answered empty", async () => {
+    cookCounty.searchPropertiesByAddress
+      .mockResolvedValueOnce({ success: true, data: [], error: null, source: "x" })
+      .mockResolvedValueOnce({
+        success: true,
+        data: [searchRow({ pin: pinAt(1), property_city: "Evanston", property_zip: "60201" })],
+        error: null,
+        source: "x",
+      })
+    cookCounty.getPropertyByPIN.mockResolvedValue({
+      success: true,
+      data: propertyRecord({ city: "Evanston", zipCode: "60201" }),
+      error: null,
+    })
+    stubComps([equityComp(2, 364000)])
+
+    const res = await POST(req({ address: SUBJECT_ADDRESS, city: "Chcago" }))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.success).toBe(true)
+    expect(cookCounty.searchPropertiesByAddress).toHaveBeenNthCalledWith(
+      1,
+      "1234 N SAMPLE ST",
+      "Chcago",
+      expect.any(Number),
+      expect.objectContaining({ fragments: ["1234 N SAMPLE ST", "1234 N SAMPLE", "1234%SAMPLE"] }),
+    )
+    expect(cookCounty.searchPropertiesByAddress).toHaveBeenNthCalledWith(
+      2,
+      "1234 N SAMPLE ST",
+      undefined,
+      expect.any(Number),
+      expect.objectContaining({ fragments: ["1234 N SAMPLE ST", "1234 N SAMPLE", "1234%SAMPLE"] }),
+    )
+  })
+
+  it("does not let the city-relaxed retry create a cross-street match", async () => {
+    cookCounty.searchPropertiesByAddress
+      .mockResolvedValueOnce({ success: true, data: [], error: null, source: "x" })
+      .mockResolvedValueOnce({
+        success: true,
+        data: [searchRow({ pin: pinAt(1), property_address: "1234 N OTHER ST", property_city: "Evanston" })],
+        error: null,
+        source: "x",
+      })
+
+    const res = await POST(req({ address: SUBJECT_ADDRESS, city: "Chcago" }))
+    const body = await res.json()
+
+    expect(res.status).toBe(404)
+    expect(body.code).toBe("ADDRESS_NOT_FOUND")
+    expect(cookCounty.getPropertyByPIN).not.toHaveBeenCalled()
+  })
+
   it("resolves a spelled-out address whose record stores the abbreviated form", async () => {
     cookCounty.searchPropertiesByAddress.mockResolvedValue({
       success: true,
@@ -286,6 +341,31 @@ describe("address lookup — failing closed", () => {
     expect(res.status).toBe(409)
     expect(body.code).toBe("ADDRESS_EVIDENCE_MISMATCH")
     expect(cookCounty.getComparableEquity).not.toHaveBeenCalled()
+  })
+
+  it("stops when a selected unit loads a different unit on the second lookup", async () => {
+    cookCounty.searchPropertiesByAddress.mockResolvedValue({
+      success: true,
+      data: [
+        searchRow({ pin: pinAt(1), property_address: "1234 N SAMPLE ST APT 3B" }),
+        searchRow({ pin: pinAt(2), property_address: "1234 N SAMPLE ST APT 4A" }),
+      ],
+      error: null,
+      source: "x",
+    })
+    cookCounty.getPropertyByPIN.mockResolvedValue({
+      success: true,
+      data: propertyRecord({ pin: pinAt(1), address: "1234 N SAMPLE ST APT 4A" }),
+      error: null,
+    })
+    stubComps([equityComp(2, 364000)])
+
+    const res = await POST(req({ address: SUBJECT_ADDRESS, selectedPin: pinAt(1) }))
+    const body = await res.json()
+
+    expect(res.status).toBe(409)
+    expect(body.code).toBe("ADDRESS_EVIDENCE_MISMATCH")
+    expect(JSON.stringify(body)).not.toMatch(/score|matchedOn|buildingIdentity/i)
   })
 
   it("drops a malformed row rather than resolving it to a short PIN", async () => {

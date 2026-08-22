@@ -200,7 +200,7 @@ function HeroNarrative() {
       <p className="ot-hero-subhead">See where your assessed value lands against comparable Cook County homes.</p>
       <p className="ot-hero-valueprop">
         Plain math on Cook County&apos;s own public records — no signup, no
-        credit card. If you&apos;re fairly assessed, we&apos;ll tell you.
+        credit card. We show what the public record does and does not support.
       </p>
       <ul className="ot-hero-deliverables">
         {/* The "estimated annual + 3-year overpayment in dollars" line that
@@ -576,7 +576,7 @@ function HeroCheckCard({
       </button>
 
       <div className="ot-cta-sub">
-        If you&apos;re fairly assessed, we&apos;ll tell you. No upsell.
+        No signup. No credit card. No upsell if the record stays inconclusive.
       </div>
 
       <RiskReversalBadge variant="inline" />
@@ -1017,11 +1017,11 @@ function SampleReportPreview() {
             </span>
           </div>
           <div className="ot-sample-assessment-foot">
-            <span className="ot-sample-flag">Over-assessed by 2.1 percentage points</span>
+            <span className="ot-sample-flag">Sample comparison only — not a merits verdict</span>
           </div>
         </div>
         <div className="ot-sample-foot">
-          <span className="ot-sample-foot-dot" /> Cicero Township appeal window open through Jul 31, 2026
+          <span className="ot-sample-foot-dot" /> Synthetic sample only — township status is shown only when verified from the county source.
         </div>
       </div>
     </div>
@@ -1106,7 +1106,7 @@ function MethodologyCard() {
   return (
     <section id="method" className="ot-method">
       <div className="ot-method-inner">
-        <div className="ot-method-eyebrow">How we estimate your overpayment</div>
+        <div className="ot-method-eyebrow">How the free check works</div>
         <h2 className="ot-h2">Plain math on public records — not a black box.</h2>
         <p className="ot-method-lede">
           Cook County publishes every assessment, every comparable, and every
