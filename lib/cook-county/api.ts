@@ -204,9 +204,9 @@ async function getParcelUniverseByPIN(
       prop_address_zipcode_1: (arch.prop_address_zipcode_1 as string | undefined) || undefined,
       prop_address_state: (arch.prop_address_state as string | undefined) || undefined,
       // Fallback property_address / property_city columns (used by some API consumers)
-      property_address: archivedRecord.property_address || currentRecord.property_address || (arch.prop_address_full as string | undefined),
-      property_city: archivedRecord.property_city || currentRecord.property_city || (arch.prop_address_city_name as string | undefined),
-      property_zip: archivedRecord.property_zip || currentRecord.property_zip || (arch.prop_address_zipcode_1 as string | undefined),
+      property_address: archivedRecord.property_address || currentRecord.property_address || (arch.prop_address_full as string | undefined) || '',
+      property_city: archivedRecord.property_city || currentRecord.property_city || (arch.prop_address_city_name as string | undefined) || '',
+      property_zip: archivedRecord.property_zip || currentRecord.property_zip || (arch.prop_address_zipcode_1 as string | undefined) || '',
     }
   }
 
@@ -282,21 +282,15 @@ async function getImprovementCharsFromCombinedByPIN(pin: PIN): Promise<Record<st
 /**
  * Look up assessed values by PIN
  * Returns mailed, certified, and board values for land, building, and total
- * Tries pin (14-digit, dashed) and pin10 columns (Cook County datasets may use either)
+ * The current Assessed Values dataset exposes one 14-digit `pin` column.
  */
 async function getAssessedValuesByPIN(
   pin: PIN
 ): Promise<Record<string, unknown> | null> {
   const normalizedPIN = normalizePIN(pin)
   if (normalizedPIN.length !== 14) return null
-  const dashedPIN = formatPIN(normalizedPIN)
-  const pin10 = normalizedPIN.slice(4) // last 10 digits
-  const pin10Dashed = pin10.length >= 10 ? `${pin10.slice(0, 2)}-${pin10.slice(2, 5)}-${pin10.slice(5, 8)}-${pin10.slice(8)}` : ''
   for (const { col, val } of [
     { col: 'pin', val: normalizedPIN },
-    { col: 'pin', val: dashedPIN },
-    { col: 'pin10', val: pin10 },
-    { col: 'pin10', val: pin10Dashed },
   ]) {
     if (!val) continue
     try {
@@ -650,8 +644,8 @@ export async function searchPropertiesByAddress(
     // Normalize results so callers always see property_address / property_city.
     if (results.length === 0) {
       const archWhereClause = citySafe
-        ? `upper(prop_address_full) like upper('%${addrSafe}%') AND upper(prop_address_city_name) like upper('%${citySafe}%')`
-        : `upper(prop_address_full) like upper('%${addrSafe}%')`
+        ? `upper(prop_address_full) like upper('${addrSafe}%') AND upper(prop_address_city_name) like upper('%${citySafe}%')`
+        : `upper(prop_address_full) like upper('${addrSafe}%')`
       const archQuery = `$where=${encodeURIComponent(archWhereClause)}&$limit=${limit * 3}&$order=year DESC`
       attemptsMade++
       try {
@@ -725,21 +719,36 @@ export async function getAddressByPIN(pin: PIN): Promise<{
   longitude: number | null
   buildingClass: string | null
 } | null> {
-  const parcel = await getParcelUniverseByPIN(pin)
-  if (!parcel) return null
-  const p = parcel as unknown as Record<string, unknown>
-  const address =
-    (p.prop_address_full ?? p.property_address ?? p.addr ?? "") as string
-  const city = (p.prop_address_city_name ?? p.property_city ?? p.cook_municipality_name ?? "") as string
-  const zipCode = (p.prop_address_zipcode_1 ?? p.property_zip ?? p.zip_code ?? "") as string
+  const normalizedPin = normalizePIN(pin)
+  const parcel = await getParcelUniverseByPIN(normalizedPin)
+  const p = parcel ? parcel as unknown as Record<string, unknown> : {}
+  let address = (p.prop_address_full ?? p.property_address ?? p.addr ?? "") as string
+  let city = (p.prop_address_city_name ?? p.property_city ?? p.cook_municipality_name ?? "") as string
+  let zipCode = (p.prop_address_zipcode_1 ?? p.property_zip ?? p.zip_code ?? "") as string
+
+  if (!address && normalizedPin.length === 14) {
+    try {
+      const query = `$where=${encodeURIComponent(`pin='${normalizedPin}'`)}&$limit=1`
+      const rows = await fetchSocrataData<Record<string, unknown>>(DATASETS.PIN_ADDRESS_INDEX, query, 4000)
+      const indexed = rows[0]
+      if (indexed) {
+        address = String(indexed.property_address ?? "")
+        city = String(indexed.property_city ?? city)
+        zipCode = String(indexed.property_zip ?? zipCode)
+      }
+    } catch {
+      // Address enrichment is optional; preserve the comparable without inventing one.
+    }
+  }
+
   const lat = p.lat != null ? parseFloat(String(p.lat)) : (p.latitude != null ? parseFloat(String(p.latitude)) : null)
   const lon = p.lon != null ? parseFloat(String(p.lon)) : (p.longitude != null ? parseFloat(String(p.longitude)) : null)
   const latitude = lat != null && !Number.isNaN(lat) ? lat : null
   const longitude = lon != null && !Number.isNaN(lon) ? lon : null
   const buildingClass =
     (p.class ?? p.char_class) != null ? (String(p.class ?? p.char_class ?? '').trim() || null) : null
-  if (!address && !city) return null
-  return { address: address || `PIN ${formatPIN(String(p.pin ?? pin))}`, city, zipCode, latitude, longitude, buildingClass }
+  if (!address) return null
+  return { address, city, zipCode, latitude, longitude, buildingClass }
 }
 
 /**
@@ -991,7 +1000,7 @@ export async function getComparableSales(
 
     return {
       success: true,
-      data: results,
+      data: await enrichComparableAddresses(results.slice(0, limit)),
       error: null,
       source,
     }
@@ -1022,6 +1031,40 @@ export type EquityDebugInfo = {
   townshipFallbackUsed: boolean
   /** First 3 sample PINs: raw from parcel, normalized, assessed found, chars found */
   sampleLookups?: Array<{ pinRaw: unknown; pinNorm: string; assessed: boolean; chars: boolean; assessedTotal: number | null; avKeys?: string[] }>
+}
+
+type ComparableAddressLookup = (pin: PIN) => Promise<{
+  address: string
+  city: string
+  zipCode: string
+  latitude: number | null
+  longitude: number | null
+  buildingClass: string | null
+} | null>
+
+/**
+ * Enrich only the already-selected comparable rows. The old path returned
+ * blank address/city fields even though the county carries them, so the public
+ * table said "Address not on file." Keeping this after the final slice bounds
+ * the extra work to at most the requested result count.
+ */
+export async function enrichComparableAddresses<
+  T extends { pin: string; address: string; city: string; zipCode: string; buildingClass: string | null },
+>(
+  records: T[],
+  lookup: ComparableAddressLookup = getAddressByPIN,
+): Promise<T[]> {
+  return Promise.all(records.map(async (record) => {
+    const address = await lookup(record.pin)
+    if (!address) return record
+    return {
+      ...record,
+      address: address.address,
+      city: address.city,
+      zipCode: address.zipCode,
+      buildingClass: record.buildingClass ?? address.buildingClass,
+    }
+  }))
 }
 
 export async function getComparableEquity(
@@ -1316,7 +1359,7 @@ export async function getComparableEquity(
       const bVal = b.assessedMarketValuePerSqft ?? Infinity
       return aVal - bVal
     })
-    const limited = finalResults.slice(0, limit)
+    const limited = await enrichComparableAddresses(finalResults.slice(0, limit))
     console.log('[comps-equity] Equity results', { total: finalResults.length, returned: limited.length, uniquePins: uniquePins.length })
 
     const resp: CookCountyApiResponse<EquityRecord[]> & { _debug?: EquityDebugInfo } = {

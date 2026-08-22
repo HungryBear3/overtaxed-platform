@@ -7,6 +7,7 @@ export {
   ADDRESS_LOOKUP_UNAVAILABLE,
   getComparableSales,
   getComparableEquity,
+  enrichComparableAddresses,
   getAddressByPIN,
   haversineMiles,
   normalizePIN,

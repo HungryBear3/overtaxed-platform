@@ -127,6 +127,26 @@ Post-fix verification:
 - TypeScript: 85 baseline / 85 candidate / 0 introduced / 0 changed-file diagnostics
 - Playwright: 14/14 passed
 
+## Live-data offer-readiness child
+
+A production-versus-candidate audit against real public Cook County records found additional blockers after `430de7ec73cd5f7009141f4ff86a157ba73a926c` passed its prior review:
+
+1. `1028 W Leland Ave` exists only in the archived Parcel Universe, but the leading-wildcard archive query timed out and Production returned false not-found. Archived lookup is now an indexed house-number prefix query.
+2. Archived single-family rows can append `HSE`; it is now normalized as an Assessor parcel marker, not a unit/street token, so valid records such as `6651 N Loron Ave` corroborate.
+3. The assessed-values dataset has no `pin10` column. Dead `pin10` attempts were removed; only the official 14-digit `pin` column is queried.
+4. Final sale/equity comparable rows are now enriched through exact-PIN address-index lookup. The public table no longer says `Address not on file` for records whose addresses are published.
+5. Three pre-existing optional-address type diagnostics in the edited API file were resolved without changing evidence semantics.
+
+Verification after these changes:
+
+- Focused offer-readiness Jest: 137/137 passed.
+- Full Jest normal and serial: each 2,293 passed / 77 skipped.
+- Build: PASS, 142/142 pages.
+- TypeScript: 85 baseline / 82 candidate / 0 introduced / 0 changed-file diagnostics.
+- Playwright mobile/desktop: 14/14 passed.
+- Real Chromium submissions at 375px and 1280px: subject, average, and all three comp addresses visible; no horizontal overflow; ~1.1 seconds warm.
+- Real public-record matrix: Leland full/no-city/city-typo resolved; Loron Class 203/205 comparisons returned three addressed comps; Randolph remained conservatively ambiguous; post-directional and invalid-address behavior remained correct.
+
 ## Residual risks
 
 - City-relaxed query remains intentionally bounded and runs only after strict empty results.

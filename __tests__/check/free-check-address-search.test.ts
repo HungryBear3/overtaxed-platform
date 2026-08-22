@@ -11,7 +11,13 @@
  * `catch` blocks, so a total outage returned `{ success: true, data: [] }` —
  * identical, to every caller, to an address the county does not carry.
  */
-import { searchPropertiesByAddress, ADDRESS_LOOKUP_UNAVAILABLE } from "@/lib/cook-county"
+import {
+  searchPropertiesByAddress,
+  enrichComparableAddresses,
+  getAddressByPIN,
+  ADDRESS_LOOKUP_UNAVAILABLE,
+} from "@/lib/cook-county"
+import { readFileSync } from "node:fs"
 
 const PIN_ADDRESS_INDEX = "c49d-89sn"
 const PARCEL_UNIVERSE = "tx2p-k2g9"
@@ -145,6 +151,28 @@ describe("searchPropertiesByAddress — the authoritative fallback", () => {
     expect(decodedWhere(calls[1])).toContain("prop_address_full")
     expect(decodedWhere(calls[1])).toContain("prop_address_city_name")
   })
+
+  it("uses an indexed house-number prefix instead of a leading-wildcard archive scan", async () => {
+    mockSocrata([
+      { dataset: PIN_ADDRESS_INDEX, rows: [] },
+      {
+        dataset: PARCEL_UNIVERSE,
+        rows: [{
+          ...archivedRow("14172030251004", "2011"),
+          prop_address_full: "1028 W LELAND AVE",
+          prop_address_zipcode_1: "60640",
+        }],
+      },
+    ])
+
+    const res = await searchPropertiesByAddress("1028 W LELAND AVE", "Chicago", 25)
+
+    expect(res.success).toBe(true)
+    expect(res.data?.[0].property_address).toBe("1028 W LELAND AVE")
+    const where = decodedWhere(calls[1])
+    expect(where).toContain("upper(prop_address_full) like upper('1028 W LELAND AVE%')")
+    expect(where).not.toContain("like upper('%1028 W LELAND AVE%')")
+  })
 })
 
 describe("searchPropertiesByAddress — outage is not a miss", () => {
@@ -204,5 +232,46 @@ describe("searchPropertiesByAddress — logging", () => {
     expect(logged).not.toMatch(/SAMPLE/i)
     expect(logged).not.toMatch(/1234/)
     expect(logged).not.toContain("$where")
+  })
+})
+
+describe("comparable address enrichment", () => {
+  it("falls back to the PIN Address Index when current Parcel Universe has no address", async () => {
+    mockSocrata([
+      { dataset: "pabr-t5kh", rows: [{ pin: "18062140010000", cook_municipality_name: "CITY OF CHICAGO", zip_code: "60600", class: "203" }] },
+      { dataset: PARCEL_UNIVERSE, rows: [] },
+      { dataset: PIN_ADDRESS_INDEX, rows: [{ pin: "18062140010000", property_address: "1234 N SAMPLE ST", property_city: "CHICAGO", property_zip: "60600" }] },
+    ])
+
+    const address = await getAddressByPIN("18062140010000")
+
+    expect(address).toEqual(expect.objectContaining({ address: "1234 N SAMPLE ST", city: "CHICAGO", zipCode: "60600" }))
+    expect(calls.at(-1)).toContain(PIN_ADDRESS_INDEX)
+  })
+
+  it("enriches only the final records and preserves a row when lookup has no address", async () => {
+    const rows = [
+      { pin: "18062140010000", address: "", city: "", zipCode: "", neighborhood: "N", assessedMarketValue: 350000, assessedMarketValuePerSqft: null, buildingClass: "203", livingArea: 1200, yearBuilt: 1950, bedrooms: 3, bathrooms: 2, dataSource: "test" },
+      { pin: "18062140020000", address: "", city: "", zipCode: "", neighborhood: "N", assessedMarketValue: 360000, assessedMarketValuePerSqft: null, buildingClass: "203", livingArea: 1250, yearBuilt: 1952, bedrooms: 3, bathrooms: 2, dataSource: "test" },
+    ]
+    const lookup = jest.fn(async (pin: string) => pin.endsWith("10000")
+      ? { address: "1234 N SAMPLE ST", city: "Chicago", zipCode: "60600", latitude: null, longitude: null, buildingClass: "203" }
+      : null)
+
+    const enriched = await enrichComparableAddresses(rows, lookup)
+
+    expect(lookup).toHaveBeenCalledTimes(2)
+    expect(enriched[0]).toEqual(expect.objectContaining({ address: "1234 N SAMPLE ST", city: "Chicago", assessedMarketValue: 350000 }))
+    expect(enriched[1]).toEqual(rows[1])
+  })
+
+  it("queries assessed values only by the dataset's real pin column", () => {
+    const source = readFileSync("lib/cook-county/api.ts", "utf8")
+    const helper = source.slice(
+      source.indexOf("async function getAssessedValuesByPIN"),
+      source.indexOf("async function getAssessmentHistoryByPIN"),
+    )
+    expect(helper).toContain("{ col: 'pin', val: normalizedPIN }")
+    expect(helper).not.toContain("pin10")
   })
 })

@@ -61,6 +61,12 @@ describe("parseFreeCheckAddress", () => {
     }
   })
 
+  it("drops the Assessor's HSE house marker without treating it as a unit", () => {
+    const parsed = parseFreeCheckAddress("1234 N Sample St HSE, Chicago IL 60600")
+    expect(parsed.street).toBe("1234 N SAMPLE ST")
+    expect(parsed.unit).toBeNull()
+  })
+
   it("folds an ordinal street name onto its bare number", () => {
     expect(parseFreeCheckAddress("1234 W 53rd St").streetName).toBe("53")
     expect(parseFreeCheckAddress("1234 W 53 St").streetName).toBe("53")
@@ -244,6 +250,11 @@ describe("recordCorroboratesAddress", () => {
 
   it("accepts the record the candidate promised", () => {
     expect(recordCorroboratesAddress(parsed, selected, pinAt(95), "1234 N SAMPLE ST APT 3B", "Chicago")).toBe(true)
+  })
+
+  it("accepts the same single-family parcel when the archived address adds HSE", () => {
+    const singleFamily = { ...selected, unit: null }
+    expect(recordCorroboratesAddress(parsed, singleFamily, pinAt(95), "1234 N SAMPLE ST HSE", "Chicago")).toBe(true)
   })
 
   it("refuses a record the second lookup returned for a different parcel", () => {

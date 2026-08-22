@@ -84,6 +84,14 @@ const UNIT_DESIGNATORS = [
   "RM", "ROOM", "BLDG", "BUILDING",
 ]
 
+/**
+ * Assessor address-index markers that describe the parcel type, not a unit.
+ * `HSE` appears on archived single-family rows while the current address index
+ * exposes the same PIN without it. Treating it as street identity makes the
+ * second authoritative lookup reject its own candidate.
+ */
+const COUNTY_NON_UNIT_TERMINALS = new Set(["HSE"])
+
 const UNIT_PATTERN = new RegExp(
   String.raw`(?:#\s*|\b(?:${UNIT_DESIGNATORS.join("|")})\b\.?\s*)([A-Z0-9][A-Z0-9-]*)`,
   "i",
@@ -216,6 +224,10 @@ export function parseFreeCheckAddress(
   const take = (from: "front" | "back") => {
     if (from === "front") { display.shift(); return tokens.shift() ?? null }
     display.pop(); return tokens.pop() ?? null
+  }
+
+  if (tokens.length > 0 && COUNTY_NON_UNIT_TERMINALS.has(tokens[tokens.length - 1])) {
+    take("back")
   }
 
   let houseNumber: string | null = null
