@@ -1055,14 +1055,20 @@ export async function enrichComparableAddresses<
   lookup: ComparableAddressLookup = getAddressByPIN,
 ): Promise<T[]> {
   return Promise.all(records.map(async (record) => {
-    const address = await lookup(record.pin)
-    if (!address) return record
-    return {
-      ...record,
-      address: address.address,
-      city: address.city,
-      zipCode: address.zipCode,
-      buildingClass: record.buildingClass ?? address.buildingClass,
+    try {
+      const address = await lookup(record.pin)
+      if (!address) return record
+      return {
+        ...record,
+        address: address.address,
+        city: address.city,
+        zipCode: address.zipCode,
+        buildingClass: record.buildingClass ?? address.buildingClass,
+      }
+    } catch {
+      // Address enrichment is optional. A provider failure must not discard an
+      // otherwise valid comparable or fail the homeowner's whole comparison.
+      return record
     }
   }))
 }

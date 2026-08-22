@@ -147,6 +147,18 @@ Verification after these changes:
 - Real Chromium submissions at 375px and 1280px: subject, average, and all three comp addresses visible; no horizontal overflow; ~1.1 seconds warm.
 - Real public-record matrix: Leland full/no-city/city-typo resolved; Loron Class 203/205 comparisons returned three addressed comps; Randolph remained conservatively ambiguous; post-directional and invalid-address behavior remained correct.
 
+## Independent-review failure-isolation child
+
+Independent review of `b7e0878d13fb4f3941c36a0e81c6e95ec01c8b05` found one blocker: a rejected optional address-enrichment lookup could reject the entire `Promise.all` and fail an otherwise valid comparison. The next linear child catches failures per comparable and preserves the original row, with a rejecting-lookup regression fixture.
+
+Verification after this narrow child:
+
+- Focused free-check Jest: 138/138 passed.
+- Full serial Jest: 2,294 passed / 77 skipped.
+- Build: PASS, 142/142 pages.
+- TypeScript: 85 baseline / 82 candidate / 0 introduced / 0 changed-file diagnostics.
+- Application/UI behavior outside optional comp-address failure isolation is unchanged from the parent that passed 14/14 Playwright and real Chromium QA.
+
 ## Residual risks
 
 - City-relaxed query remains intentionally bounded and runs only after strict empty results.

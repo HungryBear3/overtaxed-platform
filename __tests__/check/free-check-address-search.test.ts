@@ -265,6 +265,30 @@ describe("comparable address enrichment", () => {
     expect(enriched[1]).toEqual(rows[1])
   })
 
+  it("preserves each comparable when its exact-PIN address lookup throws", async () => {
+    const row = {
+      pin: "18062140010000",
+      address: "",
+      city: "",
+      zipCode: "",
+      neighborhood: "N",
+      assessedMarketValue: 350000,
+      assessedMarketValuePerSqft: null,
+      buildingClass: "203",
+      livingArea: 1200,
+      yearBuilt: 1950,
+      bedrooms: 3,
+      bathrooms: 2,
+      dataSource: "test",
+    }
+
+    const enriched = await enrichComparableAddresses([row], async () => {
+      throw new Error("transient Socrata failure")
+    })
+
+    expect(enriched).toEqual([row])
+  })
+
   it("queries assessed values only by the dataset's real pin column", () => {
     const source = readFileSync("lib/cook-county/api.ts", "utf8")
     const helper = source.slice(
