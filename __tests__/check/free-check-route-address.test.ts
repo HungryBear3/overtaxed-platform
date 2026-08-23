@@ -338,6 +338,75 @@ describe("address lookup — the widened query and the ranker", () => {
     expect(body.code).toBe("ADDRESS_AMBIGUOUS")
     expect(cookCounty.getPropertyByPIN).not.toHaveBeenCalled()
   })
+
+  /**
+   * The county lookup is repeated on the selection round trip, and it can come
+   * back narrower than it was: a partial dataset response, a cache difference,
+   * a changed widening fragment. A posted selection is an authority boundary,
+   * and none of those events transfers it to a parcel the reader never picked.
+   */
+  it("never loads a newly unique parcel in place of the posted selection", async () => {
+    cookCounty.searchPropertiesByAddress.mockResolvedValue({
+      success: true,
+      data: [searchRow({ pin: pinAt(2) })],
+      error: null,
+      source: "x",
+    })
+    stubComps([equityComp(4, 364000)])
+
+    const res = await POST(req({ address: SUBJECT_ADDRESS, selectedPin: pinAt(1) }))
+    const body = await res.json()
+
+    expect(res.status).toBe(409)
+    expect(body.code).toBe("ADDRESS_AMBIGUOUS")
+    expect(body.candidates.map((c: { pin: string }) => c.pin)).toEqual([pinAt(2)])
+    // The parcel the second lookup found on its own is never the parcel loaded.
+    expect(cookCounty.getPropertyByPIN).not.toHaveBeenCalled()
+    expect(cookCounty.getComparableEquity).not.toHaveBeenCalled()
+    expect(cookCounty.getComparableSales).not.toHaveBeenCalled()
+  })
+
+  it("selects the posted parcel even when another survivor now outscores it", async () => {
+    // Same street and number, so both survive the ranker; only the stored
+    // directional separates them, so the second lookup resolves as unique.
+    cookCounty.searchPropertiesByAddress.mockResolvedValue({
+      success: true,
+      data: [
+        searchRow({ pin: pinAt(7), property_address: "1234 SAMPLE ST" }),
+        searchRow({ pin: pinAt(8) }),
+      ],
+      error: null,
+      source: "x",
+    })
+    cookCounty.getPropertyByPIN.mockImplementation(async (pin: string) =>
+      pin === pinAt(7)
+        ? { success: true, data: propertyRecord({ pin: pinAt(7), address: "1234 SAMPLE ST" }), error: null }
+        : { success: true, data: propertyRecord({ pin: pinAt(8) }), error: null }
+    )
+    stubComps([equityComp(4, 364000)])
+
+    const res = await POST(req({ address: SUBJECT_ADDRESS, selectedPin: pinAt(7) }))
+
+    expect(res.status).toBe(200)
+    expect(cookCounty.getPropertyByPIN).toHaveBeenCalledWith(pinAt(7))
+    expect(cookCounty.getPropertyByPIN).not.toHaveBeenCalledWith(pinAt(8))
+  })
+
+  it("honors a posted selection that is the only parcel still matching", async () => {
+    cookCounty.searchPropertiesByAddress.mockResolvedValue({
+      success: true,
+      data: [searchRow({ pin: pinAt(1) })],
+      error: null,
+      source: "x",
+    })
+    cookCounty.getPropertyByPIN.mockResolvedValue({ success: true, data: propertyRecord({ pin: pinAt(1) }), error: null })
+    stubComps([equityComp(4, 364000)])
+
+    const res = await POST(req({ address: SUBJECT_ADDRESS, selectedPin: pinAt(1) }))
+
+    expect(res.status).toBe(200)
+    expect(cookCounty.getPropertyByPIN).toHaveBeenCalledWith(pinAt(1))
+  })
 })
 
 describe("address lookup — failing closed", () => {

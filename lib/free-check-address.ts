@@ -374,9 +374,17 @@ export interface RankedAddressCandidate extends AddressCandidateRecord {
   matchedOn: string[]
 }
 
+/**
+ * `selectable` is the set a posted `selectedPin` may be honored from — the
+ * parcels this lookup is willing to offer for selection, capped exactly like
+ * the offered list so a repeat request can never resolve to a parcel this one
+ * would not have shown. On an ambiguous result it is the offered list itself;
+ * on a unique one it is the rest of the ranked field that the resolver merely
+ * outscored, which is where a parcel the reader already chose will be found.
+ */
 export type AddressResolution =
-  | { kind: "unique"; candidate: RankedAddressCandidate }
-  | { kind: "ambiguous"; candidates: RankedAddressCandidate[]; total: number }
+  | { kind: "unique"; candidate: RankedAddressCandidate; selectable: RankedAddressCandidate[] }
+  | { kind: "ambiguous"; candidates: RankedAddressCandidate[]; total: number; selectable: RankedAddressCandidate[] }
   | { kind: "none" }
 
 /**
@@ -472,13 +480,18 @@ export function resolveAddressCandidates(
 
   if (parsed.unit) {
     const exact = survivors.filter((c) => c.unit === parsed.unit)
-    if (exact.length === 1) return { kind: "unique", candidate: exact[0] }
+    // A typed unit narrows what may be selected: the parcels carrying some
+    // other unit were never on offer and stay off it on the repeat request.
+    const selectable = exact.slice(0, maxCandidates)
+    if (exact.length === 1) return { kind: "unique", candidate: exact[0], selectable }
     if (exact.length > 1) {
-      return { kind: "ambiguous", candidates: exact.slice(0, maxCandidates), total: exact.length }
+      return { kind: "ambiguous", candidates: selectable, total: exact.length, selectable }
     }
   }
 
-  if (survivors.length === 1) return { kind: "unique", candidate: survivors[0] }
+  const selectable = survivors.slice(0, maxCandidates)
+
+  if (survivors.length === 1) return { kind: "unique", candidate: survivors[0], selectable }
 
   if (!parsed.unit) {
     const unitBearingCounts = new Map<string, number>()
@@ -496,15 +509,15 @@ export function resolveAddressCandidates(
       Array.from(unitBearingCounts.values()).some((count) => count > 1) ||
       Array.from(unitlessCounts.values()).some((count) => count > 1)
     ) {
-      return { kind: "ambiguous", candidates: survivors.slice(0, maxCandidates), total: survivors.length }
+      return { kind: "ambiguous", candidates: selectable, total: survivors.length, selectable }
     }
   }
 
   if (survivors[0].score > survivors[1].score) {
-    return { kind: "unique", candidate: survivors[0] }
+    return { kind: "unique", candidate: survivors[0], selectable }
   }
 
-  return { kind: "ambiguous", candidates: survivors.slice(0, maxCandidates), total: survivors.length }
+  return { kind: "ambiguous", candidates: selectable, total: survivors.length, selectable }
 }
 
 /**

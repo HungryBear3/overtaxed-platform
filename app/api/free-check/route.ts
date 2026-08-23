@@ -390,28 +390,45 @@ export async function POST(req: NextRequest) {
       // address is not a failure and it is not the homeowner's problem to solve
       // on the Assessor's site — it is a question only they can answer, so it is
       // asked here rather than resolved by taking the first row.
+      //
+      // Once it is answered, the answer is an authority boundary and it does not
+      // become advisory because the repeated county lookup happened to narrow.
+      // Remote-result drift, a partial dataset response, a cache difference or a
+      // changed widening fragment can all turn a two-parcel address into one
+      // parcel between the two requests, and the parcel left standing need not be
+      // the one that was chosen. So the posted PIN is required among this
+      // lookup's selectable parcels whichever way it resolved, and if it is not
+      // there the check fails closed and asks again — it never transfers the
+      // selection to a parcel the reader did not pick, however well that parcel
+      // matches the typed street.
+      const selectable = resolution.selectable
+      const selectionRequired = (message: string) =>
+        NextResponse.json(
+          {
+            error: message,
+            code: "ADDRESS_AMBIGUOUS",
+            candidates: selectable.map(publicSelectionFragment),
+            candidateCount: resolution.kind === "ambiguous" ? resolution.total : selectable.length,
+            candidatesShown: selectable.length,
+            assessorAddressSearchUrl: ASSESSOR_ADDRESS_SEARCH_URL,
+            disclosure: CC_02,
+          },
+          { status: 409 }
+        )
+
+      const picked = selectedPin
+        ? selectable.find((candidate) => candidate.pin === selectedPin)
+        : undefined
+
       let chosen: RankedAddressCandidate
-      if (resolution.kind === "ambiguous") {
-        const picked = selectedPin
-          ? resolution.candidates.find((candidate) => candidate.pin === selectedPin)
-          : undefined
-        if (!picked) {
-          return NextResponse.json(
-            {
-              error: selectedPin
-                ? "That PIN is not one of the matches for this address. Choose one of the listed properties."
-                : "More than one Cook County property matches that address.",
-              code: "ADDRESS_AMBIGUOUS",
-              candidates: resolution.candidates.map(publicSelectionFragment),
-              candidateCount: resolution.total,
-              candidatesShown: resolution.candidates.length,
-              assessorAddressSearchUrl: ASSESSOR_ADDRESS_SEARCH_URL,
-              disclosure: CC_02,
-            },
-            { status: 409 }
-          )
-        }
+      if (selectedPin && !picked) {
+        return selectionRequired(
+          "That PIN is not one of the matches for this address. Choose one of the listed properties."
+        )
+      } else if (picked) {
         chosen = picked
+      } else if (resolution.kind === "ambiguous") {
+        return selectionRequired("More than one Cook County property matches that address.")
       } else {
         chosen = resolution.candidate
       }
