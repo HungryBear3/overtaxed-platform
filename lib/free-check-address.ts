@@ -92,6 +92,18 @@ const UNIT_DESIGNATORS = [
  */
 const COUNTY_NON_UNIT_TERMINALS = new Set(["HSE"])
 
+/**
+ * The shape of a bare condo/unit token as the archived Parcel Universe appends
+ * it to a street line, with no designator in front of it: `… ST C23`, `… ST
+ * 2701`. Two to six characters, letters and digits only, and at least one
+ * digit.
+ *
+ * The digit is doing real work. Chicago has street names whose final token sits
+ * after a suffix word — `S AVENUE O`, `N AVENUE L` — and a rule that accepted a
+ * bare letter would read the street's own identity as a unit.
+ */
+const COUNTY_BARE_UNIT_PATTERN = /^(?=[A-Z0-9]*\d)[A-Z0-9]{2,6}$/
+
 const UNIT_PATTERN = new RegExp(
   String.raw`(?:#\s*|\b(?:${UNIT_DESIGNATORS.join("|")})\b\.?\s*)([A-Z0-9][A-Z0-9-]*)`,
   "i",
@@ -350,6 +362,67 @@ export function normalizeFreeCheckSearchInput(address: string, city: string = ""
   return { address: searchAddress, city: parsed.city }
 }
 
+/**
+ * Parse a *county record* address, which may carry a condo unit the generic
+ * parser cannot see.
+ *
+ * Cook County's current PIN Address Index stores `100 W RANDOLPH ST` with no
+ * apartment value, while the archived Parcel Universe stores the same PIN as
+ * `100 W RANDOLPH ST C23`. There is no designator on that `C23`, so
+ * [[parseFreeCheckAddress]] — which will not guess — keeps it as street
+ * identity, and the two datasets then describe two different streets for one
+ * parcel.
+ *
+ * This recognizes that one shape, and only where removing the token still
+ * leaves a complete street line behind. All of these must hold:
+ *
+ *  - the generic parse found no designated unit and claimed no suffix — the
+ *    terminal token is sitting in the position the suffix would occupy;
+ *  - it found a house number;
+ *  - the street name carries at least three tokens, so the token before the
+ *    terminal one is a recognized USPS suffix *and* a street name of its own
+ *    still stands in front of that suffix;
+ *  - the terminal token matches [[COUNTY_BARE_UNIT_PATTERN]].
+ *
+ * Anything else is returned exactly as the generic parser read it. This is for
+ * county records only; homeowner input goes through [[parseFreeCheckAddress]]
+ * and is not widened by any of it.
+ */
+export function parseCountyRecordAddress(
+  address: string,
+  city: string = "",
+): ParsedFreeCheckAddress {
+  const parsed = parseFreeCheckAddress(address, city)
+  if (parsed.unit || parsed.suffix || !parsed.houseNumber) return parsed
+
+  const tokens = parsed.streetName.split(" ").filter(Boolean)
+  if (tokens.length < 3) return parsed
+
+  const unit = tokens[tokens.length - 1]
+  const suffix = SUFFIXES[tokens[tokens.length - 2]]
+  if (!suffix || !COUNTY_BARE_UNIT_PATTERN.test(unit)) return parsed
+
+  const streetName = tokens.slice(0, -2).join(" ")
+  // A trailing directional is never claimed when the last token is this shape,
+  // so the display line ends on the same token the uppercase one does.
+  const streetDisplay = parsed.streetDisplay.split(" ").filter(Boolean).slice(0, -1).join(" ")
+
+  return {
+    ...parsed,
+    street: [parsed.houseNumber, parsed.directional, streetName, suffix].filter(Boolean).join(" "),
+    streetDisplay,
+    streetName,
+    suffix,
+    unit,
+    queryFragments: buildQueryFragments({
+      houseNumber: parsed.houseNumber,
+      directional: parsed.directional,
+      streetName,
+      suffix,
+    }),
+  }
+}
+
 /* ── Candidate ranking ────────────────────────────────────────────────────── */
 
 /** One row as it comes back from a Cook County address dataset. */
@@ -521,25 +594,20 @@ export function resolveAddressCandidates(
 }
 
 /**
- * Does the record we finally loaded still describe the address that was asked
- * for? Called after `getPropertyByPIN`, because the PIN travels through a
- * second dataset lookup between the candidate and the answer.
+ * The field-by-field comparison behind [[recordCorroboratesAddress]], against
+ * one reading of the record address.
  *
- * Fails closed: an unparseable or empty record address is not corroboration.
+ * Every check here rejects; none of them scores, and none of them can rescue a
+ * row another one turned down.
  */
-export function recordCorroboratesAddress(
+function readingCorroboratesAddress(
   parsed: ParsedFreeCheckAddress,
   selected: Pick<
     RankedAddressCandidate,
-    "pin" | "houseNumber" | "directional" | "streetName" | "suffix" | "unit"
+    "houseNumber" | "directional" | "streetName" | "suffix" | "unit"
   >,
-  recordPin: string | null | undefined,
-  recordAddress: string,
-  recordCity: string = "",
+  record: ParsedFreeCheckAddress,
 ): boolean {
-  const record = parseFreeCheckAddress(recordAddress ?? "", recordCity ?? "")
-  const normalizedRecordPin = String(recordPin ?? "").replace(/\D/g, "")
-  if (normalizedRecordPin.length !== 14 || normalizedRecordPin !== selected.pin) return false
   if (!record.streetName || !parsed.streetName) return false
   if (record.streetName !== selected.streetName) return false
   if (selected.houseNumber && record.houseNumber !== selected.houseNumber) return false
@@ -551,4 +619,47 @@ export function recordCorroboratesAddress(
   if (parsed.suffix && record.suffix && parsed.suffix !== record.suffix) return false
   if (parsed.unit && record.unit !== parsed.unit) return false
   return true
+}
+
+/**
+ * Does the record we finally loaded still describe the address that was asked
+ * for? Called after `getPropertyByPIN`, because the PIN travels through a
+ * second dataset lookup between the candidate and the answer.
+ *
+ * Fails closed: an unparseable or empty record address is not corroboration.
+ *
+ * The PIN is checked first and is not negotiable — corroboration only ever
+ * confirms or rejects the parcel that was already chosen, and can never move
+ * the answer to another one.
+ *
+ * The address is then read twice, and the second reading is a fallback the
+ * first one cannot lose by. [[parseFreeCheckAddress]] is asked first, so every
+ * record that corroborated before this fallback existed still does.
+ * [[parseCountyRecordAddress]] is asked only when that failed, and only its own
+ * narrow shape — a bare terminal condo unit on a street line that is otherwise
+ * complete — can be the difference. A record that survives on the second
+ * reading has still cleared house number, directional, street name, suffix,
+ * selected-candidate lineage and any unit the homeowner actually typed.
+ */
+export function recordCorroboratesAddress(
+  parsed: ParsedFreeCheckAddress,
+  selected: Pick<
+    RankedAddressCandidate,
+    "pin" | "houseNumber" | "directional" | "streetName" | "suffix" | "unit"
+  >,
+  recordPin: string | null | undefined,
+  recordAddress: string,
+  recordCity: string = "",
+): boolean {
+  const normalizedRecordPin = String(recordPin ?? "").replace(/\D/g, "")
+  if (normalizedRecordPin.length !== 14 || normalizedRecordPin !== selected.pin) return false
+
+  const record = parseFreeCheckAddress(recordAddress ?? "", recordCity ?? "")
+  if (readingCorroboratesAddress(parsed, selected, record)) return true
+
+  const countyRecord = parseCountyRecordAddress(recordAddress ?? "", recordCity ?? "")
+  // Nothing was recognized, so the second reading is the first one and the
+  // rejection above stands.
+  if (countyRecord.unit === record.unit) return false
+  return readingCorroboratesAddress(parsed, selected, countyRecord)
 }

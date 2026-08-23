@@ -3,8 +3,10 @@
  *
  * Address-to-PIN resolution for the free check.
  *
- * Every address in this file is synthetic. No real homeowner input, PIN or
- * parcel appears here or in any fixture it loads.
+ * Every PIN, parcel and homeowner input in this file is synthetic. One public,
+ * non-residential Loop street address — 100 W Randolph St — is reproduced
+ * verbatim, because the county record shape it carries is the exact one the
+ * corroboration block at the bottom has to pin down.
  *
  * Against the released parent (`1f2d7aae`) none of this existed: the flow
  * normalized whitespace, dropped the ZIP, and handed the remainder to a single
@@ -15,6 +17,7 @@
  */
 import {
   parseFreeCheckAddress,
+  parseCountyRecordAddress,
   rankAddressCandidates,
   resolveAddressCandidates,
   recordCorroboratesAddress,
@@ -272,5 +275,123 @@ describe("recordCorroboratesAddress", () => {
   it("fails closed on an empty or unparseable record address", () => {
     expect(recordCorroboratesAddress(parsed, selected, pinAt(95), "", "")).toBe(false)
     expect(recordCorroboratesAddress(parsed, selected, pinAt(95), "   ", "Chicago")).toBe(false)
+  })
+})
+
+describe("parseCountyRecordAddress", () => {
+  it("reads the bare terminal condo unit the archived Parcel Universe appends", () => {
+    const record = parseCountyRecordAddress("100 W RANDOLPH ST C23", "Chicago")
+    expect(record.unit).toBe("C23")
+    expect(record.houseNumber).toBe("100")
+    expect(record.directional).toBe("W")
+    expect(record.streetName).toBe("RANDOLPH")
+    expect(record.suffix).toBe("ST")
+    expect(record.street).toBe("100 W RANDOLPH ST")
+  })
+
+  it("reads an all-digit bare terminal unit the same way", () => {
+    expect(parseCountyRecordAddress("100 W RANDOLPH ST 2701").unit).toBe("2701")
+    expect(parseCountyRecordAddress("100 W RANDOLPH ST 2701").streetName).toBe("RANDOLPH")
+  })
+
+  it("leaves a legitimate trailing street-name token in the street name", () => {
+    const leftAlone = [
+      // Real Chicago street names whose final token sits after a suffix word.
+      "13200 S AVENUE O",
+      "13200 N AVENUE L",
+      // Digits, but no street name of its own in front of the suffix.
+      "1234 W HIGHWAY 20",
+      // A name of its own in front of the suffix, but no digit in the terminal.
+      "1234 N PARK PLACE TOWER",
+      // No suffix at all: what would be left is a truncated street name.
+      "1234 N SAMPLE C23",
+      // Nothing terminal to claim.
+      "1234 N SAMPLE ST",
+    ]
+    for (const address of leftAlone) {
+      expect([address, parseCountyRecordAddress(address).unit]).toEqual([address, null])
+    }
+  })
+
+  it("keeps HSE a non-unit county marker", () => {
+    const record = parseCountyRecordAddress("1234 N SAMPLE ST HSE")
+    expect(record.unit).toBeNull()
+    expect(record.street).toBe("1234 N SAMPLE ST")
+  })
+
+  it("leaves a designated unit exactly where the generic parser put it", () => {
+    const record = parseCountyRecordAddress("1234 N SAMPLE ST APT 3B")
+    expect(record.unit).toBe("3B")
+    expect(record.streetName).toBe("SAMPLE")
+    expect(record.suffix).toBe("ST")
+  })
+
+  it("does not widen the parser homeowner input goes through", () => {
+    expect(parseFreeCheckAddress("100 W RANDOLPH ST C23").unit).toBeNull()
+    expect(parseFreeCheckAddress("100 W RANDOLPH ST C23").streetName).toBe("RANDOLPH ST C23")
+  })
+})
+
+describe("recordCorroboratesAddress — bare terminal condo unit on the county record", () => {
+  // The current PIN Address Index carries this parcel with no unit; the
+  // archived Parcel Universe carries the same PIN as "… ST C23". At fc8ea95
+  // that disagreement rejected six of the eight parcels the Preview offered.
+  const parsed = parseFreeCheckAddress("100 W Randolph St, Chicago IL 60601")
+  const offered = {
+    pin: pinAt(1),
+    houseNumber: "100",
+    directional: "W",
+    streetName: "RANDOLPH",
+    suffix: "ST",
+    unit: null,
+  }
+
+  it("corroborates the offered PIN when only a bare terminal unit differs", () => {
+    expect(recordCorroboratesAddress(parsed, offered, pinAt(1), "100 W RANDOLPH ST C23", "Chicago")).toBe(true)
+  })
+
+  it("still requires the record to carry the selected PIN", () => {
+    expect(recordCorroboratesAddress(parsed, offered, pinAt(2), "100 W RANDOLPH ST C23", "Chicago")).toBe(false)
+    expect(recordCorroboratesAddress(parsed, offered, "123", "100 W RANDOLPH ST C23", "Chicago")).toBe(false)
+  })
+
+  it("still requires house number, directional and suffix to agree", () => {
+    for (const address of [
+      "200 W RANDOLPH ST C23",
+      "100 E RANDOLPH ST C23",
+      "100 W RANDOLPH AVE C23",
+      "100 W OTHER ST C23",
+    ]) {
+      expect([address, recordCorroboratesAddress(parsed, offered, pinAt(1), address, "Chicago")])
+        .toEqual([address, false])
+    }
+  })
+
+  it("refuses a record whose bare terminal unit contradicts a typed unit", () => {
+    const typedOtherUnit = parseFreeCheckAddress("100 W Randolph St Unit C24, Chicago IL 60601")
+    expect(recordCorroboratesAddress(typedOtherUnit, offered, pinAt(1), "100 W RANDOLPH ST C23", "Chicago")).toBe(false)
+  })
+
+  it("accepts a record whose bare terminal unit is the unit that was typed", () => {
+    const typedSameUnit = parseFreeCheckAddress("100 W Randolph St Unit C23, Chicago IL 60601")
+    expect(recordCorroboratesAddress(typedSameUnit, offered, pinAt(1), "100 W RANDOLPH ST C23", "Chicago")).toBe(true)
+  })
+
+  it("refuses a record whose bare terminal unit contradicts the selected candidate unit", () => {
+    const offeredWithUnit = { ...offered, unit: "C24" }
+    expect(recordCorroboratesAddress(parsed, offeredWithUnit, pinAt(1), "100 W RANDOLPH ST C23", "Chicago")).toBe(false)
+  })
+
+  it("does not rescue a record whose trailing token is street identity", () => {
+    const avenueO = parseFreeCheckAddress("13200 S Avenue O, Chicago")
+    const truncated = {
+      pin: pinAt(1),
+      houseNumber: "13200",
+      directional: "S",
+      streetName: "AVENUE",
+      suffix: null,
+      unit: null,
+    }
+    expect(recordCorroboratesAddress(avenueO, truncated, pinAt(1), "13200 S AVENUE O", "Chicago")).toBe(false)
   })
 })

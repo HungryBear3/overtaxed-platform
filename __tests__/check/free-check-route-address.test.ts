@@ -409,6 +409,50 @@ describe("address lookup — the widened query and the ranker", () => {
   })
 })
 
+describe("address lookup — the county record appends the unit the index omits", () => {
+  it("completes the selected parcel when only a bare terminal unit differs", async () => {
+    cookCounty.searchPropertiesByAddress.mockResolvedValue({
+      success: true,
+      data: [searchRow({ pin: pinAt(1) }), searchRow({ pin: pinAt(2) })],
+      error: null,
+      source: "x",
+    })
+    cookCounty.getPropertyByPIN.mockResolvedValue({
+      success: true,
+      data: propertyRecord({ pin: pinAt(1), address: "1234 N SAMPLE ST C23" }),
+      error: null,
+    })
+    stubComps([equityComp(4, 364000)])
+
+    const res = await POST(req({ address: SUBJECT_ADDRESS, selectedPin: pinAt(1) }))
+
+    expect(res.status).toBe(200)
+    expect(cookCounty.getPropertyByPIN).toHaveBeenCalledWith(pinAt(1))
+  })
+
+  it("still fails closed when the bare-unit record is a different building", async () => {
+    cookCounty.searchPropertiesByAddress.mockResolvedValue({
+      success: true,
+      data: [searchRow({ pin: pinAt(1) }), searchRow({ pin: pinAt(2) })],
+      error: null,
+      source: "x",
+    })
+    cookCounty.getPropertyByPIN.mockResolvedValue({
+      success: true,
+      data: propertyRecord({ pin: pinAt(1), address: "9876 N SAMPLE ST C23" }),
+      error: null,
+    })
+    stubComps([equityComp(4, 364000)])
+
+    const res = await POST(req({ address: SUBJECT_ADDRESS, selectedPin: pinAt(1) }))
+    const body = await res.json()
+
+    expect(res.status).toBe(409)
+    expect(body.code).toBe("ADDRESS_EVIDENCE_MISMATCH")
+    expect(cookCounty.getComparableEquity).not.toHaveBeenCalled()
+  })
+})
+
 describe("address lookup — failing closed", () => {
   it("stops when the loaded record no longer describes the address asked about", async () => {
     cookCounty.searchPropertiesByAddress.mockResolvedValue({
