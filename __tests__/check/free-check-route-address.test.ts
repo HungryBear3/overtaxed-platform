@@ -464,15 +464,23 @@ describe("address lookup — a numbered route is not a condo unit", () => {
    * undesignated unit would corroborate them as one address — an exact PIN
    * match says the parcel was not swapped, it does not say the address agrees.
    */
+  // [ homeowner input, index row the county offers, record the PIN loads ]
   const routes: Array<[string, string, string]> = [
-    ["1234 W US Highway, Chicago IL 60600", "1234 W US HIGHWAY", "1234 W US HIGHWAY 20"],
-    ["1234 W State Highway, Chicago IL 60600", "1234 W STATE HIGHWAY", "1234 W STATE HIGHWAY 20"],
-    ["1234 N Old Road, Chicago IL 60600", "1234 N OLD ROAD", "1234 N OLD ROAD 66"],
-    ["1234 N County Road, Chicago IL 60600", "1234 N COUNTY ROAD", "1234 N COUNTY ROAD 12"],
-    ["1234 N Route, Chicago IL 60600", "1234 N ROUTE", "1234 N ROUTE 53"],
+    ["1234 W US Highway, Chicago IL 60600", "1234 W US HIGHWAY 20", "1234 W US HIGHWAY"],
+    ["1234 W State Highway, Chicago IL 60600", "1234 W STATE HIGHWAY 20", "1234 W STATE HIGHWAY"],
+    ["1234 N Old Road, Chicago IL 60600", "1234 N OLD ROAD 66", "1234 N OLD ROAD"],
+    ["1234 N County Road, Chicago IL 60600", "1234 N COUNTY ROAD 12", "1234 N COUNTY ROAD"],
+    ["1234 N Route, Chicago IL 60600", "1234 N ROUTE 53", "1234 N ROUTE"],
+    // Lettered route numbers: the same token shape as a real condo unit, so
+    // only the street identity left behind can tell them apart.
+    ["1234 W State Highway, Chicago IL 60600", "1234 W STATE HIGHWAY 20A", "1234 W STATE HIGHWAY"],
+    ["1234 W US Highway, Chicago IL 60600", "1234 W US HIGHWAY 12B", "1234 W US HIGHWAY"],
+    ["1234 N Old Road, Chicago IL 60600", "1234 N OLD ROAD 66A", "1234 N OLD ROAD"],
+    ["1234 N County Road, Chicago IL 60600", "1234 N COUNTY ROAD 12B", "1234 N COUNTY ROAD"],
+    ["1234 N Route, Chicago IL 60600", "1234 N ROUTE 12B", "1234 N ROUTE"],
   ]
 
-  it.each(routes)("keeps %s fail-closed when the record appends the route number", async (input, indexAddress, recordAddress) => {
+  it.each(routes)("keeps %s fail-closed when the record reads %s", async (input, recordAddress, indexAddress) => {
     cookCounty.searchPropertiesByAddress.mockResolvedValue({
       success: true,
       data: [searchRow({ pin: pinAt(1), property_address: indexAddress })],
@@ -491,7 +499,30 @@ describe("address lookup — a numbered route is not a condo unit", () => {
 
     expect(res.status).toBe(409)
     expect(body.code).toBe("ADDRESS_EVIDENCE_MISMATCH")
+    expect(body.subject).toBeUndefined()
     expect(cookCounty.getComparableEquity).not.toHaveBeenCalled()
+    expect(cookCounty.getComparableSales).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ["1234 N Old Orchard Rd, Chicago IL 60600", "1234 N OLD ORCHARD RD", "1234 N OLD ORCHARD RD 4B"],
+    ["1234 N County Line Rd, Chicago IL 60600", "1234 N COUNTY LINE RD", "1234 N COUNTY LINE RD 12E"],
+  ])("completes %s, whose name only starts with a qualifier word", async (input, indexAddress, recordAddress) => {
+    cookCounty.searchPropertiesByAddress.mockResolvedValue({
+      success: true,
+      data: [searchRow({ pin: pinAt(1), property_address: indexAddress })],
+      error: null,
+      source: "x",
+    })
+    cookCounty.getPropertyByPIN.mockResolvedValue({
+      success: true,
+      data: propertyRecord({ pin: pinAt(1), address: recordAddress }),
+      error: null,
+    })
+    stubComps([equityComp(4, 364000)])
+
+    const res = await POST(req({ address: input }))
+    expect(res.status).toBe(200)
   })
 
   it("still completes a mixed letter-and-digit unit the index row omits", async () => {

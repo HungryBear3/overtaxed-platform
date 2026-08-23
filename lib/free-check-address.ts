@@ -118,6 +118,29 @@ const COUNTY_NON_UNIT_TERMINALS = new Set(["HSE"])
  */
 const COUNTY_BARE_UNIT_PATTERN = /^(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{2,6}$/
 
+/**
+ * Street identities that are a *numbered route* rather than a street name, as
+ * `qualifier|suffix` pairs.
+ *
+ * A lettered route number — `STATE HIGHWAY 20A`, `US HIGHWAY 12B`,
+ * `OLD ROAD 66A` — has exactly the token shape of a real condo unit, so nothing
+ * about the terminal token can separate the two. What separates them is what is
+ * *left*: strip the terminal off a numbered route and the identity that remains
+ * is a bare qualifier and its route suffix, which no one lives on.
+ *
+ * Deliberately a bounded pair list and not a ban on the qualifier word, because
+ * every one of these words also begins real street names. `OLD ORCHARD RD`,
+ * `COUNTY LINE RD` and `STATE ST` all keep more than the qualifier, or pair it
+ * with a suffix that is not a route suffix, so none of them is in here and all
+ * of them still resolve.
+ */
+const COUNTY_ROUTE_QUALIFIER_PAIRS = new Set([
+  "US|HWY",
+  "STATE|HWY",
+  "COUNTY|RD",
+  "OLD|RD",
+])
+
 const UNIT_PATTERN = new RegExp(
   String.raw`(?:#\s*|\b(?:${UNIT_DESIGNATORS.join("|")})\b\.?\s*)([A-Z0-9][A-Z0-9-]*)`,
   "i",
@@ -396,7 +419,9 @@ export function normalizeFreeCheckSearchInput(address: string, city: string = ""
  *  - the street name carries at least three tokens, so the token before the
  *    terminal one is a recognized USPS suffix *and* a street name of its own
  *    still stands in front of that suffix;
- *  - the terminal token matches [[COUNTY_BARE_UNIT_PATTERN]].
+ *  - the terminal token matches [[COUNTY_BARE_UNIT_PATTERN]];
+ *  - the street identity the terminal token would leave behind is not one of
+ *    [[COUNTY_ROUTE_QUALIFIER_PAIRS]].
  *
  * Anything else is returned exactly as the generic parser read it. This is for
  * county records only; homeowner input goes through [[parseFreeCheckAddress]]
@@ -417,6 +442,9 @@ export function parseCountyRecordAddress(
   if (!suffix || !COUNTY_BARE_UNIT_PATTERN.test(unit)) return parsed
 
   const streetName = tokens.slice(0, -2).join(" ")
+  // What the terminal token would leave behind has to be a street, not a route.
+  if (COUNTY_ROUTE_QUALIFIER_PAIRS.has(`${streetName}|${suffix}`)) return parsed
+
   // A trailing directional is never claimed when the last token is this shape,
   // so the display line ends on the same token the uppercase one does.
   const streetDisplay = parsed.streetDisplay.split(" ").filter(Boolean).slice(0, -1).join(" ")

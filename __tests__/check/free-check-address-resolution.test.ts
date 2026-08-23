@@ -324,6 +324,48 @@ describe("parseCountyRecordAddress", () => {
     }
   })
 
+  /**
+   * A lettered route number — `STATE HIGHWAY 20A`, `US HIGHWAY 12B` — has the
+   * same token shape as a real condo unit, so no rule about the terminal token
+   * alone can separate them. What separates them is what is *left*: strip the
+   * terminal off a numbered route and the street identity that remains is a
+   * bare route qualifier and its route suffix, which is not a street name.
+   */
+  it("refuses a bounded route qualifier paired with its route suffix", () => {
+    const routeForms = [
+      "1234 W STATE HIGHWAY 20A",
+      "1234 W US HIGHWAY 12B",
+      "1234 N OLD ROAD 66A",
+      "1234 N COUNTY ROAD 12B",
+      // The numeric forms the prior child closed, still closed by this guard too.
+      "1234 W STATE HIGHWAY 20",
+      "1234 W US HIGHWAY 20",
+      "1234 N OLD ROAD 66",
+      "1234 N COUNTY ROAD 12",
+      // ROUTE is not a suffix, so the structural constraints close these first.
+      "1234 N ROUTE 53",
+      "1234 N ROUTE 12B",
+    ]
+    for (const address of routeForms) {
+      const record = parseCountyRecordAddress(address)
+      expect([address, record.unit]).toEqual([address, null])
+      expect([address, record.street]).toEqual([address, parseFreeCheckAddress(address).street])
+    }
+  })
+
+  it("keeps a real street whose name merely starts with a qualifier word", () => {
+    for (const [address, unit, streetName] of [
+      ["1234 N OLD ORCHARD RD 4B", "4B", "OLD ORCHARD"],
+      ["1234 N COUNTY LINE RD 12E", "12E", "COUNTY LINE"],
+      ["1234 N STATE ST C23", "C23", "STATE"],
+      ["1234 N US CELLULAR PLZ 4B", "4B", "US CELLULAR"],
+      ["1234 N OLD ORCHARD HWY 4B", "4B", "OLD ORCHARD"],
+    ] as const) {
+      const record = parseCountyRecordAddress(address)
+      expect([address, record.unit, record.streetName]).toEqual([address, unit, streetName])
+    }
+  })
+
   it("refuses a bare terminal outside the bounded length", () => {
     expect(parseCountyRecordAddress("1234 N SAMPLE ST C").unit).toBeNull()
     expect(parseCountyRecordAddress("1234 N SAMPLE ST C2345678").unit).toBeNull()
@@ -450,6 +492,48 @@ describe("recordCorroboratesAddress — bare terminal condo unit on the county r
       }
       expect([recordAddress, recordCorroboratesAddress(typed, indexRow, pinAt(1), recordAddress, "Chicago")])
         .toEqual([recordAddress, false])
+    }
+  })
+
+  it("does not rescue a lettered route number the index row omits", () => {
+    const routes: Array<[string, string, string, string]> = [
+      ["1234 W State Highway, Chicago", "STATE", "HWY", "1234 W STATE HIGHWAY 20A"],
+      ["1234 W US Highway, Chicago", "US", "HWY", "1234 W US HIGHWAY 12B"],
+      ["1234 N Old Road, Chicago", "OLD", "RD", "1234 N OLD ROAD 66A"],
+      ["1234 N County Road, Chicago", "COUNTY", "RD", "1234 N COUNTY ROAD 12B"],
+    ]
+    for (const [input, streetName, suffix, recordAddress] of routes) {
+      const typed = parseFreeCheckAddress(input)
+      const indexRow = {
+        pin: pinAt(1),
+        houseNumber: "1234",
+        directional: typed.directional,
+        streetName,
+        suffix,
+        unit: null,
+      }
+      expect([recordAddress, recordCorroboratesAddress(typed, indexRow, pinAt(1), recordAddress, "Chicago")])
+        .toEqual([recordAddress, false])
+    }
+  })
+
+  it("corroborates a multi-token street whose name starts with a qualifier word", () => {
+    const cases: Array<[string, string, string, string]> = [
+      ["1234 N Old Orchard Rd, Chicago", "OLD ORCHARD", "RD", "1234 N OLD ORCHARD RD 4B"],
+      ["1234 N County Line Rd, Chicago", "COUNTY LINE", "RD", "1234 N COUNTY LINE RD 12E"],
+    ]
+    for (const [input, streetName, suffix, recordAddress] of cases) {
+      const typed = parseFreeCheckAddress(input)
+      const indexRow = {
+        pin: pinAt(1),
+        houseNumber: "1234",
+        directional: "N",
+        streetName,
+        suffix,
+        unit: null,
+      }
+      expect([recordAddress, recordCorroboratesAddress(typed, indexRow, pinAt(1), recordAddress, "Chicago")])
+        .toEqual([recordAddress, true])
     }
   })
 
