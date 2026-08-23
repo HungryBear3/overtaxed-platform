@@ -4,9 +4,12 @@
  * `/api/free-check`, address mode, against the released parent's two defects.
  *
  * Every address, PIN, city and ZIP in this file is synthetic. PINs are built
- * from a fixed prefix and an index; the street is "Sample". No real homeowner
- * input appears here, and the log assertions at the bottom prove the route does
- * not put any of it into a console line either.
+ * from a fixed prefix and an index, and the residential street is "Sample". The
+ * numbered-route guard block names generic route forms — "US HIGHWAY 20",
+ * "OLD ROAD 66" — because that is the record shape being guarded against; they
+ * are route names, not anyone's address. No real homeowner input appears here,
+ * and the log assertions at the bottom prove the route does not put any of it
+ * into a console line either.
  *
  * Against `1f2d7aae`:
  *   - a provider outage and an address that is not on file produced the same
@@ -450,6 +453,81 @@ describe("address lookup — the county record appends the unit the index omits"
     expect(res.status).toBe(409)
     expect(body.code).toBe("ADDRESS_EVIDENCE_MISMATCH")
     expect(cookCounty.getComparableEquity).not.toHaveBeenCalled()
+  })
+})
+
+describe("address lookup — a numbered route is not a condo unit", () => {
+  /**
+   * The county's address index can carry `1234 W US HIGHWAY` while the record
+   * for the same PIN reads `1234 W US HIGHWAY 20`. Those are two different
+   * roads, and the parent fails the pair closed. Reading `20` as an
+   * undesignated unit would corroborate them as one address — an exact PIN
+   * match says the parcel was not swapped, it does not say the address agrees.
+   */
+  const routes: Array<[string, string, string]> = [
+    ["1234 W US Highway, Chicago IL 60600", "1234 W US HIGHWAY", "1234 W US HIGHWAY 20"],
+    ["1234 W State Highway, Chicago IL 60600", "1234 W STATE HIGHWAY", "1234 W STATE HIGHWAY 20"],
+    ["1234 N Old Road, Chicago IL 60600", "1234 N OLD ROAD", "1234 N OLD ROAD 66"],
+    ["1234 N County Road, Chicago IL 60600", "1234 N COUNTY ROAD", "1234 N COUNTY ROAD 12"],
+    ["1234 N Route, Chicago IL 60600", "1234 N ROUTE", "1234 N ROUTE 53"],
+  ]
+
+  it.each(routes)("keeps %s fail-closed when the record appends the route number", async (input, indexAddress, recordAddress) => {
+    cookCounty.searchPropertiesByAddress.mockResolvedValue({
+      success: true,
+      data: [searchRow({ pin: pinAt(1), property_address: indexAddress })],
+      error: null,
+      source: "x",
+    })
+    cookCounty.getPropertyByPIN.mockResolvedValue({
+      success: true,
+      data: propertyRecord({ pin: pinAt(1), address: recordAddress }),
+      error: null,
+    })
+    stubComps([equityComp(4, 364000)])
+
+    const res = await POST(req({ address: input }))
+    const body = await res.json()
+
+    expect(res.status).toBe(409)
+    expect(body.code).toBe("ADDRESS_EVIDENCE_MISMATCH")
+    expect(cookCounty.getComparableEquity).not.toHaveBeenCalled()
+  })
+
+  it("still completes a mixed letter-and-digit unit the index row omits", async () => {
+    cookCounty.searchPropertiesByAddress.mockResolvedValue({
+      success: true,
+      data: [searchRow({ pin: pinAt(1) })],
+      error: null,
+      source: "x",
+    })
+    cookCounty.getPropertyByPIN.mockResolvedValue({
+      success: true,
+      data: propertyRecord({ pin: pinAt(1), address: "1234 N SAMPLE ST 4B" }),
+      error: null,
+    })
+    stubComps([equityComp(4, 364000)])
+
+    const res = await POST(req({ address: SUBJECT_ADDRESS }))
+    expect(res.status).toBe(200)
+  })
+
+  it("still completes a designated numeric unit on the record", async () => {
+    cookCounty.searchPropertiesByAddress.mockResolvedValue({
+      success: true,
+      data: [searchRow({ pin: pinAt(1), property_address: "1234 N SAMPLE ST APT 20" })],
+      error: null,
+      source: "x",
+    })
+    cookCounty.getPropertyByPIN.mockResolvedValue({
+      success: true,
+      data: propertyRecord({ pin: pinAt(1), address: "1234 N SAMPLE ST APT 20" }),
+      error: null,
+    })
+    stubComps([equityComp(4, 364000)])
+
+    const res = await POST(req({ address: "1234 N Sample St Apt 20, Chicago IL 60600" }))
+    expect(res.status).toBe(200)
   })
 })
 

@@ -95,14 +95,28 @@ const COUNTY_NON_UNIT_TERMINALS = new Set(["HSE"])
 /**
  * The shape of a bare condo/unit token as the archived Parcel Universe appends
  * it to a street line, with no designator in front of it: `… ST C23`, `… ST
- * 2701`. Two to six characters, letters and digits only, and at least one
- * digit.
+ * 4B`, `… ST PH2`. Two to six characters, letters and digits only, and it has
+ * to carry **both** at least one letter and at least one digit.
  *
- * The digit is doing real work. Chicago has street names whose final token sits
- * after a suffix word — `S AVENUE O`, `N AVENUE L` — and a rule that accepted a
- * bare letter would read the street's own identity as a unit.
+ * Both halves of that requirement are load-bearing, and each rules out a
+ * different way a street's own identity ends in something unit-shaped:
+ *
+ *  - **a digit is required** because Chicago has street names whose final token
+ *    sits after a suffix word — `S AVENUE O`, `N AVENUE L`. A rule that took a
+ *    bare letter would read those as apartments.
+ *  - **a letter is required** because an all-numeric ending is how the county
+ *    writes a *numbered route* — `US HIGHWAY 20`, `OLD ROAD 66`,
+ *    `COUNTY ROAD 12`. Reading `20` as a unit corroborates two different roads
+ *    as one address, which an exact PIN match does not license: the PIN proves
+ *    the parcel was not swapped, it says nothing about whether the addresses
+ *    agree.
+ *
+ * A numeric unit is still perfectly reachable — with a designator in front of
+ * it (`APT 20`, `UNIT 66`, `#20`), which [[parseFreeCheckAddress]] handles and
+ * this constant never sees. The requirement is only on the *undesignated* case,
+ * where the token's meaning has to be inferred from its shape alone.
  */
-const COUNTY_BARE_UNIT_PATTERN = /^(?=[A-Z0-9]*\d)[A-Z0-9]{2,6}$/
+const COUNTY_BARE_UNIT_PATTERN = /^(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{2,6}$/
 
 const UNIT_PATTERN = new RegExp(
   String.raw`(?:#\s*|\b(?:${UNIT_DESIGNATORS.join("|")})\b\.?\s*)([A-Z0-9][A-Z0-9-]*)`,

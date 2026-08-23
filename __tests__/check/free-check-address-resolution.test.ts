@@ -289,9 +289,56 @@ describe("parseCountyRecordAddress", () => {
     expect(record.street).toBe("100 W RANDOLPH ST")
   })
 
-  it("reads an all-digit bare terminal unit the same way", () => {
-    expect(parseCountyRecordAddress("100 W RANDOLPH ST 2701").unit).toBe("2701")
-    expect(parseCountyRecordAddress("100 W RANDOLPH ST 2701").streetName).toBe("RANDOLPH")
+  it("reads a mixed letter-and-digit bare terminal unit the same way", () => {
+    for (const [address, unit] of [
+      ["1234 N SAMPLE ST 4B", "4B"],
+      ["1234 N SAMPLE ST PH2", "PH2"],
+      ["1234 N SAMPLE ST 12E", "12E"],
+    ] as const) {
+      const record = parseCountyRecordAddress(address)
+      expect([address, record.unit, record.streetName]).toEqual([address, unit, "SAMPLE"])
+    }
+  })
+
+  /**
+   * A bare all-numeric ending is how Cook County writes a *numbered route*, not
+   * a condo unit: `US HIGHWAY 20`, `OLD ROAD 66`. Reading it as a unit turns the
+   * route's own identity into an apartment and corroborates two different roads
+   * as one address, so an undesignated terminal has to carry a letter as well as
+   * a digit before this parser will claim it.
+   */
+  it("refuses a bare all-numeric terminal, which is a numbered route", () => {
+    const numberedRoutes = [
+      "1234 W US HIGHWAY 20",
+      "1234 W STATE HIGHWAY 20",
+      "1234 N OLD ROAD 66",
+      "1234 N COUNTY ROAD 12",
+      "1234 N ROUTE 53",
+      "100 W RANDOLPH ST 2701",
+    ]
+    for (const address of numberedRoutes) {
+      const record = parseCountyRecordAddress(address)
+      expect([address, record.unit]).toEqual([address, null])
+      // The whole ending stays street identity, exactly as the parent read it.
+      expect([address, record.street]).toEqual([address, parseFreeCheckAddress(address).street])
+    }
+  })
+
+  it("refuses a bare terminal outside the bounded length", () => {
+    expect(parseCountyRecordAddress("1234 N SAMPLE ST C").unit).toBeNull()
+    expect(parseCountyRecordAddress("1234 N SAMPLE ST C2345678").unit).toBeNull()
+  })
+
+  it("leaves a designated numeric unit to the generic parser, untouched", () => {
+    for (const [address, unit] of [
+      ["1234 N SAMPLE ST APT 20", "20"],
+      ["1234 N SAMPLE ST UNIT 66", "66"],
+      ["1234 N SAMPLE ST #20", "20"],
+    ] as const) {
+      const record = parseCountyRecordAddress(address)
+      expect([address, record.unit, record.streetName, record.suffix]).toEqual([address, unit, "SAMPLE", "ST"])
+      expect([address, record.unit]).toEqual([address, parseFreeCheckAddress(address).unit])
+    }
   })
 
   it("leaves a legitimate trailing street-name token in the street name", () => {
@@ -380,6 +427,44 @@ describe("recordCorroboratesAddress — bare terminal condo unit on the county r
   it("refuses a record whose bare terminal unit contradicts the selected candidate unit", () => {
     const offeredWithUnit = { ...offered, unit: "C24" }
     expect(recordCorroboratesAddress(parsed, offeredWithUnit, pinAt(1), "100 W RANDOLPH ST C23", "Chicago")).toBe(false)
+  })
+
+  it("does not rescue a numbered route whose number the index row omits", () => {
+    // The parent fails this closed. The bare-unit fallback must not turn that
+    // 409 into a 200: an exact PIN match does not make `20` an apartment.
+    const routes: Array<[string, string, string, string]> = [
+      ["1234 W US Highway, Chicago", "US", "HWY", "1234 W US HIGHWAY 20"],
+      ["1234 W State Highway, Chicago", "STATE", "HWY", "1234 W STATE HIGHWAY 20"],
+      ["1234 N Old Road, Chicago", "OLD", "RD", "1234 N OLD ROAD 66"],
+      ["1234 N County Road, Chicago", "COUNTY", "RD", "1234 N COUNTY ROAD 12"],
+    ]
+    for (const [input, streetName, suffix, recordAddress] of routes) {
+      const typed = parseFreeCheckAddress(input)
+      const indexRow = {
+        pin: pinAt(1),
+        houseNumber: "1234",
+        directional: typed.directional,
+        streetName,
+        suffix,
+        unit: null,
+      }
+      expect([recordAddress, recordCorroboratesAddress(typed, indexRow, pinAt(1), recordAddress, "Chicago")])
+        .toEqual([recordAddress, false])
+    }
+  })
+
+  it("corroborates a mixed bare terminal unit the index row omits", () => {
+    const sample = parseFreeCheckAddress("1234 N Sample St, Chicago")
+    const indexRow = {
+      pin: pinAt(1),
+      houseNumber: "1234",
+      directional: "N",
+      streetName: "SAMPLE",
+      suffix: "ST",
+      unit: null,
+    }
+    expect(recordCorroboratesAddress(sample, indexRow, pinAt(1), "1234 N SAMPLE ST 4B", "Chicago")).toBe(true)
+    expect(recordCorroboratesAddress(sample, indexRow, pinAt(1), "1234 N SAMPLE ST PH2", "Chicago")).toBe(true)
   })
 
   it("does not rescue a record whose trailing token is street identity", () => {
