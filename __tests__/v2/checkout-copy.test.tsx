@@ -41,4 +41,23 @@ describe("OT checkout copy", () => {
     expect(document.body.textContent).not.toContain("$97");
     expect(document.body.textContent).not.toContain("22%");
   });
+
+  // The metadata assertion above already banned "procedural denial", and the
+  // body assertion above it banned the held tiers. Neither covered the body
+  // for a refund promise, and that is exactly where one survived: the shared
+  // `RiskReversalBadge` in SiteChrome rendered "If your township denies the
+  // filing on procedural grounds, we refund your packet" under the pay button.
+  // It reached this page from chrome, not from checkout's own source, which is
+  // why a per-file remediation of app/checkout and CheckoutPage missed it.
+  //
+  // CC-13 is the canonical refund statement and it says the opposite: "No
+  // county outcome — granted, denied, or partial — creates a refund right."
+  it("promises no refund on a county or township decision", () => {
+    render(<CheckoutPage />);
+    const body = document.body.textContent ?? "";
+
+    expect(body).not.toMatch(/procedural refund/i);
+    expect(body).not.toMatch(/\b(township|county|assessor)\b[^.]{0,80}\b(denies|denied|rejects|rejected)\b[^.]{0,80}\brefund\b/i);
+    expect(body).not.toMatch(/\brefund\b[^.]{0,80}\bno questions\b/i);
+  });
 });
