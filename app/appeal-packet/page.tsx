@@ -23,7 +23,7 @@ export const metadata: Metadata = {
 const included = [
   {
     title: "Comparable-property summary",
-    desc: "We organize nearby Cook County comparables so you can see whether your assessed value looks out of line.",
+    desc: "We organize public-record comparable properties from the same assessment cohort so you can review the assessed values side by side.",
   },
   {
     title: "Assessment-level explanation",

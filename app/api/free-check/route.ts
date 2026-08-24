@@ -1,8 +1,19 @@
 /**
  * Free assessment check (top-of-funnel). No auth required.
- * POST: { pin?: string, address?: string, city?: string }
- * Returns: subject property, up to 3 comps summary, avg comp value, potential overpayment/year,
- *          assessment-level metrics, comp details, appeal argument, township window status, property characteristics.
+ *
+ * POST: { pin?: string, address?: string, city?: string, selectedPin?: string }
+ *
+ * Returns the subject property, up to three comparable properties from the
+ * Cook County record with their assessed values and average, the assessment
+ * level where a market value exists for both sides, the appeal argument for a
+ * supportive outcome, the township window status, and the property
+ * characteristics on file.
+ *
+ * No overpayment projection is returned on any path; see the note beside
+ * `potentialOverpaymentPerYear` below. The doc comment here used to promise one.
+ *
+ * Address lookups can answer 409 `ADDRESS_AMBIGUOUS` with public-record
+ * candidate fragments; the caller re-posts the same address with `selectedPin`.
  */
 import { NextRequest, NextResponse } from "next/server"
 import {
@@ -13,6 +24,7 @@ import {
   formatPIN,
   normalizePIN,
   isValidPIN,
+  ADDRESS_LOOKUP_UNAVAILABLE,
 } from "@/lib/cook-county"
 import type { PropertyData, SalesRecord, EquityRecord } from "@/lib/cook-county"
 import { rateLimit, getClientIdentifier } from "@/lib/rate-limit"
@@ -23,7 +35,13 @@ import {
   type FreeCheckOutcome,
 } from "@/lib/free-check-appeal-window"
 import { CC_02, CC_05, CC_07 } from "@/lib/copy/canonical"
-import { normalizeFreeCheckSearchInput } from "@/lib/free-check-address"
+import {
+  parseFreeCheckAddress,
+  resolveAddressCandidates,
+  recordCorroboratesAddress,
+  type AddressCandidateRecord,
+  type RankedAddressCandidate,
+} from "@/lib/free-check-address"
 import {
   hostFromRequest,
   marketingGateReason,
@@ -127,8 +145,14 @@ const PREVIEW_FREE_CHECK_SAMPLE = {
     allowCheckout: false,
     reason: "eligibility_policy_unsigned" as const,
     showFigures: true,
+    showRecordComparison: true,
   },
   propertyCharacteristics: null,
+  compSelection: {
+    basis: "cohort_recency" as const,
+    distanceRanked: false,
+    label: "Sample data — not selected from any real Cook County record.",
+  },
   source: "preview-noop",
 }
 
@@ -181,6 +205,51 @@ We request a reduction in the assessed value to $${Math.round(targetAV).toLocale
 }
 
 
+const ASSESSOR_ADDRESS_SEARCH_URL = "https://www.cookcountyassessoril.gov/address-search"
+
+/**
+ * How many address rows to pull before ranking.
+ *
+ * This was 5, which is smaller than a single Chicago condo building. A
+ * ranker cannot report an eight-parcel address as ambiguous if the query only
+ * ever showed it five rows, and truncation that silently narrows an ambiguity
+ * verdict is the same defect as picking `data[0]` — just later in the pipeline.
+ */
+const ADDRESS_CANDIDATE_FETCH_LIMIT = 25
+
+/** The most candidates offered back for selection. Reported, never silent. */
+const ADDRESS_CANDIDATE_OFFER_LIMIT = 8
+
+function candidateFromRow(row: unknown): AddressCandidateRecord | null {
+  const r = (row ?? {}) as Record<string, unknown>
+  const pin = String(r.pin ?? "").replace(/\D/g, "")
+  if (pin.length !== 14) return null
+  return {
+    pin,
+    address: String(r.property_address ?? r.prop_address_full ?? "").trim(),
+    city: String(r.property_city ?? r.prop_address_city_name ?? "").trim(),
+    zip: String(r.property_zip ?? r.prop_address_zipcode_1 ?? "").trim(),
+  }
+}
+
+/**
+ * The public-record fragments a selection step may show.
+ *
+ * Everything here is already published by the Cook County Assessor against that
+ * PIN. No score, no ranking rationale, and nothing about the reader's own input
+ * crosses back over the wire — a match score rendered next to a stranger's
+ * address reads as a claim about which one is theirs.
+ */
+function publicSelectionFragment(candidate: RankedAddressCandidate) {
+  return {
+    pin: formatPIN(candidate.pin),
+    address: candidate.address,
+    city: candidate.city,
+    zipCode: candidate.zip,
+    unit: candidate.unit,
+  }
+}
+
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -209,6 +278,11 @@ export async function POST(req: NextRequest) {
     const pinRaw = typeof body.pin === "string" ? body.pin.trim() : ""
     const address = typeof body.address === "string" ? body.address.trim() : ""
     const city = typeof body.city === "string" ? body.city.trim() : ""
+    // Set by the selection step below when a building resolved to more than one
+    // parcel. It is never trusted on its own: it has to reappear among the
+    // ranked survivors of the same address before it selects anything.
+    const selectedPin =
+      typeof body.selectedPin === "string" ? normalizePIN(body.selectedPin) : ""
 
     if (PREVIEW_SAMPLE_ADDRESS_PATTERN.test(address)) {
       return NextResponse.json({
@@ -229,36 +303,167 @@ export async function POST(req: NextRequest) {
         )
       }
     } else {
-      const searchInput = normalizeFreeCheckSearchInput(address, city)
-      if (searchInput.address.length < 5) {
+      const parsed = parseFreeCheckAddress(address, city)
+      if (!parsed.streetName || parsed.street.length < 5) {
         return NextResponse.json(
           { error: "Enter either a 14-digit Cook County PIN or a street address (at least 5 characters)." },
           { status: 400 }
         )
       }
-      const search = await searchPropertiesByAddress(searchInput.address, searchInput.city || undefined, 5)
-      if (!search.success || !search.data?.length) {
+
+      // The caller's own street line first, then the widening fragments — a
+      // stored directional the homeowner omitted, a suffix they spelled out.
+      const searchOptions = { fragments: parsed.queryFragments }
+      let search = await searchPropertiesByAddress(
+        parsed.street,
+        parsed.city || undefined,
+        ADDRESS_CANDIDATE_FETCH_LIMIT,
+        searchOptions,
+      )
+
+      // A provider outage and an address that is not on file are different
+      // facts, and they used to produce the same sentence. Telling a homeowner
+      // with a perfectly good address to go find their PIN because Socrata was
+      // down is a statement about their property that we did not establish.
+      if (!search.success) {
         return NextResponse.json(
-          { error: "No Cook County property found for this address. Try your 14-digit PIN instead." },
+          {
+            error:
+              "We could not reach the Cook County records service just now. Please try again in a few minutes — this is on our side, not your address.",
+            code:
+              search.error === ADDRESS_LOOKUP_UNAVAILABLE
+                ? "ADDRESS_LOOKUP_UNAVAILABLE"
+                : "ADDRESS_LOOKUP_FAILED",
+            retryable: true,
+          },
+          { status: 503 }
+        )
+      }
+
+      if ((search.data?.length ?? 0) === 0 && parsed.city.trim()) {
+        const relaxedSearch = await searchPropertiesByAddress(
+          parsed.street,
+          undefined,
+          ADDRESS_CANDIDATE_FETCH_LIMIT,
+          searchOptions,
+        )
+        if (!relaxedSearch.success) {
+          return NextResponse.json(
+            {
+              error:
+                "We could not reach the Cook County records service just now. Please try again in a few minutes — this is on our side, not your address.",
+              code:
+                relaxedSearch.error === ADDRESS_LOOKUP_UNAVAILABLE
+                  ? "ADDRESS_LOOKUP_UNAVAILABLE"
+                  : "ADDRESS_LOOKUP_FAILED",
+              retryable: true,
+            },
+            { status: 503 }
+          )
+        }
+        if (relaxedSearch.success && (relaxedSearch.data?.length ?? 0) > 0) {
+          search = relaxedSearch
+        }
+      }
+
+      const candidates = (search.data ?? [])
+        .map((row) => candidateFromRow(row))
+        .filter((row): row is AddressCandidateRecord => row !== null)
+
+      const resolution = resolveAddressCandidates(parsed, candidates, {
+        maxCandidates: ADDRESS_CANDIDATE_OFFER_LIMIT,
+      })
+
+      if (resolution.kind === "none") {
+        return NextResponse.json(
+          {
+            error:
+              "We could not find that address in the Cook County Assessor's records. Check it against the Assessor's own address search, or enter your 14-digit PIN.",
+            code: "ADDRESS_NOT_FOUND",
+            assessorAddressSearchUrl: ASSESSOR_ADDRESS_SEARCH_URL,
+          },
+          { status: 404 }
+        )
+      }
+
+      // The selection step. A building with several parcels behind one street
+      // address is not a failure and it is not the homeowner's problem to solve
+      // on the Assessor's site — it is a question only they can answer, so it is
+      // asked here rather than resolved by taking the first row.
+      //
+      // Once it is answered, the answer is an authority boundary and it does not
+      // become advisory because the repeated county lookup happened to narrow.
+      // Remote-result drift, a partial dataset response, a cache difference or a
+      // changed widening fragment can all turn a two-parcel address into one
+      // parcel between the two requests, and the parcel left standing need not be
+      // the one that was chosen. So the posted PIN is required among this
+      // lookup's selectable parcels whichever way it resolved, and if it is not
+      // there the check fails closed and asks again — it never transfers the
+      // selection to a parcel the reader did not pick, however well that parcel
+      // matches the typed street.
+      const selectable = resolution.selectable
+      const selectionRequired = (message: string) =>
+        NextResponse.json(
+          {
+            error: message,
+            code: "ADDRESS_AMBIGUOUS",
+            candidates: selectable.map(publicSelectionFragment),
+            candidateCount: resolution.kind === "ambiguous" ? resolution.total : selectable.length,
+            candidatesShown: selectable.length,
+            assessorAddressSearchUrl: ASSESSOR_ADDRESS_SEARCH_URL,
+            disclosure: CC_02,
+          },
+          { status: 409 }
+        )
+
+      const picked = selectedPin
+        ? selectable.find((candidate) => candidate.pin === selectedPin)
+        : undefined
+
+      let chosen: RankedAddressCandidate
+      if (selectedPin && !picked) {
+        return selectionRequired(
+          "That PIN is not one of the matches for this address. Choose one of the listed properties."
+        )
+      } else if (picked) {
+        chosen = picked
+      } else if (resolution.kind === "ambiguous") {
+        return selectionRequired("More than one Cook County property matches that address.")
+      } else {
+        chosen = resolution.candidate
+      }
+
+      const res = await getPropertyByPIN(chosen.pin)
+      if (!res.success || !res.data) {
+        return NextResponse.json(
+          { error: res.error ?? "Could not load property details.", code: "PROPERTY_LOOKUP_FAILED" },
           { status: 400 }
         )
       }
-      const first = search.data[0]
-      const pin = String(first.pin ?? "").replace(/\D/g, "")
-      if (!pin || pin.length !== 14) {
+
+      // The PIN travelled through a second dataset between the candidate row and
+      // this record. If what came back no longer describes the address that was
+      // asked about, the two pieces of evidence disagree and the check stops —
+      // an answer assembled from a mismatched parcel is worse than no answer.
+      if (!recordCorroboratesAddress(
+        parsed,
+        chosen,
+        res.data.pin,
+        res.data.address,
+        res.data.city,
+      )) {
         return NextResponse.json(
-          { error: "Could not resolve address to a valid PIN. Try entering your PIN from the Assessor site." },
-          { status: 400 }
+          {
+            error:
+              "The Cook County record for that address did not match it on retrieval. Enter your 14-digit PIN, or look the address up on the Assessor's site.",
+            code: "ADDRESS_EVIDENCE_MISMATCH",
+            assessorAddressSearchUrl: ASSESSOR_ADDRESS_SEARCH_URL,
+          },
+          { status: 409 }
         )
       }
-      const res = await getPropertyByPIN(pin)
-      if (res.success && res.data) propertyData = res.data
-      else {
-        return NextResponse.json(
-          { error: res.error ?? "Could not load property details." },
-          { status: 400 }
-        )
-      }
+
+      propertyData = res.data
     }
 
     if (!propertyData) {
@@ -330,6 +535,11 @@ export async function POST(req: NextRequest) {
         appealArgumentText: null,
         appealWindowStatus: noValueWindow,
         propertyCharacteristics,
+        compSelection: {
+          basis: "cohort_recency" as const,
+          distanceRanked: false,
+          label: "No comparable properties were selected — the subject has no published assessed value.",
+        },
         noAssessedValue: true,
         message: "We found your property but the Cook County Assessor hasn't published an assessed value for this PIN yet. This can happen with recently transferred properties or during reassessment. Check your assessment status at https://www.cookcountyassessoril.gov/address-search.",
         source: "Cook County Open Data",
@@ -485,6 +695,17 @@ export async function POST(req: NextRequest) {
     // "Insufficient evidence" it simply overrides the words next to it.
     const showFigures = outcome.showFigures
 
+    // The public-record comparison rides its own gate.
+    //
+    // It used to ride `showFigures`, and `showFigures` is false whenever the
+    // assessment *level* cannot be computed — which happens whenever the county
+    // carries no market value for the subject, or for any comparable. Those are
+    // absences in a different column. A property with a published assessed value
+    // and three published comparable assessed values had all of it suppressed
+    // because a fourth field was blank, and the reader was shown "insufficient
+    // evidence" over a comparison that was sitting complete in the response.
+    const showRecordComparison = outcome.showRecordComparison
+
     return NextResponse.json({
       success: true,
       disclosure: CC_02,
@@ -501,13 +722,15 @@ export async function POST(req: NextRequest) {
         assessedTotalValue: subjectAV,
         marketValue: propertyData.marketValue,
       },
-      compCount: compValues.length,
-      comps: showFigures ? compDetails : [],
-      avgComparableAssessedValue: showFigures ? avgCompAV : null,
+      compCount: showRecordComparison ? compValues.length : 0,
+      comps: showRecordComparison ? compDetails : [],
+      avgComparableAssessedValue: showRecordComparison ? avgCompAV : null,
+      // Assessment levels are ratios against a market value, so they stay behind
+      // the narrower gate even when the assessed-value comparison is released.
       equityRatio: showFigures ? equityRatio : null,
       targetEquityRatio: 10.0,
       avgCompEquityRatio: showFigures ? avgCompEquityRatio : null,
-      assessmentGap: showFigures ? assessmentGap : null,
+      assessmentGap: showRecordComparison ? assessmentGap : null,
       // Never released. A per-year or three-year dollar projection is a savings
       // claim about the reader's property (BL-B1/B3) and a merits
       // characterization (BL-C3), and no signed eligibility policy (OD-2/OD-3)
@@ -519,6 +742,18 @@ export async function POST(req: NextRequest) {
       appealArgumentText,
       appealWindowStatus,
       propertyCharacteristics,
+      // How the comparables above were actually chosen. Nothing in this route
+      // computes a distance: `getComparableSales` filters on the subject's CCAO
+      // neighbourhood code and building class and orders by sale date, widening
+      // to a three-year window and then to the township when a cohort is thin,
+      // and `getComparableEquity` fills any shortfall from the same neighbourhood
+      // or township. Every surface that called these "the three nearest" or
+      // "nearby" was describing a ranking that is not performed.
+      compSelection: {
+        basis: "cohort_recency" as const,
+        distanceRanked: false,
+        label: "Selected from available Cook County records for similar properties in the same assessment cohort.",
+      },
       source: salesRes.source ?? "Cook County Open Data",
     })
   } catch (error) {

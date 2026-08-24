@@ -43,7 +43,7 @@ const COPY: Record<ActiveTownshipCampaignSlug, CampaignCopy> = {
     localContext:
       "Elk Grove's Assessor window follows its own published township schedule.",
     evidenceContext:
-      "Your free check starts with the subject property's Cook County record and nearby public-record comparisons.",
+      "Your free check starts with the subject property's Cook County record and relevant public-record comparisons.",
   },
   stickney: {
     name: "Stickney",

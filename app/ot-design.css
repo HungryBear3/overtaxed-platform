@@ -5447,3 +5447,55 @@ html, body { overflow-x: clip; max-width: 100%; }
 .ot-testimonials .ot-testimonials-compact .ot-p {
   color: oklch(0.24 0.018 240) !important;
 }
+
+/* ── Address selection step ───────────────────────────────────────────────
+   Shown when one street address stands for several Cook County parcels. The
+   free check refuses to pick between them, so the card has to be able to ask.
+   Styled as a question, not as an error: nothing has gone wrong. */
+.ot-check-candidates {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in oklab, var(--primary) 26%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--primary) 6%, var(--background));
+}
+
+.ot-check-candidate-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.ot-check-candidate {
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--background);
+  cursor: pointer;
+}
+
+.ot-check-candidate:hover:not(:disabled) {
+  border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
+}
+
+.ot-check-candidate:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ot-check-candidate-addr {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.ot-check-candidate-meta {
+  display: block;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}

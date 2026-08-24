@@ -2,8 +2,9 @@
  * @jest-environment jsdom
  */
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import HomePage from "@/components/ot-design/HomePage";
+import { CC_02 } from "@/lib/copy/canonical";
 
 const apiResultWithLegacyField = {
   address: "Sample result — not your submitted address",
@@ -85,13 +86,14 @@ describe("OT home free-check flow", () => {
     // that can no longer render one at all.
     mockFetch({
       success: true,
-      disclosure: "This free check compares available public Cook County records.",
+      disclosure: CC_02,
       outcome: {
         code: "supportive",
         headline: "Appears supportive of closer review",
         allowCheckout: true,
         reason: null,
         showFigures: true,
+        showRecordComparison: true,
       },
       subject: {
         address: "5236 N KENMORE AVE",
@@ -127,6 +129,48 @@ describe("OT home free-check flow", () => {
     expect(screen.queryByRole("link", { name: /^Contingency$/ })).toBeNull();
   });
 
+  it("fails closed when the homepage receives a contradictory outcome tuple", async () => {
+    mockFetch({
+      success: true,
+      disclosure: CC_02,
+      outcome: {
+        code: "insufficient_evidence",
+        headline: "We found the property, but the public record is not enough to support a conclusion",
+        allowCheckout: true,
+        reason: "no_assessed_value",
+        showFigures: true,
+        showRecordComparison: true,
+      },
+      subject: {
+        address: "5236 N KENMORE AVE",
+        city: "CHICAGO",
+        zipCode: "60640",
+        township: "Lake View",
+        assessedTotalValue: 42500,
+      },
+      compCount: 3,
+      avgComparableAssessedValue: 35100,
+      equityRatio: 12.2,
+      potentialOverpaymentPerYear: 1447,
+      appealWindowStatus: { township: "Lake View", status: "open", closeDate: "2026-09-01" },
+    });
+
+    render(<HomePage />);
+    fireEvent.change(screen.getAllByPlaceholderText("123 S Sample Ave, La Grange IL")[1], {
+      target: { value: "5236 N Kenmore Ave, Chicago IL 60640" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }));
+
+    await waitFor(() => expect(screen.getByText(/Your free check · 5236 N KENMORE AVE/i)).toBeTruthy());
+    const panel = document.querySelector(".ot-check-result");
+    expect(panel).not.toBeNull();
+    const result = within(panel as HTMLElement);
+    expect(result.getByText("We could not complete this check.")).toBeTruthy();
+    expect(result.queryByText("$42,500")).toBeNull();
+    expect(result.queryByText("$35,100")).toBeNull();
+    expect(result.queryByText(/DIY Appeal Packet \$69/)).toBeNull();
+  });
+
   it("renders real fair-assessment results without sample copy or double signs", async () => {
     const fetchMock = jest.fn().mockResolvedValue({
       json: async () => ({
@@ -150,6 +194,7 @@ describe("OT home free-check flow", () => {
           allowCheckout: false,
           reason: "below_evidence_threshold",
           showFigures: true,
+          showRecordComparison: true,
         },
         compCount: 3,
         avgComparableAssessedValue: 36396,

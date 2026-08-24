@@ -23,6 +23,7 @@ export interface ParcelUniverseRecord {
   prop_address_full?: string
   prop_address_city_name?: string
   prop_address_zipcode_1?: string
+  prop_address_state?: string
   lat?: string
   lon?: string
   latitude: string

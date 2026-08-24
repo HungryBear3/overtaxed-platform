@@ -154,10 +154,10 @@ describe("the legacy `_v1` cached payload", () => {
 
 describe("a supplied disclosure is checked, not trusted", () => {
   const OUTCOMES: Record<string, ResultOutcome> = {
-    A: { code: "supportive", headline: CC_03, allowCheckout: true, showFigures: true, reason: null },
-    B: { code: "not_supportive", headline: CC_04, allowCheckout: false, showFigures: true, reason: null },
-    C: { code: "insufficient_evidence", headline: CC_05, allowCheckout: false, showFigures: false, reason: null },
-    D: { code: "unsupported_property", headline: CC_06, allowCheckout: false, showFigures: false, reason: null },
+    A: { code: "supportive", headline: CC_03, allowCheckout: true, showFigures: true, showRecordComparison: true, reason: null },
+    B: { code: "not_supportive", headline: CC_04, allowCheckout: false, showFigures: true, showRecordComparison: true, reason: "below_evidence_threshold" },
+    C: { code: "insufficient_evidence", headline: CC_05, allowCheckout: false, showFigures: false, showRecordComparison: false, reason: "no_assessed_value" },
+    D: { code: "unsupported_property", headline: CC_06, allowCheckout: false, showFigures: false, showRecordComparison: false, reason: "property_class_unsupported" },
   }
 
   function build(outcome: ResultOutcome | null, disclosure: string | null | undefined): Result {
