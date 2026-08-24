@@ -95,41 +95,53 @@ const COUNTY_NON_UNIT_TERMINALS = new Set(["HSE"])
 /**
  * The shape of a bare condo/unit token as the archived Parcel Universe appends
  * it to a street line, with no designator in front of it: `… ST C23`, `… ST
- * 4B`, `… ST PH2`. Two to six characters, letters and digits only, and it has
- * to carry **both** at least one letter and at least one digit.
+ * PH2`. A letter prefix, then digits, two to six characters in total.
  *
- * Both halves of that requirement are load-bearing, and each rules out a
- * different way a street's own identity ends in something unit-shaped:
+ * Both halves of that shape are load-bearing, and each rules out a different
+ * way a street's own identity ends in something unit-shaped:
  *
- *  - **a digit is required** because Chicago has street names whose final token
- *    sits after a suffix word — `S AVENUE O`, `N AVENUE L`. A rule that took a
- *    bare letter would read those as apartments.
- *  - **a letter is required** because an all-numeric ending is how the county
- *    writes a *numbered route* — `US HIGHWAY 20`, `OLD ROAD 66`,
- *    `COUNTY ROAD 12`. Reading `20` as a unit corroborates two different roads
- *    as one address, which an exact PIN match does not license: the PIN proves
- *    the parcel was not swapped, it says nothing about whether the addresses
- *    agree.
+ *  - **trailing digits are required** because Chicago has street names whose
+ *    final token sits after a suffix word — `S AVENUE O`, `N AVENUE L`. A rule
+ *    that took a bare letter would read those as apartments.
+ *  - **a leading letter is required** because a digit-first ending is how the
+ *    county writes a *numbered route* — `US HIGHWAY 20`, `OLD ROAD 66`,
+ *    `STATE HIGHWAY 20A`, `FEDERAL HWY 20A`. Reading `20A` as a unit
+ *    corroborates two different roads as one address, which an exact PIN match
+ *    does not license: the PIN proves the parcel was not swapped, it says
+ *    nothing about whether the addresses agree.
  *
- * A numeric unit is still perfectly reachable — with a designator in front of
- * it (`APT 20`, `UNIT 66`, `#20`), which [[parseFreeCheckAddress]] handles and
- * this constant never sees. The requirement is only on the *undesignated* case,
- * where the token's meaning has to be inferred from its shape alone.
+ * The leading-letter requirement is what makes this rule self-contained. The
+ * alternative — deciding from the street identity a terminal token would leave
+ * behind — needs an inventory of route qualifiers, and an inventory of names
+ * cannot be shown complete: `FEDERAL HWY`, `TOWNSHIP RD`, `FRONTAGE RD` and
+ * `INTERSTATE HWY` are all route identities, and the next one is always
+ * unlisted. The token's own shape needs no such list.
+ *
+ * The cost is deliberate and known: real undesignated county units written
+ * digit-first — `… RD 4B`, `… RD 12E` — no longer resolve through the record,
+ * and fail closed at corroboration instead of risking a confident answer about
+ * the wrong property. Those units stay reachable with a designator in front of
+ * them (`APT 4B`, `UNIT 12E`, `#20`), which [[parseFreeCheckAddress]] handles
+ * and this constant never sees, and a direct PIN remains the fallback. The
+ * requirement is only on the *undesignated* case, where the token's meaning has
+ * to be inferred from its shape alone.
  */
-const COUNTY_BARE_UNIT_PATTERN = /^(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{2,6}$/
+const COUNTY_BARE_UNIT_PATTERN = /^(?=.{2,6}$)[A-Z]+\d+$/
 
 /**
- * Street identities that are a *numbered route* rather than a street name, as
- * `qualifier|suffix` pairs.
+ * A few street identities that are a *numbered route* rather than a street
+ * name, as `qualifier|suffix` pairs.
  *
- * A lettered route number — `STATE HIGHWAY 20A`, `US HIGHWAY 12B`,
- * `OLD ROAD 66A` — has exactly the token shape of a real condo unit, so nothing
- * about the terminal token can separate the two. What separates them is what is
- * *left*: strip the terminal off a numbered route and the identity that remains
- * is a bare qualifier and its route suffix, which no one lives on.
+ * Defense in depth only, and **not a complete inventory** — it makes no claim
+ * to be one, and nothing depends on it being one. Route qualifiers are an open
+ * set (`FEDERAL HWY`, `TOWNSHIP RD`, `FRONTAGE RD`, `INTERSTATE HWY` are none
+ * of them listed here), so what actually closes a numbered route is the shape
+ * of the terminal token in [[COUNTY_BARE_UNIT_PATTERN]]: every route number,
+ * lettered or not, is digit-first. This list is not the guard and must not be
+ * expanded as if it were.
  *
- * Deliberately a bounded pair list and not a ban on the qualifier word, because
- * every one of these words also begins real street names. `OLD ORCHARD RD`,
+ * Deliberately a pair list and not a ban on the qualifier word, because every
+ * one of these words also begins real street names. `OLD ORCHARD RD`,
  * `COUNTY LINE RD` and `STATE ST` all keep more than the qualifier, or pair it
  * with a suffix that is not a route suffix, so none of them is in here and all
  * of them still resolve.
@@ -421,7 +433,7 @@ export function normalizeFreeCheckSearchInput(address: string, city: string = ""
  *    still stands in front of that suffix;
  *  - the terminal token matches [[COUNTY_BARE_UNIT_PATTERN]];
  *  - the street identity the terminal token would leave behind is not one of
- *    [[COUNTY_ROUTE_QUALIFIER_PAIRS]].
+ *    the [[COUNTY_ROUTE_QUALIFIER_PAIRS]] this file happens to name.
  *
  * Anything else is returned exactly as the generic parser read it. This is for
  * county records only; homeowner input goes through [[parseFreeCheckAddress]]
@@ -442,7 +454,7 @@ export function parseCountyRecordAddress(
   if (!suffix || !COUNTY_BARE_UNIT_PATTERN.test(unit)) return parsed
 
   const streetName = tokens.slice(0, -2).join(" ")
-  // What the terminal token would leave behind has to be a street, not a route.
+  // Defense in depth behind the shape rule; not a complete route inventory.
   if (COUNTY_ROUTE_QUALIFIER_PAIRS.has(`${streetName}|${suffix}`)) return parsed
 
   // A trailing directional is never claimed when the last token is this shape,

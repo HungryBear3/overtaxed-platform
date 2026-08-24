@@ -505,8 +505,8 @@ describe("address lookup — a numbered route is not a condo unit", () => {
   })
 
   it.each([
-    ["1234 N Old Orchard Rd, Chicago IL 60600", "1234 N OLD ORCHARD RD", "1234 N OLD ORCHARD RD 4B"],
-    ["1234 N County Line Rd, Chicago IL 60600", "1234 N COUNTY LINE RD", "1234 N COUNTY LINE RD 12E"],
+    ["1234 N Old Orchard Rd, Chicago IL 60600", "1234 N OLD ORCHARD RD", "1234 N OLD ORCHARD RD B4"],
+    ["1234 N County Line Rd, Chicago IL 60600", "1234 N COUNTY LINE RD", "1234 N COUNTY LINE RD PH2"],
   ])("completes %s, whose name only starts with a qualifier word", async (input, indexAddress, recordAddress) => {
     cookCounty.searchPropertiesByAddress.mockResolvedValue({
       success: true,
@@ -525,7 +525,7 @@ describe("address lookup — a numbered route is not a condo unit", () => {
     expect(res.status).toBe(200)
   })
 
-  it("still completes a mixed letter-and-digit unit the index row omits", async () => {
+  it("still completes a letter-prefix unit the index row omits", async () => {
     cookCounty.searchPropertiesByAddress.mockResolvedValue({
       success: true,
       data: [searchRow({ pin: pinAt(1) })],
@@ -534,7 +534,7 @@ describe("address lookup — a numbered route is not a condo unit", () => {
     })
     cookCounty.getPropertyByPIN.mockResolvedValue({
       success: true,
-      data: propertyRecord({ pin: pinAt(1), address: "1234 N SAMPLE ST 4B" }),
+      data: propertyRecord({ pin: pinAt(1), address: "1234 N SAMPLE ST B4" }),
       error: null,
     })
     stubComps([equityComp(4, 364000)])
@@ -560,6 +560,135 @@ describe("address lookup — a numbered route is not a condo unit", () => {
     const res = await POST(req({ address: "1234 N Sample St Apt 20, Chicago IL 60600" }))
     expect(res.status).toBe(200)
   })
+})
+
+/**
+ * The pair list above enumerates route identities, and an enumeration cannot be
+ * shown complete: probes against `103308b` found route shapes it does not name
+ * — `FEDERAL HWY 20A`, `TOWNSHIP RD 12B`, `FRONTAGE RD 66A` — resolving to a
+ * 200 with a subject. What closes those is the shape of the terminal token
+ * itself: an undesignated county terminal is a letter prefix followed by
+ * digits, so a digit-prefix token is never read as a unit no matter what street
+ * identity precedes it.
+ */
+describe("address lookup — an unenumerated route qualifier is not a condo unit", () => {
+  // [ homeowner input, index row the county offers, record the PIN loads ]
+  const routes: Array<[string, string, string]> = [
+    ["1234 W Federal Hwy, Chicago IL 60600", "1234 W FEDERAL HWY", "1234 W FEDERAL HWY 20A"],
+    ["1234 N Township Rd, Chicago IL 60600", "1234 N TOWNSHIP RD", "1234 N TOWNSHIP RD 12B"],
+    ["1234 N Frontage Rd, Chicago IL 60600", "1234 N FRONTAGE RD", "1234 N FRONTAGE RD 66A"],
+    ["1234 W Interstate Hwy, Chicago IL 60600", "1234 W INTERSTATE HWY", "1234 W INTERSTATE HWY 90A"],
+    ["1234 N US Rd, Chicago IL 60600", "1234 N US RD", "1234 N US RD 12B"],
+    ["1234 N State Rd, Chicago IL 60600", "1234 N STATE RD", "1234 N STATE RD 20A"],
+    ["1234 N County Hwy, Chicago IL 60600", "1234 N COUNTY HWY", "1234 N COUNTY HWY 12B"],
+  ]
+
+  it.each(routes)("keeps %s fail-closed when the record reads %s", async (input, indexAddress, recordAddress) => {
+    cookCounty.searchPropertiesByAddress.mockResolvedValue({
+      success: true,
+      data: [searchRow({ pin: pinAt(1), property_address: indexAddress })],
+      error: null,
+      source: "x",
+    })
+    cookCounty.getPropertyByPIN.mockResolvedValue({
+      success: true,
+      data: propertyRecord({ pin: pinAt(1), address: recordAddress }),
+      error: null,
+    })
+    stubComps([equityComp(4, 364000)])
+
+    const res = await POST(req({ address: input }))
+    const body = await res.json()
+
+    expect(res.status).toBe(409)
+    expect(body.code).toBe("ADDRESS_EVIDENCE_MISMATCH")
+    expect(body.subject).toBeUndefined()
+    expect(cookCounty.getComparableEquity).not.toHaveBeenCalled()
+    expect(cookCounty.getComparableSales).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * The accepted availability trade. A real, undesignated county unit written
+ * `4B` or `12E` has the shape of a lettered route number, and nothing on the
+ * street line separates the two, so it now fails closed rather than risk
+ * corroborating a different property. The designated forms are unaffected, and
+ * a direct PIN remains the fallback.
+ */
+describe("address lookup — an undesignated digit-prefix unit fails closed", () => {
+  const unrecognized: Array<[string, string, string]> = [
+    ["1234 N Sample St, Chicago IL 60600", "1234 N SAMPLE ST", "1234 N SAMPLE ST 4B"],
+    ["1234 N Old Orchard Rd, Chicago IL 60600", "1234 N OLD ORCHARD RD", "1234 N OLD ORCHARD RD 4B"],
+    ["1234 N County Line Rd, Chicago IL 60600", "1234 N COUNTY LINE RD", "1234 N COUNTY LINE RD 12E"],
+    ["1234 N US Cellular Plz, Chicago IL 60600", "1234 N US CELLULAR PLZ", "1234 N US CELLULAR PLZ 4B"],
+  ]
+
+  it.each(unrecognized)("stops %s when the record reads %s", async (input, indexAddress, recordAddress) => {
+    cookCounty.searchPropertiesByAddress.mockResolvedValue({
+      success: true,
+      data: [searchRow({ pin: pinAt(1), property_address: indexAddress })],
+      error: null,
+      source: "x",
+    })
+    cookCounty.getPropertyByPIN.mockResolvedValue({
+      success: true,
+      data: propertyRecord({ pin: pinAt(1), address: recordAddress }),
+      error: null,
+    })
+    stubComps([equityComp(4, 364000)])
+
+    const res = await POST(req({ address: input }))
+    const body = await res.json()
+
+    expect(res.status).toBe(409)
+    expect(body.code).toBe("ADDRESS_EVIDENCE_MISMATCH")
+    expect(body.subject).toBeUndefined()
+    expect(cookCounty.getComparableEquity).not.toHaveBeenCalled()
+    expect(cookCounty.getComparableSales).not.toHaveBeenCalled()
+  })
+
+  const designated: Array<[string, string]> = [
+    ["1234 N Sample St Apt 4B, Chicago IL 60600", "1234 N SAMPLE ST APT 4B"],
+    ["1234 N Sample St Unit 12E, Chicago IL 60600", "1234 N SAMPLE ST UNIT 12E"],
+    ["1234 N Sample St #20, Chicago IL 60600", "1234 N SAMPLE ST #20"],
+  ]
+
+  it.each(designated)("still completes the designated form %s", async (input, address) => {
+    cookCounty.searchPropertiesByAddress.mockResolvedValue({
+      success: true,
+      data: [searchRow({ pin: pinAt(1), property_address: address })],
+      error: null,
+      source: "x",
+    })
+    cookCounty.getPropertyByPIN.mockResolvedValue({
+      success: true,
+      data: propertyRecord({ pin: pinAt(1), address }),
+      error: null,
+    })
+    stubComps([equityComp(4, 364000)])
+
+    expect((await POST(req({ address: input }))).status).toBe(200)
+  })
+
+  it.each(["1234 N SAMPLE ST C23", "1234 N SAMPLE ST PH2"])(
+    "still completes the letter-prefix record %s the index row omits",
+    async (recordAddress) => {
+      cookCounty.searchPropertiesByAddress.mockResolvedValue({
+        success: true,
+        data: [searchRow({ pin: pinAt(1) })],
+        error: null,
+        source: "x",
+      })
+      cookCounty.getPropertyByPIN.mockResolvedValue({
+        success: true,
+        data: propertyRecord({ pin: pinAt(1), address: recordAddress }),
+        error: null,
+      })
+      stubComps([equityComp(4, 364000)])
+
+      expect((await POST(req({ address: SUBJECT_ADDRESS }))).status).toBe(200)
+    },
+  )
 })
 
 describe("address lookup — failing closed", () => {

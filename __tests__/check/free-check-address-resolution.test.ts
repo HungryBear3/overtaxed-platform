@@ -289,11 +289,11 @@ describe("parseCountyRecordAddress", () => {
     expect(record.street).toBe("100 W RANDOLPH ST")
   })
 
-  it("reads a mixed letter-and-digit bare terminal unit the same way", () => {
+  it("reads a letter-prefix bare terminal unit the same way", () => {
     for (const [address, unit] of [
-      ["1234 N SAMPLE ST 4B", "4B"],
+      ["1234 N SAMPLE ST B4", "B4"],
       ["1234 N SAMPLE ST PH2", "PH2"],
-      ["1234 N SAMPLE ST 12E", "12E"],
+      ["1234 N SAMPLE ST C1204", "C1204"],
     ] as const) {
       const record = parseCountyRecordAddress(address)
       expect([address, record.unit, record.streetName]).toEqual([address, unit, "SAMPLE"])
@@ -304,8 +304,8 @@ describe("parseCountyRecordAddress", () => {
    * A bare all-numeric ending is how Cook County writes a *numbered route*, not
    * a condo unit: `US HIGHWAY 20`, `OLD ROAD 66`. Reading it as a unit turns the
    * route's own identity into an apartment and corroborates two different roads
-   * as one address, so an undesignated terminal has to carry a letter as well as
-   * a digit before this parser will claim it.
+   * as one address, so an undesignated terminal has to begin with a letter and
+   * end in digits before this parser will claim it.
    */
   it("refuses a bare all-numeric terminal, which is a numbered route", () => {
     const numberedRoutes = [
@@ -325,13 +325,13 @@ describe("parseCountyRecordAddress", () => {
   })
 
   /**
-   * A lettered route number — `STATE HIGHWAY 20A`, `US HIGHWAY 12B` — has the
-   * same token shape as a real condo unit, so no rule about the terminal token
-   * alone can separate them. What separates them is what is *left*: strip the
-   * terminal off a numbered route and the street identity that remains is a
-   * bare route qualifier and its route suffix, which is not a street name.
+   * The same route forms seen from the other side. The terminal shape rule
+   * already closes every one of these — a route number is digit-first — and the
+   * bounded pair list sits behind it as defense in depth. That list is not
+   * complete and is not claimed to be; the suite below covers route qualifiers
+   * it does not name.
    */
-  it("refuses a bounded route qualifier paired with its route suffix", () => {
+  it("refuses a route qualifier paired with its route suffix", () => {
     const routeForms = [
       "1234 W STATE HIGHWAY 20A",
       "1234 W US HIGHWAY 12B",
@@ -355,11 +355,11 @@ describe("parseCountyRecordAddress", () => {
 
   it("keeps a real street whose name merely starts with a qualifier word", () => {
     for (const [address, unit, streetName] of [
-      ["1234 N OLD ORCHARD RD 4B", "4B", "OLD ORCHARD"],
-      ["1234 N COUNTY LINE RD 12E", "12E", "COUNTY LINE"],
+      ["1234 N OLD ORCHARD RD B4", "B4", "OLD ORCHARD"],
+      ["1234 N COUNTY LINE RD PH2", "PH2", "COUNTY LINE"],
       ["1234 N STATE ST C23", "C23", "STATE"],
-      ["1234 N US CELLULAR PLZ 4B", "4B", "US CELLULAR"],
-      ["1234 N OLD ORCHARD HWY 4B", "4B", "OLD ORCHARD"],
+      ["1234 N US CELLULAR PLZ B4", "B4", "US CELLULAR"],
+      ["1234 N OLD ORCHARD HWY B4", "B4", "OLD ORCHARD"],
     ] as const) {
       const record = parseCountyRecordAddress(address)
       expect([address, record.unit, record.streetName]).toEqual([address, unit, streetName])
@@ -418,6 +418,131 @@ describe("parseCountyRecordAddress", () => {
   it("does not widen the parser homeowner input goes through", () => {
     expect(parseFreeCheckAddress("100 W RANDOLPH ST C23").unit).toBeNull()
     expect(parseFreeCheckAddress("100 W RANDOLPH ST C23").streetName).toBe("RANDOLPH ST C23")
+  })
+})
+
+/**
+ * The shape rule for an undesignated county terminal, stated directly.
+ *
+ * A route-pair inventory enumerates street identities, and an enumeration
+ * cannot be shown complete — `FEDERAL HWY 20A`, `TOWNSHIP RD 12B` and
+ * `FRONTAGE RD 66A` are all outside the bounded pair list and all read as units
+ * at `103308b`. The terminal token carries the distinction instead: an
+ * undesignated unit is a letter prefix followed by digits, so every
+ * digit-prefix token stays street identity regardless of what precedes it.
+ */
+describe("parseCountyRecordAddress — an undesignated bare unit is letter-prefix only", () => {
+  it("refuses a digit-prefix terminal on a route the pair list never names", () => {
+    const unenumerated = [
+      "1234 W FEDERAL HWY 20A",
+      "1234 N TOWNSHIP RD 12B",
+      "1234 N FRONTAGE RD 66A",
+      "1234 W INTERSTATE HWY 90A",
+      "1234 N US RD 12B",
+      "1234 N STATE RD 20A",
+      "1234 N COUNTY HWY 12B",
+    ]
+    for (const address of unenumerated) {
+      const record = parseCountyRecordAddress(address)
+      expect([address, record.unit]).toEqual([address, null])
+      expect([address, record.street]).toEqual([address, parseFreeCheckAddress(address).street])
+    }
+  })
+
+  it("refuses a digit-prefix terminal on a street that is not a route at all", () => {
+    for (const address of [
+      "1234 N SAMPLE ST 4B",
+      "1234 N SAMPLE ST 12E",
+      "1234 N OLD ORCHARD RD 4B",
+      "1234 N COUNTY LINE RD 12E",
+      "1234 N US CELLULAR PLZ 4B",
+    ]) {
+      const record = parseCountyRecordAddress(address)
+      expect([address, record.unit]).toEqual([address, null])
+      expect([address, record.street]).toEqual([address, parseFreeCheckAddress(address).street])
+    }
+  })
+
+  it("keeps the letter-prefix forms the Preview record and a penthouse need", () => {
+    for (const [address, unit, streetName] of [
+      ["100 W RANDOLPH ST C23", "C23", "RANDOLPH"],
+      ["1234 N SAMPLE ST PH2", "PH2", "SAMPLE"],
+      ["1234 N OLD ORCHARD RD C23", "C23", "OLD ORCHARD"],
+      ["1234 N US CELLULAR PLZ PH2", "PH2", "US CELLULAR"],
+    ] as const) {
+      const record = parseCountyRecordAddress(address)
+      expect([address, record.unit, record.streetName]).toEqual([address, unit, streetName])
+    }
+  })
+
+  it("keeps the 2–6 character bound on the letter-prefix shape", () => {
+    for (const address of [
+      // One character: no digit, and `S AVENUE O` is a real street.
+      "1234 N SAMPLE ST C",
+      // Seven characters, over the bound.
+      "1234 N SAMPLE ST C234567",
+      // Letters after the digits: not the observed shape.
+      "1234 N SAMPLE ST C2B",
+    ]) {
+      expect([address, parseCountyRecordAddress(address).unit]).toEqual([address, null])
+    }
+    expect(parseCountyRecordAddress("1234 N SAMPLE ST C23456").unit).toBe("C23456")
+  })
+})
+
+describe("recordCorroboratesAddress — the letter-prefix rule at the corroboration boundary", () => {
+  const indexRow = (streetName: string, suffix: string) => ({
+    pin: pinAt(1),
+    houseNumber: "1234",
+    directional: "N",
+    streetName,
+    suffix,
+    unit: null,
+  })
+
+  it("does not rescue a route the bounded pair list never enumerated", () => {
+    const routes: Array<[string, string, string, string]> = [
+      ["1234 W Federal Hwy, Chicago", "FEDERAL", "HWY", "1234 W FEDERAL HWY 20A"],
+      ["1234 N Township Rd, Chicago", "TOWNSHIP", "RD", "1234 N TOWNSHIP RD 12B"],
+      ["1234 N Frontage Rd, Chicago", "FRONTAGE", "RD", "1234 N FRONTAGE RD 66A"],
+      ["1234 W Interstate Hwy, Chicago", "INTERSTATE", "HWY", "1234 W INTERSTATE HWY 90A"],
+      ["1234 N US Rd, Chicago", "US", "RD", "1234 N US RD 12B"],
+      ["1234 N State Rd, Chicago", "STATE", "RD", "1234 N STATE RD 20A"],
+      ["1234 N County Hwy, Chicago", "COUNTY", "HWY", "1234 N COUNTY HWY 12B"],
+    ]
+    for (const [input, streetName, suffix, recordAddress] of routes) {
+      const typed = parseFreeCheckAddress(input)
+      const row = { ...indexRow(streetName, suffix), directional: typed.directional }
+      expect([recordAddress, recordCorroboratesAddress(typed, row, pinAt(1), recordAddress, "Chicago")])
+        .toEqual([recordAddress, false])
+    }
+  })
+
+  it("fails an undesignated digit-prefix unit closed, the accepted trade", () => {
+    const cases: Array<[string, string, string, string]> = [
+      ["1234 N Sample St, Chicago", "SAMPLE", "ST", "1234 N SAMPLE ST 4B"],
+      ["1234 N Old Orchard Rd, Chicago", "OLD ORCHARD", "RD", "1234 N OLD ORCHARD RD 4B"],
+      ["1234 N County Line Rd, Chicago", "COUNTY LINE", "RD", "1234 N COUNTY LINE RD 12E"],
+      ["1234 N US Cellular Plz, Chicago", "US CELLULAR", "PLZ", "1234 N US CELLULAR PLZ 4B"],
+    ]
+    for (const [input, streetName, suffix, recordAddress] of cases) {
+      const typed = parseFreeCheckAddress(input)
+      expect([recordAddress, recordCorroboratesAddress(typed, indexRow(streetName, suffix), pinAt(1), recordAddress, "Chicago")])
+        .toEqual([recordAddress, false])
+    }
+  })
+
+  it("still corroborates the letter-prefix units the record actually carries", () => {
+    const cases: Array<[string, string, string, string]> = [
+      ["1234 N Sample St, Chicago", "SAMPLE", "ST", "1234 N SAMPLE ST C23"],
+      ["1234 N Sample St, Chicago", "SAMPLE", "ST", "1234 N SAMPLE ST PH2"],
+      ["1234 N Old Orchard Rd, Chicago", "OLD ORCHARD", "RD", "1234 N OLD ORCHARD RD C23"],
+    ]
+    for (const [input, streetName, suffix, recordAddress] of cases) {
+      const typed = parseFreeCheckAddress(input)
+      expect([recordAddress, recordCorroboratesAddress(typed, indexRow(streetName, suffix), pinAt(1), recordAddress, "Chicago")])
+        .toEqual([recordAddress, true])
+    }
   })
 })
 
@@ -519,8 +644,8 @@ describe("recordCorroboratesAddress — bare terminal condo unit on the county r
 
   it("corroborates a multi-token street whose name starts with a qualifier word", () => {
     const cases: Array<[string, string, string, string]> = [
-      ["1234 N Old Orchard Rd, Chicago", "OLD ORCHARD", "RD", "1234 N OLD ORCHARD RD 4B"],
-      ["1234 N County Line Rd, Chicago", "COUNTY LINE", "RD", "1234 N COUNTY LINE RD 12E"],
+      ["1234 N Old Orchard Rd, Chicago", "OLD ORCHARD", "RD", "1234 N OLD ORCHARD RD B4"],
+      ["1234 N County Line Rd, Chicago", "COUNTY LINE", "RD", "1234 N COUNTY LINE RD PH2"],
     ]
     for (const [input, streetName, suffix, recordAddress] of cases) {
       const typed = parseFreeCheckAddress(input)
@@ -537,7 +662,7 @@ describe("recordCorroboratesAddress — bare terminal condo unit on the county r
     }
   })
 
-  it("corroborates a mixed bare terminal unit the index row omits", () => {
+  it("corroborates a letter-prefix bare terminal unit the index row omits", () => {
     const sample = parseFreeCheckAddress("1234 N Sample St, Chicago")
     const indexRow = {
       pin: pinAt(1),
@@ -547,7 +672,7 @@ describe("recordCorroboratesAddress — bare terminal condo unit on the county r
       suffix: "ST",
       unit: null,
     }
-    expect(recordCorroboratesAddress(sample, indexRow, pinAt(1), "1234 N SAMPLE ST 4B", "Chicago")).toBe(true)
+    expect(recordCorroboratesAddress(sample, indexRow, pinAt(1), "1234 N SAMPLE ST B4", "Chicago")).toBe(true)
     expect(recordCorroboratesAddress(sample, indexRow, pinAt(1), "1234 N SAMPLE ST PH2", "Chicago")).toBe(true)
   })
 
