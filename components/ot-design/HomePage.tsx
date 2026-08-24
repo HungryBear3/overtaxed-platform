@@ -1,7 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import {
-  RiskReversalBadge,
   StatusChip,
   StickyAddressBar,
   LiveTicker,
@@ -570,8 +569,6 @@ function HeroCheckCard({
       <div className="ot-cta-sub">
         No signup. No credit card. No upsell if the record stays inconclusive.
       </div>
-
-      <RiskReversalBadge variant="inline" />
 
       <button
         type="button"
@@ -1241,9 +1238,6 @@ function PricingCompare() {
               </a>
             </div>
           ))}
-        </div>
-        <div className="ot-pcompare-footer">
-          <RiskReversalBadge variant="inline" />
         </div>
       </div>
     </section>

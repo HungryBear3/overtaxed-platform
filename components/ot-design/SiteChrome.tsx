@@ -235,53 +235,27 @@ export function LiveTicker() {
   );
 }
 
-export function RiskReversalBadge({
-  variant = "full",
-}: {
-  variant?: "full" | "compact" | "inline";
-}) {
-  if (variant === "compact") {
-    return (
-      <span className="ot-rrb ot-rrb-compact">
-        <span className="ot-rrb-shield" aria-hidden="true">
-          ○
-        </span>
-        <span className="ot-rrb-text">
-          <strong>Procedural refund</strong> if our filing error causes rejection
-        </span>
-      </span>
-    );
-  }
-  if (variant === "inline") {
-    return (
-      <div className="ot-rrb ot-rrb-inline">
-        <span className="ot-rrb-shield" aria-hidden="true">
-          ○
-        </span>
-        <span className="ot-rrb-text">
-          <strong>Procedural refund policy</strong> if your township denies the filing on
-          procedural grounds
-        </span>
-      </div>
-    );
-  }
-  return (
-    <div className="ot-rrb ot-rrb-full">
-      <div className="ot-rrb-icon" aria-hidden="true">
-        ○
-      </div>
-      <div className="ot-rrb-body">
-        <div className="ot-rrb-head">
-          <strong>Procedural refund policy</strong>
-        </div>
-        <div className="ot-rrb-sub">
-          If your township denies the filing on procedural grounds, we refund
-          your packet — no questions, no upsell.
-        </div>
-      </div>
-    </div>
-  );
-}
+/*
+ * `RiskReversalBadge` is removed, not reworded.
+ *
+ * All three variants promised a refund on a decision OverTaxed IL does not
+ * make: "If your township denies the filing on procedural grounds, we refund
+ * your packet — no questions, no upsell." CC-13 is the canonical refund
+ * statement and it says the opposite in terms — "No county outcome — granted,
+ * denied, or partial — creates a refund right" — and Terms of Service §7
+ * conditions refund review on *our* procedural error in the materials we
+ * prepared, not on what the township decides. The badge was a third copy of a
+ * refund rule that had already drifted wider than both.
+ *
+ * This is the same defect `__tests__/v2/marketing-unification.test.ts` records
+ * having removed from the homepage FAQ, for the same stated reason: two copies
+ * of one policy in two places is how the two drift apart. Nothing replaces it
+ * here — the policy is stated once, in the Terms.
+ *
+ * The `.ot-rrb*` rules in `app/ot-design.css` stay: `HoaSection` still uses
+ * `.ot-rrb-inline` for its "You're on the list" confirmation, which makes no
+ * refund claim.
+ */
 
 export function StatusChip() {
   return (

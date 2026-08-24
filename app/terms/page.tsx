@@ -2,10 +2,41 @@ import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import { CC_10, CC_11, CC_12 } from "@/lib/copy/canonical"
 import "../ot-design.css"
 
+/**
+ * Two defects, one cause: this object declared a title, a description and a
+ * canonical and nothing else, so every Open Graph field fell through to
+ * `app/layout.tsx` — the *home page's* og:title and og:description, and an
+ * og:url pointing at the apex. A link to the Terms previewed as the home page
+ * and advertised a URL its own canonical, one line up, contradicted.
+ *
+ * The description also said the Terms govern "OverTaxed IL property tax appeal
+ * services". We do not offer an appeal service: §1 of the document below says
+ * OverTaxed IL does not act as your filing representative, and CC-11 says we
+ * do not file, sign, prepare, handle, or represent anyone at the Board of
+ * Review. The description now names what is actually sold — one preparation
+ * packet the homeowner files themselves — rather than a service posture the
+ * page it summarises spends its first section denying.
+ */
+const TERMS_DESCRIPTION =
+  "Terms of Service for OverTaxed IL. Covers the $69 DIY Appeal Packet — a preparation service you review, sign, and file with Cook County yourself — and the limits on what OverTaxed IL does and does not do."
+
 export const metadata = {
   title: "Terms of Service",
-  description: "Terms of Service and User Agreement for OverTaxed IL property tax appeal services.",
+  description: TERMS_DESCRIPTION,
   alternates: { canonical: "https://www.overtaxed-il.com/terms" },
+  openGraph: {
+    type: "website",
+    url: "https://www.overtaxed-il.com/terms",
+    title: "OverTaxed IL Terms of Service",
+    description: TERMS_DESCRIPTION,
+    siteName: "OverTaxed IL",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "OverTaxed IL Terms of Service",
+    description: TERMS_DESCRIPTION,
+  },
+  robots: { index: true, follow: true },
 }
 
 export default function TermsPage() {

@@ -2,7 +2,6 @@
 import Link from "next/link"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { RiskReversalBadge } from "@/components/ot-design/SiteChrome"
 import { getAnonymousGaIdentifiersForRequest } from "@/lib/analytics/ga4"
 import { isClientPreviewStubMode } from "@/lib/marketing/preview-gate-client"
 
@@ -299,7 +298,6 @@ export default function CheckoutPage({ initialPlan = "diy" }: { initialPlan?: Pl
 
                 {error && <p style={{ color: "#dc2626", fontSize: 13, marginTop: 8 }}>{error}</p>}
               </form>
-              <div className="ot-checkout-rrb"><RiskReversalBadge variant="full" /></div>
             </div>
           </div>
         </div>

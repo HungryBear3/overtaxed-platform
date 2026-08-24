@@ -171,14 +171,18 @@ test.describe("Pass 2 visual smoke", () => {
     expect(expectedOpen).toBeLessThan(total);
   });
 
-  test("/checkout — readable plan cards on mobile + desktop", async ({ page }) => {
+  // This asserted "≥ 2 plan cards", which was written when Done-For-You and
+  // Contingency were on the page. Both are held, and the assertion outlived
+  // them: it was a served-HTML test that could only pass by re-adding a tier
+  // that may not be offered. It now pins the count at exactly one, so adding a
+  // second card fails here rather than shipping.
+  test("/checkout — exactly one readable plan card on mobile + desktop", async ({ page }) => {
     for (const w of [375, 1280]) {
       await page.setViewportSize({ width: w, height: 900 });
       await gotoAndWaitForHeading(page, "/checkout");
       const plans = page.locator(".ot-checkout-plan");
       await expect(plans.first()).toBeVisible();
-      const count = await plans.count();
-      expect(count, `/checkout @ ${w} should show ≥ 2 plan cards`).toBeGreaterThanOrEqual(2);
+      await expect(plans, `/checkout @ ${w} offers only the $69 DIY packet`).toHaveCount(1);
     }
   });
 
