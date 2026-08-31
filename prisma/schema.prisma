@@ -856,6 +856,16 @@ model OTOrder {
   createdAt                 DateTime  @default(now())
   updatedAt                 DateTime  @updatedAt
 
+  // Phase 1 confirmation-email delivery evidence (additive, nullable; all-NULL
+  // = never attempted, the state of every old-writer row). Status: ATTEMPTED |
+  // SENT | FAILED; errorClass is a bounded non-PII value from the closed
+  // allowlist in lib/email/send.ts. First success wins (see confirmation-evidence.ts).
+  confirmationEmailStatus      String?
+  confirmationEmailAttemptedAt DateTime?
+  confirmationEmailSentAt      DateTime?
+  confirmationEmailMessageId   String?
+  confirmationEmailErrorClass  String?
+
   // Additive back-relation for the T2 delivery-evidence foundation (Phase 1).
   // Virtual only — the foreign key lives on ot_fulfillment; ot_order is unchanged.
   fulfillments OTFulfillment[]
