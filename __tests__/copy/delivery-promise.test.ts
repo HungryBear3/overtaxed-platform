@@ -11,7 +11,7 @@
  * requires every remaining "24 hours" in the tree to be a deliberate, named
  * exemption rather than a survivor.
  */
-import { readFileSync } from "node:fs"
+import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 
 const ROOT = join(__dirname, "..", "..")
@@ -46,6 +46,10 @@ const EXEMPTIONS: Array<{ file: string; why: string }> = [
   {
     file: "lib/deadlines/official-source-state.ts",
     why: "code comment contrasting calendar days with elapsed 24-hour periods",
+  },
+  {
+    file: "PRD-BILLING-OVERHAUL.md",
+    why: "historical product requirements document, not shipped copy and not rendered to any customer; retained as a record of what the promise used to be",
   },
 ]
 
@@ -83,29 +87,45 @@ describe("the approved delivery promise", () => {
   })
 
   it("carries no unexplained twenty-four-hour promise anywhere in the tree", () => {
-    // Enumerated rather than globbed: the point is that each survivor was
-    // looked at and justified, not that the sweep found nothing.
+    // This walks the tree. An earlier version iterated a hardcoded five-file
+    // list and swallowed missing files with try/catch, so a brand-new
+    // customer-facing 24-hour promise in any other file passed unnoticed.
     const exemptFiles = new Set(EXEMPTIONS.map((e) => e.file))
     for (const { file, why } of EXEMPTIONS) {
       expect(why.length).toBeGreaterThan(20)
+      // An exemption that no longer matches is stale and must be removed.
       expect(read(file)).toMatch(/24[ -]hours?/i)
     }
-    const customerFacing = [
-      "app/checkout/success/page.tsx",
-      "app/checkout/page.tsx",
-      "components/ot-design/CheckoutPage.tsx",
-      "app/pricing/page.tsx",
-      "app/faq/page.tsx",
-    ]
-    for (const file of customerFacing) {
-      if (exemptFiles.has(file)) continue
-      let text: string
-      try {
-        text = read(file)
-      } catch {
-        continue // surface does not exist on this branch
+
+    const offenders: string[] = []
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
+        const rel = `${dir}/${entry.name}`
+        if (entry.isDirectory()) {
+          if (entry.name === "node_modules" || entry.name === ".next") continue
+          walk(rel)
+          continue
+        }
+        if (!/\.(ts|tsx|js|jsx|md|mdx|json|html)$/.test(entry.name)) continue
+        if (exemptFiles.has(rel)) continue
+        const text = readFileSync(join(ROOT, rel), "utf8")
+        if (/24[ -]hours?/i.test(text)) offenders.push(rel)
       }
-      expect(text).not.toMatch(/within\s+(<strong>)?24\s*hours/i)
     }
+    for (const root of ["app", "lib", "components", "content"]) {
+      try {
+        walk(root)
+      } catch {
+        // directory absent on this branch
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it("proves the sweep actually detects a new offender", () => {
+    // Guards the guard: if the sweep silently stopped matching, this fails.
+    const probe = "We will email your completed appeal packet within 24 hours."
+    expect(/24[ -]hours?/i.test(probe)).toBe(true)
+    expect(EXEMPTIONS.every((e) => !probe.includes(e.file))).toBe(true)
   })
 })

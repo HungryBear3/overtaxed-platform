@@ -15,6 +15,7 @@ import {
   evaluateCheckoutBusinessDayCutoff,
   isChicagoBusinessDay,
   parseCalendarDay,
+  stripeSessionExpiry,
 } from "@/lib/checkout/business-days"
 
 describe("Chicago calendar day", () => {
@@ -222,5 +223,109 @@ describe("the approved checkout cutoff", () => {
     const allowed = days.map((d) => evaluateCheckoutBusinessDayCutoff({ closeDate: d, now }).allowed)
     // Monotonic: once allowed, every later close date stays allowed.
     expect(allowed).toEqual([false, false, false, true, true, true])
+  })
+})
+
+describe("the Stripe session-expiry clamp", () => {
+  // Extracted from the checkout route so it has coverage of its own. Behind the
+  // three-business-day product cutoff it is no longer reachable on the T2 path,
+  // and it was left both unreachable and untested by the first candidate. It is
+  // retained as defence in depth, so it is verified as defence in depth.
+  const MIN = 30 * 60
+  const MAX = 24 * 60 * 60
+  const at = (iso: string) => Date.parse(iso)
+
+  it("clamps to the end of the close day in Chicago, not a UTC midnight", () => {
+    const result = stripeSessionExpiry({
+      closeDate: "2026-06-11",
+      now: at("2026-06-11T12:00:00.000Z"),
+      maxSeconds: MAX,
+      minSeconds: MIN,
+    })
+    // End of 2026-06-11 in Chicago (CDT, UTC-5) is 2026-06-12T04:59:59Z.
+    expect(new Date(result.expiresAtEpochSeconds * 1000).toISOString()).toBe(
+      "2026-06-12T04:59:59.000Z",
+    )
+    expect(result.viable).toBe(true)
+  })
+
+  it("refuses when under thirty minutes remain before the window's last moment", () => {
+    const result = stripeSessionExpiry({
+      closeDate: "2026-06-11",
+      now: at("2026-06-12T04:45:00.000Z"), // 14m59s before the Chicago day ends
+      maxSeconds: MAX,
+      minSeconds: MIN,
+    })
+    expect(result.viable).toBe(false)
+    expect(result.secondsAvailable).toBeLessThan(MIN)
+  })
+
+  it("clamps to the provider maximum when the window is far away", () => {
+    const now = at("2026-06-01T12:00:00.000Z")
+    const result = stripeSessionExpiry({
+      closeDate: "2026-12-31", now, maxSeconds: MAX, minSeconds: MIN,
+    })
+    expect(result.expiresAtEpochSeconds).toBe(Math.floor((now + MAX * 1000) / 1000))
+    expect(result.viable).toBe(true)
+  })
+
+  it("is unbounded by the window for an approved-notice order", () => {
+    const now = at("2026-06-12T04:45:00.000Z")
+    const bounded = stripeSessionExpiry({
+      closeDate: "2026-06-11", now, maxSeconds: MAX, minSeconds: MIN,
+    })
+    const unbounded = stripeSessionExpiry({
+      closeDate: "2026-06-11", now, maxSeconds: MAX, minSeconds: MIN, unboundedByWindow: true,
+    })
+    expect(bounded.viable).toBe(false)
+    expect(unbounded.viable).toBe(true)
+  })
+
+  it("falls back to the provider maximum when the close date is unusable", () => {
+    for (const closeDate of [null, undefined, "", "2026-02-31", "nope"]) {
+      const now = at("2026-06-01T12:00:00.000Z")
+      const result = stripeSessionExpiry({ closeDate, now, maxSeconds: MAX, minSeconds: MIN })
+      expect(result.expiresAtEpochSeconds).toBe(Math.floor((now + MAX * 1000) / 1000))
+    }
+  })
+
+  it("cannot fire for any window the product cutoff allows", () => {
+    // The relationship between the two rules, asserted rather than assumed:
+    // three Chicago business days is always far more than thirty minutes, so
+    // the provider clamp is unreachable behind the product cutoff.
+    const now = at("2026-06-08T14:00:00.000Z")
+    let checked = 0
+    for (let step = 0; step <= 45; step += 1) {
+      const day = new Date(Date.parse("2026-06-08T00:00:00Z") + step * 86_400_000)
+        .toISOString()
+        .slice(0, 10)
+      if (!evaluateCheckoutBusinessDayCutoff({ closeDate: day, now }).allowed) continue
+      checked += 1
+      expect(
+        stripeSessionExpiry({ closeDate: day, now, maxSeconds: MAX, minSeconds: MIN }).viable,
+      ).toBe(true)
+    }
+    expect(checked).toBeGreaterThan(20)
+  })
+
+  it("handles a close day across both daylight-saving transitions", () => {
+    // Spring forward: 2026-03-08 ends at 2026-03-09T04:59:59Z (CDT).
+    expect(
+      new Date(
+        stripeSessionExpiry({
+          closeDate: "2026-03-08", now: at("2026-03-08T12:00:00.000Z"),
+          maxSeconds: MAX, minSeconds: MIN,
+        }).expiresAtEpochSeconds * 1000,
+      ).toISOString(),
+    ).toBe("2026-03-09T04:59:59.000Z")
+    // Fall back: 2026-11-01 ends at 2026-11-02T05:59:59Z (CST).
+    expect(
+      new Date(
+        stripeSessionExpiry({
+          closeDate: "2026-11-01", now: at("2026-11-01T12:00:00.000Z"),
+          maxSeconds: MAX, minSeconds: MIN,
+        }).expiresAtEpochSeconds * 1000,
+      ).toISOString(),
+    ).toBe("2026-11-02T05:59:59.000Z")
   })
 })
