@@ -265,7 +265,13 @@ export async function sendOrderConfirmation(args: {
   // file". OverTaxed IL does not file, sign, or represent anyone, so there was
   // no honest version of that sentence to keep; the tier that produced it is
   // refused above and the remaining copy describes preparation only.
-  const nextStep = "We'll email you within 24 hours with your completed appeal packet."
+  // The approved delivery promise (Gate A owner ruling 2026-08-31, D-3 / T-1) is
+  // one business day, not 24 hours. The two are not the same commitment: a
+  // Friday-evening purchase is ~15 hours from a 24-hour promise expiring and
+  // three days from the end of the next business day, and the wording the buyer
+  // sees has to be the one the business can actually keep.
+  const nextStep =
+    "We'll email you within one business day with your completed appeal packet."
   const text = [
     `Hi ${customerName || "there"},`,
     ``,

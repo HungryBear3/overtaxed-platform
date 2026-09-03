@@ -31,6 +31,10 @@ import {
   signedPolicyVersion,
 } from "@/lib/checkout/ot-contract"
 import {
+  MIN_BUSINESS_DAYS_BEFORE_CLOSE,
+  evaluateCheckoutBusinessDayCutoff,
+} from "@/lib/checkout/business-days"
+import {
   hostFromRequest,
   isPreviewStubEnabled,
   marketingGateReason,
@@ -432,6 +436,37 @@ export async function POST(req: NextRequest) {
           ? "The Assessor filing window for your township is closed. We are not selling a packet for a closed window, and you have not been charged."
           : "We could not confirm a currently open Assessor filing window for your property, so checkout is closed. You have not been charged.",
         code: "CHECKOUT_ELIGIBILITY_CLOSED",
+        window,
+      },
+      { status: 409 },
+    )
+  }
+
+  // The approved three-business-day product cutoff (Gate A owner ruling
+  // 2026-08-31, D-3 / T-1).
+  //
+  // This is a PRODUCT rule and it is deliberately not the Stripe session-expiry
+  // clamp further down. That clamp is a provider constraint: it only refuses
+  // when fewer than 30 minutes remain, it measures against a UTC midnight, and
+  // it exists to keep a hosted session from outliving its window. Neither one
+  // protects a buyer who would receive a packet with no time left to review,
+  // sign and file it. The promise is delivery within one business day, so a
+  // window closing inside three Chicago business days is not sold at all.
+  //
+  // It runs after `allowCheckout`, so it can only ever narrow eligibility: a
+  // window that is already refused stays refused, and a synthetic or stale
+  // snapshot never reaches here because it never produces a close date.
+  const businessDayCutoff = evaluateCheckoutBusinessDayCutoff({
+    closeDate: snapshot.closeDate,
+    now: new Date(),
+  })
+  if (!businessDayCutoff.allowed) {
+    return NextResponse.json(
+      {
+        error:
+          "Your township's Assessor filing window closes too soon for us to prepare a packet you would still have time to review, sign, and file. We are not selling one, and you have not been charged. You can still file an appeal yourself.",
+        code: "CHECKOUT_WINDOW_CLOSING_TOO_SOON",
+        minimumBusinessDays: MIN_BUSINESS_DAYS_BEFORE_CLOSE,
         window,
       },
       { status: 409 },

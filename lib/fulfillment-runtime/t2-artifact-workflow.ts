@@ -4,7 +4,10 @@ import { t2ArtifactBindingEnabled } from "@/lib/fulfillment/flag"
 import { MAX_ARTIFACT_BYTES } from "@/lib/fulfillment/types"
 import { computeArtifactSha256, contentAddressedT2ArtifactLocator } from "@/lib/fulfillment/artifact-digest"
 import { bindT2Artifact, type BindT2ArtifactResult } from "@/lib/fulfillment-runtime/bind-artifact"
-import { generateT2Artifact } from "@/lib/fulfillment-runtime/t2-artifact-producer"
+import {
+  generateT2Artifact,
+  type T2ArtifactProducerBlocker,
+} from "@/lib/fulfillment-runtime/t2-artifact-producer"
 import {
   readT2ArtifactBytes,
   reconcileUnboundT2Artifact,
@@ -20,7 +23,13 @@ type T2ArtifactWorkflowRefusalBlocker =
 
 export type T2ArtifactWorkflowResult =
   | { outcome: "DISABLED"; blocker: "FLAG_DISABLED" }
-  | { outcome: "UNAVAILABLE"; blocker: "T2_ARTIFACT_PRODUCER_UNAVAILABLE" }
+  /**
+   * The producer refused. `blocker` names which gate closed — an unsigned
+   * eligibility policy, an untrusted deadline authority, a property the packet
+   * is not defined for, or evidence too thin to describe. A refusal produces no
+   * bytes, so nothing is uploaded, bound, or delivered.
+   */
+  | { outcome: "UNAVAILABLE"; blocker: T2ArtifactProducerBlocker }
   | { outcome: "REFUSED"; blocker: T2ArtifactWorkflowRefusalBlocker }
   | { outcome: "RECONCILIATION_REQUIRED"; blocker: "UNBOUND_ARTIFACT_RECONCILIATION_REQUIRED" }
   | Extract<BindT2ArtifactResult, { outcome: "BOUND" }>

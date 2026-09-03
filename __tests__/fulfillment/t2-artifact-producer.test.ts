@@ -1,0 +1,566 @@
+/**
+ * The T2 artifact producer.
+ *
+ * Two things have to be true at once and they pull in opposite directions:
+ * the producer must really produce a packet, and production must be unable to
+ * reach that path while OD-2 and OD-3 are unsigned. Both are proven here.
+ *
+ * Every fixture below is synthetic. The PINs are in a reserved 99-prefixed
+ * block that Cook County does not issue, and no owner name, buyer name, seller
+ * name or real address appears anywhere in this file.
+ */
+import {
+  buildT2ArtifactContent,
+  encodeT2Artifact,
+  T2_PRODUCER_VERSION,
+  type DeadlineAuthoritySnapshot,
+  type SignedPolicySnapshot,
+  type SourceRecord,
+  type SubjectRecord,
+  type T2ArtifactInputs,
+} from "@/lib/fulfillment/t2-artifact-content"
+import { CC_01, CC_07, CC_10, CC_12, CC_13, CC_14, CC_17 } from "@/lib/copy/canonical"
+import {
+  NON_DIRECTIONAL_RULE_ID,
+  attachAssessedValues,
+  measureUniformity,
+  selectNonDirectionalComparables,
+  type ComparableMatchAttributes,
+} from "@/lib/fulfillment/t2-comparables"
+import {
+  generateT2Artifact,
+  type T2ArtifactGateway,
+  type T2ProducerCountyData,
+  type T2ProducerOrder,
+} from "@/lib/fulfillment-runtime/t2-artifact-producer"
+
+jest.mock("server-only", () => ({}))
+
+/* ── synthetic fixtures ─────────────────────────────────────────────────── */
+
+const SUBJECT_PIN = "99010010010000"
+const ORDER: T2ProducerOrder = {
+  id: "ord_synthetic_0001",
+  propertyPin: SUBJECT_PIN,
+  propertyAddress: "1 EXAMPLE ST",
+  township: "Example",
+}
+
+const SUBJECT: SubjectRecord = {
+  pin: SUBJECT_PIN,
+  address: "1 EXAMPLE ST",
+  city: "Chicago",
+  township: "Example",
+  neighborhoodCode: "99010",
+  propertyClass: "203",
+  residentialSubtype: "1 Story",
+  buildingSqft: 1200,
+  yearBuilt: 1955,
+  assessedTotalValue: 30000, // $25.00/sqft
+  assessmentStage: "mailed",
+  taxYear: 2025,
+  pinCount: 1,
+  inCookCounty: true,
+}
+
+/** Six qualifying comparables at $20.00/sqft, so the subject sits +25% above. */
+function comparableFixtures(): {
+  candidates: ComparableMatchAttributes[]
+  values: Map<string, number>
+  addresses: Map<string, string>
+} {
+  const candidates: ComparableMatchAttributes[] = []
+  const values = new Map<string, number>()
+  const addresses = new Map<string, string>()
+  for (let i = 1; i <= 6; i += 1) {
+    const pin = `990100100200${String(i).padStart(2, "0")}`
+    candidates.push({
+      pin,
+      neighborhoodCode: "99010",
+      propertyClass: "203",
+      residentialSubtype: "1 Story",
+      buildingSqft: 1200,
+      yearBuilt: 1955,
+    })
+    values.set(pin, 24000) // 24000 / 1200 = $20.00/sqft
+    addresses.set(pin, `${i} EXAMPLE AVE`)
+  }
+  return { candidates, values, addresses }
+}
+
+const SOURCES: SourceRecord[] = [
+  {
+    datasetId: "uzyt-m557",
+    datasetTitle: "Assessor - Assessed Values",
+    url: "https://datacatalog.cookcountyil.gov/resource/uzyt-m557.json",
+    retrievedAt: "2026-06-08T12:00:00Z",
+  },
+  {
+    datasetId: "x54s-btds",
+    datasetTitle: "Assessor - Single and Multi-Family Improvement Characteristics",
+    url: "https://datacatalog.cookcountyil.gov/resource/x54s-btds.json",
+    retrievedAt: "2026-06-08T12:00:00Z",
+  },
+]
+
+const SIGNED_POLICY: SignedPolicySnapshot = {
+  version: "test-only-policy-2026-06-08",
+  ownerDecisions: ["OD-2", "OD-3"],
+  signedAt: "2026-06-08",
+  evidenceThreshold: { minRelativeAssessmentGap: 0.2, minComparables: 5 },
+}
+
+const TRUSTED_DEADLINE: DeadlineAuthoritySnapshot = {
+  trusted: true,
+  status: "open",
+  closeDate: "2026-06-30",
+  sourceName: "Cook County Assessor",
+  sourceUrl: "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+  retrievedAt: "2026-06-08T12:00:00Z",
+  businessDaysRemaining: 16,
+  businessDayCutoffAllowed: true,
+}
+
+function contentInputs(overrides: Partial<T2ArtifactInputs> = {}): T2ArtifactInputs {
+  const { candidates, values, addresses } = comparableFixtures()
+  return {
+    orderId: ORDER.id,
+    orderPropertyPin: ORDER.propertyPin,
+    orderPropertyAddress: ORDER.propertyAddress,
+    subject: SUBJECT,
+    comparableCandidates: candidates,
+    comparableAssessedValues: values,
+    comparableAddresses: addresses,
+    policy: SIGNED_POLICY,
+    deadline: TRUSTED_DEADLINE,
+    sources: SOURCES,
+    generatedAt: "2026-06-08T12:00:00Z",
+    ...overrides,
+  }
+}
+
+function testGateway(overrides: Partial<T2ArtifactGateway> = {}): T2ArtifactGateway {
+  const { candidates, values, addresses } = comparableFixtures()
+  const county: T2ProducerCountyData = {
+    subject: SUBJECT,
+    comparableCandidates: candidates,
+    comparableAssessedValues: values,
+    comparableAddresses: addresses,
+    sources: SOURCES,
+  }
+  return {
+    loadOrder: async () => ORDER,
+    loadCountyData: async () => county,
+    resolvePolicy: () => SIGNED_POLICY,
+    resolveDeadline: async () => ({
+      trusted: true,
+      status: "open",
+      closeDate: "2026-06-30",
+      sourceName: "Cook County Assessor",
+      sourceUrl: "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+      retrievedAt: "2026-06-08T12:00:00Z",
+    }),
+    now: () => new Date("2026-06-08T12:00:00Z"),
+    ...overrides,
+  }
+}
+
+/* ── production cannot reach success ────────────────────────────────────── */
+
+describe("the live policy registry keeps production closed", () => {
+  it("refuses with the unsigned-policy blocker when the real resolver is used", async () => {
+    // The default gateway's resolver is the live `resolveEligibilityPolicy`.
+    // SIGNED_ELIGIBILITY_POLICIES is empty, so this is the production answer.
+    const result = await generateT2Artifact(
+      { orderId: ORDER.id, fulfillmentId: "ful_1" },
+      testGateway({ resolvePolicy: () => null }),
+    )
+    expect(result).toEqual({ ok: false, blocker: "ELIGIBILITY_POLICY_UNSIGNED" })
+  })
+
+  it("refuses before loading an order, so no lookup masks the real blocker", async () => {
+    const loadOrder = jest.fn(async () => ORDER)
+    const result = await generateT2Artifact(
+      { orderId: ORDER.id, fulfillmentId: "ful_1" },
+      testGateway({ resolvePolicy: () => null, loadOrder }),
+    )
+    expect(result.ok).toBe(false)
+    expect(loadOrder).not.toHaveBeenCalled()
+  })
+
+  it("emits no bytes and no provenance on any refusal", async () => {
+    const result = await generateT2Artifact(
+      { orderId: ORDER.id, fulfillmentId: "ful_1" },
+      testGateway({ resolvePolicy: () => null }),
+    )
+    expect(result).not.toHaveProperty("bytes")
+    expect(result).not.toHaveProperty("provenance")
+  })
+})
+
+/* ── success is reachable only through injected fixtures ────────────────── */
+
+describe("injected signed policy and trusted deadline", () => {
+  it("produces a packet", async () => {
+    const result = await generateT2Artifact({ orderId: ORDER.id, fulfillmentId: "ful_1" }, testGateway())
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.bytes.byteLength).toBeGreaterThan(0)
+    expect(result.provenance).toMatchObject({
+      sourceOrderId: ORDER.id,
+      propertyPin: SUBJECT_PIN,
+      generatorVersion: T2_PRODUCER_VERSION,
+      generatedAt: "2026-06-08T12:00:00Z",
+    })
+  })
+
+  it("produces byte-identical output on repeated runs", async () => {
+    const a = await generateT2Artifact({ orderId: ORDER.id, fulfillmentId: "ful_1" }, testGateway())
+    const b = await generateT2Artifact({ orderId: ORDER.id, fulfillmentId: "ful_1" }, testGateway())
+    expect(a.ok && b.ok).toBe(true)
+    if (!a.ok || !b.ok) return
+    expect(a.bytes.equals(b.bytes)).toBe(true)
+  })
+
+  it("produces byte-identical output when the candidate order is shuffled", () => {
+    const forward = buildT2ArtifactContent(contentInputs())
+    const reversed = buildT2ArtifactContent(
+      contentInputs({ comparableCandidates: [...comparableFixtures().candidates].reverse() }),
+    )
+    expect(forward.ok && reversed.ok).toBe(true)
+    if (!forward.ok || !reversed.ok) return
+    expect(encodeT2Artifact(forward.text).equals(encodeT2Artifact(reversed.text))).toBe(true)
+  })
+})
+
+/* ── the packet's content is bounded and truthful ───────────────────────── */
+
+describe("packet content", () => {
+  const built = buildT2ArtifactContent(contentInputs())
+
+  it("records complete, non-directional comparable provenance", () => {
+    expect(built.ok).toBe(true)
+    if (!built.ok) return
+    const m = built.manifest
+    expect(m.selectionRuleId).toBe(NON_DIRECTIONAL_RULE_ID)
+    expect(m.selectionIsDirectional).toBe(false)
+    expect(m.comparableCount).toBe(6)
+    expect(m.comparablePins).toHaveLength(6)
+    expect(m.policyVersion).toBe(SIGNED_POLICY.version)
+    expect(m.policyOwnerDecisions).toEqual(["OD-2", "OD-3"])
+    expect(m.producerVersion).toBe(T2_PRODUCER_VERSION)
+    expect(m.sources).toHaveLength(2)
+    expect(m.deadlineRetrievedAt).toBe("2026-06-08T12:00:00Z")
+    expect(m.relativeGap).toBe("0.250000")
+    expect(m.rule15RecommendationMet).toBe(true)
+  })
+
+  it("names every source with a retrieval timestamp", () => {
+    expect(built.ok).toBe(true)
+    if (!built.ok) return
+    for (const source of SOURCES) {
+      expect(built.text).toContain(source.datasetId)
+      expect(built.text).toContain(source.url)
+    }
+    expect(built.text).toContain("retrieved 2026-06-08T12:00:00Z")
+  })
+
+  it("states no savings, probability, grade, or recommendation to file", () => {
+    expect(built.ok).toBe(true)
+    if (!built.ok) return
+    // The negation trap named in the frozen banned-claims lexicon: CC-12
+    // legitimately contains "guarantee a reduction" and "legal advice". Strip
+    // the approved canonical strings before asserting, or a correct packet
+    // red-lines on its own required disclosures.
+    const withoutCanonicalCopy = [CC_01, CC_07, CC_10, CC_12, CC_13, CC_14, CC_17].reduce(
+      (text, canonical) => text.split(canonical).join(" "),
+      built.text,
+    )
+    for (const canonical of [CC_12, CC_13]) {
+      expect(built.text).toContain(canonical)
+      expect(withoutCanonicalCopy).not.toContain(canonical)
+    }
+    const banned = [
+      /you (will|could|may) save/i,
+      /estimated savings/i,
+      /potential savings/i,
+      /\bper year\b.*\$/i,
+      /likely (to )?(win|succeed)/i,
+      /\bprobability\b/i,
+      /\bscore\b/i,
+      /\bgrade\b/i,
+      /you are (over-?assessed|overpaying)/i,
+      /you should (appeal|file)/i,
+      /we recommend appealing/i,
+      /strong (case|comps)/i,
+      /guarantee/i,
+    ]
+    for (const pattern of banned) {
+      expect(withoutCanonicalCopy).not.toMatch(pattern)
+    }
+  })
+
+  it("carries the homeowner-files posture and the standing disclosures", () => {
+    expect(built.ok).toBe(true)
+    if (!built.ok) return
+    expect(built.text).toContain("You review it, sign it, and file it yourself.")
+    expect(built.text).toContain("The $69 packet is a preparation service.")
+    expect(built.text).toContain("OverTaxed IL is not a law firm")
+  })
+
+  it("discloses that the drafted argument is omitted rather than invented", () => {
+    expect(built.ok).toBe(true)
+    if (!built.ok) return
+    expect(built.manifest.draftArgumentIncluded).toBe(false)
+    expect(built.text).toContain("does not contain a drafted argument in your own voice")
+    expect(built.manifest.draftArgumentOmissionReason).toContain("OD-5")
+  })
+})
+
+/* ── refusals ───────────────────────────────────────────────────────────── */
+
+describe("refusals fail closed and produce nothing", () => {
+  const cases: Array<[string, Partial<T2ArtifactInputs>, string]> = [
+    ["unsigned policy", { policy: null }, "ELIGIBILITY_POLICY_UNSIGNED"],
+    [
+      "synthetic deadline authority",
+      { deadline: { ...TRUSTED_DEADLINE, trusted: false } },
+      "UNTRUSTED_DEADLINE_AUTHORITY",
+    ],
+    [
+      "stale deadline with no retrieval instant",
+      { deadline: { ...TRUSTED_DEADLINE, retrievedAt: null } },
+      "DEADLINE_SNAPSHOT_STALE",
+    ],
+    [
+      "window not open",
+      { deadline: { ...TRUSTED_DEADLINE, status: "closed" } },
+      "FILING_WINDOW_NOT_OPEN",
+    ],
+    [
+      "fewer than three business days",
+      { deadline: { ...TRUSTED_DEADLINE, businessDayCutoffAllowed: false } },
+      "INSUFFICIENT_BUSINESS_DAYS",
+    ],
+    [
+      // Class 299 IS a class-2 code, so a condominium is inside the served
+      // class. What it lacks is a published building area, and the blocker
+      // says exactly that rather than blaming the class.
+      "condominium with no published building area",
+      { subject: { ...SUBJECT, propertyClass: "299", buildingSqft: 0 } },
+      "MISSING_BUILDING_SQFT",
+    ],
+    ["missing building area", { subject: { ...SUBJECT, buildingSqft: 0 } }, "MISSING_BUILDING_SQFT"],
+    [
+      "missing assessed value",
+      { subject: { ...SUBJECT, assessedTotalValue: 0 } },
+      "MISSING_ASSESSED_VALUE",
+    ],
+    ["multi-PIN property", { subject: { ...SUBJECT, pinCount: 2 } }, "MULTI_PIN_PROPERTY"],
+    [
+      "outside Cook County",
+      { subject: { ...SUBJECT, inCookCounty: false } },
+      "UNSUPPORTED_PROPERTY_CLASS",
+    ],
+    [
+      "non-residential class",
+      { subject: { ...SUBJECT, propertyClass: "517" } },
+      "UNSUPPORTED_PROPERTY_CLASS",
+    ],
+    [
+      "order bought a different parcel",
+      { orderPropertyPin: "99010010019999" },
+      "ORDER_PROPERTY_MISMATCH",
+    ],
+    ["empty source manifest", { sources: [] }, "INCOMPLETE_SOURCE_MANIFEST"],
+    [
+      "source with no retrieval timestamp",
+      { sources: [{ ...SOURCES[0], retrievedAt: "" }] },
+      "INCOMPLETE_SOURCE_MANIFEST",
+    ],
+    ["unusable generation instant", { generatedAt: "yesterday" }, "INCOMPLETE_SOURCE_MANIFEST"],
+  ]
+
+  it.each(cases)("refuses: %s", (_label, overrides, blocker) => {
+    const result = buildT2ArtifactContent(contentInputs(overrides))
+    expect(result).toEqual({ ok: false, blocker })
+    expect(result).not.toHaveProperty("text")
+    expect(result).not.toHaveProperty("manifest")
+  })
+
+  it("refuses when too few comparables qualify", () => {
+    const { candidates, values, addresses } = comparableFixtures()
+    const result = buildT2ArtifactContent(
+      contentInputs({
+        comparableCandidates: candidates.slice(0, 3),
+        comparableAssessedValues: values,
+        comparableAddresses: addresses,
+      }),
+    )
+    expect(result).toEqual({ ok: false, blocker: "INSUFFICIENT_COMPARABLES" })
+  })
+
+  it("refuses when a selected comparable has no assessed value", () => {
+    const { candidates, values, addresses } = comparableFixtures()
+    values.delete(candidates[0].pin)
+    const result = buildT2ArtifactContent(
+      contentInputs({
+        comparableCandidates: candidates,
+        comparableAssessedValues: values,
+        comparableAddresses: addresses,
+      }),
+    )
+    expect(result).toEqual({ ok: false, blocker: "COMPARABLE_VALUE_INCOMPLETE" })
+  })
+
+  it("refuses when the measured gap is below the signed threshold", () => {
+    const result = buildT2ArtifactContent(
+      contentInputs({
+        policy: {
+          ...SIGNED_POLICY,
+          evidenceThreshold: { minRelativeAssessmentGap: 0.5, minComparables: 5 },
+        },
+      }),
+    )
+    expect(result).toEqual({ ok: false, blocker: "BELOW_SIGNED_EVIDENCE_THRESHOLD" })
+  })
+
+  it("refuses when the injected policy carries no threshold", () => {
+    const result = buildT2ArtifactContent(
+      contentInputs({ policy: { ...SIGNED_POLICY, version: "" } }),
+    )
+    expect(result).toEqual({ ok: false, blocker: "ELIGIBILITY_POLICY_UNSIGNED" })
+  })
+
+  it("refuses at the producer when county data is unavailable", async () => {
+    const result = await generateT2Artifact(
+      { orderId: ORDER.id, fulfillmentId: "ful_1" },
+      testGateway({ loadCountyData: async () => null }),
+    )
+    expect(result).toEqual({ ok: false, blocker: "COMPARABLE_SOURCE_UNAVAILABLE" })
+  })
+
+  it("refuses at the producer when the order is missing", async () => {
+    const result = await generateT2Artifact(
+      { orderId: ORDER.id, fulfillmentId: "ful_1" },
+      testGateway({ loadOrder: async () => null }),
+    )
+    expect(result).toEqual({ ok: false, blocker: "ORDER_NOT_FOUND" })
+  })
+
+  it("applies the Chicago cutoff to a real close date inside the producer", async () => {
+    const result = await generateT2Artifact(
+      { orderId: ORDER.id, fulfillmentId: "ful_1" },
+      testGateway({
+        resolveDeadline: async () => ({
+          trusted: true,
+          status: "open",
+          closeDate: "2026-06-09", // one business day after Monday 2026-06-08
+          sourceName: "Cook County Assessor",
+          sourceUrl: "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+          retrievedAt: "2026-06-08T12:00:00Z",
+        }),
+      }),
+    )
+    expect(result).toEqual({ ok: false, blocker: "INSUFFICIENT_BUSINESS_DAYS" })
+  })
+})
+
+/* ── the selector cannot be directional ─────────────────────────────────── */
+
+describe("selection is structurally non-directional", () => {
+  it("accepts the same set no matter how assessed values are permuted", () => {
+    const { candidates } = comparableFixtures()
+    const subject = {
+      pin: SUBJECT_PIN,
+      neighborhoodCode: "99010",
+      propertyClass: "203",
+      residentialSubtype: "1 Story",
+      buildingSqft: 1200,
+      yearBuilt: 1955,
+    }
+    const first = selectNonDirectionalComparables(subject, candidates)
+    // Values are not an input to selection at all, so no permutation of them
+    // can reach it. Prove the accepted set is identical across wildly
+    // different value assignments.
+    for (const scale of [1, 100, 0.01]) {
+      const values = new Map(candidates.map((c, i) => [c.pin, 1000 * (i + 1) * scale]))
+      const attached = attachAssessedValues(first!.accepted, values)
+      expect(attached.valued.map((c) => c.pin)).toEqual(first!.accepted.map((c) => c.pin))
+    }
+    const second = selectNonDirectionalComparables(subject, [...candidates].reverse())
+    expect(second!.accepted.map((c) => c.pin)).toEqual(first!.accepted.map((c) => c.pin))
+  })
+
+  it("never returns the subject as its own comparable", () => {
+    const { candidates } = comparableFixtures()
+    const subject = {
+      pin: SUBJECT_PIN,
+      neighborhoodCode: "99010",
+      propertyClass: "203",
+      residentialSubtype: "1 Story",
+      buildingSqft: 1200,
+      yearBuilt: 1955,
+    }
+    const withSelf = selectNonDirectionalComparables(subject, [
+      { ...subject },
+      ...candidates,
+    ])
+    expect(withSelf!.accepted.some((c) => c.pin === SUBJECT_PIN)).toBe(false)
+    expect(withSelf!.rejected).toContainEqual({
+      pin: SUBJECT_PIN,
+      reason: "same_parcel_as_subject",
+    })
+  })
+
+  it("excludes candidates outside the preregistered bands, with a reason each", () => {
+    const subject = {
+      pin: SUBJECT_PIN,
+      neighborhoodCode: "99010",
+      propertyClass: "203",
+      residentialSubtype: "1 Story",
+      buildingSqft: 1200,
+      yearBuilt: 1955,
+    }
+    const selection = selectNonDirectionalComparables(subject, [
+      { ...subject, pin: "99010010030001", neighborhoodCode: "99011" },
+      { ...subject, pin: "99010010030002", propertyClass: "204" },
+      { ...subject, pin: "99010010030003", residentialSubtype: "2 Story" },
+      { ...subject, pin: "99010010030004", buildingSqft: 3000 },
+      { ...subject, pin: "99010010030005", yearBuilt: 1900 },
+    ])
+    expect(selection!.accepted).toHaveLength(0)
+    expect(selection!.rejected.map((r) => r.reason).sort()).toEqual([
+      "building_sqft_out_of_band",
+      "different_class",
+      "different_neighborhood",
+      "different_subtype",
+      "year_built_out_of_band",
+    ])
+  })
+
+  it("computes the uniformity gap from published values and areas", () => {
+    const { candidates, values } = comparableFixtures()
+    const { valued } = attachAssessedValues(candidates, values)
+    const measurement = measureUniformity(
+      { buildingSqft: 1200, assessedTotalValue: 30000 },
+      valued,
+    )
+    expect(measurement).not.toBeNull()
+    expect(measurement!.subjectAssessedPerSqft).toBeCloseTo(25, 10)
+    expect(measurement!.comparableMedianAssessedPerSqft).toBeCloseTo(20, 10)
+    expect(measurement!.relativeGap).toBeCloseTo(0.25, 10)
+  })
+
+  it("is not the degenerate assessed-value-times-ten metric", () => {
+    // The metric on main divides assessed value by (assessed value x 10) on both
+    // sides, so its gap is exactly zero for every parcel. This one moves.
+    const { candidates, values } = comparableFixtures()
+    const { valued } = attachAssessedValues(candidates, values)
+    const gaps = [24000, 27000, 30000, 36000].map(
+      (av) => measureUniformity({ buildingSqft: 1200, assessedTotalValue: av }, valued)!.relativeGap,
+    )
+    expect(new Set(gaps.map((g) => g.toFixed(6))).size).toBe(gaps.length)
+    expect(gaps.some((g) => g !== 0)).toBe(true)
+  })
+})

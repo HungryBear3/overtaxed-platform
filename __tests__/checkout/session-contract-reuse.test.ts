@@ -440,23 +440,36 @@ describe("POST /api/checkout/session server-authoritative OT contract reuse", ()
     expect(urls.length).toBeGreaterThanOrEqual(1)
   })
 
-  it("never strands CHECKOUT_CREATING when the filing window is too close to create a session", async () => {
-    // A Checkout Session must live at least STRIPE_MIN_CHECKOUT_SECONDS (30
-    // minutes) and may never outlive the filing window it was sold against.
-    // Fifteen minutes before the county's last filing moment there is no
-    // session that satisfies both, so the request is refused — and the order it
-    // already pre-created must not be left holding the CHECKOUT_CREATING lease.
+  it("creates no order at all when the filing window is too close to sell into", async () => {
+    // This case used to prove that the Stripe session-expiry clamp
+    // (STRIPE_MIN_CHECKOUT_SECONDS, 30 minutes) refused without stranding a
+    // pre-created order in CHECKOUT_CREATING.
+    //
+    // The approved three-business-day product cutoff now refuses the same
+    // request earlier and for the better reason: a window closing today has no
+    // business days left, so there is no packet to sell regardless of how long
+    // a provider session could live. Because that cutoff runs before any order
+    // row is written, the original invariant is not merely preserved but
+    // strengthened — there is no order to strand.
+    //
+    // The provider clamp remains in the route as defence in depth. Behind a
+    // three-business-day floor it is no longer reachable on this path, since a
+    // close date that far out always leaves far more than thirty minutes.
     jest.useFakeTimers().setSystemTime(new Date("2026-07-23T23:45:30.000Z"))
     nowMs = Date.now()
     armWindow(0)
 
-    const res = await postT2("66666666-6666-4666-8666-666666666666")
+    // Called directly rather than through `postT2`: the refusal lands before
+    // the acknowledgment gate, and that helper consumes the body it inspects.
+    const res = await POST(request("66666666-6666-4666-8666-666666666666"))
 
     expect(res.status).toBe(409)
-    expect(await res.json()).toMatchObject({ code: "CHECKOUT_WINDOW_TOO_CLOSE" })
+    expect(await res.json()).toMatchObject({
+      code: "CHECKOUT_WINDOW_CLOSING_TOO_SOON",
+      minimumBusinessDays: 3,
+    })
     expect(stripeModule.__create).not.toHaveBeenCalled()
-    const [, order] = Array.from(state.orders.entries())[0]
-    expect(order.status).not.toBe("CHECKOUT_CREATING")
+    expect(state.orders.size).toBe(0)
   })
 
   it("does not create or reuse any order row for the held T3 tier", async () => {
