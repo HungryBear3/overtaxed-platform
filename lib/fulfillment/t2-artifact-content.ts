@@ -66,9 +66,17 @@ import {
  * fulfillment creation instant rather than the wall clock; business days
  * remaining are recorded relative to that instant; county-supplied text is
  * control-character-safe in the body.
+ *
+ * 1.1.1 (2026-09-04, after independent re-review): rejection accounting is per
+ * row, so `candidateAcceptedCount + sum(candidateRejectedByReason)` equals
+ * `candidateCount` for every duplicate shape and construction refuses if it
+ * does not; the order id and the deadline close date, retrieval instant and
+ * source URL are rendered through the same one-line-safe policy as county
+ * text; that policy now also covers C1 controls and the Unicode line and
+ * paragraph separators.
  */
-export const T2_PRODUCER_VERSION = "t2-evidence-packet/1.1.0";
-export const T2_TEMPLATE_VERSION = "t2-evidence-packet-text/1.1.0";
+export const T2_PRODUCER_VERSION = "t2-evidence-packet/1.1.1";
+export const T2_TEMPLATE_VERSION = "t2-evidence-packet-text/1.1.1";
 
 /** Bounded, stable, non-PII refusal vocabulary. Every ambiguity fails closed. */
 export type T2ArtifactRefusal =
@@ -90,7 +98,8 @@ export type T2ArtifactRefusal =
   | "COMPARABLE_ADDRESS_MISSING"
   | "UNIFORMITY_NOT_COMPUTABLE"
   | "BELOW_SIGNED_EVIDENCE_THRESHOLD"
-  | "INCOMPLETE_SOURCE_MANIFEST";
+  | "INCOMPLETE_SOURCE_MANIFEST"
+  | "CANDIDATE_ACCOUNTING_MISMATCH";
 
 export type SignedPolicySnapshot = {
   version: string;
@@ -221,12 +230,19 @@ const RFC3339_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 /**
- * Body-safe rendering of county-supplied text. Every C0 control character and
- * DEL — newline, carriage return, tab and the rest — collapses to a single
- * space, and the result is trimmed. The packet body is line-oriented plain
- * text, so a stray newline inside an address would otherwise start a line of
- * its own. Applied at render time only: the manifest is canonical JSON, which
- * escapes these characters, so it is left exactly as received.
+ * Body-safe rendering of every externally supplied string. Every C0 control
+ * character and DEL — newline, carriage return, tab and the rest — every C1
+ * control (including NEL, U+0085) and the Unicode line and paragraph
+ * separators (U+2028, U+2029) collapse to a single space, and the result is
+ * trimmed. The packet body is line-oriented plain text, so a stray separator
+ * inside an address would otherwise start a line of its own. Applied at render
+ * time only: the manifest is canonical JSON, which escapes the C0 range and
+ * carries the rest verbatim, so it is left exactly as received.
+ *
+ * Applied to county text AND to the order id and the deadline close date,
+ * retrieval instant and source URL (independent re-review of e5383bbc, L2):
+ * those reach this module through the same untrusted-input contract, whatever
+ * the default gateway validates upstream.
  */
 function safeText(value: unknown): string {
   return String(value ?? "")
@@ -236,7 +252,9 @@ function safeText(value: unknown): string {
 }
 // Built from code points so the source itself carries no control characters.
 const CONTROL_CHARACTERS = new RegExp(
-  `[${String.fromCharCode(0)}-${String.fromCharCode(31)}${String.fromCharCode(127)}]+`,
+  `[${String.fromCharCode(0)}-${String.fromCharCode(31)}` +
+    `${String.fromCharCode(127)}-${String.fromCharCode(159)}` +
+    `${String.fromCharCode(0x2028)}${String.fromCharCode(0x2029)}]+`,
   "g",
 );
 
@@ -391,6 +409,22 @@ export function buildT2ArtifactContent(
   const candidateRejectedByReason = rejectionCountsByReason(selection.rejected);
   const poolSha256 = candidatePoolSha256(input.comparableCandidates);
 
+  // Hard invariant, enforced here and not only in tests: every raw candidate
+  // row is either accepted or rejected for exactly one reason, so the counts
+  // the manifest carries and the sentence the body prints must reconcile to
+  // the raw row count. Selection is built to satisfy this for every duplicate
+  // shape; if it ever does not, the packet would be asserting an accounting it
+  // cannot show, so nothing is rendered.
+  const candidateRejectedTotal = Object.values(
+    candidateRejectedByReason,
+  ).reduce((sum, count) => sum + count, 0);
+  if (
+    candidateRejectedTotal !== selection.rejected.length ||
+    selection.accepted.length + candidateRejectedTotal !== candidateCount
+  ) {
+    return { ok: false, blocker: "CANDIDATE_ACCOUNTING_MISMATCH" };
+  }
+
   const requiredComparables = Math.max(
     policy.evidenceThreshold.minComparables,
     RULE15_REQUIRED_MINIMUM,
@@ -508,7 +542,7 @@ function renderPacket(
   w(CC_10);
   w();
   w(`Prepared: ${manifest.generatedAt}`);
-  w(`Order reference: ${manifest.orderId}`);
+  w(`Order reference: ${safeText(manifest.orderId)}`);
   w(`Producer: ${manifest.producerVersion}`);
   w();
 
@@ -562,8 +596,11 @@ function renderPacket(
       `(${subject.yearBuilt - YEAR_BUILT_TOLERANCE}-${subject.yearBuilt + YEAR_BUILT_TOLERANCE}).`,
   );
   w();
-  const rejectedCount =
-    manifest.candidateCount - manifest.candidateAcceptedCount;
+  // Printed from the per-reason counts themselves, which the construction
+  // invariant has already reconciled to the raw row count.
+  const rejectedCount = Object.values(
+    manifest.candidateRejectedByReason,
+  ).reduce((sum, count) => sum + count, 0);
   w(`Candidate rows handed to selection: ${manifest.candidateCount}`);
   w(
     `  ${manifest.candidateAcceptedCount} qualified; ${rejectedCount} did not, counted by ` +
@@ -674,16 +711,24 @@ function renderPacket(
   w("5. YOUR FILING WINDOW");
   w("---------------------");
   w(`Township:            ${safeText(subject.township)}`);
-  w(`Assessor window closes: ${manifest.deadlineCloseDate ?? "not published"}`);
+  w(
+    `Assessor window closes: ${
+      manifest.deadlineCloseDate === null
+        ? "not published"
+        : safeText(manifest.deadlineCloseDate)
+    }`,
+  );
   if (manifest.deadlineRetrievedAt && manifest.deadlineSourceName) {
     w(
       cc08({
-        source: manifest.deadlineSourceName,
-        timestamp: manifest.deadlineRetrievedAt,
+        source: safeText(manifest.deadlineSourceName),
+        timestamp: safeText(manifest.deadlineRetrievedAt),
       }),
     );
   }
-  if (manifest.deadlineSourceUrl) w(`Source: ${manifest.deadlineSourceUrl}`);
+  if (manifest.deadlineSourceUrl) {
+    w(`Source: ${safeText(manifest.deadlineSourceUrl)}`);
+  }
   w();
   w(
     "File your appeal with the Cook County Assessor yourself, through the county's",
