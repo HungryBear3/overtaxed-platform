@@ -311,7 +311,7 @@ export function StickyAddressBar() {
     // its own start. The homepage listener that renders the dispatched result
     // deliberately counts nothing — instrumenting there instead would also
     // count every check the hero card runs.
-    analytics.freeCheckStarted({ surface: "home_hero", inputMode: "address" });
+    analytics.freeCheckStarted({ surface: "sticky_bar", inputMode: "address" });
     try {
       const submittedInput = addr.trim();
       const res = await fetch("/api/free-check", {
@@ -329,7 +329,7 @@ export function StickyAddressBar() {
       } else {
         const payload = data?.result ?? data;
         analytics.freeCheckCompleted({
-          surface: "home_hero",
+          surface: "sticky_bar",
           outcome: payload?.outcome,
           windowStatus: payload?.appealWindowStatus?.status,
           preview: isPreviewFreeCheckResponse(data) || isPreviewFreeCheckResponse(payload),

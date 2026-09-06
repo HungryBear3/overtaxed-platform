@@ -335,10 +335,11 @@ describe("free-check funnel across both surfaces", () => {
       await waitFor(() => expect(countOf("free_check_completed")).toBe(1))
       expect(countOf("free_check_started")).toBe(1)
       expect(paramsOf("free_check_started")).toMatchObject({
-        surface: "home_hero",
+        surface: "sticky_bar",
         input_mode: "address",
       })
       expect(countOf("free_check_qualified")).toBe(1)
+      expect(paramsOf("free_check_qualified")).toMatchObject({ surface: "sticky_bar" })
     })
 
     it("does not double-count when the sticky-bar result reaches the hero listener", async () => {

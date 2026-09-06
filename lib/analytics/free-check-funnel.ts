@@ -18,7 +18,7 @@ import {
  * qualified signal now comes from the same evaluated outcome the page renders.
  */
 
-export const FREE_CHECK_SURFACES = ["home_hero", "check_page"] as const
+export const FREE_CHECK_SURFACES = ["home_hero", "check_page", "sticky_bar"] as const
 export type FreeCheckSurface = (typeof FREE_CHECK_SURFACES)[number]
 
 export const FREE_CHECK_INPUT_MODES = ["pin", "address"] as const

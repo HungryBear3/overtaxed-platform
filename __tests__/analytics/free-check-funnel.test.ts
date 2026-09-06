@@ -119,7 +119,7 @@ describe("deriveFreeCheckOutcomeParams", () => {
   })
 
   it("exposes closed surface and input-mode vocabularies", () => {
-    expect(FREE_CHECK_SURFACES).toEqual(["home_hero", "check_page"])
+    expect(FREE_CHECK_SURFACES).toEqual(["home_hero", "check_page", "sticky_bar"])
     expect(FREE_CHECK_INPUT_MODES).toEqual(["pin", "address"])
   })
 })
