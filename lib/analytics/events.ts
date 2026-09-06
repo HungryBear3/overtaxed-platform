@@ -45,6 +45,33 @@ export function trackEvent(eventName: string, params?: Record<string, unknown>):
 }
 
 /**
+ * The free-check funnel's own GA4 boundary. One `gtag` call, no page context.
+ *
+ * `trackGA4Event` merges `buildSanitizedPageContext`, which resolves the
+ * referrer to `origin + pathname`. That drops the query and hash but keeps the
+ * path — and a path is free text someone else wrote. A referrer of
+ * `https://partner.example.com/clients/jane-doe-100-w-randolph` sanitizes to
+ * itself, so the generic helper would attach a name and a street address to an
+ * event that states a specific identified parcel qualified.
+ *
+ * The funnel therefore sends no browser URL or referrer context at all. It
+ * still passes through `sanitizeGaEventParams`, so the blocked-key list and the
+ * primitives-only rule continue to apply to the bounded params themselves; with
+ * no `page_location`/`page_referrer` present there is nothing for the
+ * sanitizer's URL-rewriting branch to preserve.
+ *
+ * Deliberately narrow: `trackEvent`, `trackGA4Event` and the page_view path are
+ * untouched and keep their sanitized page context.
+ */
+function trackFreeCheckEvent(eventName: string, params: Record<string, unknown>): void {
+  if (typeof window === "undefined" || !window.gtag) return
+  window.gtag("event", eventName, sanitizeGaEventParams(params))
+  if (process.env.NODE_ENV === "development") {
+    console.log("[Analytics]", eventName, params)
+  }
+}
+
+/**
  * Pre-configured analytics events for OverTaxed
  */
 export const analytics = {
@@ -138,7 +165,7 @@ export const analytics = {
    */
   freeCheckStarted: (params: { surface: FreeCheckSurface; inputMode: FreeCheckInputMode }) => {
     safely(() => {
-      trackEvent("free_check_started", {
+      trackFreeCheckEvent("free_check_started", {
         surface: params.surface,
         input_mode: params.inputMode,
       })
@@ -164,7 +191,7 @@ export const analytics = {
       })
       if (!derived) return
 
-      trackEvent("free_check_completed", { surface: params.surface, ...derived })
+      trackFreeCheckEvent("free_check_completed", { surface: params.surface, ...derived })
 
       if (!derived.qualified) return
       const { qualified: _qualified, ...outcomeParams } = derived
@@ -181,7 +208,7 @@ export const analytics = {
       // the signal such a value must not be joined to. Campaign attribution for
       // this funnel belongs to the session's own page_view, which GA4 already
       // records against a sanitized page_location.
-      trackEvent("free_check_qualified", {
+      trackFreeCheckEvent("free_check_qualified", {
         surface: params.surface,
         ...outcomeParams,
       })

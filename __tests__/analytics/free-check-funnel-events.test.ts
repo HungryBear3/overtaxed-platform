@@ -177,9 +177,10 @@ describe("free-check funnel transport", () => {
     })
 
     for (const call of gtag.mock.calls) {
+      expect(call[2]).not.toHaveProperty("page_location")
+      expect(call[2]).not.toHaveProperty("page_referrer")
       for (const [key, value] of Object.entries(call[2] as Record<string, unknown>)) {
         expect(["string", "boolean", "number"]).toContain(typeof value)
-        if (key === "page_location" || key === "page_referrer") continue
         if (typeof value === "string") {
           expect(value).not.toContain("?")
           expect(value).not.toContain("#")
@@ -188,14 +189,14 @@ describe("free-check funnel transport", () => {
     }
   })
 
-  it("keeps page_location and page_referrer at origin+pathname", () => {
+  it("omits page_location and page_referrer entirely", () => {
     window.history.replaceState({}, "", "/check?pin=16012160010000#result")
 
     analytics.freeCheckStarted({ surface: "check_page", inputMode: "pin" })
 
     const params = eventsNamed("free_check_started")[0][2] as Record<string, string>
-    expect(params.page_location).toBe("http://localhost/check")
-    expect(params.page_location).not.toContain("16012160010000")
+    expect(params).not.toHaveProperty("page_location")
+    expect(params).not.toHaveProperty("page_referrer")
   })
 
   it("does not throw into the caller when the vendor boundary throws", () => {
