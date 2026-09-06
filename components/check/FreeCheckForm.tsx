@@ -2,6 +2,8 @@
 
 import { useState, useRef, useCallback } from "react"
 import type { Result } from "./FreeCheckResult"
+import { analytics } from "@/lib/analytics/events"
+import { isPreviewFreeCheckResponse } from "@/lib/analytics/free-check-funnel"
 
 /**
  * One public-record match offered back when an address resolves to more than
@@ -139,6 +141,16 @@ export function FreeCheckForm({ onResult, onReset }: Props) {
       }
       setCandidates([])
       setCandidateTotal(0)
+      // One completion per authoritative result, emitted from the response the
+      // renderer is about to be handed — not from what ends up on screen. The
+      // outcome tuple is passed through untouched so the funnel derives
+      // qualification from the same evaluation the page renders.
+      analytics.freeCheckCompleted({
+        surface: "check_page",
+        outcome: data?.outcome,
+        windowStatus: data?.appealWindowStatus?.status,
+        preview: isPreviewFreeCheckResponse(data),
+      })
       onResult(data)
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
@@ -164,6 +176,10 @@ export function FreeCheckForm({ onResult, onReset }: Props) {
       setError("Enter at least 5 characters of your street address.")
       return
     }
+    // After validation, so a rejected form is not a start. Picking a parcel from
+    // the ambiguity list calls `runCheck` directly and is deliberately not
+    // counted again: it finishes the check this submission began.
+    analytics.freeCheckStarted({ surface: "check_page", inputMode: mode })
     await runCheck()
   }
 

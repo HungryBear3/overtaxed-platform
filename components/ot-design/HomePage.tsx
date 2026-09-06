@@ -405,22 +405,17 @@ function HeroCheckCard({
         const isPreview = Boolean(data?.preview || data?.mode === "preview_noop" || data?.source === "preview-noop");
         const normalized = normalizeCheckResult(data?.result ?? data, isPreview, submittedInput);
         onResult(normalized);
-        // Absent data is null and stays null. A qualified event carries a real
-        // township and a real dollar figure or it is not sent; nothing here
-        // substitutes a placeholder to satisfy the event shape.
-        if (
-          !normalized.preview &&
-          normalized.township !== null &&
-          normalized.overpayPerYear !== null &&
-          normalized.overpayPerYear > 0
-        ) {
-          analytics.freeCheckQualified({
-            township: normalized.township,
-            windowStatus: normalized.windowStatus,
-            estimatedAnnualSavings: normalized.overpayPerYear,
-            preview: false,
-          });
-        }
+        // Qualification is read off the route's evaluated outcome, which
+        // `normalizeCheckResult` has already refused to accept unless the shared
+        // matrix recognizes it. It used to be inferred here from a positive
+        // `overpayPerYear` — a figure the route now computes on no path and
+        // sends as null, so the inference had quietly stopped firing at all.
+        analytics.freeCheckCompleted({
+          surface: "home_hero",
+          outcome: normalized.outcome,
+          windowStatus: normalized.windowStatus,
+          preview: normalized.preview === true,
+        });
       } catch {
         setLoading(false);
         onResult(null);
@@ -433,9 +428,12 @@ function HeroCheckCard({
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
+      // One start per submission. Selecting a parcel from the ambiguity list
+      // calls `runCheck` directly and is not counted again.
+      analytics.freeCheckStarted({ surface: "home_hero", inputMode: mode });
       await runCheck();
     },
-    [runCheck],
+    [runCheck, mode],
   );
 
   if (result) {

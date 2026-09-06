@@ -3,6 +3,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { buildTickerItems, TICKER_STANDING_ITEM, TOWNSHIPS } from "@/lib/townships";
 import { CC_18 } from "@/lib/copy/canonical";
+import { analytics } from "@/lib/analytics/events";
+import { isPreviewFreeCheckResponse } from "@/lib/analytics/free-check-funnel";
 
 // Public-contact constants used by SiteChrome (footer text, contact CTAs).
 // Personal-name attribution is intentionally NOT in this shared chrome
@@ -305,6 +307,11 @@ export function StickyAddressBar() {
     if (loading || !addr.trim()) return;
     setInlineError("");
     setLoading(true);
+    // The sticky bar is a third entry point into the same route, so it counts
+    // its own start. The homepage listener that renders the dispatched result
+    // deliberately counts nothing — instrumenting there instead would also
+    // count every check the hero card runs.
+    analytics.freeCheckStarted({ surface: "sticky_bar", inputMode: "address" });
     try {
       const submittedInput = addr.trim();
       const res = await fetch("/api/free-check", {
@@ -320,6 +327,13 @@ export function StickyAddressBar() {
           detail: { error: message, submittedInput },
         }));
       } else {
+        const payload = data?.result ?? data;
+        analytics.freeCheckCompleted({
+          surface: "sticky_bar",
+          outcome: payload?.outcome,
+          windowStatus: payload?.appealWindowStatus?.status,
+          preview: isPreviewFreeCheckResponse(data) || isPreviewFreeCheckResponse(payload),
+        });
         window.dispatchEvent(new CustomEvent("ot:free-check-result", {
           detail: {
             result: data?.result ?? data,

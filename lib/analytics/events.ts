@@ -7,6 +7,25 @@ import { trackMetaEvent, trackMetaCustomEvent } from "@/components/analytics/met
 import { trackGoogleAdsConversion } from "@/components/analytics/google-analytics"
 import { buildSanitizedPageContext, sanitizeGaEventParams } from "./ga4"
 import { getStoredUTMParams } from "./utm-tracking"
+import {
+  deriveFreeCheckOutcomeParams,
+  type FreeCheckInputMode,
+  type FreeCheckSurface,
+} from "./free-check-funnel"
+
+/**
+ * Measurement is never load-bearing. The free-check surfaces call these from
+ * inside the handler that renders a result and unlocks checkout, so a throwing
+ * tag manager, a blocked script, or a hostile `window.gtag` must not become an
+ * exception on the path that shows the reader their outcome.
+ */
+function safely(emit: () => void): void {
+  try {
+    emit()
+  } catch {
+    // Analytics failure is not the reader's problem and must not surface as one.
+  }
+}
 
 export function trackGA4Event(eventName: string, params?: Record<string, unknown>): void {
   if (typeof window !== "undefined" && window.gtag) {
@@ -20,6 +39,33 @@ export function trackGA4Event(eventName: string, params?: Record<string, unknown
 
 export function trackEvent(eventName: string, params?: Record<string, unknown>): void {
   trackGA4Event(eventName, params)
+  if (process.env.NODE_ENV === "development") {
+    console.log("[Analytics]", eventName, params)
+  }
+}
+
+/**
+ * The free-check funnel's own GA4 boundary. One `gtag` call, no page context.
+ *
+ * `trackGA4Event` merges `buildSanitizedPageContext`, which resolves the
+ * referrer to `origin + pathname`. That drops the query and hash but keeps the
+ * path — and a path is free text someone else wrote. A referrer of
+ * `https://partner.example.com/clients/jane-doe-100-w-randolph` sanitizes to
+ * itself, so the generic helper would attach a name and a street address to an
+ * event that states a specific identified parcel qualified.
+ *
+ * The funnel therefore sends no browser URL or referrer context at all. It
+ * still passes through `sanitizeGaEventParams`, so the blocked-key list and the
+ * primitives-only rule continue to apply to the bounded params themselves; with
+ * no `page_location`/`page_referrer` present there is nothing for the
+ * sanitizer's URL-rewriting branch to preserve.
+ *
+ * Deliberately narrow: `trackEvent`, `trackGA4Event` and the page_view path are
+ * untouched and keep their sanitized page context.
+ */
+function trackFreeCheckEvent(eventName: string, params: Record<string, unknown>): void {
+  if (typeof window === "undefined" || !window.gtag) return
+  window.gtag("event", eventName, sanitizeGaEventParams(params))
   if (process.env.NODE_ENV === "development") {
     console.log("[Analytics]", eventName, params)
   }
@@ -109,32 +155,63 @@ export const analytics = {
     trackMetaCustomEvent("DeadlineFreeCheckStart", { source: params.source })
   },
 
-  freeCheckQualified: ({
-    township,
-    windowStatus,
-    estimatedAnnualSavings,
-    preview,
-  }: {
-    township: string
-    windowStatus: string
-    estimatedAnnualSavings: number
+  /**
+   * One user-initiated free check. Fired from the submit handler after the
+   * surface's own validation passes, so a rejected form contributes no start.
+   *
+   * Picking a parcel from the ambiguity list is not a second start: it resolves
+   * the check the reader already began, and counting it again would report two
+   * starts for one intent.
+   */
+  freeCheckStarted: (params: { surface: FreeCheckSurface; inputMode: FreeCheckInputMode }) => {
+    safely(() => {
+      trackFreeCheckEvent("free_check_started", {
+        surface: params.surface,
+        input_mode: params.inputMode,
+      })
+    })
+  },
+
+  /**
+   * One authoritative result. `free_check_qualified` is emitted from the same
+   * derivation rather than from a separate call, so the two can never disagree
+   * about a single result and no call site can emit one without the other.
+   */
+  freeCheckCompleted: (params: {
+    surface: FreeCheckSurface
+    outcome: unknown
+    windowStatus: unknown
     preview: boolean
   }) => {
-    const utm = getStoredUTMParams() ?? {}
-    const savingsBand =
-      estimatedAnnualSavings >= 2000
-        ? "2000_plus"
-        : estimatedAnnualSavings >= 1000
-          ? "1000_1999"
-          : estimatedAnnualSavings > 0
-            ? "1_999"
-            : "none"
-    trackEvent("free_check_qualified", {
-      township,
-      window_status: windowStatus,
-      savings_band: savingsBand,
-      preview,
-      ...utm,
+    safely(() => {
+      const derived = deriveFreeCheckOutcomeParams({
+        outcome: params.outcome,
+        windowStatus: params.windowStatus,
+        preview: params.preview,
+      })
+      if (!derived) return
+
+      trackFreeCheckEvent("free_check_completed", { surface: params.surface, ...derived })
+
+      if (!derived.qualified) return
+      const { qualified: _qualified, ...outcomeParams } = derived
+      // Deliberately no stored UTM enrichment.
+      //
+      // `getStoredUTMParams` JSON-parses the `utm_params` localStorage key and
+      // returns it with no key allow-list, no length bound and no content
+      // check. Its values arrive as URL query parameters, so a crafted link — or
+      // anything else that can write localStorage — chooses them. An address, an
+      // email or a PIN carries neither `?` nor `#`, so `sanitizeGaEventParams`
+      // has no handle on it and would forward it verbatim.
+      //
+      // This event states that an identified parcel qualified, which is exactly
+      // the signal such a value must not be joined to. Campaign attribution for
+      // this funnel belongs to the session's own page_view, which GA4 already
+      // records against a sanitized page_location.
+      trackFreeCheckEvent("free_check_qualified", {
+        surface: params.surface,
+        ...outcomeParams,
+      })
     })
   },
 }
