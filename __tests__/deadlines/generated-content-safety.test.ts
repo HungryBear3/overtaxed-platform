@@ -67,7 +67,13 @@ describe("the HOA resident artifacts are no longer public", () => {
   })
 
   it("no rewrite, redirect, or route can reconstruct the path", () => {
-    for (const config of ["next.config.ts", "next.config.mjs"]) {
+    // Every filename Next would resolve, not a fixed pair: the repo carries one
+    // config, and naming a second here made this guard depend on the duplicate.
+    const configs = ["next.config.js", "next.config.mjs", "next.config.ts", "next.config.mts"].filter((name) =>
+      existsSync(join(ROOT, name)),
+    )
+    expect(configs.length).toBeGreaterThan(0)
+    for (const config of configs) {
       const src = readFileSync(join(ROOT, config), "utf8")
       expect(src).not.toMatch(/rewrites|redirects/)
       expect(src).not.toContain("resources")
