@@ -10,6 +10,9 @@
  * This test focuses on guard #2 — the orchestrator itself.
  */
 
+import type { put as BlobPut } from "@vercel/blob"
+import type { generateAppealSummaryPdf as GenerateAppealSummaryPdf } from "@/lib/document-generation/appeal-summary"
+
 type MockInvoice = {
   id: string
   userId: string
@@ -73,12 +76,16 @@ jest.mock("@/lib/db", () => ({
   },
 }))
 
-const putMock = jest.fn(async (pathname: string) => ({ url: `https://blob.example.com/${pathname}` }))
-jest.mock("@vercel/blob", () => ({ put: (...args: unknown[]) => putMock(...args) }))
+const putMock = jest.fn<Promise<{ url: string }>, Parameters<typeof BlobPut>>(async (pathname) => ({
+  url: `https://blob.example.com/${pathname}`,
+}))
+jest.mock("@vercel/blob", () => ({ put: (...args: Parameters<typeof BlobPut>) => putMock(...args) }))
 
-const pdfMock = jest.fn(async () => new Uint8Array([37, 80, 68, 70]))
+const pdfMock = jest.fn<Promise<Uint8Array>, Parameters<typeof GenerateAppealSummaryPdf>>(
+  async () => new Uint8Array([37, 80, 68, 70]),
+)
 jest.mock("@/lib/document-generation/appeal-summary", () => ({
-  generateAppealSummaryPdf: (...args: unknown[]) => pdfMock(...args),
+  generateAppealSummaryPdf: (...args: Parameters<typeof GenerateAppealSummaryPdf>) => pdfMock(...args),
 }))
 
 const buildInputsMock = jest.fn()
