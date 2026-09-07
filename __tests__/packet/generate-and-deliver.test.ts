@@ -7,6 +7,12 @@
  * is cheaper and more reliable than a live DB test.
  */
 
+import type {
+  sendPacketFailureAlert as SendPacketFailureAlert,
+  sendPacketManualReviewAlert as SendPacketManualReviewAlert,
+  sendPacketReadyEmail as SendPacketReadyEmail,
+} from "@/lib/email/send"
+
 type MockInvoice = {
   id: string
   userId: string
@@ -15,6 +21,9 @@ type MockInvoice = {
   propertyId: string | null
   packetStatus: string
   packetAppealId: string | null
+  // Written by the orchestrator on FAILED / MANUAL_REVIEW; nullable in Prisma
+  // (`packetLastError String?`) and absent on a freshly seeded row.
+  packetLastError?: string | null
   user: { email: string | null }
 }
 
@@ -92,13 +101,16 @@ jest.mock("@/lib/document-generation/appeal-summary", () => ({
 }))
 
 // Email helpers — observe calls
-const sendReadyMock = jest.fn(async () => true)
-const sendManualReviewMock = jest.fn(async () => true)
-const sendFailureMock = jest.fn(async () => true)
+const sendReadyMock = jest.fn<Promise<boolean>, Parameters<typeof SendPacketReadyEmail>>(async () => true)
+const sendManualReviewMock = jest.fn<Promise<boolean>, Parameters<typeof SendPacketManualReviewAlert>>(
+  async () => true,
+)
+const sendFailureMock = jest.fn<Promise<boolean>, Parameters<typeof SendPacketFailureAlert>>(async () => true)
 jest.mock("@/lib/email/send", () => ({
-  sendPacketReadyEmail: (...args: unknown[]) => sendReadyMock(...args),
-  sendPacketManualReviewAlert: (...args: unknown[]) => sendManualReviewMock(...args),
-  sendPacketFailureAlert: (...args: unknown[]) => sendFailureMock(...args),
+  sendPacketReadyEmail: (...args: Parameters<typeof SendPacketReadyEmail>) => sendReadyMock(...args),
+  sendPacketManualReviewAlert: (...args: Parameters<typeof SendPacketManualReviewAlert>) =>
+    sendManualReviewMock(...args),
+  sendPacketFailureAlert: (...args: Parameters<typeof SendPacketFailureAlert>) => sendFailureMock(...args),
 }))
 
 import { generatePacketForInvoice } from "@/lib/packet/generate-and-deliver"
@@ -187,8 +199,13 @@ describe("generatePacketForInvoice — weak data (MANUAL_REVIEW, not fake succes
     const r = await generatePacketForInvoice("inv_1")
     expect(r.ok).toBe(false)
     if (!r.ok) {
+      // `!r.ok` still spans MANUAL_REVIEW | FAILED; only the status discriminant
+      // narrows to the member carrying `reason`. The toBe above is what fails
+      // loudly if the status is ever wrong.
       expect(r.status).toBe("MANUAL_REVIEW")
-      expect(r.reason).toMatch(/minimum 3/i)
+      if (r.status === "MANUAL_REVIEW") {
+        expect(r.reason).toMatch(/minimum 3/i)
+      }
     }
     const final = mockDb.invoicesById.get("inv_1")
     expect(final?.packetStatus).toBe("MANUAL_REVIEW")
@@ -273,7 +290,9 @@ describe("generatePacketForInvoice — generation error", () => {
     expect(r.ok).toBe(false)
     if (!r.ok) {
       expect(r.status).toBe("FAILED")
-      expect(r.error).toMatch(/Realie timeout/)
+      if (r.status === "FAILED") {
+        expect(r.error).toMatch(/Realie timeout/)
+      }
     }
     expect(sendFailureMock).toHaveBeenCalledWith("owner@example.com", "inv_1", expect.stringMatching(/Realie timeout/))
     const final = mockDb.invoicesById.get("inv_1")

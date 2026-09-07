@@ -3,11 +3,16 @@
  * attachment is only used when bytes are present.
  */
 
+import type { CreateEmailOptions } from "resend"
+
 // Mock Resend at the transport layer so the real send.ts code path runs and
 // we can assert the exact payload the helpers build.
-const resendSendMock = jest.fn(async () => ({ data: { id: "rs_1" }, error: null }))
+const resendSendMock = jest.fn<
+  Promise<{ data: { id: string }; error: null }>,
+  [payload: CreateEmailOptions]
+>(async () => ({ data: { id: "rs_1" }, error: null }))
 jest.mock("@/lib/email/resend", () => ({
-  resend: { emails: { send: (args: unknown) => resendSendMock(args) } },
+  resend: { emails: { send: (payload: CreateEmailOptions) => resendSendMock(payload) } },
   FROM_EMAIL: "from@example.com",
 }))
 

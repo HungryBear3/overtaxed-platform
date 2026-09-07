@@ -1,14 +1,17 @@
 /** @jest-environment node */
 /** Route safety: require webhook secret outside dev/test and reject bad signatures. */
 
+import type { extractProviderEventId as ExtractProviderEventId } from "@/lib/outreach/webhooks"
+
 const ingestResendEvent = jest.fn()
-const extractProviderEventId = jest.fn(() => "evt_1")
+const extractProviderEventId = jest.fn<string, Parameters<typeof ExtractProviderEventId>>(() => "evt_1")
 const getOutreachWebhookSecret = jest.fn()
 const shouldRequireOutreachWebhookSecret = jest.fn()
 const verifyResendSignature = jest.fn()
 
 jest.mock("@/lib/outreach/webhooks", () => ({
-  extractProviderEventId: (...args: unknown[]) => extractProviderEventId(...args),
+  extractProviderEventId: (...args: Parameters<typeof ExtractProviderEventId>) =>
+    extractProviderEventId(...args),
   ingestResendEvent: (...args: unknown[]) => ingestResendEvent(...args),
   getOutreachWebhookSecret: () => getOutreachWebhookSecret(),
   shouldRequireOutreachWebhookSecret: () => shouldRequireOutreachWebhookSecret(),

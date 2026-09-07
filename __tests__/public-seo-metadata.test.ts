@@ -8,7 +8,6 @@
 
 import fs from "fs";
 import path from "path";
-import { describe, expect, test } from "@jest/globals";
 import sitemap from "../app/sitemap";
 
 const SITE_URL = "https://www.overtaxed-il.com";

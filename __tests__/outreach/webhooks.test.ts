@@ -19,9 +19,23 @@ function cloneRows(rows: Row[]): Row[] {
   return rows.map((row) => ({ ...row }))
 }
 
+/** Only the delegates the webhook ingest path actually touches. */
+type MockPrisma = {
+  $transaction: jest.Mock
+  outreachWebhookEvent: { create: jest.Mock; updateMany: jest.Mock }
+  outreachSend: {
+    findUnique: jest.Mock
+    findFirst: jest.Mock
+    update: jest.Mock
+    count: jest.Mock
+  }
+  outreachSuppression: { create: jest.Mock; findFirst: jest.Mock }
+  outreachCampaign: { update: jest.Mock }
+}
+
 jest.mock("@/lib/db", () => {
-  const prisma = {
-    $transaction: jest.fn(async (callback: (tx: typeof prisma) => unknown) => {
+  const prisma: MockPrisma = {
+    $transaction: jest.fn(async (callback: (tx: MockPrisma) => unknown) => {
       const snapshot = {
         webhookEvents: cloneMap(db.webhookEvents),
         sends: cloneMap(db.sends),

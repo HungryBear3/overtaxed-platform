@@ -4,7 +4,12 @@
  * Packet storage abstraction — private vs public-fallback access modes.
  */
 
-const putMock = jest.fn(async (_pathname: string, _bytes: Buffer, opts: { access: string }) => ({
+// Mirrors the option object storePacket actually hands to @vercel/blob's put().
+const putMock = jest.fn(async (
+  _pathname: string,
+  _bytes: Buffer,
+  opts: { access: string; contentType: string; addRandomSuffix: boolean; token: string },
+) => ({
   url: `https://store.${opts.access}.blob.vercel-storage.com/${_pathname}`,
   pathname: _pathname,
 }))

@@ -91,7 +91,12 @@ export async function GET(
   }
 
   const filename = `overtaxed-appeal-packet-${invoice.invoiceNumber}.pdf`
-  return new NextResponse(buf, {
+  // `BodyInit` wants a `Uint8Array<ArrayBuffer>`; a Node `Buffer` is a
+  // `Uint8Array<ArrayBufferLike>` and does not satisfy it. Copy through the
+  // view — `new Uint8Array(buf)` respects `byteOffset`/`byteLength`, so a
+  // pooled Buffer yields exactly the packet bytes and never the surrounding
+  // pool. (`new Uint8Array(buf.buffer)` would serve the whole pool.)
+  return new NextResponse(new Uint8Array(buf), {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
