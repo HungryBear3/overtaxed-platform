@@ -53,3 +53,20 @@ export function t2ArtifactBindingEnabled(
 ): boolean {
   return env[OT_T2_ARTIFACT_BINDING_FLAG] === "true"
 }
+
+/**
+ * Independent default-off gate for Phase 1 confirmation-email delivery
+ * evidence writes on the paid OT settlement path. Deliberately NOT folded into
+ * the T2 write gate above (already "true" in Production): migration, deploy,
+ * and activation stay separately reviewed steps. While off, the webhook's
+ * confirmation-email behavior is exactly the legacy fire-and-forget path.
+ * Promotion gate: enable only after the migration is applied and evidence
+ * writes are observed no-op-safe in Preview.
+ */
+export const OT_CONFIRMATION_EVIDENCE_FLAG = "OT_CONFIRMATION_EVIDENCE_ENABLED"
+
+export function confirmationEvidenceWritesEnabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return env[OT_CONFIRMATION_EVIDENCE_FLAG] === "true"
+}
