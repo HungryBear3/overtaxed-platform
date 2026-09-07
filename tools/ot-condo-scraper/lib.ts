@@ -1,13 +1,20 @@
 // Pure helpers for the OT condo scraper. No DB, no network. Tests target this
 // module so the runner script (scrape.ts) can stay imperative.
 
+// Type-only import — erased at build time, so this module stays runtime-free.
+import type { Prisma } from '@prisma/client';
+
 export const ROLE_ADDRESS_RE =
   /^(info|admin|contact|board|help|support|postmaster|noreply|no-reply)@/i;
 
 export const PROPERTY_MANAGER_NAME_RE =
   /\b(mgmt|management|associates|llc|inc|co\.|corp|properties|realty|holdings)\b/i;
 
-export interface RealieCondoRow {
+// Declared as a type alias, not an interface, so it carries an implicit index
+// signature and TypeScript can check it structurally against
+// `Prisma.InputJsonObject` — that is what proves every field is valid JSON
+// instead of asserting it with a cast.
+export type RealieCondoRow = {
   id?: string;
   address?: string;
   buildingName?: string | null;
@@ -21,7 +28,7 @@ export interface RealieCondoRow {
   ownerEmail?: string | null;
   source?: string;
   sourceUrl?: string;
-}
+};
 
 export interface MappedProspect {
   buildingName: string | null;
@@ -32,7 +39,9 @@ export interface MappedProspect {
   boardEmailLowercase: string;
   sourceUrl: string;
   rowStatus: 'ok' | 'needs_review' | 'rejected';
-  rawPayload: Record<string, unknown>;
+  /** Written straight to the `raw_payload` Json column, so it has to be a
+   *  Prisma JSON input value at this point — not merely an object. */
+  rawPayload: Prisma.InputJsonObject;
   diagnostics: { roleAddress: boolean; propertyManagerSuspected: boolean; reason?: string };
 }
 
@@ -78,7 +87,7 @@ export function mapRealieRow(row: RealieCondoRow): MappedProspect | null {
     boardEmailLowercase: lc,
     sourceUrl: row.sourceUrl ?? '',
     rowStatus,
-    rawPayload: row as unknown as Record<string, unknown>,
+    rawPayload: row,
     diagnostics: { roleAddress, propertyManagerSuspected, ...(reason ? { reason } : {}) },
   };
 }

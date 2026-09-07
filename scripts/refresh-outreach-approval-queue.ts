@@ -2,7 +2,29 @@ import { readFileSync } from "node:fs"
 import { prisma } from "../lib/db"
 import defaultSnapshot from "../data/outreach/approval-snapshot.json"
 
-type SnapshotPacket = typeof defaultSnapshot.packets[number]
+// Declared explicitly rather than inferred from the checked-in snapshot.
+// `typeof defaultSnapshot.packets[number]` only describes the rows that happen
+// to be in the file today, so `blockers` and `replySnippet` — optional in the
+// schema and absent from most rows — are unrepresentable there.
+type SnapshotPacket = {
+  id: string
+  status: string
+  organization: string
+  contact: string
+  role: string
+  township: string
+  units: number
+  channel: string
+  subject: string
+  summary: string
+  ownerCountNote: string
+  draftedBy: string
+  updated: string
+  risk: string
+  body: string[]
+  blockers?: string[]
+  replySnippet?: string
+}
 
 type Snapshot = {
   source?: string
