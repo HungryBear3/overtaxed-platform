@@ -17,7 +17,13 @@ import { parse, stringify } from "yaml"
 const root = process.cwd()
 const WORKFLOW = ".github/workflows/ci.yml"
 
-type Step = { name?: string; uses?: string; run?: string; env?: Record<string, unknown> }
+type Step = {
+  name?: string
+  uses?: string
+  run?: string
+  env?: Record<string, unknown>
+  with?: Record<string, unknown>
+}
 type Job = { "runs-on"?: string; steps?: Step[]; env?: Record<string, unknown> }
 type Workflow = {
   on?: Record<string, unknown>
@@ -87,6 +93,11 @@ describe("CI workflow", () => {
   })
 
   describe("gates", () => {
+    it("uses Node 24 because Prisma 7 requires Node 22.12 or newer and Vercel production runs 24", () => {
+      const setupNode = steps().find((step) => step.uses === "actions/setup-node@v4")
+      expect(setupNode?.with?.["node-version"]).toBe("24")
+    })
+
     it("installs from the committed lockfile with `npm ci`", () => {
       // `npm ci` is the install that refuses to run when package-lock.json and
       // package.json disagree, and that rebuilds node_modules from the lockfile
@@ -138,8 +149,57 @@ describe("CI workflow", () => {
       expect(effectiveSource()).not.toMatch(/DATABASE_URL/)
     })
 
-    it("runs no database migration", () => {
-      expect(commands().filter((c) => /prisma\s+migrate|db:(migrate|push|reset)/.test(c))).toEqual([])
+    it("triggers on pull_request and never on pull_request_target", () => {
+      // pull_request_target runs in the BASE repository's context: it gets a
+      // writable token and access to secrets, while the ref being tested is
+      // the fork's. Combined with a checkout of the PR head that is arbitrary
+      // code execution with the repository's own credentials. A gate that runs
+      // untrusted contributor code must stay on pull_request.
+      const triggers = Object.keys(workflow().on ?? {})
+      expect(triggers).toContain("pull_request")
+      expect(triggers).not.toContain("pull_request_target")
+    })
+
+    it("checks out without leaving credentials behind in the git config", () => {
+      // actions/checkout persists the token into .git/config by default, where
+      // every later step — including anything a dependency's lifecycle script
+      // reaches — can reuse it to push. Nothing here writes to the repository,
+      // so the credential should not outlive the checkout.
+      const checkouts = steps().filter((step) => step.uses?.startsWith("actions/checkout"))
+      expect(checkouts).not.toHaveLength(0)
+      for (const checkout of checkouts) {
+        expect(checkout.with?.["persist-credentials"]).toBe(false)
+      }
+    })
+
+    it("uses only the first-party actions this gate needs", () => {
+      // An allowlist rather than a denylist: a third-party action is opaque
+      // code running with the job's token, and a deploy or publish action
+      // smuggled in as a `uses:` would bypass every `run:`-based check below.
+      const allowed = ["actions/checkout", "actions/setup-node"]
+      const used = steps().flatMap((step) => (step.uses ? [step.uses] : []))
+      expect(used).not.toHaveLength(0)
+      expect(used.filter((ref) => !allowed.includes(ref.split("@")[0]))).toEqual([])
+    })
+
+    it("runs no database migration or schema mutation", () => {
+      // Broader than `prisma migrate`, because that is only the spelling this
+      // repo happens to use: every one of these mutates a live schema, and
+      // package.json defines db:migrate, db:push and db:reset as one-word paths
+      // to exactly that.
+      const migration =
+        /prisma\s+(migrate|db\s+(push|execute|seed|pull))|migrate\s+(deploy|dev|reset|resolve)|\bdb:(migrate|push|reset|baseline)\b|enforce-rls/
+      expect(commands().filter((command) => migration.test(command))).toEqual([])
+    })
+
+    it("invokes no database, provider or deployment CLI", () => {
+      // The gate builds and tests; it never reaches a running service. `npm ci`
+      // legitimately talks to the registry, so this targets the specific tools
+      // that would touch a database, a vendor account, or a deployment — not
+      // network access in general.
+      const services =
+        /\b(psql|pg_dump|pg_restore|mysql|redis-cli|supabase|vercel|netlify|fly|heroku|stripe|resend|sendgrid|aws|gcloud|az|docker|ssh|scp|gh)\s/
+      expect(commands().filter((command) => services.test(command))).toEqual([])
     })
 
     it("grants the workflow read-only access to the repository", () => {

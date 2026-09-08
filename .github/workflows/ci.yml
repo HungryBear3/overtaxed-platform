@@ -29,14 +29,16 @@ jobs:
         with:
           persist-credentials: false
 
-      # The Node floor is the intersection of the engines ranges recorded in
-      # package-lock.json: next >=20.9.0, prisma ^20.19 || ^22.12 || >=24,
-      # jest ^18.14 || ^20 || ^22 || >=24. The repo pins no version of its own —
-      # there is no .nvmrc and no engines field — so this is the pin.
+      # Every engines range in package-lock.json admits 24: next >=20.9.0,
+      # prisma ^20.19 || ^22.12 || >=24, jest ^18.14 || ^20 || ^22 || >=24.
+      # The repo pins no version of its own — no .nvmrc, no engines field — so
+      # this is the pin, and it is 24 to match the Node that Vercel runs in
+      # production. A gate on an older major certifies a runtime nothing
+      # deploys on.
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
           cache-dependency-path: package-lock.json
 
