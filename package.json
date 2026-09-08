@@ -90,6 +90,7 @@
     "tailwindcss": "^4",
     "ts-jest": "^29.4.6",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "yaml": "^2.8.2"
   }
 }

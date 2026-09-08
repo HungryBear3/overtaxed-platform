@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  verify:
+    name: build · type-check · test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Every engines range in package-lock.json admits 24: next >=20.9.0,
+      # prisma ^20.19 || ^22.12 || >=24, jest ^18.14 || ^20 || ^22 || >=24.
+      # The repo pins no version of its own — no .nvmrc, no engines field — so
+      # this is the pin, and it is 24 to match the Node that Vercel runs in
+      # production. A gate on an older major certifies a runtime nothing
+      # deploys on.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # `npm ci` is the install that refuses to run when package-lock.json and
+      # package.json disagree. Its postinstall hook runs `prisma generate`,
+      # which is what makes the suites importing @prisma/client runnable.
+      - name: Install
+        run: npm ci
+
+      # package.json -> scripts/build-with-migrate-retry.mjs, which runs
+      # `prisma generate` then `next build` and deliberately runs no migration.
+      # Since next.config.mjs stopped setting typescript.ignoreBuildErrors, this
+      # step is also the type gate for everything the build graph reaches.
+      - name: Build
+        run: npm run build
+
+      # Widens the type gate past the build graph: tsconfig.json includes
+      # **/*.ts, so this also covers __tests__/ and tools/, which .vercelignore
+      # keeps out of Vercel uploads and which therefore no deploy type-checks.
+      #
+      # Ordered after Build so the gitignored next-env.d.ts exists first. That
+      # ordering is insurance, not a requirement: `tsc --noEmit` was verified to
+      # pass on a cold tree with neither .next nor next-env.d.ts present, so the
+      # steps can be swapped if a faster first failure is ever worth more.
+      - name: Type-check
+        run: npm run type-check
+
+      # No step in this job binds an environment variable, and none needs to.
+      # `prisma generate` falls back to a placeholder URL when DATABASE_URL is
+      # unset (prisma.config.ts) and no page reads the database while
+      # prerendering, so the build runs without one. Each suite assigns the
+      # variables it needs, and the four PostgreSQL suites skip themselves
+      # unless TEST_DATABASE_URL is set — setting it here would silently switch
+      # on four suites that require a disposable live database.
+      - name: Test
+        run: npm test -- --ci --maxWorkers=2
