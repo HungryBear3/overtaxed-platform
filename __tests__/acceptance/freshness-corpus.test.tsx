@@ -36,6 +36,12 @@ import type { TownshipResolution } from "@/lib/deadlines/township-resolution"
 import { expectNoBannedClaim, readable } from "../lexicon/banned-claims.test"
 import { readAcceptanceMatrix } from "../helpers/governance-fixtures.test"
 
+jest.mock("@/data/deadlines/cook-county.json", () => ({
+  schemaVersion: 1,
+  synthetic: true,
+  sources: {},
+  townships: {},
+}))
 
 type AcceptedRoute = {
   accepted_path_id: number
@@ -67,14 +73,29 @@ const CLOSES_TODAY = /closes today/i
 const PLACEHOLDER_YEAR = /1900/
 
 function expectNoUnverifiedDeadlineClaim(html: string, where: string) {
-  expect({ where, matched: DATE_CLAIM.test(html) }).toEqual({ where, matched: false })
-  expect({ where, matched: ISO_DATE.test(html) }).toEqual({ where, matched: false })
-  expect({ where, matched: COUNTDOWN.test(html) }).toEqual({ where, matched: false })
-  expect({ where, matched: CLOSES_TODAY.test(html) }).toEqual({ where, matched: false })
+  expect({ where, matched: DATE_CLAIM.test(html) }).toEqual({
+    where,
+    matched: false,
+  })
+  expect({ where, matched: ISO_DATE.test(html) }).toEqual({
+    where,
+    matched: false,
+  })
+  expect({ where, matched: COUNTDOWN.test(html) }).toEqual({
+    where,
+    matched: false,
+  })
+  expect({ where, matched: CLOSES_TODAY.test(html) }).toEqual({
+    where,
+    matched: false,
+  })
   // The committed snapshot's placeholder dates are in 1900. Their absence is
   // what proves the fixture did not leak through a surface that ignored the
   // synthetic flag.
-  expect({ where, matched: PLACEHOLDER_YEAR.test(html) }).toEqual({ where, matched: false })
+  expect({ where, matched: PLACEHOLDER_YEAR.test(html) }).toEqual({
+    where,
+    matched: false,
+  })
 }
 
 /**
@@ -90,9 +111,18 @@ function expectNoUnverifiedDeadlineClaim(html: string, where: string) {
 function expectNoCommerceOrReminder(html: string, where: string) {
   const text = readable(html)
 
-  expect({ where, matched: /\/checkout\?plan=/.test(html) }).toEqual({ where, matched: false })
-  expect({ where, matched: /DIY Appeal Packet \$69/.test(html) }).toEqual({ where, matched: false })
-  expect({ where, matched: /Done-For-You/.test(html) }).toEqual({ where, matched: false })
+  expect({ where, matched: /\/checkout\?plan=/.test(html) }).toEqual({
+    where,
+    matched: false,
+  })
+  expect({ where, matched: /DIY Appeal Packet \$69/.test(html) }).toEqual({
+    where,
+    matched: false,
+  })
+  expect({ where, matched: /Done-For-You/.test(html) }).toEqual({
+    where,
+    matched: false,
+  })
 
   // Reminder capture. Identified by intent, so a sign-in or contact field is
   // not mistaken for a deadline subscription.
@@ -134,10 +164,7 @@ describe("the accepted route corpus", () => {
     const blogs = ACCEPTED.filter((r) => r.path.startsWith("/blog/")).map((r) => r.path)
     const downloads = ACCEPTED.filter((r) => r.path.startsWith("/resources/")).map((r) => r.path)
     const unaccounted = ACCEPTED.filter(
-      (r) =>
-        !rendered.has(r.path) &&
-        !blogs.includes(r.path) &&
-        !downloads.includes(r.path),
+      (r) => !rendered.has(r.path) && !blogs.includes(r.path) && !downloads.includes(r.path),
     )
     expect(unaccounted.map((r) => r.path)).toEqual([])
     expect(blogs).toHaveLength(5)
@@ -150,25 +177,19 @@ describe("township pages publish no unverified deadline", () => {
 
   it("has one accepted row per township in the roster", () => {
     expect(townshipRows).toHaveLength(38)
-    expect(townshipRows.map((r) => r.path).sort()).toEqual(
-      TOWNSHIPS.map((t) => `/township/${t.slug}`).sort(),
-    )
+    expect(townshipRows.map((r) => r.path).sort()).toEqual(TOWNSHIPS.map((t) => `/township/${t.slug}`).sort())
   })
 
   it.each(TOWNSHIPS.map((t) => [t.slug] as const))(
     "/township/%s suppresses date, countdown, CTA, reminder and checkout together",
     async (slug) => {
-      const html = renderToStaticMarkup(
-        await TownshipPageRoute({ params: Promise.resolve({ slug }) } as never),
-      )
+      const html = renderToStaticMarkup(await TownshipPageRoute({ params: Promise.resolve({ slug }) } as never))
       expectNoUnverifiedDeadlineClaim(html, `/township/${slug}`)
       expectNoCommerceOrReminder(html, `/township/${slug}`)
 
       // Structured data is the copy a search engine republishes, and it is the
       // one a reader never sees us withdraw.
-      const scripts = [
-        ...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g),
-      ].map((m) => m[1])
+      const scripts = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) => m[1])
       for (const script of scripts) {
         expect(script).not.toContain('"@type":"Event"')
         expect(script).not.toContain("startDate")
@@ -180,7 +201,9 @@ describe("township pages publish no unverified deadline", () => {
   it.each(TOWNSHIPS.slice(0, 6).map((t) => [t.slug] as const))(
     "/township/%s metadata makes no deadline claim",
     async (slug) => {
-      const meta = await townshipMetadata({ params: Promise.resolve({ slug }) } as never)
+      const meta = await townshipMetadata({
+        params: Promise.resolve({ slug }),
+      } as never)
       const serialized = JSON.stringify(meta)
       expectNoUnverifiedDeadlineClaim(serialized, `/township/${slug} metadata`)
     },
@@ -194,7 +217,9 @@ describe("campaign landing pages", () => {
     // missing: 404ing an advertised URL leaves the reader who followed it with
     // nothing at all.
     const html = renderToStaticMarkup(
-      await CampaignPageRoute({ params: Promise.resolve({ slug: "west-chicago" }) } as never),
+      await CampaignPageRoute({
+        params: Promise.resolve({ slug: "west-chicago" }),
+      } as never),
     )
     expect(html.length).toBeGreaterThan(0)
     expectNoUnverifiedDeadlineClaim(html, "/appeal-deadline/west-chicago")
@@ -207,7 +232,9 @@ describe("campaign landing pages", () => {
     // pins which of the two dispositions it is — a pending campaign page for an
     // unapproved slug would be a page we never decided to publish.
     await expect(
-      CampaignPageRoute({ params: Promise.resolve({ slug: "rogers-park" }) } as never),
+      CampaignPageRoute({
+        params: Promise.resolve({ slug: "rogers-park" }),
+      } as never),
     ).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK;404/)
   })
 
@@ -215,10 +242,7 @@ describe("campaign landing pages", () => {
     const meta = await campaignMetadata({
       params: Promise.resolve({ slug: "west-chicago" }),
     } as never)
-    expectNoUnverifiedDeadlineClaim(
-      JSON.stringify(meta),
-      "/appeal-deadline/west-chicago metadata",
-    )
+    expectNoUnverifiedDeadlineClaim(JSON.stringify(meta), "/appeal-deadline/west-chicago metadata")
   })
 })
 
@@ -337,8 +361,14 @@ describe("committed blog artifacts", () => {
       // article the corpus reported as clean.
       const article = body.startsWith("---") ? body.slice(body.indexOf("\n---", 3) + 4) : body
       expect(article).not.toMatch(COUNTDOWN)
-      expect({ slug, matched: DATE_CLAIM.test(article) }).toEqual({ slug, matched: false })
-      expect({ slug, matched: ISO_DATE.test(article) }).toEqual({ slug, matched: false })
+      expect({ slug, matched: DATE_CLAIM.test(article) }).toEqual({
+        slug,
+        matched: false,
+      })
+      expect({ slug, matched: ISO_DATE.test(article) }).toEqual({
+        slug,
+        matched: false,
+      })
       expectNoBannedClaim(article, `/blog/${slug}`)
       expect(body).toContain("cookcountyassessoril.gov")
       expect(body).not.toContain("cookcountyassessor.com")
@@ -375,8 +405,7 @@ describe("withdrawn download artifacts", () => {
 /* ── Hostile fixtures (FX-01 … FX-10) ────────────────────────────────────── */
 
 describe("hostile source fixtures", () => {
-  const CALENDAR_URL =
-    "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
+  const CALENDAR_URL = "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
   const NOW = "2026-08-19T17:00:00.000Z"
 
   const resolution: TownshipResolution = {
@@ -435,7 +464,10 @@ describe("hostile source fixtures", () => {
 
   /** Every capability is off together, or the fixture has not failed closed. */
   function expectJointSuppression(projection: ReturnType<typeof project>, id: string) {
-    expect({ id, available: projection.available }).toEqual({ id, available: false })
+    expect({ id, available: projection.available }).toEqual({
+      id,
+      available: false,
+    })
     for (const capability of [
       "showDates",
       "showStatus",
@@ -470,16 +502,11 @@ describe("hostile source fixtures", () => {
   })
 
   it("FX-02 stale: a prior-day retrieval inside the window fails closed", () => {
-    expectJointSuppression(
-      project(snapshot({ source: { retrievedAt: "2026-08-18T16:00:00.000Z" } })),
-      "FX-02-stale",
-    )
+    expectJointSuppression(project(snapshot({ source: { retrievedAt: "2026-08-18T16:00:00.000Z" } })), "FX-02-stale")
   })
 
   it("FX-03 closed: a verified closed window sells nothing", () => {
-    const projection = project(
-      snapshot({ openDate: "2026-06-01", lastFileDate: "2026-07-01" }),
-    )
+    const projection = project(snapshot({ openDate: "2026-06-01", lastFileDate: "2026-07-01" }))
     // A closed window may be described — a homeowner who arrives late is owed
     // the reason — but everything commercial is off.
     expect(projection.available).toBe(true)
@@ -492,31 +519,19 @@ describe("hostile source fixtures", () => {
   })
 
   it("FX-04 future: a retrieval stamped after the evaluation fails closed", () => {
-    expectJointSuppression(
-      project(snapshot({ source: { retrievedAt: "2026-08-20T16:00:00.000Z" } })),
-      "FX-04-future",
-    )
+    expectJointSuppression(project(snapshot({ source: { retrievedAt: "2026-08-20T16:00:00.000Z" } })), "FX-04-future")
   })
 
   it("FX-05 hash mismatch: a malformed content hash fails closed", () => {
-    expectJointSuppression(
-      project(snapshot({ source: { contentSha256: "not-a-sha" } })),
-      "FX-05-hash-mismatch",
-    )
+    expectJointSuppression(project(snapshot({ source: { contentSha256: "not-a-sha" } })), "FX-05-hash-mismatch")
   })
 
   it("FX-06 parse failure fails closed", () => {
-    expectJointSuppression(
-      project(snapshot({ source: { parseStatus: "parse_error" } })),
-      "FX-06-parse-failure",
-    )
+    expectJointSuppression(project(snapshot({ source: { parseStatus: "parse_error" } })), "FX-06-parse-failure")
   })
 
   it("FX-07 schema failure fails closed", () => {
-    expectJointSuppression(
-      project(snapshot({ source: { parseStatus: "schema_error" } })),
-      "FX-07-schema-failure",
-    )
+    expectJointSuppression(project(snapshot({ source: { parseStatus: "schema_error" } })), "FX-07-schema-failure")
   })
 
   it("FX-08 unresolved township fails closed", () => {

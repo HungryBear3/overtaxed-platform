@@ -36,7 +36,13 @@
  */
 jest.mock("next/navigation", () => ({
   __esModule: true,
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), refresh: jest.fn(), prefetch: jest.fn(), back: jest.fn() }),
+  useRouter: () => ({
+    push: jest.fn(),
+    replace: jest.fn(),
+    refresh: jest.fn(),
+    prefetch: jest.fn(),
+    back: jest.fn(),
+  }),
   useSearchParams: () => new URLSearchParams(),
   usePathname: () => "/",
   redirect: (to: string) => {
@@ -48,7 +54,11 @@ jest.mock("next/navigation", () => ({
 }))
 
 const getSession = jest.fn(async () => null)
-jest.mock("@/lib/auth", () => ({ __esModule: true, getSession, authOptions: {} }))
+jest.mock("@/lib/auth", () => ({
+  __esModule: true,
+  getSession,
+  authOptions: {},
+}))
 jest.mock("@/lib/auth/session", () => ({ __esModule: true, getSession }))
 jest.mock("next-auth/react", () => ({
   __esModule: true,
@@ -57,12 +67,26 @@ jest.mock("next-auth/react", () => ({
   signOut: jest.fn(),
   SessionProvider: ({ children }: { children: unknown }) => children,
 }))
-jest.mock("next-auth", () => ({ __esModule: true, default: jest.fn(), AuthError: class extends Error {} }))
-jest.mock("@/app/auth/signin/actions", () => ({ __esModule: true, signInWithCredentials: jest.fn(async () => ({})) }))
+jest.mock("next-auth", () => ({
+  __esModule: true,
+  default: jest.fn(),
+  AuthError: class extends Error {},
+}))
+jest.mock("@/app/auth/signin/actions", () => ({
+  __esModule: true,
+  signInWithCredentials: jest.fn(async () => ({})),
+}))
 
 const prismaMock = {
-  oTOrder: { findUnique: jest.fn(async () => null), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
-  invoice: { findMany: jest.fn(async () => []), findUnique: jest.fn(async () => null) },
+  oTOrder: {
+    findUnique: jest.fn(async () => null),
+    findFirst: jest.fn(async () => null),
+    findMany: jest.fn(async () => []),
+  },
+  invoice: {
+    findMany: jest.fn(async () => []),
+    findUnique: jest.fn(async () => null),
+  },
   user: { findUnique: jest.fn(async () => null) },
   property: { findMany: jest.fn(async () => []) },
   appeal: { findMany: jest.fn(async () => []) },
@@ -77,20 +101,23 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { createElement, type ReactElement } from "react"
 
 import { readable } from "../lexicon/banned-claims.test"
-import {
-  ADDITIVE_PAGE_ROUTES,
-  PAGE_FILES,
-  classifyRoutes,
-  pageRouteViolations,
-} from "./page-route-rules.test"
+import { ADDITIVE_PAGE_ROUTES, PAGE_FILES, classifyRoutes, pageRouteViolations } from "./page-route-rules.test"
 import { readAcceptanceMatrix } from "../helpers/governance-fixtures.test"
 
-const { all: ALL_PAGE_ROUTES, dynamic: DYNAMIC_ROUTES, authenticated: AUTHENTICATED, crawlable: CRAWLABLE, disallowed: DISALLOWED } = classifyRoutes()
+const {
+  all: ALL_PAGE_ROUTES,
+  dynamic: DYNAMIC_ROUTES,
+  authenticated: AUTHENTICATED,
+  crawlable: CRAWLABLE,
+  disallowed: DISALLOWED,
+} = classifyRoutes()
 const isDisallowed = (p: string) => DISALLOWED.some((d) => p === d || p.startsWith(`${d}/`))
 
 /* ── Rendering ────────────────────────────────────────────────────────────── */
 
-type PageModule = { default: (props: never) => ReactElement | Promise<ReactElement> }
+type PageModule = {
+  default: (props: never) => ReactElement | Promise<ReactElement>
+}
 
 /** Rendered markup, or the redirect a page issues — which is also its output. */
 async function render(route: string): Promise<string> {
@@ -111,10 +138,12 @@ async function render(route: string): Promise<string> {
     if (message.startsWith("REDIRECT:")) return `<!-- redirected to ${message.slice(9)} -->`
     if (message.includes("404")) return "<!-- 404 -->"
     // Several pages take `searchParams`; a page that needs them is not a finding.
-    return await attempt({ searchParams: Promise.resolve({}), params: Promise.resolve({}) })
+    return await attempt({
+      searchParams: Promise.resolve({}),
+      params: Promise.resolve({}),
+    })
   }
 }
-
 
 const ROOT = resolve(__dirname, "../..")
 const APP_DIR = join(ROOT, "app")
@@ -129,8 +158,13 @@ describe("the route set is derived from what Next serves", () => {
       // A route group contributes no segment, so the file may sit under one.
       const viaGroup =
         !direct &&
-        readdirSync(APP_DIR).some((e) => e.startsWith("(") && PAGE_FILES.some((f) => existsSync(join(APP_DIR, e, route.slice(1), f))))
-      expect({ route, hasPage: direct || viaGroup }).toEqual({ route, hasPage: true })
+        readdirSync(APP_DIR).some(
+          (e) => e.startsWith("(") && PAGE_FILES.some((f) => existsSync(join(APP_DIR, e, route.slice(1), f))),
+        )
+      expect({ route, hasPage: direct || viaGroup }).toEqual({
+        route,
+        hasPage: true,
+      })
     }
   })
 
@@ -163,10 +197,16 @@ describe("the route set is derived from what Next serves", () => {
   it("takes the disallowed prefixes from robots.ts rather than assuming them", () => {
     expect(DISALLOWED).toEqual(["/account", "/admin", "/appeals", "/auth", "/dashboard", "/properties"])
     for (const route of AUTHENTICATED) {
-      expect({ route, disallowed: isDisallowed(route) }).toEqual({ route, disallowed: true })
+      expect({ route, disallowed: isDisallowed(route) }).toEqual({
+        route,
+        disallowed: true,
+      })
     }
     for (const route of CRAWLABLE) {
-      expect({ route, disallowed: isDisallowed(route) }).toEqual({ route, disallowed: false })
+      expect({ route, disallowed: isDisallowed(route) }).toEqual({
+        route,
+        disallowed: false,
+      })
     }
   })
 
@@ -221,7 +261,10 @@ describe("every crawlable page route is governed exactly once", () => {
   it("resolves every additive entry to a real page module", () => {
     for (const route of ADDITIVE_PAGE_ROUTES) {
       const dir = join(APP_DIR, route === "/" ? "" : route)
-      expect({ route, hasPage: PAGE_FILES.some((f) => existsSync(join(dir, f))) }).toEqual({ route, hasPage: true })
+      expect({
+        route,
+        hasPage: PAGE_FILES.some((f) => existsSync(join(dir, f))),
+      }).toEqual({ route, hasPage: true })
     }
   })
 
@@ -239,7 +282,10 @@ describe("every crawlable page route is governed exactly once", () => {
     const paths = [...gs.matchAll(/path:\s*"([^"]+)"/g)].map((m) => m[1])
     expect(paths.length).toBeGreaterThan(0)
     for (const path of paths) {
-      expect({ path, inPageLayer: ADDITIVE_PAGE_ROUTES.filter((p) => p === path).length }).toEqual({
+      expect({
+        path,
+        inPageLayer: ADDITIVE_PAGE_ROUTES.filter((p) => p === path).length,
+      }).toEqual({
         path,
         inPageLayer: 1,
       })
@@ -251,7 +297,10 @@ describe("every crawlable page route is governed exactly once", () => {
       accepted_routes: unknown[]
       named_surfaces: unknown[]
     }
-    expect({ routes: m.accepted_routes.length, surfaces: m.named_surfaces.length }).toEqual({
+    expect({
+      routes: m.accepted_routes.length,
+      surfaces: m.named_surfaces.length,
+    }).toEqual({
       routes: 53,
       surfaces: 22,
     })
@@ -268,7 +317,11 @@ describe("every crawlable page route renders clean", () => {
 
   it.each(CRAWLABLE)("%s trips no page rule", async (route) => {
     const html = await render(route)
-    expect({ route, violations: pageRouteViolations(html) }).toEqual({ route, violations: [] })
+    const verifiedDeadlineSurface = route === "/deadlines" || route === "/townships"
+    expect({
+      route,
+      violations: pageRouteViolations(html, { verifiedDeadlineSurface }),
+    }).toEqual({ route, violations: [] })
   })
 })
 
@@ -283,7 +336,10 @@ describe("the neutralized claims are gone and their replacements are live", () =
 
   it.each(GONE)("%s no longer renders %s", async (route, _row, pattern) => {
     const text = readable(await render(route))
-    expect({ route, matched: pattern.test(text) }).toEqual({ route, matched: false })
+    expect({ route, matched: pattern.test(text) }).toEqual({
+      route,
+      matched: false,
+    })
   })
 
   it("the homepage replacements are present, and say less", async () => {

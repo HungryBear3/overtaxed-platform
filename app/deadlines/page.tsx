@@ -1,13 +1,17 @@
 import type { Metadata } from "next";
 import DeadlinesPage from "@/components/ot-design/DeadlinesPage";
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
+import { buildTownship2026Views } from "@/lib/deadlines-2026";
 import "../ot-design.css";
 
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
 
+// Evaluate each row on every request so an expired filing window closes
+// without waiting for another deployment.
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
-  title:
-    "Cook County Property Tax Appeal Deadlines — Township Calendar",
+  title: "Cook County Property Tax Appeal Deadlines — Township Calendar",
   description:
     "An indicative Cook County township appeal calendar with links to the official county sources. Appeal dates vary by township and change through the year — always confirm your exact deadline with the Cook County Assessor before filing.",
   alternates: { canonical: siteUrl + "/deadlines" },
@@ -40,7 +44,7 @@ export default function Page() {
   return (
     <div className="ot-root">
       <SiteHeader active="deadlines" />
-      <DeadlinesPage />
+      <DeadlinesPage views={buildTownship2026Views()} />
       <SiteFooter />
     </div>
   );

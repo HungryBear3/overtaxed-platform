@@ -23,11 +23,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import DeadlinesRoutePage from "../app/deadlines/page";
 import * as townshipDeadlines from "@/lib/appeals/township-deadlines";
 import { ASSESSOR_CALENDAR_URL } from "@/lib/appeals/township-deadlines";
-import {
-  buildTownship2026Views,
-  count2026Views,
-  official2026Provenance,
-} from "@/lib/deadlines-2026";
+import { buildTownship2026Views, count2026Views, official2026Provenance } from "@/lib/deadlines-2026";
 
 const at = (iso: string) => new Date(iso + "T12:00:00Z");
 
@@ -43,9 +39,7 @@ describe("removed deadline authority", () => {
   it("keeps the neutral official-source link, at the canonical .gov host", () => {
     // A link to the authority's own page is not a claim about a date, and it
     // is what a suppressed projection offers the reader instead of one.
-    expect(ASSESSOR_CALENDAR_URL).toBe(
-      "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
-    );
+    expect(ASSESSOR_CALENDAR_URL).toBe("https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines");
   });
 
   it("contains no date literal that could become a fallback", () => {
@@ -69,7 +63,7 @@ describe("2026 view model against the committed snapshot", () => {
     expect(views).toHaveLength(38);
   });
 
-  it("verifies nothing, because the committed snapshot is a synthetic fixture", () => {
+  it("verifies nothing before the committed snapshot's retrieval instant", () => {
     expect(counts.official).toBe(0);
     expect(counts.pending).toBe(counts.total);
     expect(counts.open).toBe(0);
@@ -78,7 +72,7 @@ describe("2026 view model against the committed snapshot", () => {
     for (const v of views) {
       expect(v.official).toBe(false);
       expect(v.status).toBe("pending");
-      expect(v.pendingReason).toBe("synthetic_source");
+      expect(v.pendingReason).toBe("source_from_future");
     }
   });
 
@@ -106,36 +100,29 @@ describe("2026 view model against the committed snapshot", () => {
   });
 });
 
-describe("/deadlines page render", () => {
+describe("/deadlines page render with the 6a snapshot", () => {
   const html = renderToStaticMarkup(DeadlinesRoutePage());
 
   it("shows the official Assessor calendar source URL", () => {
     expect(html).toContain(ASSESSOR_CALENDAR_URL);
   });
 
-  it("publishes no township deadline date", () => {
-    expect(html).not.toMatch(/Last file:/);
-    expect(html).not.toMatch(/\b(19|20)\d{2}-\d{2}-\d{2}\b/);
-    expect(html).not.toMatch(
-      /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+(19|20)\d{2}\b/,
-    );
+  it("publishes only the eight hand-verified township deadline dates", () => {
+    expect(html.match(/Last file:/g) ?? []).toHaveLength(8);
+    expect(html).toContain("September 23, 2026");
+    expect(html).toContain("October 22, 2026");
     expect(html).not.toMatch(/1900/);
   });
 
-  it("marks every township pending", () => {
+  it("marks the other 30 townships pending", () => {
     expect(html).toContain("Pending official date");
     const pendingMatches = html.match(/Pending official date/g) ?? [];
-    // One per township in the table and one per township in the grid, plus the
-    // copy that names the label. The floor that matters is that no township
-    // escaped the label.
-    expect(pendingMatches.length).toBeGreaterThanOrEqual(38);
+    expect(pendingMatches.length).toBeGreaterThanOrEqual(30);
   });
 
   it("says the gap is ours rather than attributing it to the county", () => {
-    expect(html).toMatch(/we have not (verified|read)/i);
+    expect(html).toMatch(/we have not verified/i);
     expect(html).not.toMatch(/The 0 townships/);
-    // "the county hasn't posted that township yet" is a claim about the
-    // Assessor's calendar and is only available once we have read it.
     expect(html).not.toMatch(/county hasn&#x27;t posted/i);
   });
 
@@ -149,9 +136,7 @@ describe("/deadlines page render", () => {
     expect(html).toContain("layers=show:3");
     expect(html).toContain("bbox=-88.45,41.45,-87.2055556,42.15");
     expect(html).toContain("size=1600,900");
-    expect(html).toContain(
-      "Cook County township deadline status dots over official township boundaries",
-    );
+    expect(html).toContain("Cook County township deadline status dots over official township boundaries");
     const mapDotMatches = html.match(/class="ot-deadline-map-dot ot-deadline-map-dot-/g) ?? [];
     expect(mapDotMatches.length).toBe(38);
   });
@@ -161,9 +146,7 @@ describe("/deadlines page render", () => {
   });
 
   it("publishes no Event JSON-LD with appeal dates", () => {
-    const scripts = [
-      ...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g),
-    ].map((m) => m[1]);
+    const scripts = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) => m[1]);
     for (const script of scripts) {
       expect(script).not.toContain('"@type":"Event"');
       expect(script).not.toContain("startDate");
@@ -182,14 +165,12 @@ describe("2026 view model over a verified snapshot", () => {
   function snapshotAt(retrievedAt: string) {
     const source = {
       authority: "cook_county_assessor",
-      sourceUrl:
-        "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+      sourceUrl: "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
       retrievedAt,
       sourceUpdatedAt: null,
       contentSha256: "b".repeat(64),
       httpStatus: 200,
-      finalUrl:
-        "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+      finalUrl: "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
       parseStatus: "ok",
       parserVersion: "1.0.0",
     };
@@ -201,9 +182,18 @@ describe("2026 view model over a verified snapshot", () => {
       synthetic: false,
       sources: { assessor: source, bor: source },
       townships: {
-        "oak-park": { townshipName: "Oak Park", stages: stage("2026-05-18", "2026-06-18") },
-        "river-forest": { townshipName: "River Forest", stages: stage("2026-05-04", "2026-06-02") },
-        "norwood-park": { townshipName: "Norwood Park", stages: stage("2026-04-27", "2026-05-26") },
+        "oak-park": {
+          townshipName: "Oak Park",
+          stages: stage("2026-05-18", "2026-06-18"),
+        },
+        "river-forest": {
+          townshipName: "River Forest",
+          stages: stage("2026-05-04", "2026-06-02"),
+        },
+        "norwood-park": {
+          townshipName: "Norwood Park",
+          stages: stage("2026-04-27", "2026-05-26"),
+        },
       },
     };
   }

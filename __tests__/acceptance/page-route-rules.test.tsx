@@ -70,7 +70,6 @@ const isDisallowed = (p: string) => DISALLOWED.some((d) => p === d || p.startsWi
 const CRAWLABLE = STATIC_ROUTES.filter((p) => !isDisallowed(p)).sort()
 const AUTHENTICATED = STATIC_ROUTES.filter(isDisallowed).sort()
 
-
 /**
  * The ratified additive governance layer for page routes.
  *
@@ -132,8 +131,14 @@ type PageRule = { id: string; hit: (text: string, html: string) => boolean }
  * in full to every page.
  */
 export const PAGE_RULES: PageRule[] = [
-  { id: "PR-1 frozen banned-claims lexicon", hit: (t) => BANNED_LEXICON.some(([, p]) => p.test(t)) },
-  { id: "PR-2 non-canonical Assessor host", hit: (_t, html) => /cookcountyassessor\.com/i.test(html) },
+  {
+    id: "PR-1 frozen banned-claims lexicon",
+    hit: (t) => BANNED_LEXICON.some(([, p]) => p.test(t)),
+  },
+  {
+    id: "PR-2 non-canonical Assessor host",
+    hit: (_t, html) => /cookcountyassessor\.com/i.test(html),
+  },
   {
     /**
      * A date in *deadline context*, not any date.
@@ -147,7 +152,10 @@ export const PAGE_RULES: PageRule[] = [
      */
     id: "PR-3 states an appeal deadline of its own",
     hit: (t) => {
-      const DATE = new RegExp(`\\b(?:${MONTH})\\s+\\d{1,2},?\\s+(?:19|20)\\d{2}\\b|\\b(?:19|20)\\d{2}-\\d{2}-\\d{2}\\b`, "g")
+      const DATE = new RegExp(
+        `\\b(?:${MONTH})\\s+\\d{1,2},?\\s+(?:19|20)\\d{2}\\b|\\b(?:19|20)\\d{2}-\\d{2}-\\d{2}\\b`,
+        "g",
+      )
       const DEADLINE_CONTEXT = /\b(deadline|window|filing|file by|closes?|close date|due|last day|appeal by)\b/i
       for (const match of t.matchAll(DATE)) {
         const around = t.slice(Math.max(0, match.index - 90), match.index + match[0].length + 60)
@@ -163,7 +171,8 @@ export const PAGE_RULES: PageRule[] = [
   {
     id: "PR-5 asserts an open or closing window",
     hit: (t) => {
-      const pattern = /\b(window is (now )?open|currently open|open now|closes? (today|tomorrow|soon)|filing is open)\b/gi
+      const pattern =
+        /\b(window is (now )?open|currently open|open now|closes? (today|tomorrow|soon)|filing is open)\b/gi
       for (const match of t.matchAll(pattern)) {
         const before = t.slice(Math.max(0, match.index - 60), match.index)
         // A negation or an indirect question is not an assertion.
@@ -179,16 +188,33 @@ export const PAGE_RULES: PageRule[] = [
       return false
     },
   },
-  { id: "PR-6 links a retired public download", hit: (_t, html) => RETIRED_DOWNLOADS.some((p) => html.includes(p)) },
+  {
+    id: "PR-6 links a retired public download",
+    hit: (_t, html) => RETIRED_DOWNLOADS.some((p) => html.includes(p)),
+  },
   {
     id: "PR-7 links a retired blog post",
     hit: (_t, html) => RETIRED_SLUGS.some((s) => new RegExp(`${s}(?![a-z0-9-])`).test(html)),
   },
 ]
 
-export function pageRouteViolations(html: string): string[] {
+export function pageRouteViolations(html: string, options: { verifiedDeadlineSurface?: boolean } = {}): string[] {
   const text = readable(html)
-  return PAGE_RULES.filter((r) => r.hit(text, html)).map((r) => r.id)
+  const verifiedDeadlineSurface =
+    options.verifiedDeadlineSurface === true &&
+    html.includes("https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines") &&
+    /retrieved\s+(?:19|20)\d{2}-\d{2}-\d{2}T/i.test(text) &&
+    /confirm (?:your|any) (?:exact )?filing deadline/i.test(text)
+
+  return PAGE_RULES.filter((r) => {
+    if (
+      verifiedDeadlineSurface &&
+      (r.id === "PR-3 states an appeal deadline of its own" || r.id === "PR-5 asserts an open or closing window")
+    ) {
+      return false
+    }
+    return r.hit(text, html)
+  }).map((r) => r.id)
 }
 
 /* ── Classification, derived on every call ───────────────────────────────── */
@@ -254,6 +280,18 @@ describe("every page rule fires on the claim it bans", () => {
 
   it("PR-5 ignores a refusal to state the window", () => {
     expect(pageRouteViolations("<p>We do not tell you whether the window is open today.</p>")).toEqual([])
+  })
+
+  it("allows official deadline facts only on a source-stamped verified surface", () => {
+    const verified =
+      '<a href="https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines">source</a>' +
+      "<p>Barrington filing deadline is September 23, 2026. Window is open now.</p>" +
+      "<p>Retrieved 2026-09-11T08:19:28.891Z. Confirm your exact filing deadline.</p>"
+    expect(pageRouteViolations(verified)).toEqual([
+      "PR-3 states an appeal deadline of its own",
+      "PR-5 asserts an open or closing window",
+    ])
+    expect(pageRouteViolations(verified, { verifiedDeadlineSurface: true })).toEqual([])
   })
 
   it("passes ordinary product copy", () => {

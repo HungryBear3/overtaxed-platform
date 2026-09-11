@@ -14,28 +14,21 @@
  * produces the same dates and statuses it always did; and `allowCheckout` turns
  * on for an official property record and for nothing else.
  */
-import {
-  getFreeCheckAppealWindowStatus,
-  appealWindowForIdentity,
-} from "@/lib/free-check-appeal-window";
+import { getFreeCheckAppealWindowStatus, appealWindowForIdentity } from "@/lib/free-check-appeal-window";
 import type { TownshipResolution } from "@/lib/deadlines/township-resolution";
 
-const ASSESSOR_CALENDAR_URL =
-  "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines";
+const ASSESSOR_CALENDAR_URL = "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines";
 
 describe("against the committed snapshot", () => {
   it.each(["Lake View", "Berwyn", "Maine", "North Chicago"])(
     "reports %s unknown with the reason, and no date",
     (township) => {
-      const status = getFreeCheckAppealWindowStatus(
-        township,
-        new Date("2026-07-12T12:00:00Z"),
-      );
+      const status = getFreeCheckAppealWindowStatus(township, new Date("2026-07-12T12:00:00Z"));
       expect(status.township).toBe(township);
       expect(status.status).toBe("unknown");
       expect(status.openDate).toBeNull();
       expect(status.closeDate).toBeNull();
-      expect(status.pendingReason).toBe("synthetic_source");
+      expect(status.pendingReason).toBe("source_from_future");
       expect(status.allowCheckout).toBe(false);
       expect(status.note).toContain(ASSESSOR_CALENDAR_URL);
     },
@@ -48,7 +41,7 @@ describe("against the committed snapshot", () => {
     expect(noInput.pendingReason).toBe("township_unresolved");
 
     const named = getFreeCheckAppealWindowStatus("Berwyn", new Date("2026-07-12T12:00:00Z"));
-    expect(named.pendingReason).toBe("synthetic_source");
+    expect(named.pendingReason).toBe("source_from_future");
   });
 
   it("never authorizes checkout, whatever identity is presented", () => {
@@ -61,9 +54,7 @@ describe("against the committed snapshot", () => {
       resolutionSource: "official_property_record",
       resolvedAt: "2026-07-12T11:59:55.000Z",
     };
-    expect(
-      appealWindowForIdentity(resolution, new Date("2026-07-12T12:00:00Z")).allowCheckout,
-    ).toBe(false);
+    expect(appealWindowForIdentity(resolution, new Date("2026-07-12T12:00:00Z")).allowCheckout).toBe(false);
   });
 });
 
@@ -90,9 +81,18 @@ describe("against a verified snapshot", () => {
       synthetic: false,
       sources: { assessor: source, bor: source },
       townships: {
-        "lake-view": { townshipName: "Lake View", stages: stage("2026-05-28", "2026-07-13") },
-        berwyn: { townshipName: "Berwyn", stages: stage("2026-05-20", "2026-07-06") },
-        maine: { townshipName: "Maine", stages: stage("2026-08-05", "2026-09-21") },
+        "lake-view": {
+          townshipName: "Lake View",
+          stages: stage("2026-05-28", "2026-07-13"),
+        },
+        berwyn: {
+          townshipName: "Berwyn",
+          stages: stage("2026-05-20", "2026-07-06"),
+        },
+        maine: {
+          townshipName: "Maine",
+          stages: stage("2026-08-05", "2026-09-21"),
+        },
       },
     };
   }
@@ -190,9 +190,7 @@ describe("against a verified snapshot", () => {
       resolutionSource: "official_property_record",
       resolvedAt: "2026-07-12T11:59:55.000Z",
     };
-    expect(
-      windowForIdentityAt(resolution, "2026-07-12T12:00:00.000Z").allowCheckout,
-    ).toBe(true);
+    expect(windowForIdentityAt(resolution, "2026-07-12T12:00:00.000Z").allowCheckout).toBe(true);
   });
 
   it("closes checkout for a property record whose window is not open", () => {
