@@ -20,7 +20,13 @@ jest.mock("@/lib/db", () => ({
 jest.mock("@/lib/cook-county", () => ({
   getPropertyByPIN: jest.fn(async () => ({
     success: true,
-    data: { pin: "09000000000000", address: "1 TEST ST", city: "ELK GROVE VILLAGE", zipCode: "60007", township: "Elk Grove" },
+    data: {
+      pin: "09000000000000",
+      address: "1 TEST ST",
+      city: "ELK GROVE VILLAGE",
+      zipCode: "60007",
+      township: "Elk Grove",
+    },
   })),
   normalizePIN: (value: string) => value.replace(/\D/g, ""),
   searchPropertiesByAddress: jest.fn(),
@@ -29,7 +35,9 @@ jest.mock("@/lib/cook-county", () => ({
 describe("admin OT notice review actions", () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    getSessionMock.mockResolvedValue({ user: { id: "admin_1", role: "ADMIN", email: "admin@example.com" } })
+    getSessionMock.mockResolvedValue({
+      user: { id: "admin_1", role: "ADMIN", email: "admin@example.com" },
+    })
     findUniqueMock.mockResolvedValue({
       id: "ord_notice",
       tier: "T3",
@@ -68,78 +76,90 @@ describe("admin OT notice review actions", () => {
   it("audits approve, reject, and revalidate without directly creating a charge", async () => {
     const { POST } = await import("@/app/api/admin/ot-orders/[orderId]/review/route")
 
-    const approve = await POST(request("approve") as never, { params: Promise.resolve({ orderId: "ord_notice" }) } as never)
+    const approve = await POST(
+      request("approve") as never,
+      { params: Promise.resolve({ orderId: "ord_notice" }) } as never,
+    )
     expect(approve.status).toBe(200)
-    expect(updateManyMock).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({
-        id: "ord_notice",
-        status: "NOTICE_REVIEW_REQUIRED",
-        contractKey: "contract_notice",
-        attempt: 0,
-        stripeSessionId: null,
+    expect(updateManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "ord_notice",
+          status: "NOTICE_REVIEW_REQUIRED",
+          contractKey: "contract_notice",
+          attempt: 0,
+          stripeSessionId: null,
+          checkoutPriceId: "price_t3",
+          checkoutProductId: "prod_t3",
+          checkoutAmountCents: 6900,
+          checkoutCurrency: "usd",
+        }),
+        data: expect.objectContaining({
+          noticeReviewStatus: "APPROVED",
+          noticeReviewActionBy: "admin_1",
+        }),
+      }),
+    )
+
+    const reject = await POST(
+      request("reject") as never,
+      { params: Promise.resolve({ orderId: "ord_notice" }) } as never,
+    )
+    expect(reject.status).toBe(200)
+
+    const revalidate = await POST(
+      request("revalidate") as never,
+      { params: Promise.resolve({ orderId: "ord_notice" }) } as never,
+    )
+    expect(revalidate.status).toBe(200)
+    expect(updateManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          noticeReviewStatus: "REVALIDATED",
+          township: "Elk Grove",
+          windowStatus: "unknown",
+          windowOpenDate: null,
+          windowCloseDate: null,
+          windowSourceUpdated: null,
+          windowVerifiedAt: null,
+          eligibilitySnapshot: expect.objectContaining({
+            status: "unknown",
+            verifiedAt: null,
+            pendingReason: "township_missing",
+          }),
+        }),
+      }),
+    )
+  })
+
+  it.each(["PAID", "PAID_RECOVERY_REQUIRED", "CANCELLED", "REFUNDED", "CHECKOUT_CREATED", "CHECKOUT_CREATING"])(
+    "refuses to mutate provider-bound or terminal order status %s",
+    async (status) => {
+      findUniqueMock.mockResolvedValueOnce({
+        id: "ord_terminal",
+        tier: "T3",
+        status,
+        contractKey: "contract_terminal",
+        attempt: 1,
+        stripeSessionId: status === "CHECKOUT_PENDING" || status === "CHECKOUT_FAILED" ? null : "cs_terminal",
         checkoutPriceId: "price_t3",
         checkoutProductId: "prod_t3",
         checkoutAmountCents: 6900,
         checkoutCurrency: "usd",
-      }),
-      data: expect.objectContaining({
-        noticeReviewStatus: "APPROVED",
-        noticeReviewActionBy: "admin_1",
-      }),
-    }))
-
-    const reject = await POST(request("reject") as never, { params: Promise.resolve({ orderId: "ord_notice" }) } as never)
-    expect(reject.status).toBe(200)
-
-    const revalidate = await POST(request("revalidate") as never, { params: Promise.resolve({ orderId: "ord_notice" }) } as never)
-    expect(revalidate.status).toBe(200)
-    expect(updateManyMock).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        noticeReviewStatus: "REVALIDATED",
+        propertyPin: "09000000000000",
         township: "Elk Grove",
-        windowStatus: "unknown",
-        windowOpenDate: null,
-        windowCloseDate: null,
-        windowSourceUpdated: null,
-        windowVerifiedAt: null,
-        eligibilitySnapshot: expect.objectContaining({
-          status: "unknown",
-          verifiedAt: null,
-          pendingReason: "synthetic_source",
-        }),
-      }),
-    }))
-  })
+      })
 
-  it.each([
-    "PAID",
-    "PAID_RECOVERY_REQUIRED",
-    "CANCELLED",
-    "REFUNDED",
-    "CHECKOUT_CREATED",
-    "CHECKOUT_CREATING",
-  ])("refuses to mutate provider-bound or terminal order status %s", async (status) => {
-    findUniqueMock.mockResolvedValueOnce({
-      id: "ord_terminal",
-      tier: "T3",
-      status,
-      contractKey: "contract_terminal",
-      attempt: 1,
-      stripeSessionId: status === "CHECKOUT_PENDING" || status === "CHECKOUT_FAILED" ? null : "cs_terminal",
-      checkoutPriceId: "price_t3",
-      checkoutProductId: "prod_t3",
-      checkoutAmountCents: 6900,
-      checkoutCurrency: "usd",
-      propertyPin: "09000000000000",
-      township: "Elk Grove",
-    })
+      const { POST } = await import("@/app/api/admin/ot-orders/[orderId]/review/route")
+      const res = await POST(
+        request("approve") as never,
+        { params: Promise.resolve({ orderId: "ord_terminal" }) } as never,
+      )
 
-    const { POST } = await import("@/app/api/admin/ot-orders/[orderId]/review/route")
-    const res = await POST(request("approve") as never, { params: Promise.resolve({ orderId: "ord_terminal" }) } as never)
-
-    expect(res.status).toBe(409)
-    expect(updateManyMock).not.toHaveBeenCalled()
-  })
+      expect(res.status).toBe(409)
+      expect(updateManyMock).not.toHaveBeenCalled()
+    },
+  )
 
   it("allows pre-provider checkout failure revalidation only while the original immutable evidence still matches", async () => {
     findUniqueMock.mockResolvedValueOnce({
@@ -160,17 +180,22 @@ describe("admin OT notice review actions", () => {
     })
 
     const { POST } = await import("@/app/api/admin/ot-orders/[orderId]/review/route")
-    const res = await POST(request("revalidate") as never, { params: Promise.resolve({ orderId: "ord_failed" }) } as never)
+    const res = await POST(
+      request("revalidate") as never,
+      { params: Promise.resolve({ orderId: "ord_failed" }) } as never,
+    )
 
     expect(res.status).toBe(200)
-    expect(updateManyMock).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({
-        id: "ord_failed",
-        status: "CHECKOUT_FAILED",
-        stripeSessionId: null,
-        attempt: 2,
+    expect(updateManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "ord_failed",
+          status: "CHECKOUT_FAILED",
+          stripeSessionId: null,
+          attempt: 2,
+        }),
       }),
-    }))
+    )
   })
 
   it("returns conflict when the admin review CAS loses a concurrent state change", async () => {

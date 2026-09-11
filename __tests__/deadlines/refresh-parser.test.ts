@@ -78,9 +78,7 @@ const bothStages = (over: Record<string, FetchedSource | Error> = {}) =>
 
 describe("sha256Hex", () => {
   it("hashes the exact bytes retrieved", () => {
-    expect(sha256Hex("")).toBe(
-      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    )
+    expect(sha256Hex("")).toBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
     expect(sha256Hex(ASSESSOR_HTML)).toHaveLength(64)
     expect(sha256Hex(ASSESSOR_HTML)).not.toBe(sha256Hex(`${ASSESSOR_HTML} `))
   })
@@ -194,7 +192,11 @@ describe("buildSnapshot", () => {
   it("builds a whole snapshot with provenance for every stage", async () => {
     const fetcher = bothStages()
 
-    const result = await buildSnapshot({ fetchSource: fetcher, now: NOW, synthetic: false })
+    const result = await buildSnapshot({
+      fetchSource: fetcher,
+      now: NOW,
+      synthetic: false,
+    })
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -223,8 +225,16 @@ describe("buildSnapshot", () => {
     // appears only on the Assessor's calendar and must not acquire a Board
     // window it was never listed for.
     expect(snapshot.townships["rogers-park"].stages).toEqual({
-      assessor: { noticeDate: "2026-06-01", openDate: "2026-06-15", lastFileDate: "2026-07-15" },
-      bor: { noticeDate: null, openDate: "2026-08-03", lastFileDate: "2026-09-02" },
+      assessor: {
+        noticeDate: "2026-06-01",
+        openDate: "2026-06-15",
+        lastFileDate: "2026-07-15",
+      },
+      bor: {
+        noticeDate: null,
+        openDate: "2026-08-03",
+        lastFileDate: "2026-09-02",
+      },
     })
     expect(snapshot.townships["oak-park"].stages.bor ?? null).toBeNull()
   })
@@ -241,20 +251,28 @@ describe("buildSnapshot", () => {
 
   it("publishes nothing when one stage returns a non-200", async () => {
     const result = await buildSnapshot({
-      fetchSource: bothStages({ [borUrl]: fetched("Not Found", { status: 404 }) }),
+      fetchSource: bothStages({
+        [borUrl]: fetched("Not Found", { status: 404 }),
+      }),
       now: NOW,
       synthetic: false,
     })
 
     expect(result.ok).toBe(false)
     expect(result.ok === false && result.failures).toEqual([
-      { stage: "bor", parseStatus: "http_error", detail: expect.stringContaining("404") },
+      {
+        stage: "bor",
+        parseStatus: "http_error",
+        detail: expect.stringContaining("404"),
+      },
     ])
   })
 
   it("publishes nothing when one stage fails to parse", async () => {
     const result = await buildSnapshot({
-      fetchSource: bothStages({ [assessorUrl]: fetched("<html>maintenance</html>") }),
+      fetchSource: bothStages({
+        [assessorUrl]: fetched("<html>maintenance</html>"),
+      }),
       now: NOW,
       synthetic: false,
     })
@@ -307,10 +325,7 @@ describe("buildSnapshot", () => {
     })
 
     expect(result.ok).toBe(false)
-    expect(result.ok === false && result.failures.map((f) => f.stage).sort()).toEqual([
-      "assessor",
-      "bor",
-    ])
+    expect(result.ok === false && result.failures.map((f) => f.stage).sort()).toEqual(["assessor", "bor"])
   })
 
   it("refuses a retrieval instant it cannot parse", async () => {
@@ -345,7 +360,11 @@ describe("publishSnapshot", () => {
   })
 
   it("writes a temp file and renames it into place, never writing the target directly", async () => {
-    const built = await buildSnapshot({ fetchSource: bothStages(), now: NOW, synthetic: true })
+    const built = await buildSnapshot({
+      fetchSource: bothStages(),
+      now: NOW,
+      synthetic: true,
+    })
     if (!built.ok) throw new Error("fixture build failed")
 
     await publishSnapshot("data/deadlines/cook-county.json", built.snapshot, io)
@@ -354,25 +373,28 @@ describe("publishSnapshot", () => {
     expect(writes[0].path).not.toBe("data/deadlines/cook-county.json")
     expect(writes[0].path).toMatch(/\.tmp$/)
 
-    expect(renames).toEqual([
-      { from: writes[0].path, to: "data/deadlines/cook-county.json" },
-    ])
+    expect(renames).toEqual([{ from: writes[0].path, to: "data/deadlines/cook-county.json" }])
 
     // A half-written JSON file is a snapshot that parses as garbage on the next
     // deploy; the rename is what makes the swap atomic.
-    expect(JSON.parse(writes[0].body)).toMatchObject({ schemaVersion: 1, synthetic: true })
+    expect(JSON.parse(writes[0].body)).toMatchObject({
+      schemaVersion: 1,
+      synthetic: true,
+    })
     expect(writes[0].body.endsWith("\n")).toBe(true)
   })
 
   it("removes the temp file and rethrows if the rename fails, leaving the target alone", async () => {
-    const built = await buildSnapshot({ fetchSource: bothStages(), now: NOW, synthetic: true })
+    const built = await buildSnapshot({
+      fetchSource: bothStages(),
+      now: NOW,
+      synthetic: true,
+    })
     if (!built.ok) throw new Error("fixture build failed")
 
     io.rename.mockRejectedValueOnce(new Error("EXDEV"))
 
-    await expect(
-      publishSnapshot("data/deadlines/cook-county.json", built.snapshot, io),
-    ).rejects.toThrow("EXDEV")
+    await expect(publishSnapshot("data/deadlines/cook-county.json", built.snapshot, io)).rejects.toThrow("EXDEV")
 
     expect(io.unlink).toHaveBeenCalledWith(writes[0].path)
   })
@@ -382,17 +404,22 @@ describe("the committed snapshot", () => {
   const { readFileSync } = require("node:fs") as typeof import("node:fs")
   const { join } = require("node:path") as typeof import("node:path")
 
-  it("is marked synthetic, because no county page has been fetched for it", () => {
+  it("is bound to the approved hand-verified Assessor retrieval", () => {
     const raw = readFileSync(join(process.cwd(), "data/deadlines/cook-county.json"), "utf8")
     const snapshot = JSON.parse(raw)
 
-    // This is the load-bearing assertion for the whole candidate. The dates in
-    // that file are invented. Marked synthetic, they can never reach a
-    // homeowner: `evaluateOfficialDeadlineState` refuses the snapshot outright.
-    // If this flag is ever flipped without a real retrieval behind it, every
-    // one of the 52 paths starts publishing fabricated deadlines.
-    expect(snapshot.synthetic).toBe(true)
+    expect(snapshot.synthetic).toBe(false)
     expect(snapshot.schemaVersion).toBe(1)
+    expect(Object.keys(snapshot.townships)).toHaveLength(8)
+    expect(snapshot.sources.assessor).toEqual(
+      expect.objectContaining({
+        authority: "cook_county_assessor",
+        retrievedAt: "2026-09-11T08:19:28.891Z",
+        httpStatus: 200,
+        parseStatus: "ok",
+      }),
+    )
+    expect(snapshot.sources.bor).toBeUndefined()
   })
 })
 
