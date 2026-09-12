@@ -65,7 +65,7 @@ test("hidden pages suppress dates and resume rechecks the current clock", () => 
 });
 test("far-off window still expires at source TTL and replacement does not reuse it", () => {
   const source = fixture();
-  source.townships["oak-park"].stages.assessor = { openDate: "2026-08-01", lastFileDate: "2026-08-31" };
+  source.townships["oak-park"].stages.assessor = { noticeDate: null, openDate: "2026-08-01", lastFileDate: "2026-08-31" };
   jest.setSystemTime(new Date("2026-06-03T16:54:59Z"));
   const { result, rerender } = renderHook(({ snapshot }) => useInformationalCalendar(snapshot), { initialProps: { snapshot: source } });
   expect(result.current.COUNTS.official).toBe(1);
