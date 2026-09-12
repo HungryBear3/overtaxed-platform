@@ -1,5 +1,6 @@
 {
   "crons": [
+    {"path":"/api/cron/informational-deadlines","schedule":"5 * * * *"},
     {"path":"/api/cron/township-alerts","schedule":"30 8 * * *"},
     {"path":"/api/cron/free-check-followups","schedule":"15 14 * * *"},
     {"path":"/api/cron/township-open-notifications","schedule":"0 10 * * *"},

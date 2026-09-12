@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import DeadlinesPage from "@/components/ot-design/DeadlinesPage";
 import { analytics } from "@/lib/analytics/events";
 
@@ -39,33 +39,16 @@ describe("/deadlines lead tracking", () => {
     });
   });
 
-  it("tracks township selection from the reminder dropdown", () => {
+  it("tracks township navigation without offering unauthorized reminder capture", () => {
     render(<DeadlinesPage />);
-
-    fireEvent.change(screen.getByLabelText("Township"), { target: { value: "cicero" } });
-
-    expect(analytics.deadlineTownshipSelected).toHaveBeenCalledWith({
-      source: "reminder_dropdown",
-      townshipSlug: "cicero",
-      townshipName: "Cicero",
-      status: "pending",
-    });
-  });
-
-  it("tracks reminder signup without sending the visitor email to analytics", async () => {
-    render(<DeadlinesPage />);
-
-    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "owner@example.com" } });
-    fireEvent.change(screen.getByLabelText("Township"), { target: { value: "palos" } });
-    fireEvent.click(screen.getByRole("button", { name: /send me reminders/i }));
-
-    await waitFor(() => expect(analytics.deadlineReminderSignup).toHaveBeenCalled());
-    expect(analytics.deadlineReminderSignup).toHaveBeenCalledWith({
-      townshipSlug: "palos",
-      townshipName: "Palos",
-      status: "pending",
-    });
-    expect(JSON.stringify((analytics.deadlineReminderSignup as jest.Mock).mock.calls)).not.toContain("owner@example.com");
+    fireEvent.click(screen.getAllByRole("link", { name: "Cicero" })[0]);
+    expect(analytics.deadlineTownshipSelected).toHaveBeenCalledWith(expect.objectContaining({
+      townshipSlug: "cicero", townshipName: "Cicero", status: "pending",
+    }));
+    expect(screen.queryByLabelText("Email address")).toBeNull();
+    expect(screen.queryByRole("button", { name: /send me reminders/i })).toBeNull();
+    expect(analytics.deadlineReminderSignup).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it("tracks deadline-page free-check starts without storing the address", () => {

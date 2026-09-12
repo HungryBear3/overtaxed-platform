@@ -80,10 +80,18 @@ export interface Township2026View {
 /**
  * Build the per-township view. `now` is injectable for deterministic tests.
  */
-export function buildTownship2026Views(now: Date = new Date()): Township2026View[] {
+export function buildTownship2026Views(
+  now: Date = new Date(),
+  snapshot?: import("@/lib/deadlines/official-source-state").OfficialDeadlineSnapshot,
+): Township2026View[] {
   const at = now.toISOString();
   return TOWNSHIPS.map((t) => {
-    const projection = describeTownshipCalendar(t.name, at);
+    const projection = describeTownshipCalendar(
+      t.name,
+      at,
+      "assessor",
+      snapshot,
+    );
     const base = {
       slug: t.slug,
       name: t.name,
@@ -91,12 +99,16 @@ export function buildTownship2026Views(now: Date = new Date()): Township2026View
       cycleYear: t.cycleYear,
     };
 
-    if (!projection.available) {
+    // This page is explicitly the 2026 calendar, not a generic yearless view.
+    // A valid official date from another cycle must not be attributed to 2026.
+    if (!projection.available ||
+      [projection.openDate, projection.lastFileDate, projection.noticeDate]
+        .some(date => date !== null && !date.startsWith("2026-"))) {
       return {
         ...base,
         official: false,
         status: "pending" as const,
-        pendingReason: projection.reason,
+        pendingReason: projection.available ? "date_invalid" as const : projection.reason,
         allowReminderSignup: false,
       };
     }
@@ -134,17 +146,17 @@ export function buildTownship2026Views(now: Date = new Date()): Township2026View
 export function official2026Provenance(
   views: Township2026View[],
 ): { source: string; retrievedAt: string } | null {
-  const verified = views.filter((v) => v.official && v.retrievedAt)
-  if (!verified.length) return null
+  const verified = views.filter((v) => v.official && v.retrievedAt);
+  if (!verified.length) return null;
 
   // Oldest retrieval across the rows actually shown. Attributing the freshest
   // one would overstate the page: a reader would take the newest timestamp as
   // covering every date on it.
   const retrievedAt = verified
     .map((v) => v.retrievedAt as string)
-    .reduce((oldest, current) => (current < oldest ? current : oldest))
+    .reduce((oldest, current) => (current < oldest ? current : oldest));
 
-  return { source: "the Cook County Assessor", retrievedAt }
+  return { source: "the Cook County Assessor", retrievedAt };
 }
 
 export interface Deadline2026Counts {

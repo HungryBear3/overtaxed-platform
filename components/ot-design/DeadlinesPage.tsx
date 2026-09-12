@@ -1,8 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
-import { TOWNSHIPS, TOWNSHIPS_BY_SLUG } from "@/lib/townships";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { OT_PUBLIC_CONTACT } from "@/components/ot-design/SiteChrome";
 import {
   OFFICIAL_DEADLINE_SOURCES,
@@ -12,54 +10,16 @@ import {
 import { analytics } from "@/lib/analytics/events";
 import { cc08 } from "@/lib/copy/canonical";
 import {
-  buildTownship2026Views,
-  count2026Views,
-  official2026Provenance,
   type Deadline2026Status,
   type Township2026View,
 } from "@/lib/deadlines-2026";
 
-// One evaluated state array for the whole page. The hero counts, the map dots,
-// the table, and the grid all read this — they used to be able to disagree,
-// because each derived its own notion of open from the same seed dates.
-//
-// A township with no verified state is "pending" and never shows a date. One
-// with a window the county has published but not yet opened is "upcoming",
-// which is a fact about the calendar; "pending" is a fact about us.
-const VIEWS: Township2026View[] = buildTownship2026Views();
-const COUNTS = count2026Views(VIEWS);
-const PROVENANCE = official2026Provenance(VIEWS);
+import { unavailableCalendar, useInformationalCalendar } from "@/lib/deadlines/use-informational-calendar";
+import type { OfficialDeadlineSnapshot } from "@/lib/deadlines/official-source-state";
+
+// Every surface observes one mounted, canonically evaluated informational state.
+const CalendarContext = createContext(unavailableCalendar);
 const PENDING_LABEL = "Pending official date";
-
-/**
- * Reasons that are about *our* source, not about the county's calendar.
- *
- * The distinction is load-bearing in the copy below. "The Assessor has not
- * posted this township yet" is a claim about the county, and it is only true
- * when we read the calendar and the row was absent. When the snapshot itself
- * is synthetic, stale, unfetched, or unparsed, we do not know what the county
- * has posted, and saying otherwise attributes our own gap to them.
- */
-const SOURCE_LEVEL_PENDING_REASONS = new Set([
-  "source_unavailable",
-  "synthetic_source",
-  "source_stale",
-  "source_from_future",
-  "parse_failed",
-]);
-
-/** True when nothing on this page is backed by a reading of the calendar. */
-const NOTHING_VERIFIED = COUNTS.official === 0;
-
-/** True when every pending row is pending because of our source, not the county's. */
-const ALL_PENDING_AT_SOURCE =
-  COUNTS.pending > 0 &&
-  VIEWS.every(
-    (v) =>
-      v.official ||
-      (v.pendingReason !== undefined &&
-        SOURCE_LEVEL_PENDING_REASONS.has(v.pendingReason)),
-  );
 const MAP_BBOX = "-88.45,41.45,-87.2055556,42.15";
 const MAP_IMAGE_SIZE = "1600,900";
 const SATELLITE_MAP_URL =
@@ -171,6 +131,7 @@ function StatusPill({
 }
 
 function DeadlinesHero() {
+  const { COUNTS, PROVENANCE, NOTHING_VERIFIED } = useContext(CalendarContext);
   return (
     <section className="ot-page-hero">
       <div className="ot-page-hero-inner">
@@ -222,108 +183,15 @@ function DeadlinesHero() {
   );
 }
 
-function PageReminderCapture() {
-  const [email, setEmail] = useState("");
-  const [slug, setSlug] = useState("");
-  const [outcome, setOutcome] = useState<"idle" | "scheduled" | "recorded">("idle");
-  const selectedView = VIEWS.find((t) => t.slug === slug);
-
-  function selectTownship(nextSlug: string) {
-    setSlug(nextSlug);
-    trackTownshipSelection(VIEWS.find((t) => t.slug === nextSlug), "reminder_dropdown");
-  }
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (!email.trim() || !slug) return;
-    // Confirm what the endpoint reports doing, not that the request returned.
-    // `/api/reminder` is a preview stub: it stores nothing and schedules
-    // nothing, and it reports both. "You're set" over a discarded address is
-    // the one outcome a reader cannot detect for themselves.
-    let scheduled = false;
-    try {
-      const res = await fetch("/api/reminder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, townshipSlug: slug }),
-      });
-      const data = (await res.json()) as { scheduled?: boolean };
-      scheduled = data?.scheduled === true;
-    } catch {
-      /* preview stub */
-    }
-    if (selectedView) {
-      analytics.deadlineReminderSignup({
-        townshipSlug: selectedView.slug,
-        townshipName: selectedView.name,
-        status: analyticsStatus(selectedView.status),
-      });
-    }
-    setOutcome(scheduled ? "scheduled" : "recorded");
-  }
-
-  if (outcome !== "idle") {
-    const t = TOWNSHIPS_BY_SLUG[slug];
-    return (
-      <div className="ot-reminder-block ot-reminder-block-done">
-        <div className="ot-reminder-block-check">✓</div>
-        <div className="ot-reminder-block-title">
-          {outcome === "scheduled" ? "You're set." : "Request received."}
-        </div>
-        {outcome === "scheduled" ? (
-          <p>
-            We&apos;ll email you when <strong>{t?.name} Township</strong>&apos;s official
-            appeal deadline is posted by the Assessor, and again before it closes. Nothing else.
-          </p>
-        ) : (
-          <p>
-            We&apos;ve recorded your request, but reminder mail is not running yet —
-            so do not wait to hear from us. Confirm{" "}
-            <strong>{t?.name} Township</strong>&apos;s filing deadline with the Cook
-            County Assessor before you file.
-          </p>
-        )}
-      </div>
-    );
-  }
-
+function PageCalendarNotice() {
+  // Informational township identity cannot authorize a personalized reminder.
   return (
     <div className="ot-reminder-block">
-      <div className="ot-reminder-block-eyebrow">Get a reminder</div>
-      <h2 className="ot-reminder-block-title">
-        Get a reminder when your township&apos;s official deadline is posted.
-      </h2>
+      <h2 className="ot-reminder-block-title">Confirm your deadline with the county.</h2>
       <p className="ot-reminder-block-body">
-        Tell us where to write and we&apos;ll use it only for appeal-deadline
-        updates. Confirm your own filing deadline with the county in the
-        meantime — it is the only source that is authoritative today.
+        This calendar does not determine your property's eligibility or enroll you in reminders.
+        Check the <a href={ASSESSOR_CALENDAR_URL} target="_blank" rel="noopener noreferrer">official Cook County Assessor calendar</a> before filing.
       </p>
-      <form className="ot-reminder-block-form" onSubmit={submit}>
-        <input
-          type="email"
-          required
-          placeholder="you@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="ot-input"
-          aria-label="Email address"
-        />
-        <select
-          required
-          value={slug}
-          onChange={(e) => selectTownship(e.target.value)}
-          className="ot-input"
-          aria-label="Township"
-        >
-          <option value="">Select your township…</option>
-          {TOWNSHIPS.map((t) => (
-            <option key={t.slug} value={t.slug}>{t.name}</option>
-          ))}
-        </select>
-        <button type="submit" className="ot-cta">
-          Send me reminders <span className="ot-cta-arrow">→</span>
-        </button>
-      </form>
     </div>
   );
 }
@@ -347,10 +215,8 @@ function normalizeName(name: string) {
   return name.trim().toLowerCase().replace(/\s+township$/i, "");
 }
 
-const VIEWS_BY_NAME = new Map(VIEWS.map((v) => [normalizeName(v.name), v]));
-
-function viewForMapTownship(township: Pick<MapDot, "name">) {
-  return VIEWS_BY_NAME.get(normalizeName(township.name));
+function viewForMapTownship(township: Pick<MapDot, "name">, views: Township2026View[]) {
+  return views.find(v => normalizeName(v.name) === normalizeName(township.name));
 }
 
 function mapDotClass(status: Deadline2026Status) {
@@ -358,11 +224,12 @@ function mapDotClass(status: Deadline2026Status) {
 }
 
 function DeadlineSatelliteMap() {
+  const { VIEWS } = useContext(CalendarContext);
   const [activeName, setActiveName] = useState<string | null>(null);
   const activeTownship = activeName
     ? MAP_DOTS.find((t) => t.name === activeName) ?? null
     : null;
-  const activeView = activeTownship ? viewForMapTownship(activeTownship) : null;
+  const activeView = activeTownship ? viewForMapTownship(activeTownship, VIEWS) : null;
 
   const activeTitle = activeView?.name ?? activeTownship?.name ?? "Township";
   const activeDeadline = activeView
@@ -392,7 +259,7 @@ function DeadlineSatelliteMap() {
           aria-label="Cook County township deadline status dots over official township boundaries"
         >
           {MAP_DOTS.map((township) => {
-            const view = viewForMapTownship(township);
+            const view = viewForMapTownship(township, VIEWS);
             const status = view?.status ?? "pending";
             const isActive = activeName === township.name;
             const trackingView = view;
@@ -430,7 +297,7 @@ function DeadlineSatelliteMap() {
         </div>
         <div className="ot-deadline-map-card-deadline">{activeTownship ? activeDeadline : "Official Assessor dates only"}</div>
         <div className="ot-deadline-map-card-note">
-          Satellite imagery with Cook County GIS township boundaries. Pending means the Assessor has not posted a 2026 last-file date yet.
+          Satellite imagery with Cook County GIS township boundaries. Pending means we do not have a freshly verified official date.
         </div>
       </div>
     </div>
@@ -438,13 +305,14 @@ function DeadlineSatelliteMap() {
 }
 
 function TownshipsTable() {
+  const { VIEWS, COUNTS } = useContext(CalendarContext);
   const [filter, setFilter] = useState<"all" | Deadline2026Status>("all");
   const [sort, setSort] = useState<"soonest" | "alpha">("soonest");
 
   const rows = useMemo(() => {
     const filtered = filter === "all" ? VIEWS : VIEWS.filter((t) => t.status === filter);
     return [...filtered].sort(SORTERS[sort]);
-  }, [filter, sort]);
+  }, [filter, sort, VIEWS]);
 
   const filterButtons: Array<{ id: "all" | Deadline2026Status; label: string; count: number }> = [
     { id: "all", label: "All", count: VIEWS.length },
@@ -459,7 +327,8 @@ function TownshipsTable() {
 
   const formatDays = (t: Township2026View) => {
     if (t.status === "open") {
-      const d = t.daysUntilLastFile ?? 0;
+      const d = t.daysUntilLastFile;
+      if (d === undefined) return "—";
       return d === 0 ? "closes today" : `${d} day${d === 1 ? "" : "s"} left`;
     }
     if (t.status === "upcoming") return "not yet open";
@@ -474,18 +343,8 @@ function TownshipsTable() {
           <h2 className="ot-h2">Official 2026 township deadlines.</h2>
           <p className="ot-tbl-note" style={{ fontSize: 14, color: "var(--ink-soft, #6b6258)", margin: "4px 0 0", maxWidth: "62ch" }}>
             Dates shown are the Cook County Assessor&apos;s official 2026 Last File Date.
-            {ALL_PENDING_AT_SOURCE ? (
-              <>
-                {" "}Townships marked &ldquo;{PENDING_LABEL}&rdquo; are ones we have not read
-                from the Assessor&apos;s calendar — we don&apos;t estimate them, and we don&apos;t
-                know whether the county has posted them.
-              </>
-            ) : (
-              <>
-                {" "}Townships marked &ldquo;{PENDING_LABEL}&rdquo; have not been posted yet — we
-                don&apos;t estimate them.
-              </>
-            )}{" "}
+            {" "}Townships marked &ldquo;{PENDING_LABEL}&rdquo; do not have a freshly verified
+            official date here. We do not estimate missing dates or infer whether the county has posted them.{" "}
             Confirm any date on the{" "}
             <a href={ASSESSOR_CALENDAR_URL} target="_blank" rel="noopener noreferrer">
               official Cook County Assessor calendar
@@ -611,6 +470,7 @@ function BottomCheckCta() {
  * "Pending official date" — never an inferred window.
  */
 function TownshipGrid() {
+  const { VIEWS } = useContext(CalendarContext);
   const order: Deadline2026Status[] = ["open", "upcoming", "closed", "pending"];
   const heads: Record<Deadline2026Status, string> = {
     open: "Open now",
@@ -633,9 +493,7 @@ function TownshipGrid() {
             <p className="ot-fullmap-sub">
               Grouped by the Assessor&apos;s official 2026 status. &ldquo;{PENDING_LABEL}&rdquo;
               means{" "}
-              {ALL_PENDING_AT_SOURCE
-                ? "we have not read that township from the Assessor's calendar"
-                : "the county hasn't posted that township yet"}{" "}
+              we do not have a freshly verified official date here{" "}
               — confirm yours before filing.
             </p>
           </div>
@@ -714,8 +572,13 @@ function VerifyAndSources() {
   );
 }
 
-export default function DeadlinesPage() {
+export default function DeadlinesPage({ snapshot }: { snapshot?: OfficialDeadlineSnapshot } = {}) {
+  const calendar = useInformationalCalendar(snapshot);
+  const { COUNTS, PROVENANCE } = calendar;
+  const [tracked, setTracked] = useState(false);
   useEffect(() => {
+    if (tracked || calendar === unavailableCalendar) return;
+    setTracked(true);
     analytics.deadlineMapView({
       officialCount: COUNTS.official,
       openCount: COUNTS.open,
@@ -725,20 +588,20 @@ export default function DeadlinesPage() {
       // nothing verified. Never the day a constant was last edited.
       sourceUpdated: PROVENANCE?.retrievedAt ?? "",
     });
-  }, []);
+  }, [calendar, tracked, COUNTS, PROVENANCE]);
 
   return (
-    <>
+    <CalendarContext.Provider value={calendar}>
       <DeadlinesHero />
       <VerifyAndSources />
       <section className="ot-reminder-section">
         <div className="ot-reminder-section-inner">
-          <PageReminderCapture />
+          <PageCalendarNotice />
         </div>
       </section>
       <TownshipGrid />
       <TownshipsTable />
       <BottomCheckCta />
-    </>
+    </CalendarContext.Provider>
   );
 }
