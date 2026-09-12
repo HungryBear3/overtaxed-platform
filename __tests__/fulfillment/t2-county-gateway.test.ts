@@ -932,3 +932,64 @@ describe("retrieval freshness", () => {
     expect(result.ok).toBe(true)
   })
 })
+
+// Independent-review regressions: malformed source types and stalled response bodies.
+describe("independent county gateway review", () => {
+  it("does not coerce boolean residential subtype or numeric street address into evidence", async () => {
+    const malformedFeature = makeCounty(4)
+    malformedFeature[COUNTY_DATASETS.characteristics.id][0].char_type_resd = true
+    await expectBlocker(malformedFeature, "CANDIDATE_CHARACTERISTICS_INCOMPLETE")
+    const malformedAddress = makeCounty(4)
+    malformedAddress[COUNTY_DATASETS.addresses.id][0].prop_address_full = 12345
+    await expectBlocker(malformedAddress, "CANDIDATE_ADDRESS_INCOMPLETE")
+  })
+
+  it("aborts a stalled body at the remaining global budget rather than granting a new 15 seconds", async () => {
+    jest.useFakeTimers()
+    try {
+      let calls = 0
+      let aborted = false
+      const start = new Date("2026-09-12T15:00:00Z").getTime()
+      const pending = fetchCountyEvidence(ORDER, {
+        now: () => new Date(start + (++calls >= 3 ? MAX_RETRIEVAL_WINDOW_MS - 1000 : 0)),
+        fetch: async (_url, init) => ({
+          ok: true, status: 200,
+          text: async () => { throw new Error("must stream") },
+          body: { getReader: () => ({
+            read: () => new Promise((_, reject) => {
+              init.signal.addEventListener("abort", () => {
+                aborted = true
+                reject(new Error("body aborted"))
+              }, { once: true })
+            }),
+            cancel: async () => {},
+          }) },
+        }),
+      })
+      await jest.advanceTimersByTimeAsync(999)
+      expect(aborted).toBe(false)
+      await jest.advanceTimersByTimeAsync(1)
+      expect(aborted).toBe(true)
+      await expect(pending).resolves.toMatchObject({ ok: false, blocker: "COUNTY_SOURCE_UNAVAILABLE" })
+    } finally { jest.useRealTimers() }
+  })
+})
+
+it("rejects invalid UTF-8 rather than recording a hash of replacement bytes", async () => {
+  let read = false
+  const result = await fetchCountyEvidence(ORDER, {
+    now: makeClock().now,
+    fetch: async () => ({
+      ok: true, status: 200, text: async () => "",
+      body: { getReader: () => ({
+        read: async () => {
+          if (read) return { done: true }
+          read = true
+          return { done: false, value: new Uint8Array([91, 34, 255, 34, 93]) }
+        },
+        cancel: async () => {},
+      }) },
+    }),
+  })
+  expect(result).toMatchObject({ ok: false, blocker: "COUNTY_SOURCE_UNAVAILABLE", sources: [] })
+})
