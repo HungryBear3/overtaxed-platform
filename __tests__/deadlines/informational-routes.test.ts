@@ -76,3 +76,15 @@ test("public read revalidates after storage delay or late disable and hides raw 
   expect(await (await read()).json()).toBeNull(); process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED = "true";
   factory.mockRejectedValueOnce(new Error("private driver diagnostics")); expect(await (await read()).json()).toBeNull();
 });
+
+test("attempt must be durable before fetching, and completion must bind successful publication", async () => {
+  store.begin.mockResolvedValueOnce(null); expect((await refresh(request())).status).toBe(503); expect(collect).not.toHaveBeenCalled();
+  store.complete.mockResolvedValueOnce(false); expect((await refresh(request())).status).toBe(503);
+  expect(store.complete).toHaveBeenCalledWith("synthetic-attempt", JSON.stringify(fixture()));
+  expect(store.begin.mock.invocationCallOrder[1]).toBeLessThan(collect.mock.invocationCallOrder[0]);
+  expect(store.publish.mock.invocationCallOrder[0]).toBeLessThan(store.complete.mock.invocationCallOrder[0]);
+});
+test("failed collection never marks its pending attempt ready", async () => {
+  collect.mockResolvedValue(null); expect((await refresh(request())).status).toBe(503);
+  expect(store.begin).toHaveBeenCalled(); expect(store.complete).not.toHaveBeenCalled();
+});

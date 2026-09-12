@@ -19,9 +19,12 @@ export async function GET(request: Request) {
   try {
     const store = await informationalSnapshotStore();
     if (!store || !enabled()) return reply("unavailable", 503);
+    const attempt = await store.begin();
+    if (!attempt || !enabled()) return reply("refused", 503);
     const snapshot = await collectInformationalSnapshot({ fetchSource: fetch, parseHtml: parseInformationalAssessorHtml, now: () => new Date() });
     if (!snapshot || !enabled()) return reply("refused", 503);
     const result = await store.publish(JSON.stringify(snapshot));
-    return reply(result.toLowerCase(), result === "REFUSED" ? 503 : 200);
+    if (result === "REFUSED" || !enabled() || !await store.complete(attempt, JSON.stringify(snapshot))) return reply("refused", 503);
+    return reply(result.toLowerCase());
   } catch { return reply("unavailable", 503); }
 }
