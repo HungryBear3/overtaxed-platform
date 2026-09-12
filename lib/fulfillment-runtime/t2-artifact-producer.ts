@@ -5,7 +5,6 @@ import {
   T2_PRODUCER_VERSION,
   T2_TEMPLATE_VERSION,
   buildT2ArtifactContent,
-  encodeT2Artifact,
   type DeadlineAuthoritySnapshot,
   type SignedPolicySnapshot,
   type SourceRecord,
@@ -15,6 +14,7 @@ import {
 import type { ComparableMatchAttributes } from "@/lib/fulfillment/t2-comparables"
 import { evaluateCheckoutBusinessDayCutoff } from "@/lib/checkout/business-days"
 import { resolveEligibilityPolicy } from "@/lib/checkout/ot-contract"
+import { renderT2ArtifactPdf } from "@/lib/fulfillment/t2-artifact-pdf"
 
 /**
  * The OT T2 artifact producer.
@@ -357,7 +357,7 @@ export async function generateT2Artifact(
 
   return {
     ok: true,
-    bytes: encodeT2Artifact(content.text),
+    bytes: await renderT2ArtifactPdf(content.text, generatedAt),
     provenance: {
       sourceOrderId: order.id,
       propertyPin: order.propertyPin,

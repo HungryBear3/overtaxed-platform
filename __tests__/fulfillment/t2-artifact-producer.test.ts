@@ -1,3 +1,4 @@
+import { PDFDocument } from "pdf-lib";
 /**
  * The T2 artifact producer.
  *
@@ -874,9 +875,9 @@ describe("independent review remediation (2026-09-04)", () => {
       // value is pinned in the re-review block; here only the bump itself.
       expect(T2_PRODUCER_VERSION).not.toBe("t2-evidence-packet/1.0.0");
       expect(T2_TEMPLATE_VERSION).not.toBe("t2-evidence-packet-text/1.0.0");
-      expect(T2_PRODUCER_VERSION).toMatch(/^t2-evidence-packet\/1\.1\.\d+$/);
+      expect(T2_PRODUCER_VERSION).toMatch(/^t2-evidence-packet\/1\.2\.\d+$/);
       expect(T2_TEMPLATE_VERSION).toMatch(
-        /^t2-evidence-packet-text\/1\.1\.\d+$/,
+        /^t2-evidence-packet-pdf\/1\.2\.\d+$/,
       );
     });
 
@@ -904,10 +905,10 @@ describe("independent review remediation (2026-09-04)", () => {
       );
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      const text = result.bytes.toString("utf8");
-      expect(text).toContain("Prepared: 2026-06-08T10:15:30Z");
-      expect(text).not.toContain("2026-06-11T21:45:10");
-      expect(text).not.toContain("2026-06-11");
+      expect(result.bytes.subarray(0, 5).toString()).toBe("%PDF-");
+      const pdf = await PDFDocument.load(result.bytes.toString("base64"), { updateMetadata: false });
+      expect(pdf.getCreationDate()?.toISOString()).toBe("2026-06-08T10:15:30.000Z");
+      expect(pdf.getModificationDate()?.toISOString()).toBe("2026-06-08T10:15:30.000Z");
     });
 
     it("samples the runtime clock exactly once and hands that instant to deadline resolution", async () => {
@@ -1203,8 +1204,8 @@ describe("independent re-review remediation (2026-09-04, e5383bbc)", () => {
 
   describe("M1: rejection accounting is per row and partitions the pool", () => {
     it("bumps the producer and template versions because manifest semantics changed", () => {
-      expect(T2_PRODUCER_VERSION).toBe("t2-evidence-packet/1.1.1");
-      expect(T2_TEMPLATE_VERSION).toBe("t2-evidence-packet-text/1.1.1");
+      expect(T2_PRODUCER_VERSION).toBe("t2-evidence-packet/1.2.0");
+      expect(T2_TEMPLATE_VERSION).toBe("t2-evidence-packet-pdf/1.2.0");
     });
 
     it("a 1.1.0 binding never replays as identical to a 1.1.1 artifact", () => {
