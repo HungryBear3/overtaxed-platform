@@ -80,3 +80,10 @@ test("orphan reconciliation stays HOLD without provider access", async () => {
   expect(get).not.toHaveBeenCalled()
   expect(put).not.toHaveBeenCalled()
 })
+
+test("matching plain-text digest and PDF metadata do not substitute for a PDF header", async () => {
+  const text = Buffer.from("plain text report")
+  const textLocator = contentAddressedT2ArtifactLocator(computeArtifactSha256(text))
+  getMock.mockResolvedValue(response([text], { pathname: textLocator, size: text.length }))
+  await expect(readT2ArtifactBytes({ locator: textLocator })).rejects.toMatchObject(failure)
+})
