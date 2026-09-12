@@ -250,6 +250,8 @@ type World = {
   attempts: Array<Record<string, unknown>>
   events: Array<Record<string, unknown>>
   sql: string[]
+  casMiss?: boolean
+  rolledBack?: boolean
 }
 
 function world(patch: Partial<World> = {}): World {
@@ -263,9 +265,9 @@ function world(patch: Partial<World> = {}): World {
       status: "ARTIFACT_READY",
       statusRevision: 3,
       attemptCount: 0,
-      leaseOwner: null,
-      leaseToken: null,
-      leaseExpiresAt: null,
+      leaseOwner: "worker",
+      leaseToken: "token",
+      leaseExpiresAt: new Date("2026-09-12T13:00:00.000Z"),
     },
     artifact: {
       version: 1,
@@ -285,12 +287,13 @@ function fakeClient(state: World): T2DeliveryClient {
     async $queryRaw<T>(query: Prisma.Sql): Promise<T> {
       const sql = query.sql
       state.sql.push(sql)
-      if (sql.includes("CURRENT_TIMESTAMP")) return [{ now: state.now }] as T
+      if (sql.includes("clock_timestamp()")) return [{ now: state.now }] as T
       if (sql.includes('FROM "ot_order"')) return (state.order ? [state.order] : []) as T
       if (sql.includes('FROM "ot_fulfillment_artifact"'))
         return (state.artifact ? [state.artifact] : []) as T
       if (sql.includes('FROM "ot_fulfillment"'))
         return (state.summary ? [state.summary] : []) as T
+      if (sql.includes('FROM "ot_delivery_attempt"')) return state.attempts.filter(a => a.attemptNumber === query.values[1]) as T
       if (sql.includes('FROM "ot_delivery_event"')) {
         const max = state.events.reduce(
           (best, event) => Math.max(best, Number(event.sequence)),
@@ -324,6 +327,7 @@ function fakeClient(state: World): T2DeliveryClient {
         return state.attempts.length > 0 ? 1 : 0
       }
       if (sql.includes("'DELIVERY_PENDING'")) {
+        if (state.casMiss) return 0
         // SET "status_revision" = $1, "attempt_count" = $2
         // WHERE "id" = $3 AND "status"::text = $4 AND "status_revision" = $5
         const summary = state.summary
@@ -342,6 +346,7 @@ function fakeClient(state: World): T2DeliveryClient {
         return 1
       }
       if (sql.includes('UPDATE "ot_fulfillment"') && sql.includes('SET "status"')) {
+        if (state.casMiss) return 0
         // SET "status" = $1, "status_revision" = $2, "last_reason_code" = $3
         // WHERE "id" = $4 AND "status_revision" = $5
         const summary = state.summary
@@ -377,7 +382,11 @@ function fakeClient(state: World): T2DeliveryClient {
   }
   return {
     async $transaction<T>(work: (t: T2DeliveryTransaction) => Promise<T>): Promise<T> {
-      return work(tx)
+      const snapshot = structuredClone(state)
+      try { return await work(tx) } catch (error) {
+        Object.assign(state, snapshot, { rolledBack: true })
+        throw error
+      }
     },
     async $executeRaw(query: Prisma.Sql): Promise<number> {
       return tx.$executeRaw(query)
@@ -398,7 +407,7 @@ describe("the store persists an attempt before any send is possible", () => {
   it("writes the attempt, its REQUESTED event, and the transition in one pass", async () => {
     const state = world()
     const store = createPrismaT2DeliveryStore(fakeClient(state))
-    const persisted = await store.persistAttempt({
+    const persisted = await store.persistAttempt({ owner: "worker", token: "token",
       orderId: ORDER_ID,
       fulfillmentId: FULFILLMENT_ID,
       provider: "resend",
@@ -418,7 +427,7 @@ describe("the store persists an attempt before any send is possible", () => {
   it("holds no recipient address and names only a provider", async () => {
     const state = world()
     const store = createPrismaT2DeliveryStore(fakeClient(state))
-    await store.persistAttempt({
+    await store.persistAttempt({ owner: "worker", token: "token",
       orderId: ORDER_ID,
       fulfillmentId: FULFILLMENT_ID,
       provider: "resend",
@@ -431,7 +440,7 @@ describe("the store persists an attempt before any send is possible", () => {
     const state = world({ order: { id: ORDER_ID, status: "REFUNDED", tier: "T2" } })
     const store = createPrismaT2DeliveryStore(fakeClient(state))
     await expect(
-      store.persistAttempt({ orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" }),
+      store.persistAttempt({ owner: "worker", token: "token", orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" }),
     ).resolves.toEqual({ ok: false, blocker: "INELIGIBLE_SETTLEMENT" })
     expect(state.attempts).toHaveLength(0)
     expect(state.summary).toMatchObject({ status: "ARTIFACT_READY" })
@@ -441,7 +450,7 @@ describe("the store persists an attempt before any send is possible", () => {
     const state = world({ artifact: null })
     const store = createPrismaT2DeliveryStore(fakeClient(state))
     await expect(
-      store.persistAttempt({ orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" }),
+      store.persistAttempt({ owner: "worker", token: "token", orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" }),
     ).resolves.toEqual({ ok: false, blocker: "ARTIFACT_NOT_FOUND" })
     expect(state.attempts).toHaveLength(0)
   })
@@ -449,9 +458,9 @@ describe("the store persists an attempt before any send is possible", () => {
   it("refuses a second concurrent attempt once the summary has moved on", async () => {
     const state = world()
     const store = createPrismaT2DeliveryStore(fakeClient(state))
-    await store.persistAttempt({ orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" })
+    await store.persistAttempt({ owner: "worker", token: "token", orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" })
     await expect(
-      store.persistAttempt({ orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" }),
+      store.persistAttempt({ owner: "worker", token: "token", orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" }),
     ).resolves.toEqual({ ok: false, blocker: "UNRESOLVED_SEND" })
     expect(state.attempts).toHaveLength(1)
   })
@@ -461,7 +470,7 @@ describe("the store persists an attempt before any send is possible", () => {
     const state = world()
     const store = createPrismaT2DeliveryStore(fakeClient(state))
     await expect(
-      store.persistAttempt({ orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" }),
+      store.persistAttempt({ owner: "worker", token: "token", orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" }),
     ).resolves.toEqual({ ok: false, blocker: "FLAG_DISABLED" })
     expect(state.sql).toHaveLength(0)
   })
@@ -470,7 +479,7 @@ describe("the store persists an attempt before any send is possible", () => {
 describe("the store records outcomes without over-claiming", () => {
   async function pending(state: World) {
     const store = createPrismaT2DeliveryStore(fakeClient(state))
-    await store.persistAttempt({ orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" })
+    await store.persistAttempt({ owner: "worker", token: "token", orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" })
     return store
   }
 
@@ -543,6 +552,7 @@ describe("the orchestrator is bounded and default-off", () => {
 
   it("does nothing at all while the flag is not exactly true", async () => {
     const state = world()
+    Object.assign(state.summary!, { leaseOwner: null, leaseToken: null, leaseExpiresAt: null })
     const send = adapter({ kind: "ACCEPTED", provider: "resend", providerMessageId: "m" })
     await expect(
       runT2Delivery(
@@ -556,6 +566,7 @@ describe("the orchestrator is bounded and default-off", () => {
 
   it("reports the missing provider adapter as an explicit blocker, writing nothing", async () => {
     const state = world()
+    Object.assign(state.summary!, { leaseOwner: null, leaseToken: null, leaseExpiresAt: null })
     await expect(
       runT2Delivery(
         { orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID },
@@ -568,6 +579,7 @@ describe("the orchestrator is bounded and default-off", () => {
 
   it("persists the attempt BEFORE calling the adapter", async () => {
     const state = world()
+    Object.assign(state.summary!, { leaseOwner: null, leaseToken: null, leaseExpiresAt: null })
     const order: string[] = []
     const send: T2DeliveryAdapter = {
       provider: "resend",
@@ -588,6 +600,7 @@ describe("the orchestrator is bounded and default-off", () => {
 
   it("treats a thrown adapter as UNKNOWN, recording nothing and resending nothing", async () => {
     const state = world()
+    Object.assign(state.summary!, { leaseOwner: null, leaseToken: null, leaseExpiresAt: null })
     const send = adapter(new Error("private provider detail"))
     const result = await runT2Delivery(
       { orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID },
@@ -633,6 +646,7 @@ describe("the orchestrator is bounded and default-off", () => {
 
   it("takes a namespaced in-process lease and releases it afterwards", async () => {
     const state = world()
+    Object.assign(state.summary!, { leaseOwner: null, leaseToken: null, leaseExpiresAt: null })
     const owners: unknown[] = []
     const send: T2DeliveryAdapter = {
       provider: "resend",
@@ -684,5 +698,55 @@ describe("source contract: no half-wired sender ships in this slice", () => {
     for (const source of [orchestrator, store]) {
       expect(code(source)).not.toMatch(/\brecipient\b|\btoAddress\b|\bemail\b/i)
     }
+  })
+})
+
+
+describe("adversarial authoritative delivery admission", () => {
+  const dispatchInput = { orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend", owner: "worker", token: "token" }
+  it.each([
+    ["order", "FULFILLMENT_ORDER_MISMATCH"],
+    ["provider", "ATTEMPT_PROVIDER_MISMATCH"],
+    ["kind", "INELIGIBLE_FULFILLMENT_STATUS"],
+    ["stale", "STALE_ATTEMPT"],
+    ["refund", "INELIGIBLE_SETTLEMENT"],
+  ])("rejects %s mismatch without writes", async (which, blocker) => {
+    const state = world()
+    const store = createPrismaT2DeliveryStore(fakeClient(state))
+    expect((await store.persistAttempt(dispatchInput)).ok).toBe(true)
+    if (which === "order") state.summary!.orderId = "other-order"
+    if (which === "kind") state.summary!.kind = "OTHER"
+    if (which === "stale") state.summary!.attemptCount = 2
+    if (which === "refund") state.order!.status = "REFUNDED"
+    const before = structuredClone({ attempts: state.attempts, events: state.events, summary: state.summary })
+    expect(await store.recordOutcome({
+      orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, attemptNumber: 1,
+      outcome: { kind: "ACCEPTED", provider: which === "provider" ? "other" : "resend", providerMessageId: "msg" },
+    })).toEqual({ ok: false, blocker })
+    expect({ attempts: state.attempts, events: state.events, summary: state.summary }).toEqual(before)
+  })
+  it.each(["expired", "replacement", "missing"])("fences %s lease before any attempt", async (which) => {
+    const state = world()
+    if (which === "expired") state.summary!.leaseExpiresAt = new Date(NOW)
+    if (which === "replacement") state.summary!.leaseToken = "replacement"
+    if (which === "missing") Object.assign(state.summary!, { leaseOwner: null, leaseToken: null, leaseExpiresAt: null })
+    const store = createPrismaT2DeliveryStore(fakeClient(state))
+    expect(await store.persistAttempt(dispatchInput)).toEqual({ ok: false, blocker: "LEASE_NOT_OWNED" })
+    expect(state.attempts).toHaveLength(0)
+    expect(state.events).toHaveLength(0)
+  })
+  it.each(["dispatch", "outcome"])("rolls back all %s writes on CAS failure", async (phase) => {
+    const state = world()
+    const store = createPrismaT2DeliveryStore(fakeClient(state))
+    if (phase === "outcome") await store.persistAttempt(dispatchInput)
+    const before = structuredClone({ attempts: state.attempts, events: state.events, summary: state.summary })
+    state.casMiss = true
+    const result = phase === "dispatch" ? await store.persistAttempt(dispatchInput) : await store.recordOutcome({
+      orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, attemptNumber: 1,
+      outcome: { kind: "ACCEPTED", provider: "resend", providerMessageId: "msg" },
+    })
+    expect(result).toEqual({ ok: false, blocker: "DELIVERY_ATTEMPT_CONFLICT" })
+    expect(state.rolledBack).toBe(true)
+    expect({ attempts: state.attempts, events: state.events, summary: state.summary }).toEqual(before)
   })
 })

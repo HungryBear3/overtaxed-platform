@@ -83,6 +83,7 @@ type World = {
   order: Record<string, unknown> | null
   fulfillment: Record<string, unknown> | null
   artifact: Record<string, unknown> | null
+  historicalArtifact?: Record<string, unknown> | null
   capability: CapabilityRow | null
   locks: string[]
   inserted: Array<Record<string, unknown>>
@@ -126,19 +127,19 @@ function world(patch: Partial<World> = {}): World {
 /** A literal fake of the narrow Prisma surface the store uses. */
 function fakeClient(
   state: World,
-  hooks: { onClaim?: () => void } = {},
+  hooks: { onClaim?: () => void; onOrderLock?: () => void } = {},
 ): PacketDownloadClient {
   const tx: PacketDownloadTransaction = {
     async $queryRaw<T>(query: Prisma.Sql): Promise<T> {
       const sql = query.sql
-      if (sql.includes("CURRENT_TIMESTAMP")) return [{ now: state.now }] as T
+      if (sql.includes("clock_timestamp()")) return [{ now: state.now }] as T
       if (sql.includes('SELECT "source_order_id" AS "sourceOrderId"')) {
         return (state.capability
           ? [{ sourceOrderId: state.capability.sourceOrderId }]
           : []) as T
       }
       if (sql.includes('FROM "ot_order"')) {
-        if (sql.includes("FOR UPDATE")) state.locks.push("order")
+        if (sql.includes("FOR UPDATE")) { state.locks.push("order"); hooks.onOrderLock?.() }
         return (state.order ? [state.order] : []) as T
       }
       if (sql.includes('FROM "ot_packet_download_capability"')) {
@@ -146,7 +147,8 @@ function fakeClient(
         return (state.capability ? [state.capability] : []) as T
       }
       if (sql.includes('FROM "ot_fulfillment_artifact"')) {
-        return (state.artifact ? [state.artifact] : []) as T
+        const artifact = sql.includes('ORDER BY "version" DESC') ? state.artifact : (state.historicalArtifact ?? state.artifact)
+        return (artifact ? [artifact] : []) as T
       }
       if (sql.includes('FROM "ot_fulfillment"')) {
         return (state.fulfillment ? [state.fulfillment] : []) as T
@@ -509,5 +511,42 @@ describe("issuance", () => {
       store.issue({ capabilityHash: HASH, fulfillmentId: FULFILLMENT_ID, ttlSeconds: 3600, maxUses: 1 }),
     ).resolves.toEqual({ ok: false, blocker: "FLAG_DISABLED" })
     expect(transaction).not.toHaveBeenCalled()
+  })
+})
+
+describe("fresh current-artifact authority", () => {
+  it("refuses a superseded capability before consuming a use", async () => {
+    const state = world()
+    state.historicalArtifact = state.artifact
+    state.artifact = { ...state.artifact, id: "art_v2", version: 2 }
+    const store = createPrismaPacketDownloadStore(fakeClient(state))
+    expect(await store.authorize({ capabilityHash: HASH })).toMatchObject({ ok: false })
+    expect(state.capability!.useCount).toBe(0)
+  })
+  it("refuses replacement during the asynchronous storage read", async () => {
+    const state = world()
+    const store = createPrismaPacketDownloadStore(fakeClient(state))
+    const first = await store.authorize({ capabilityHash: HASH })
+    expect(first.ok).toBe(true)
+    if (!first.ok) throw new Error("expected grant")
+    state.historicalArtifact = state.artifact
+    state.artifact = { ...state.artifact, id: "art_v2", version: 2 }
+    expect(await store.reassert({ capabilityHash: HASH, grant: first.grant })).toMatchObject({ ok: false })
+  })
+  it("uses the post-lock clock when waiting crosses expiry", async () => {
+    const state = world()
+    const store = createPrismaPacketDownloadStore(fakeClient(state, {
+      onOrderLock: () => { state.now = "2026-09-20T12:00:00.000Z" },
+    }))
+    expect(await store.authorize({ capabilityHash: HASH })).toMatchObject({ ok: false })
+    expect(state.capability!.useCount).toBe(0)
+  })
+  it("rereads fulfillment after issuance waits on the order lock", async () => {
+    const state = world()
+    const store = createPrismaPacketDownloadStore(fakeClient(state, {
+      onOrderLock: () => { state.fulfillment = null },
+    }))
+    expect(await store.issue({ capabilityHash: HASH, fulfillmentId: FULFILLMENT_ID, ttlSeconds: 60, maxUses: 1 })).toMatchObject({ ok: false })
+    expect(state.inserted).toHaveLength(0)
   })
 })
