@@ -98,6 +98,9 @@ importers:
       nodemailer:
         specifier: ^7.0.12
         version: 7.0.13
+      parse5:
+        specifier: 7.3.0
+        version: 7.3.0
       pdf-lib:
         specifier: ^1.17.1
         version: 1.17.1
