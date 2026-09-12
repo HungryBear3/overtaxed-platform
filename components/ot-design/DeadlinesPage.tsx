@@ -1,8 +1,6 @@
 "use client";
 import Link from "next/link";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
-import { TOWNSHIPS, TOWNSHIPS_BY_SLUG } from "@/lib/townships";
 import { OT_PUBLIC_CONTACT } from "@/components/ot-design/SiteChrome";
 import {
   OFFICIAL_DEADLINE_SOURCES,
@@ -185,109 +183,15 @@ function DeadlinesHero() {
   );
 }
 
-function PageReminderCapture() {
-  const { VIEWS } = useContext(CalendarContext);
-  const [email, setEmail] = useState("");
-  const [slug, setSlug] = useState("");
-  const [outcome, setOutcome] = useState<"idle" | "scheduled" | "recorded">("idle");
-  const selectedView = VIEWS.find((t) => t.slug === slug);
-
-  function selectTownship(nextSlug: string) {
-    setSlug(nextSlug);
-    trackTownshipSelection(VIEWS.find((t) => t.slug === nextSlug), "reminder_dropdown");
-  }
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (!email.trim() || !slug) return;
-    // Confirm what the endpoint reports doing, not that the request returned.
-    // `/api/reminder` is a preview stub: it stores nothing and schedules
-    // nothing, and it reports both. "You're set" over a discarded address is
-    // the one outcome a reader cannot detect for themselves.
-    let scheduled = false;
-    try {
-      const res = await fetch("/api/reminder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, townshipSlug: slug }),
-      });
-      const data = (await res.json()) as { scheduled?: boolean };
-      scheduled = data?.scheduled === true;
-    } catch {
-      /* preview stub */
-    }
-    if (selectedView) {
-      analytics.deadlineReminderSignup({
-        townshipSlug: selectedView.slug,
-        townshipName: selectedView.name,
-        status: analyticsStatus(selectedView.status),
-      });
-    }
-    setOutcome(scheduled ? "scheduled" : "recorded");
-  }
-
-  if (outcome !== "idle") {
-    const t = TOWNSHIPS_BY_SLUG[slug];
-    return (
-      <div className="ot-reminder-block ot-reminder-block-done">
-        <div className="ot-reminder-block-check">✓</div>
-        <div className="ot-reminder-block-title">
-          {outcome === "scheduled" ? "You're set." : "Request received."}
-        </div>
-        {outcome === "scheduled" ? (
-          <p>
-            We&apos;ll email you when <strong>{t?.name} Township</strong>&apos;s official
-            appeal deadline is posted by the Assessor, and again before it closes. Nothing else.
-          </p>
-        ) : (
-          <p>
-            We&apos;ve recorded your request, but reminder mail is not running yet —
-            so do not wait to hear from us. Confirm{" "}
-            <strong>{t?.name} Township</strong>&apos;s filing deadline with the Cook
-            County Assessor before you file.
-          </p>
-        )}
-      </div>
-    );
-  }
-
+function PageCalendarNotice() {
+  // Informational township identity cannot authorize a personalized reminder.
   return (
     <div className="ot-reminder-block">
-      <div className="ot-reminder-block-eyebrow">Get a reminder</div>
-      <h2 className="ot-reminder-block-title">
-        Get a reminder when your township&apos;s official deadline is posted.
-      </h2>
+      <h2 className="ot-reminder-block-title">Confirm your deadline with the county.</h2>
       <p className="ot-reminder-block-body">
-        Tell us where to write and we&apos;ll use it only for appeal-deadline
-        updates. Confirm your own filing deadline with the county in the
-        meantime — it is the only source that is authoritative today.
+        This calendar does not determine your property's eligibility or enroll you in reminders.
+        Check the <a href={ASSESSOR_CALENDAR_URL} target="_blank" rel="noopener noreferrer">official Cook County Assessor calendar</a> before filing.
       </p>
-      <form className="ot-reminder-block-form" onSubmit={submit}>
-        <input
-          type="email"
-          required
-          placeholder="you@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="ot-input"
-          aria-label="Email address"
-        />
-        <select
-          required
-          value={slug}
-          onChange={(e) => selectTownship(e.target.value)}
-          className="ot-input"
-          aria-label="Township"
-        >
-          <option value="">Select your township…</option>
-          {TOWNSHIPS.map((t) => (
-            <option key={t.slug} value={t.slug}>{t.name}</option>
-          ))}
-        </select>
-        <button type="submit" className="ot-cta">
-          Send me reminders <span className="ot-cta-arrow">→</span>
-        </button>
-      </form>
     </div>
   );
 }
@@ -703,7 +607,7 @@ export default function DeadlinesPage({ snapshot }: { snapshot?: OfficialDeadlin
       <VerifyAndSources />
       <section className="ot-reminder-section">
         <div className="ot-reminder-section-inner">
-          <PageReminderCapture />
+          <PageCalendarNotice />
         </div>
       </section>
       <TownshipGrid />
