@@ -1,0 +1,688 @@
+/**
+ * @jest-environment node
+ *
+ * Bounded, default-off delivery: the pure dispatch/outcome decisions, the store's
+ * real SQL through a fake Prisma adapter, and the orchestrator's ordering.
+ *
+ * The three properties every assertion here is protecting:
+ *   - the attempt is durable BEFORE the send;
+ *   - provider "accepted" is not "delivered";
+ *   - an unknown outcome is never automatically resent, and a terminal state is
+ *     never resurrected.
+ */
+import type { Prisma } from "@prisma/client"
+import {
+  decideDeliveryDispatch,
+  decideSendOutcomeRecord,
+  type DeliverySendOutcome,
+} from "@/lib/fulfillment/delivery-orchestration"
+import { computeArtifactSha256 } from "@/lib/fulfillment/artifact-digest"
+import { FULFILLMENT_STATUSES, TERMINAL_LOCK_STATUSES } from "@/lib/fulfillment/types"
+import {
+  T2_MAX_DELIVERY_ATTEMPTS,
+  createPrismaT2DeliveryStore,
+  type T2DeliveryClient,
+  type T2DeliveryStore,
+  type T2DeliveryTransaction,
+} from "@/lib/fulfillment-runtime/delivery-store"
+import {
+  runT2Delivery,
+  type T2DeliveryAdapter,
+} from "@/lib/fulfillment-runtime/t2-delivery-orchestrator"
+
+const ORDER_ID = "ord_paid_t2"
+const FULFILLMENT_ID = "ful_t2"
+const sha = computeArtifactSha256(Buffer.from("%PDF-1.7 bound evidence\n"))
+const NOW = "2026-09-12T12:00:00.000Z"
+
+const dispatch = {
+  flagEnabled: true,
+  orderId: ORDER_ID,
+  fulfillmentId: FULFILLMENT_ID,
+  status: "ARTIFACT_READY",
+  statusRevision: 3,
+  attemptCount: 0,
+  maxAttempts: T2_MAX_DELIVERY_ATTEMPTS,
+  provider: "resend",
+  artifactVersion: 1,
+  artifactSha256: sha,
+  generatorVersion: "t2-generator-v1",
+  templateVersion: "t2-template-v1",
+}
+
+describe("dispatch decisions reuse the existing send authority", () => {
+  it("plans an attempt that writes BEFORE any send", () => {
+    const decision = decideDeliveryDispatch(dispatch)
+    expect(decision).toMatchObject({
+      ok: true,
+      plan: {
+        attemptNumber: 1,
+        artifactVersion: 1,
+        provider: "resend",
+        purpose: "DELIVERY",
+        fromStatus: "ARTIFACT_READY",
+        nextStatus: "DELIVERY_PENDING",
+        expectedStatusRevision: 3,
+        requestEventType: "REQUESTED",
+      },
+    })
+    if (!decision.ok) throw new Error("unreachable")
+    // The key is the existing single-sourced contract, not a new one.
+    expect(decision.plan.idempotencyKey).toContain("purpose=DELIVERY")
+    expect(decision.plan.idempotencyKey).toContain(`sha=${sha}`)
+  })
+
+  it("treats a retry from DELAYED as a send of the SAME artifact version", () => {
+    const decision = decideDeliveryDispatch({
+      ...dispatch,
+      status: "DELAYED",
+      attemptCount: 1,
+    })
+    expect(decision).toMatchObject({
+      ok: true,
+      plan: { attemptNumber: 2, artifactVersion: 1 },
+    })
+  })
+
+  it("refuses an unresolved in-flight send rather than risking a duplicate", () => {
+    for (const status of ["DELIVERY_PENDING", "PROVIDER_ACCEPTED"]) {
+      expect(decideDeliveryDispatch({ ...dispatch, status })).toEqual({
+        ok: false,
+        blocker: "UNRESOLVED_SEND",
+      })
+    }
+  })
+
+  it.each([...TERMINAL_LOCK_STATUSES])("refuses terminal %s", (status) => {
+    expect(decideDeliveryDispatch({ ...dispatch, status })).toEqual({
+      ok: false,
+      blocker: `TERMINAL_${status}`,
+    })
+  })
+
+  it("refuses a second send once delivery is confirmed", () => {
+    expect(decideDeliveryDispatch({ ...dispatch, status: "DELIVERED" })).toEqual({
+      ok: false,
+      blocker: "ALREADY_DELIVERED",
+    })
+  })
+
+  it("respects the bounded attempt budget", () => {
+    expect(
+      decideDeliveryDispatch({
+        ...dispatch,
+        status: "DELAYED",
+        attemptCount: T2_MAX_DELIVERY_ATTEMPTS,
+      }),
+    ).toEqual({ ok: false, blocker: "MAX_ATTEMPTS" })
+  })
+
+  it.each([
+    ["a disabled flag", { flagEnabled: false }, "FLAG_DISABLED"],
+    ["a malformed provider", { provider: "res end" }, "INVALID_PROVIDER"],
+    ["a malformed digest", { artifactSha256: "NOTHEX" }, "INVALID_ARTIFACT_SHA256"],
+    ["a zero artifact version", { artifactVersion: 0 }, "INVALID_ARTIFACT_VERSION"],
+    ["a negative revision", { statusRevision: -1 }, "INVALID_STATUS_REVISION"],
+  ])("refuses %s", (_label, patch, blocker) => {
+    expect(decideDeliveryDispatch({ ...dispatch, ...patch })).toEqual({ ok: false, blocker })
+  })
+
+  it("never plans a send from a pre-artifact status", () => {
+    for (const status of FULFILLMENT_STATUSES) {
+      const decision = decideDeliveryDispatch({ ...dispatch, status })
+      if (status === "ARTIFACT_READY" || status === "DELAYED") {
+        expect(decision.ok).toBe(true)
+      } else {
+        expect(decision.ok).toBe(false)
+      }
+    }
+  })
+})
+
+describe("send outcomes: accepted is not delivered, unknown is not failure", () => {
+  it("folds an accepted send to PROVIDER_ACCEPTED and never to DELIVERED", () => {
+    expect(
+      decideSendOutcomeRecord({
+        status: "DELIVERY_PENDING",
+        outcome: { kind: "ACCEPTED", provider: "resend", providerMessageId: "msg_1" },
+        occurredAt: NOW,
+      }),
+    ).toEqual({
+      ok: true,
+      record: {
+        eventType: "ACCEPTED",
+        nextStatus: "PROVIDER_ACCEPTED",
+        providerMessageId: "msg_1",
+        reasonCode: null,
+        resendAllowed: false,
+        unresolved: false,
+      },
+    })
+  })
+
+  it("records NOTHING for an unknown outcome, leaving the send unresolved", () => {
+    expect(
+      decideSendOutcomeRecord({
+        status: "DELIVERY_PENDING",
+        outcome: { kind: "UNKNOWN", provider: "resend" },
+        occurredAt: NOW,
+      }),
+    ).toEqual({
+      ok: true,
+      record: {
+        eventType: null,
+        nextStatus: null,
+        providerMessageId: null,
+        reasonCode: null,
+        resendAllowed: false,
+        unresolved: true,
+      },
+    })
+  })
+
+  it("leaves an unresolved send un-retryable by the send authority", () => {
+    // DELIVERY_PENDING is exactly what an unknown outcome leaves behind.
+    expect(decideDeliveryDispatch({ ...dispatch, status: "DELIVERY_PENDING" })).toEqual({
+      ok: false,
+      blocker: "UNRESOLVED_SEND",
+    })
+  })
+
+  it("folds an explicit provider rejection to terminal FAILED", () => {
+    expect(
+      decideSendOutcomeRecord({
+        status: "DELIVERY_PENDING",
+        outcome: { kind: "REJECTED", provider: "resend", reasonCode: "INVALID_RECIPIENT" },
+        occurredAt: NOW,
+      }),
+    ).toMatchObject({ ok: true, record: { eventType: "FAILED", nextStatus: "FAILED" } })
+  })
+
+  it("never authorizes an automatic resend for any outcome", () => {
+    const outcomes: DeliverySendOutcome[] = [
+      { kind: "ACCEPTED", provider: "resend", providerMessageId: "msg_1" },
+      { kind: "REJECTED", provider: "resend", reasonCode: "HARD_BOUNCE" },
+      { kind: "UNKNOWN", provider: "resend" },
+    ]
+    for (const outcome of outcomes) {
+      const decision = decideSendOutcomeRecord({
+        status: "DELIVERY_PENDING",
+        outcome,
+        occurredAt: NOW,
+      })
+      expect(decision).toMatchObject({ ok: true, record: { resendAllowed: false } })
+    }
+  })
+
+  it.each([...TERMINAL_LOCK_STATUSES])(
+    "refuses to write any outcome against terminal %s",
+    (status) => {
+      expect(
+        decideSendOutcomeRecord({
+          status,
+          outcome: { kind: "ACCEPTED", provider: "resend", providerMessageId: "msg_1" },
+          occurredAt: NOW,
+        }),
+      ).toEqual({ ok: false, blocker: "OUTCOME_NOT_APPLICABLE" })
+    },
+  )
+
+  it.each([
+    ["free-form provider text as a reason", { kind: "REJECTED", provider: "resend", reasonCode: "550 mailbox unavailable" }, "INVALID_REASON_CODE"],
+    ["a malformed provider", { kind: "UNKNOWN", provider: "re send" }, "INVALID_PROVIDER"],
+    ["a newline-bearing message id", { kind: "ACCEPTED", provider: "resend", providerMessageId: "msg\n1" }, "INVALID_PROVIDER_MESSAGE_ID"],
+  ])("refuses %s", (_label, outcome, blocker) => {
+    expect(
+      decideSendOutcomeRecord({
+        status: "DELIVERY_PENDING",
+        outcome: outcome as DeliverySendOutcome,
+        occurredAt: NOW,
+      }),
+    ).toEqual({ ok: false, blocker })
+  })
+})
+
+type World = {
+  now: string
+  order: { id: string; status: string; tier: string } | null
+  summary: Record<string, unknown> | null
+  artifact: Record<string, unknown> | null
+  attempts: Array<Record<string, unknown>>
+  events: Array<Record<string, unknown>>
+  sql: string[]
+}
+
+function world(patch: Partial<World> = {}): World {
+  return {
+    now: NOW,
+    order: { id: ORDER_ID, status: "PAID", tier: "T2" },
+    summary: {
+      id: FULFILLMENT_ID,
+      orderId: ORDER_ID,
+      kind: "T2_APPEAL_EVIDENCE",
+      status: "ARTIFACT_READY",
+      statusRevision: 3,
+      attemptCount: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+    },
+    artifact: {
+      version: 1,
+      artifactSha256: sha,
+      generatorVersion: "t2-generator-v1",
+      templateVersion: "t2-template-v1",
+    },
+    attempts: [],
+    events: [],
+    sql: [],
+    ...patch,
+  }
+}
+
+function fakeClient(state: World): T2DeliveryClient {
+  const tx: T2DeliveryTransaction = {
+    async $queryRaw<T>(query: Prisma.Sql): Promise<T> {
+      const sql = query.sql
+      state.sql.push(sql)
+      if (sql.includes("CURRENT_TIMESTAMP")) return [{ now: state.now }] as T
+      if (sql.includes('FROM "ot_order"')) return (state.order ? [state.order] : []) as T
+      if (sql.includes('FROM "ot_fulfillment_artifact"'))
+        return (state.artifact ? [state.artifact] : []) as T
+      if (sql.includes('FROM "ot_fulfillment"'))
+        return (state.summary ? [state.summary] : []) as T
+      if (sql.includes('FROM "ot_delivery_event"')) {
+        const max = state.events.reduce(
+          (best, event) => Math.max(best, Number(event.sequence)),
+          0,
+        )
+        return [{ next: max + 1 }] as T
+      }
+      throw new Error(`unexpected query: ${sql}`)
+    },
+    async $executeRaw(query: Prisma.Sql): Promise<number> {
+      const sql = query.sql
+      state.sql.push(sql)
+      if (sql.includes('INSERT INTO "ot_delivery_attempt"')) {
+        state.attempts.push({
+          attemptNumber: query.values[2],
+          artifactVersion: query.values[3],
+          idempotencyKey: query.values[4],
+          provider: query.values[5],
+        })
+        return 1
+      }
+      if (sql.includes('INSERT INTO "ot_delivery_event"')) {
+        state.events.push({
+          attemptNumber: query.values[2],
+          eventType: query.values[5],
+          sequence: query.values[6],
+        })
+        return 1
+      }
+      if (sql.includes('UPDATE "ot_delivery_attempt"')) {
+        return state.attempts.length > 0 ? 1 : 0
+      }
+      if (sql.includes("'DELIVERY_PENDING'")) {
+        // SET "status_revision" = $1, "attempt_count" = $2
+        // WHERE "id" = $3 AND "status"::text = $4 AND "status_revision" = $5
+        const summary = state.summary
+        if (!summary) return 0
+        const [nextRevision, attemptCount, , expectedStatus, expectedRevision] =
+          query.values
+        if (
+          summary.status !== expectedStatus ||
+          summary.statusRevision !== expectedRevision
+        ) {
+          return 0
+        }
+        summary.status = "DELIVERY_PENDING"
+        summary.statusRevision = nextRevision
+        summary.attemptCount = attemptCount
+        return 1
+      }
+      if (sql.includes('UPDATE "ot_fulfillment"') && sql.includes('SET "status"')) {
+        // SET "status" = $1, "status_revision" = $2, "last_reason_code" = $3
+        // WHERE "id" = $4 AND "status_revision" = $5
+        const summary = state.summary
+        if (!summary) return 0
+        const [nextStatus, nextRevision, , , expectedRevision] = query.values
+        if (summary.statusRevision !== expectedRevision) return 0
+        summary.status = nextStatus
+        summary.statusRevision = nextRevision
+        return 1
+      }
+      if (sql.includes('SET "lease_owner" = NULL')) {
+        // WHERE "id" = $1 AND "lease_owner" = $2 AND "lease_token" = $3
+        const summary = state.summary
+        if (!summary) return 0
+        const [, owner, token] = query.values
+        if (summary.leaseOwner !== owner || summary.leaseToken !== token) return 0
+        summary.leaseOwner = null
+        summary.leaseToken = null
+        summary.leaseExpiresAt = null
+        return 1
+      }
+      if (sql.includes('SET "lease_owner"')) {
+        // SET "lease_owner" = $1, "lease_token" = $2, "lease_expires_at" = $3
+        const summary = state.summary
+        if (!summary) return 0
+        summary.leaseOwner = query.values[0]
+        summary.leaseToken = query.values[1]
+        summary.leaseExpiresAt = query.values[2]
+        return 1
+      }
+      throw new Error(`unexpected execute: ${sql}`)
+    },
+  }
+  return {
+    async $transaction<T>(work: (t: T2DeliveryTransaction) => Promise<T>): Promise<T> {
+      return work(tx)
+    },
+    async $executeRaw(query: Prisma.Sql): Promise<number> {
+      return tx.$executeRaw(query)
+    },
+  }
+}
+
+const PRIOR = process.env.OT_T2_DELIVERY_ENABLED
+beforeEach(() => {
+  process.env.OT_T2_DELIVERY_ENABLED = "true"
+})
+afterAll(() => {
+  if (PRIOR === undefined) delete process.env.OT_T2_DELIVERY_ENABLED
+  else process.env.OT_T2_DELIVERY_ENABLED = PRIOR
+})
+
+describe("the store persists an attempt before any send is possible", () => {
+  it("writes the attempt, its REQUESTED event, and the transition in one pass", async () => {
+    const state = world()
+    const store = createPrismaT2DeliveryStore(fakeClient(state))
+    const persisted = await store.persistAttempt({
+      orderId: ORDER_ID,
+      fulfillmentId: FULFILLMENT_ID,
+      provider: "resend",
+    })
+    expect(persisted).toMatchObject({ ok: true, attemptNumber: 1, artifactVersion: 1 })
+    expect(state.attempts).toHaveLength(1)
+    expect(state.events).toEqual([
+      { attemptNumber: 1, eventType: "REQUESTED", sequence: 1 },
+    ])
+    expect(state.summary).toMatchObject({
+      status: "DELIVERY_PENDING",
+      statusRevision: 4,
+      attemptCount: 1,
+    })
+  })
+
+  it("holds no recipient address and names only a provider", async () => {
+    const state = world()
+    const store = createPrismaT2DeliveryStore(fakeClient(state))
+    await store.persistAttempt({
+      orderId: ORDER_ID,
+      fulfillmentId: FULFILLMENT_ID,
+      provider: "resend",
+    })
+    expect(JSON.stringify(state.attempts)).not.toMatch(/@/)
+    expect(state.attempts[0]).toMatchObject({ provider: "resend" })
+  })
+
+  it("refuses a refunded order under the lock without writing", async () => {
+    const state = world({ order: { id: ORDER_ID, status: "REFUNDED", tier: "T2" } })
+    const store = createPrismaT2DeliveryStore(fakeClient(state))
+    await expect(
+      store.persistAttempt({ orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" }),
+    ).resolves.toEqual({ ok: false, blocker: "INELIGIBLE_SETTLEMENT" })
+    expect(state.attempts).toHaveLength(0)
+    expect(state.summary).toMatchObject({ status: "ARTIFACT_READY" })
+  })
+
+  it("refuses when no artifact is bound", async () => {
+    const state = world({ artifact: null })
+    const store = createPrismaT2DeliveryStore(fakeClient(state))
+    await expect(
+      store.persistAttempt({ orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" }),
+    ).resolves.toEqual({ ok: false, blocker: "ARTIFACT_NOT_FOUND" })
+    expect(state.attempts).toHaveLength(0)
+  })
+
+  it("refuses a second concurrent attempt once the summary has moved on", async () => {
+    const state = world()
+    const store = createPrismaT2DeliveryStore(fakeClient(state))
+    await store.persistAttempt({ orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" })
+    await expect(
+      store.persistAttempt({ orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" }),
+    ).resolves.toEqual({ ok: false, blocker: "UNRESOLVED_SEND" })
+    expect(state.attempts).toHaveLength(1)
+  })
+
+  it("makes no database call while the flag is not exactly true", async () => {
+    delete process.env.OT_T2_DELIVERY_ENABLED
+    const state = world()
+    const store = createPrismaT2DeliveryStore(fakeClient(state))
+    await expect(
+      store.persistAttempt({ orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" }),
+    ).resolves.toEqual({ ok: false, blocker: "FLAG_DISABLED" })
+    expect(state.sql).toHaveLength(0)
+  })
+})
+
+describe("the store records outcomes without over-claiming", () => {
+  async function pending(state: World) {
+    const store = createPrismaT2DeliveryStore(fakeClient(state))
+    await store.persistAttempt({ orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID, provider: "resend" })
+    return store
+  }
+
+  it("advances an accepted send to PROVIDER_ACCEPTED, never DELIVERED", async () => {
+    const state = world()
+    const store = await pending(state)
+    await expect(
+      store.recordOutcome({
+        orderId: ORDER_ID,
+        fulfillmentId: FULFILLMENT_ID,
+        attemptNumber: 1,
+        outcome: { kind: "ACCEPTED", provider: "resend", providerMessageId: "msg_1" },
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      recorded: true,
+      unresolved: false,
+      status: "PROVIDER_ACCEPTED",
+    })
+    expect(state.summary).toMatchObject({ status: "PROVIDER_ACCEPTED" })
+    expect(state.events.map((e) => e.eventType)).toEqual(["REQUESTED", "ACCEPTED"])
+  })
+
+  it("writes nothing for an unknown outcome and leaves the send unresolved", async () => {
+    const state = world()
+    const store = await pending(state)
+    const eventsBefore = state.events.length
+    await expect(
+      store.recordOutcome({
+        orderId: ORDER_ID,
+        fulfillmentId: FULFILLMENT_ID,
+        attemptNumber: 1,
+        outcome: { kind: "UNKNOWN", provider: "resend" },
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      recorded: false,
+      unresolved: true,
+      status: "DELIVERY_PENDING",
+    })
+    expect(state.events).toHaveLength(eventsBefore)
+    expect(state.summary).toMatchObject({ status: "DELIVERY_PENDING" })
+  })
+
+  it("assigns strictly increasing local sequence numbers", async () => {
+    const state = world()
+    const store = await pending(state)
+    await store.recordOutcome({
+      orderId: ORDER_ID,
+      fulfillmentId: FULFILLMENT_ID,
+      attemptNumber: 1,
+      outcome: { kind: "ACCEPTED", provider: "resend", providerMessageId: "msg_1" },
+    })
+    expect(state.events.map((e) => e.sequence)).toEqual([1, 2])
+  })
+})
+
+describe("the orchestrator is bounded and default-off", () => {
+  const adapter = (outcome: DeliverySendOutcome | Error): T2DeliveryAdapter => ({
+    provider: "resend",
+    send: jest.fn(async () => {
+      if (outcome instanceof Error) throw outcome
+      return outcome
+    }),
+  })
+
+  function storeSpy(state: World): T2DeliveryStore {
+    return createPrismaT2DeliveryStore(fakeClient(state))
+  }
+
+  it("does nothing at all while the flag is not exactly true", async () => {
+    const state = world()
+    const send = adapter({ kind: "ACCEPTED", provider: "resend", providerMessageId: "m" })
+    await expect(
+      runT2Delivery(
+        { orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID },
+        { env: {}, store: storeSpy(state), adapter: send },
+      ),
+    ).resolves.toEqual({ outcome: "DISABLED" })
+    expect(state.sql).toHaveLength(0)
+    expect(send.send).not.toHaveBeenCalled()
+  })
+
+  it("reports the missing provider adapter as an explicit blocker, writing nothing", async () => {
+    const state = world()
+    await expect(
+      runT2Delivery(
+        { orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID },
+        { env: { OT_T2_DELIVERY_ENABLED: "true" }, store: storeSpy(state) },
+      ),
+    ).resolves.toEqual({ outcome: "BLOCKED", blocker: "NO_DELIVERY_ADAPTER" })
+    expect(state.sql).toHaveLength(0)
+    expect(state.attempts).toHaveLength(0)
+  })
+
+  it("persists the attempt BEFORE calling the adapter", async () => {
+    const state = world()
+    const order: string[] = []
+    const send: T2DeliveryAdapter = {
+      provider: "resend",
+      send: async () => {
+        order.push(`send:attempts=${state.attempts.length}`)
+        return { kind: "ACCEPTED", provider: "resend", providerMessageId: "msg_1" }
+      },
+    }
+    const result = await runT2Delivery(
+      { orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID },
+      { env: { OT_T2_DELIVERY_ENABLED: "true" }, store: storeSpy(state), adapter: send },
+    )
+    expect(result).toMatchObject({ outcome: "ATTEMPTED", attemptNumber: 1, recorded: true })
+    // The attempt was already durable when the adapter ran.
+    expect(order).toEqual(["send:attempts=1"])
+    expect(state.summary).toMatchObject({ status: "PROVIDER_ACCEPTED" })
+  })
+
+  it("treats a thrown adapter as UNKNOWN, recording nothing and resending nothing", async () => {
+    const state = world()
+    const send = adapter(new Error("private provider detail"))
+    const result = await runT2Delivery(
+      { orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID },
+      { env: { OT_T2_DELIVERY_ENABLED: "true" }, store: storeSpy(state), adapter: send },
+    )
+    expect(result).toMatchObject({ outcome: "ATTEMPTED", recorded: false, unresolved: true })
+    expect(state.summary).toMatchObject({ status: "DELIVERY_PENDING" })
+    expect(state.events.map((e) => e.eventType)).toEqual(["REQUESTED"])
+
+    // A second invocation must refuse rather than risk a duplicate.
+    const again = await runT2Delivery(
+      { orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID },
+      { env: { OT_T2_DELIVERY_ENABLED: "true" }, store: storeSpy(state), adapter: send },
+    )
+    expect(again).toEqual({ outcome: "NOT_CLAIMED" })
+    expect(state.attempts).toHaveLength(1)
+  })
+
+  it("refuses to claim a terminal fulfillment, so nothing resurrects it", async () => {
+    const state = world({
+      summary: {
+        id: FULFILLMENT_ID,
+        orderId: ORDER_ID,
+        kind: "T2_APPEAL_EVIDENCE",
+        status: "BOUNCED",
+        statusRevision: 7,
+        attemptCount: 1,
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+      },
+    })
+    const send = adapter({ kind: "ACCEPTED", provider: "resend", providerMessageId: "m" })
+    await expect(
+      runT2Delivery(
+        { orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID },
+        { env: { OT_T2_DELIVERY_ENABLED: "true" }, store: storeSpy(state), adapter: send },
+      ),
+    ).resolves.toEqual({ outcome: "NOT_CLAIMED" })
+    expect(send.send).not.toHaveBeenCalled()
+    expect(state.attempts).toHaveLength(0)
+  })
+
+  it("takes a namespaced in-process lease and releases it afterwards", async () => {
+    const state = world()
+    const owners: unknown[] = []
+    const send: T2DeliveryAdapter = {
+      provider: "resend",
+      send: async () => {
+        // Observed mid-flight: the lease is held by an identity this process
+        // generated, never one a caller supplied.
+        owners.push(state.summary?.leaseOwner)
+        return { kind: "ACCEPTED", provider: "resend", providerMessageId: "m" }
+      },
+    }
+    const result = await runT2Delivery(
+      { orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID },
+      { env: { OT_T2_DELIVERY_ENABLED: "true" }, store: storeSpy(state), adapter: send },
+    )
+    expect(String(owners[0])).toMatch(/^ot-t2-delivery:/)
+    expect(result).toMatchObject({ outcome: "ATTEMPTED", released: true })
+    expect(state.summary?.leaseOwner).toBeNull()
+  })
+})
+
+describe("source contract: no half-wired sender ships in this slice", () => {
+  const ROOT = process.cwd()
+  const orchestrator = require("node:fs").readFileSync(
+    require("node:path").join(ROOT, "lib/fulfillment-runtime/t2-delivery-orchestrator.ts"),
+    "utf8",
+  )
+  const store = require("node:fs").readFileSync(
+    require("node:path").join(ROOT, "lib/fulfillment-runtime/delivery-store.ts"),
+    "utf8",
+  )
+
+  it("imports no mail client, provider SDK, or email module", () => {
+    for (const source of [orchestrator, store]) {
+      expect(source).not.toMatch(/from "(resend|nodemailer|@?[\w/-]*\/email[\w/-]*)"/)
+      expect(source).not.toMatch(/lib\/email/)
+    }
+  })
+
+  it("ships no default adapter, so an env flag alone can send nothing", () => {
+    expect(orchestrator).not.toMatch(/deps\.adapter \?\?/)
+    expect(orchestrator).toContain("NO_DELIVERY_ADAPTER")
+  })
+
+  it("never handles a recipient address in code", () => {
+    // Prose may discuss what the adapter is responsible for; the CODE may not
+    // touch it, so the comments are stripped before the check.
+    const code = (source: string) =>
+      source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
+    for (const source of [orchestrator, store]) {
+      expect(code(source)).not.toMatch(/\brecipient\b|\btoAddress\b|\bemail\b/i)
+    }
+  })
+})

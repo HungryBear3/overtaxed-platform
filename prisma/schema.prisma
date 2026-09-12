@@ -1211,6 +1211,7 @@ model OTFulfillment {
   attempts  OTDeliveryAttempt[]
   events    OTDeliveryEvent[]
   adminEvents OTFulfillmentAdminEvent[]
+  downloadCapabilities OTPacketDownloadCapability[]
 
   @@unique([orderId, kind])
   @@index([status])
@@ -1268,6 +1269,8 @@ model OTFulfillmentArtifact {
   fulfillment OTFulfillment       @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
   // Delivery attempts that sent THIS immutable artifact version (same fulfillment).
   attempts    OTDeliveryAttempt[]
+  // Download capabilities bound to THIS immutable artifact version.
+  downloadCapabilities OTPacketDownloadCapability[]
 
   @@unique([fulfillmentId, version])
   @@unique([fulfillmentId, artifactSha256])
@@ -1343,4 +1346,85 @@ model OTDeliveryEvent {
   @@unique([provider, providerEventId])
   @@unique([fulfillmentId, sequence])
   @@map("ot_delivery_event")
+}
+
+/// Secure, default-off customer download capability for one immutable T2 packet.
+///
+/// Only a persistent SHA-256 hash of a high-entropy capability value is stored.
+/// The value itself exists in the issuing process and in the customer's POST
+/// body and nowhere else: it is never a column, never a URL path/query segment,
+/// and never written to a log. A row is bound to the exact artifact identity
+/// (row id + version + content digest), to the authoritative order, and to the
+/// property-binding fingerprint in force at issuance, so one capability can
+/// never be replayed against a different packet, order, or property.
+///
+/// Lifecycle is durable, not inferred: `expiresAt` bounds it in time, `maxUses`
+/// bounds it in count, and `revokedAt` ends it immediately. None of these three
+/// replaces the authority re-read at download time — order settlement and
+/// fulfillment status are read fresh on every use.
+model OTPacketDownloadCapability {
+  id                         String    @id @default(cuid())
+  /// SHA-256 (lowercase hex) of the opaque capability value. Never the value.
+  capabilityHash             String    @unique @map("capability_hash")
+  fulfillmentId              String    @map("fulfillment_id")
+  /// Denormalized artifact row id, re-verified against the joined artifact.
+  artifactId                 String    @map("artifact_id")
+  artifactVersion            Int       @map("artifact_version")
+  artifactSha256             String    @map("artifact_sha256")
+  sourceOrderId              String    @map("source_order_id")
+  propertyBindingFingerprint String    @map("property_binding_fingerprint")
+  issuedAt                   DateTime  @default(now()) @map("issued_at")
+  expiresAt                  DateTime  @map("expires_at")
+  maxUses                    Int       @map("max_uses")
+  useCount                   Int       @default(0) @map("use_count")
+  lastUsedAt                 DateTime? @map("last_used_at")
+  revokedAt                  DateTime? @map("revoked_at")
+  /// Bounded non-PII revocation code from the closed allowlist.
+  revokedReasonCode          String?   @map("revoked_reason_code")
+  createdAt                  DateTime  @default(now()) @map("created_at")
+
+  fulfillment OTFulfillment         @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+  /// Same composite identity FK the delivery attempt uses: a capability can only
+  /// ever name an immutable artifact version of its OWN fulfillment.
+  artifact    OTFulfillmentArtifact @relation(fields: [fulfillmentId, artifactVersion], references: [fulfillmentId, version], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([fulfillmentId])
+  @@index([expiresAt])
+  @@map("ot_packet_download_capability")
+}
+
+/// Durable, idempotent quarantine record for stored artifact content whose bind
+/// outcome is unknown or refused.
+///
+/// Recording is the ONLY action taken: nothing here deletes, overwrites, or
+/// rewrites storage, because the same content address may already be bound by
+/// another fulfillment. Ambiguity preserves the object. A later garbage
+/// collector must coordinate atomically with the binding registry, re-check all
+/// references at deletion time, and preserve on ambiguity.
+///
+/// Deliberately has NO foreign key to ot_fulfillment. A cascade would delete the
+/// very record that says "bytes may exist in private storage", which is exactly
+/// the fact an operator needs after the fulfillment row is gone.
+model OTArtifactOrphanQuarantine {
+  id               String   @id @default(cuid())
+  /// Private internal content-addressed locator — never a public bearer URL.
+  storageLocator   String   @map("storage_locator")
+  /// The EXPECTED content digest of the bytes that may be stored at the locator.
+  artifactSha256   String   @map("artifact_sha256")
+  fulfillmentId    String   @map("fulfillment_id")
+  sourceOrderId    String   @map("source_order_id")
+  /// CONFIRMED when the upload returned a trustworthy created result; UNKNOWN
+  /// when the write outcome was never observed and the object may or may not exist.
+  uploadOutcome    String   @map("upload_outcome")
+  firstReasonCode  String   @map("first_reason_code")
+  lastReasonCode   String   @map("last_reason_code")
+  observationCount Int      @default(1) @map("observation_count")
+  firstObservedAt  DateTime @map("first_observed_at")
+  lastObservedAt   DateTime @map("last_observed_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@unique([fulfillmentId, storageLocator, artifactSha256])
+  @@index([artifactSha256])
+  @@index([lastObservedAt])
+  @@map("ot_artifact_orphan_quarantine")
 }
