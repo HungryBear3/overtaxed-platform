@@ -30,7 +30,7 @@ export function createInformationalSnapshotStore(client: InformationalSnapshotCl
       try {
         return await client.$transaction(async tx => {
           // Serialize this key even before its first row exists. All owned writers use this lock.
-          await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${INFORMATIONAL_SNAPSHOT_KEY}))`);
+          await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${INFORMATIONAL_SNAPSHOT_KEY}))::text AS locked`);
           const clocks = await tx.$queryRaw<{ now: Date }[]>(Prisma.sql`SELECT clock_timestamp() AS now`);
           const snapshot = decodeInformationalSnapshot(raw, new Date(clocks[0]?.now));
           if (!enabled() || !snapshot) return "REFUSED";

@@ -17,7 +17,7 @@ function decode(raw: string): Marker | null {
 export function createInformationalRefreshBarrier(client: InformationalSnapshotClient, snapshotKey: string) {
   const key = `${snapshotKey}:attempt`;
   const read = () => Prisma.sql`SELECT left("value", 300) AS value FROM "SystemConfig" WHERE "key" = ${key} LIMIT 1`;
-  const lock = () => Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${snapshotKey}))`;
+  const lock = () => Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${snapshotKey}))::text AS locked`;
   return {
     async begin(): Promise<string | null> {
       if (!enabled()) return null;
