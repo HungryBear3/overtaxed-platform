@@ -1,4 +1,5 @@
 import "server-only";
+import { createInformationalRefreshBarrier } from "./informational-refresh-barrier";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { decodeInformationalSnapshot, MAX_INFORMATIONAL_SNAPSHOT_LENGTH } from "./informational-snapshot";
@@ -59,6 +60,13 @@ export async function informationalSnapshotStore() {
   if (!enabled()) return null;
   try {
     const { prisma } = await import("@/lib/db");
-    return enabled() ? createInformationalSnapshotStore(prisma as unknown as InformationalSnapshotClient) : null;
+    if (!enabled()) return null;
+    const client = prisma as unknown as InformationalSnapshotClient;
+    const store = createInformationalSnapshotStore(client);
+    const barrier = createInformationalRefreshBarrier(client, INFORMATIONAL_SNAPSHOT_KEY);
+    return { ...store, begin: barrier.begin, complete: barrier.complete, async read(now: Date) {
+      const snapshot = await store.read(now);
+      return snapshot && await barrier.permits(JSON.stringify(snapshot)) ? snapshot : null;
+    } };
   } catch { return null; }
 }

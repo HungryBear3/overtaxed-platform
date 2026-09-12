@@ -15,7 +15,7 @@ const factory = jest.mocked(informationalSnapshotStore);
 const collect = jest.mocked(collectInformationalSnapshot);
 const oldFlag = process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED;
 const oldSecret = process.env.CRON_SECRET;
-const store = { read: jest.fn(), publish: jest.fn() };
+const store = { read: jest.fn(), publish: jest.fn(), begin: jest.fn(), complete: jest.fn() };
 const request = (auth = `Bearer ${KEY}`) => new Request("https://example.test/api/cron/informational-deadlines", { headers: { authorization: auth } });
 const fixture = () => ({ schemaVersion: 1 as const, synthetic: false, sources: { bor: null, assessor: {
   authority: "cook_county_assessor" as const, sourceUrl: URL, finalUrl: URL, httpStatus: 200, retrievedAt: AT.toISOString(), sourceUpdatedAt: null,
@@ -24,6 +24,7 @@ const fixture = () => ({ schemaVersion: 1 as const, synthetic: false, sources: {
 beforeEach(() => {
   jest.useFakeTimers().setSystemTime(AT); jest.resetAllMocks();
   process.env.CRON_SECRET = KEY; process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED = "true";
+  store.begin.mockResolvedValue("synthetic-attempt"); store.complete.mockResolvedValue(true);
   factory.mockResolvedValue(store); store.read.mockResolvedValue(fixture()); store.publish.mockResolvedValue("PUBLISHED"); collect.mockResolvedValue(fixture());
 });
 afterEach(() => {
