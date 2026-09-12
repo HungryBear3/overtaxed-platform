@@ -99,12 +99,16 @@ export function buildTownship2026Views(
       cycleYear: t.cycleYear,
     };
 
-    if (!projection.available) {
+    // This page is explicitly the 2026 calendar, not a generic yearless view.
+    // A valid official date from another cycle must not be attributed to 2026.
+    if (!projection.available ||
+      [projection.openDate, projection.lastFileDate, projection.noticeDate]
+        .some(date => date !== null && !date.startsWith("2026-"))) {
       return {
         ...base,
         official: false,
         status: "pending" as const,
-        pendingReason: projection.reason,
+        pendingReason: projection.available ? "date_invalid" as const : projection.reason,
         allowReminderSignup: false,
       };
     }

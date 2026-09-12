@@ -60,3 +60,15 @@ test("mounted expiry removes the previously verified exact date from every surfa
   expect([...container.querySelectorAll(".ot-tbl-window")].every(c => c.textContent === "Pending official date")).toBe(true);
   assertNoPersonalizedClaims(container);
 });
+test.each([
+  ["2025-05-25", "2025-06-08"],
+  ["2027-05-25", "2027-06-08"],
+  ["2026-05-25", "2027-06-08"],
+])("the 2026 calendar refuses window %s through %s", (openDate, lastFileDate) => {
+  const snapshot = source();
+  snapshot.townships["oak-park"].stages.assessor = { noticeDate: openDate, openDate, lastFileDate };
+  const { container } = render(<DeadlinesPage snapshot={snapshot} />);
+  expect([...container.querySelectorAll(".ot-tbl-window")].every(c => c.textContent === "Pending official date")).toBe(true);
+  expect(container.textContent).not.toMatch(/Last file:|Last file Jun/);
+  assertNoPersonalizedClaims(container);
+});
