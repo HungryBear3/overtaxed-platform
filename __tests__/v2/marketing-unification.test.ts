@@ -250,26 +250,19 @@ describe("OT v2 marketing — SiteChrome footer references canonical township gr
 });
 
 describe("OT v2 marketing — township deadline source of truth", () => {
-  it("/townships renders from lib/townships instead of a duplicate hardcoded dataset", () => {
-    const src = read("app/townships/page.tsx");
-    expect(src).toMatch(/from\s+["']@\/lib\/townships["']/);
-    // Was `TOWNSHIP_STATUS_COUNTS` — a status tally this page kept for itself,
-    // computed from the seed dates in lib/townships.ts. Counts now come from
-    // the same canonical view model /deadlines reads, which is what stops the
-    // two pages from disagreeing.
-    expect(src).not.toMatch(/TOWNSHIP_STATUS_COUNTS/);
-    expect(src).toMatch(/count2026Views/);
-    expect(src).toMatch(/from\s+["']@\/lib\/deadlines-2026["']/);
-    expect(src).not.toMatch(/const townships = \[/);
-    expect(src).not.toMatch(/Northwest District/);
-    expect(src).not.toMatch(/Berwyn[\s\S]{0,240}2028/);
-    expect(src).not.toMatch(/Oak Park[\s\S]{0,240}2028/);
+  it("both calendar routes render the shared live informational calendar", () => {
+    for (const route of ["app/townships/page.tsx", "app/deadlines/page.tsx"]) {
+      const src = read(route);
+      expect(src).toMatch(/<LiveDeadlinesPage/);
+      expect(src).not.toMatch(/buildTownship2026Views|TOWNSHIP_STATUS_COUNTS|TownshipAlertForm/);
+    }
+    expect(read("components/ot-design/LiveDeadlinesPage.tsx")).toMatch(/useLiveInformationalSnapshot/);
+    expect(read("components/ot-design/DeadlinesPage.tsx")).toMatch(/useInformationalCalendar/);
   });
 
-  it("/townships attributes its dates or shows none", () => {
-    const src = read("app/townships/page.tsx");
-    // CC-08: a source and a retrieval instant wherever a deadline appears.
-    expect(src).toMatch(/official2026Provenance/);
+  it("the shared calendar attributes its dates or shows none", () => {
+    const src = read("components/ot-design/DeadlinesPage.tsx");
+    expect(src).toMatch(/PROVENANCE/);
     expect(src).toMatch(/cc08/);
   });
 
