@@ -199,6 +199,9 @@ function currentArtifact(): Row | undefined {
 
 function query(sql: string, values: readonly unknown[]): unknown {
   if (sql.includes("clock_timestamp()")) return [{ now: db.now }]
+  // The unmatched-spool cap serializes on a transaction advisory lock. Nothing
+  // in this single-threaded fake contends for it; it only has to answer.
+  if (sql.includes("pg_advisory_xact_lock")) return [{ locked: true }]
 
   // The callback store's message-id lookup.
   if (sql.includes('JOIN "ot_fulfillment" f ON f."id" = t."fulfillment_id"')) {
@@ -243,13 +246,16 @@ function query(sql: string, values: readonly unknown[]): unknown {
     }]
   }
   if (sql.includes('FROM "ot_delivery_provider_callback"')) {
-    const [provider, messageId, horizon] = values as [string, string, Date]
+    // … AND "received_at" >= $3 AND "replay_count" < $4
+    const [provider, messageId, horizon, ceiling] = values as [string, string, Date, number]
     return db.callbacks
       .filter((c) =>
         c.provider === provider && c.providerMessageId === messageId &&
         c.disposition === "UNMATCHED" && c.resolvedAt === null &&
-        (c.receivedAt as Date) >= horizon)
+        (c.receivedAt as Date) >= horizon && Number(c.replayCount) < ceiling)
       .sort((a, b) => (a.occurredAt as Date).getTime() - (b.occurredAt as Date).getTime())
+      // Copies, as a real query returns — never live references.
+      .map((row) => ({ ...row }))
   }
 
   if (sql.includes('FROM "ot_packet_download_capability"')) {
@@ -315,10 +321,12 @@ function execute(sql: string, values: readonly unknown[]): number {
   }
 
   if (sql.includes('UPDATE "ot_delivery_provider_callback"')) {
-    if (sql.includes('"replay_count" = LEAST')) {
-      const [id, expected] = values
+    if (sql.includes('SET "replay_count" = "replay_count" + 1')) {
+      // … AND "replay_count" = $2 AND "replay_count" < $3
+      const [id, expected, ceiling] = values as [string, number, number]
       const row = db.callbacks.find(
-        (c) => c.id === id && c.disposition === "UNMATCHED" && c.resolvedAt === null && c.replayCount === expected,
+        (c) => c.id === id && c.disposition === "UNMATCHED" && c.resolvedAt === null &&
+          c.replayCount === expected && Number(c.replayCount) < ceiling,
       )
       if (!row) return 0
       row.replayCount = Number(row.replayCount) + 1

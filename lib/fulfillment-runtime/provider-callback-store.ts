@@ -30,6 +30,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import {
   decideCallbackApplication,
+  MAX_CALLBACK_REPLAYS,
   MAX_RECONCILIATION_BATCH,
   MAX_UNMATCHED_CALLBACKS,
   UNMATCHED_RECONCILIATION_WINDOW_MS,
@@ -48,7 +49,16 @@ export type CallbackIngestResult =
   /** Recorded, correlation not yet possible. Reconciled once the id is bound. */
   | { outcome: "UNMATCHED" }
   /** Recorded, deliberately not applied. */
-  | { outcome: "REFUSED"; code: CallbackNonApplicationCode };
+  | { outcome: "REFUSED"; code: CallbackNonApplicationCode }
+  /**
+   * Reconciliation only. This pass did not own the replay: a concurrent
+   * reconciler claimed the row, it was resolved between the batch read and the
+   * claim, or it has spent its replay budget. Distinct from DUPLICATE — which
+   * means the signed delivery had already been admitted — because conflating
+   * them made a lost race look like a de-duplicated one, and made `examined`
+   * silently fail to account for its own rows.
+   */
+  | { outcome: "CONFLICTED" };
 
 export interface ProviderCallbackStore {
   ingest(event: SanitizedProviderCallback): Promise<CallbackIngestResult>;
@@ -60,14 +70,58 @@ export interface ProviderCallbackStore {
   reconcile(input: {
     provider: string;
     providerMessageId: string;
-  }): Promise<{ examined: number; applied: number; stillUnmatched: number }>;
+  }): Promise<ReconciliationSummary>;
 }
+
+/**
+ * What one reconciliation pass did.
+ *
+ * `examined` is the size of the batch that was read, and the other three account
+ * for every row in it: `examined === applied + stillUnmatched + skipped`. That
+ * identity is the point — without `skipped`, a pass that lost every claim to a
+ * concurrent reconciler reported `applied: 0, stillUnmatched: 0` against a
+ * non-zero `examined` and looked like a pass that had silently dropped rows.
+ */
+export type ReconciliationSummary = {
+  examined: number;
+  applied: number;
+  stillUnmatched: number;
+  /** Claimed by someone else, resolved mid-pass, or out of replay budget. */
+  skipped: number;
+};
 
 const TRUSTED_CLOCK_SQL = Prisma.sql`
   SELECT to_char(
     clock_timestamp() AT TIME ZONE 'UTC',
     'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
   ) AS "now"
+`;
+
+/**
+ * Transaction-scoped advisory lock serializing the unmatched-spool cap decision.
+ *
+ * `SELECT COUNT(*) … > MAX` is not, by itself, a cap. Under READ COMMITTED a
+ * concurrent transaction's inserted-but-uncommitted row is invisible, so N
+ * ingesters racing each other can each count MAX, each conclude there is room,
+ * and each commit — leaving MAX + N durable unresolved rows. The ceiling exists
+ * to bound unbounded attacker-driven growth, and a ceiling that a burst walks
+ * straight through is not one.
+ *
+ * Holding this lock across the count makes the decision serial, because an
+ * advisory XACT lock is held until commit: the next holder's count therefore
+ * sees every earlier holder's row already committed. Each transaction decides
+ * against (all committed rows) + (its own), which is exact.
+ *
+ * It is taken ONLY on the unmatched branch, which is reached before `apply`
+ * takes any row lock, so it can never be held while waiting on `ot_order` and
+ * cannot participate in a deadlock cycle with the delivery store. The matched
+ * path never takes it at all.
+ *
+ * The key is an arbitrary fixed constant pair, namespaced by the first element
+ * so another advisory-lock user in this database cannot collide with it.
+ */
+const SPOOL_CAP_LOCK_SQL = Prisma.sql`
+  SELECT pg_advisory_xact_lock(19260912, 1) AS "locked"
 `;
 
 export type ProviderCallbackTransaction = {
@@ -98,6 +152,12 @@ type AttemptLookupRow = {
 
 function toInstant(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+/** The database's wall clock, or "" when it cannot be trusted. */
+async function readTrustedNow(tx: ProviderCallbackTransaction): Promise<string> {
+  const clock = await tx.$queryRaw<Array<{ now: unknown }>>(TRUSTED_CLOCK_SQL);
+  return toInstant(clock[0]?.now);
 }
 
 function asInstant(value: Date | string): string {
@@ -135,8 +195,22 @@ export function createPrismaProviderCallbackStore(
                  FROM "ot_delivery_attempt" t
                  JOIN "ot_fulfillment" f ON f."id" = t."fulfillment_id"
                  WHERE t."provider" = ${event.provider}
-                   AND t."provider_message_id" = ${event.providerMessageId}`,
+                   AND t."provider_message_id" = ${event.providerMessageId}
+                 LIMIT 2`,
     );
+    // `LIMIT 2`, not `LIMIT 1`, so a second row is SEEN rather than silently
+    // discarded. The schema's unique (provider, provider_message_id) should make
+    // this unreachable; reading `located[0]` out of an unordered result would
+    // turn any future loss of that index into "fold this provider event onto
+    // whichever of two orders came back first", which is not a thing to guess.
+    if (located.length > 1) {
+      const trustedNow = await readTrustedNow(tx);
+      await markRefused(tx, callbackId, "AMBIGUOUS_MESSAGE_BINDING", trustedNow, {
+        fulfillmentId: null,
+        attemptNumber: null,
+      });
+      return { outcome: "REFUSED", code: "AMBIGUOUS_MESSAGE_BINDING" };
+    }
     const found = located[0];
     if (!found) return { outcome: "UNMATCHED" };
 
@@ -329,6 +403,11 @@ export function createPrismaProviderCallbackStore(
             // The ceiling is enforced AFTER the insert so the count includes this
             // row; over the ceiling we keep the evidence but stop pretending it
             // will be replayed.
+            //
+            // Serialized: without this lock the count is a snapshot that cannot
+            // see concurrent uncommitted inserts, and a burst of ingests would
+            // each independently conclude there was room. See SPOOL_CAP_LOCK_SQL.
+            await tx.$queryRaw<Array<{ locked: unknown }>>(SPOOL_CAP_LOCK_SQL);
             const counts = await tx.$queryRaw<Array<{ live: bigint | number }>>(
               Prisma.sql`SELECT COUNT(*) AS "live"
                          FROM "ot_delivery_provider_callback"
@@ -359,14 +438,9 @@ export function createPrismaProviderCallbackStore(
       // not the rows reconciled before it. Prisma's raw seam offers no
       // savepoints, so each stored callback gets its own transaction. The pass is
       // therefore re-runnable, and one poisoned row cannot undo the others.
-      const horizonNow = await client.$transaction(async (tx) => {
-        const clock = await tx.$queryRaw<Array<{ now: unknown }>>(
-          TRUSTED_CLOCK_SQL,
-        );
-        return toInstant(clock[0]?.now);
-      });
+      const horizonNow = await client.$transaction((tx) => readTrustedNow(tx));
       if (horizonNow === "")
-        return { examined: 0, applied: 0, stillUnmatched: 0 };
+        return { examined: 0, applied: 0, stillUnmatched: 0, skipped: 0 };
       const horizon = new Date(
         new Date(horizonNow).getTime() - UNMATCHED_RECONCILIATION_WINDOW_MS,
       );
@@ -388,6 +462,7 @@ export function createPrismaProviderCallbackStore(
                        AND "disposition" = 'UNMATCHED'
                        AND "resolved_at" IS NULL
                        AND "received_at" >= ${horizon}
+                       AND "replay_count" < ${MAX_CALLBACK_REPLAYS}
                      ORDER BY "occurred_at" ASC, "received_at" ASC
                      LIMIT ${MAX_RECONCILIATION_BATCH}`,
         ),
@@ -395,6 +470,7 @@ export function createPrismaProviderCallbackStore(
 
       let applied = 0;
       let stillUnmatched = 0;
+      let skipped = 0;
       for (const row of stored) {
         let result: CallbackIngestResult;
         try {
@@ -403,15 +479,26 @@ export function createPrismaProviderCallbackStore(
               // Claim the row conditionally. Losing this to a concurrent
               // reconciler means somebody else owns this replay, so we do
               // nothing rather than applying the same event twice.
+              //
+              // The increment is unclamped and the predicate requires strictly
+              // less than the ceiling. `LEAST(count + 1, MAX)` looked safer and
+              // was not: at the ceiling it wrote MAX over MAX, so the
+              // compare-and-set `replay_count = <observed>` stayed satisfiable
+              // forever and stopped excluding a concurrent reconciler — the one
+              // thing this statement exists to do. A row that reaches the
+              // ceiling is now simply no longer claimable.
               const claimed = await tx.$executeRaw(
                 Prisma.sql`UPDATE "ot_delivery_provider_callback"
-                           SET "replay_count" = LEAST("replay_count" + 1, 1000)
+                           SET "replay_count" = "replay_count" + 1
                            WHERE "id" = ${row.id}
                              AND "disposition" = 'UNMATCHED'
                              AND "resolved_at" IS NULL
-                             AND "replay_count" = ${row.replayCount}`,
+                             AND "replay_count" = ${row.replayCount}
+                             AND "replay_count" < ${MAX_CALLBACK_REPLAYS}`,
               );
-              if (claimed !== 1) return { outcome: "DUPLICATE" };
+              // Not ours to replay: either a concurrent reconciler claimed it,
+              // it was resolved while we read the batch, or it is spent.
+              if (claimed !== 1) return { outcome: "CONFLICTED" };
               return apply(tx, row.id, {
                 provider: row.provider,
                 providerEventId: row.providerEventId,
@@ -434,8 +521,11 @@ export function createPrismaProviderCallbackStore(
         }
         if (result.outcome === "APPLIED") applied += 1;
         else if (result.outcome === "UNMATCHED") stillUnmatched += 1;
+        // REFUSED is a resolved row, CONFLICTED and DUPLICATE were not ours to
+        // act on. None of the three is unmatched work still waiting.
+        else skipped += 1;
       }
-      return { examined: stored.length, applied, stillUnmatched };
+      return { examined: stored.length, applied, stillUnmatched, skipped };
     },
   };
 }
