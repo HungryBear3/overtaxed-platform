@@ -56,6 +56,9 @@ export function createInformationalSnapshotStore(client: InformationalSnapshotCl
 }
 
 export async function informationalSnapshotStore() {
-  const { prisma } = await import("@/lib/db");
-  return createInformationalSnapshotStore(prisma as unknown as InformationalSnapshotClient);
+  if (!enabled()) return null;
+  try {
+    const { prisma } = await import("@/lib/db");
+    return enabled() ? createInformationalSnapshotStore(prisma as unknown as InformationalSnapshotClient) : null;
+  } catch { return null; }
 }
