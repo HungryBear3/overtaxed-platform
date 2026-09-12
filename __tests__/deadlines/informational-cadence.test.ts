@@ -1,0 +1,14 @@
+/** @jest-environment node */
+import config from "../../vercel.json";
+test("one hourly informational job preserves every unrelated schedule", () => {
+  expect(config.crons.filter(c => c.path === "/api/cron/informational-deadlines")).toEqual([{ path: "/api/cron/informational-deadlines", schedule: "5 * * * *" }]);
+  expect(config.crons.filter(c => c.path !== "/api/cron/informational-deadlines")).toEqual([
+    {path:"/api/cron/township-alerts",schedule:"30 8 * * *"},
+    {path:"/api/cron/free-check-followups",schedule:"15 14 * * *"},
+    {path:"/api/cron/township-open-notifications",schedule:"0 10 * * *"},
+    {path:"/api/cron/deadline-reminders",schedule:"0 9 * * *"},
+    {path:"/api/cron/assessment-checks",schedule:"0 7 * * 1"},
+    {path:"/api/cron/performance-invoices",schedule:"0 8 * * 1"},
+    {path:"/api/cron/invoice-collections",schedule:"0 9 * * *"},
+  ]);
+});
