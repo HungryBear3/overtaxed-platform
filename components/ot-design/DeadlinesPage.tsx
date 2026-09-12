@@ -297,7 +297,7 @@ function DeadlineSatelliteMap() {
         </div>
         <div className="ot-deadline-map-card-deadline">{activeTownship ? activeDeadline : "Official Assessor dates only"}</div>
         <div className="ot-deadline-map-card-note">
-          Satellite imagery with Cook County GIS township boundaries. Pending means the Assessor has not posted a 2026 last-file date yet.
+          Satellite imagery with Cook County GIS township boundaries. Pending means we do not have a freshly verified official date.
         </div>
       </div>
     </div>
@@ -305,7 +305,7 @@ function DeadlineSatelliteMap() {
 }
 
 function TownshipsTable() {
-  const { VIEWS, COUNTS, ALL_PENDING_AT_SOURCE } = useContext(CalendarContext);
+  const { VIEWS, COUNTS } = useContext(CalendarContext);
   const [filter, setFilter] = useState<"all" | Deadline2026Status>("all");
   const [sort, setSort] = useState<"soonest" | "alpha">("soonest");
 
@@ -327,7 +327,8 @@ function TownshipsTable() {
 
   const formatDays = (t: Township2026View) => {
     if (t.status === "open") {
-      const d = t.daysUntilLastFile ?? 0;
+      const d = t.daysUntilLastFile;
+      if (d === undefined) return "—";
       return d === 0 ? "closes today" : `${d} day${d === 1 ? "" : "s"} left`;
     }
     if (t.status === "upcoming") return "not yet open";
@@ -342,18 +343,8 @@ function TownshipsTable() {
           <h2 className="ot-h2">Official 2026 township deadlines.</h2>
           <p className="ot-tbl-note" style={{ fontSize: 14, color: "var(--ink-soft, #6b6258)", margin: "4px 0 0", maxWidth: "62ch" }}>
             Dates shown are the Cook County Assessor&apos;s official 2026 Last File Date.
-            {ALL_PENDING_AT_SOURCE ? (
-              <>
-                {" "}Townships marked &ldquo;{PENDING_LABEL}&rdquo; are ones we have not read
-                from the Assessor&apos;s calendar — we don&apos;t estimate them, and we don&apos;t
-                know whether the county has posted them.
-              </>
-            ) : (
-              <>
-                {" "}Townships marked &ldquo;{PENDING_LABEL}&rdquo; have not been posted yet — we
-                don&apos;t estimate them.
-              </>
-            )}{" "}
+            {" "}Townships marked &ldquo;{PENDING_LABEL}&rdquo; do not have a freshly verified
+            official date here. We do not estimate missing dates or infer whether the county has posted them.{" "}
             Confirm any date on the{" "}
             <a href={ASSESSOR_CALENDAR_URL} target="_blank" rel="noopener noreferrer">
               official Cook County Assessor calendar
@@ -479,7 +470,7 @@ function BottomCheckCta() {
  * "Pending official date" — never an inferred window.
  */
 function TownshipGrid() {
-  const { VIEWS, ALL_PENDING_AT_SOURCE } = useContext(CalendarContext);
+  const { VIEWS } = useContext(CalendarContext);
   const order: Deadline2026Status[] = ["open", "upcoming", "closed", "pending"];
   const heads: Record<Deadline2026Status, string> = {
     open: "Open now",
@@ -502,9 +493,7 @@ function TownshipGrid() {
             <p className="ot-fullmap-sub">
               Grouped by the Assessor&apos;s official 2026 status. &ldquo;{PENDING_LABEL}&rdquo;
               means{" "}
-              {ALL_PENDING_AT_SOURCE
-                ? "we have not read that township from the Assessor's calendar"
-                : "the county hasn't posted that township yet"}{" "}
+              we do not have a freshly verified official date here{" "}
               — confirm yours before filing.
             </p>
           </div>
