@@ -73,6 +73,7 @@
  */
 
 import { createHash } from "node:crypto"
+import { isUtf8 } from "node:buffer"
 
 import type { SourceRecord, SubjectRecord } from "@/lib/fulfillment/t2-artifact-content"
 import type { ComparableMatchAttributes } from "@/lib/fulfillment/t2-comparables"
@@ -101,9 +102,8 @@ const SOCRATA_ORIGIN = `https://${SOCRATA_HOST}`
  * the live API, the published column inventory for the parcel universe, and the
  * 2026-09-12 address-source evidence for `3723-97qp`.
  *
- * Every select list is the minimum the packet needs. None of these datasets
- * publishes an owner, taxpayer, mailing or contact column, and no such column is
- * named here.
+ * Every select list is the minimum the packet needs. The address dataset also
+ * publishes owner and mailing fields; none is selected here.
  */
 export const COUNTY_DATASETS = {
   parcelUniverse: {
@@ -493,7 +493,10 @@ class CountyReader {
       }
       chunks.push(value)
     }
-    return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8")
+    const bytes = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)))
+    // Reject malformed encoding rather than hashing replacement characters as source bytes.
+    if (!isUtf8(bytes)) throw new CountyRefusal("COUNTY_SOURCE_UNAVAILABLE")
+    return bytes.toString("utf8")
   }
 
   async rows(
@@ -505,12 +508,15 @@ class CountyReader {
     this.requests += 1
     // Checked BEFORE the request, so a retrieval that has already run long does
     // not start yet another call whose result it could not honestly date.
-    this.tick()
+    const requestAt = this.tick()
 
     if (!url.startsWith(`${SOCRATA_ORIGIN}/`)) throw new CountyRefusal("COUNTY_SOURCE_UNAVAILABLE")
 
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    const remainingMs = MAX_RETRIEVAL_WINDOW_MS - (requestAt.getTime() - this.startedAtMs)
+    if (remainingMs <= 0) throw new CountyRefusal("COUNTY_RETRIEVAL_WINDOW_EXCEEDED")
+    // This signal remains active through streamed body reads, not just headers.
+    const timer = setTimeout(() => controller.abort(), Math.min(REQUEST_TIMEOUT_MS, remainingMs))
     let body: string
     try {
       const response = await this.deps.fetch(url, {
@@ -732,6 +738,7 @@ function readCharacteristics(
     // A building cannot have been built after the year being assessed, and a
     // fractional year is not a year. Either means the column is not what it says.
     yearBuilt > OFFICIAL_TAX_YEAR ||
+    typeof row.char_type_resd !== "string" ||
     residentialSubtype === "" ||
     propertyClass === ""
   ) {
@@ -784,7 +791,7 @@ function readAddress(rows: ReadonlyArray<Record<string, unknown>>): {
   const address = asText(row.prop_address_full)
   const city = asText(row.prop_address_city_name)
   const state = asText(row.prop_address_state).toUpperCase()
-  if (address === "" || city === "" || state !== OFFICIAL_ADDRESS_STATE) {
+  if (typeof row.prop_address_full !== "string" || typeof row.prop_address_city_name !== "string" || address === "" || city === "" || state !== OFFICIAL_ADDRESS_STATE) {
     throw new CountyRefusal("CANDIDATE_ADDRESS_INCOMPLETE")
   }
   return { address, city }
