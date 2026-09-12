@@ -34,12 +34,10 @@ import { renderT2ArtifactPdf } from "@/lib/fulfillment/t2-artifact-pdf"
  * is reachable only by injecting a `policyResolver` — which is exactly what the
  * tests do, and what production has no way to do.
  *
- * **It has no runtime caller yet.** `runT2ArtifactBindingWorkflow` is the only
- * caller of [[generateT2Artifact]], and nothing in the webhook, kickoff, cron or
- * admin surfaces invokes that workflow. The webhook reaches kickoff, kickoff
- * records `ARTIFACT_PENDING`, and there it stops. A separate orchestration slice
- * is required before a paid T2 order can be fulfilled, and it is deliberately
- * not part of this module.
+ * **Runtime orchestration is independently gated.** Paid settlement can reach
+ * the binding workflow through the default-off scheduling and lease modules.
+ * That code connection does not supply county data, sign eligibility, activate
+ * private storage or deliver to a customer.
  *
  * **Its bytes are deterministic given the stable generation instant.** The
  * packet embeds no wall-clock reading. `generatedAt` is the immutable
