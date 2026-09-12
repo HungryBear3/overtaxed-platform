@@ -12,6 +12,7 @@ import {
   type T2ArtifactRefusal,
 } from "@/lib/fulfillment/t2-artifact-content"
 import type { ComparableMatchAttributes } from "@/lib/fulfillment/t2-comparables"
+import type { CountyDataRefusal, CountyGatewayBlocker } from "./t2-county-gateway"
 import { evaluateCheckoutBusinessDayCutoff } from "@/lib/checkout/business-days"
 import { resolveEligibilityPolicy } from "@/lib/checkout/ot-contract"
 import { renderT2ArtifactPdf } from "@/lib/fulfillment/t2-artifact-pdf"
@@ -62,6 +63,11 @@ export type T2ArtifactProducerBlocker =
   | "GENERATION_INSTANT_UNAVAILABLE"
   | "SUBJECT_RECORD_UNAVAILABLE"
   | "COMPARABLE_SOURCE_UNAVAILABLE"
+  // Named refusals from the official county reader. They say WHICH official
+  // record was missing or ambiguous, which `COMPARABLE_SOURCE_UNAVAILABLE`
+  // cannot: operations should not have to guess whether the county published
+  // nothing, published something contradictory, or was simply unreachable.
+  | CountyGatewayBlocker
 
 export type GeneratedT2Artifact =
   | { ok: true; bytes: Buffer; provenance: ArtifactProvenanceInput }
@@ -110,7 +116,16 @@ export type T2ProducerDeadlineBase = Omit<
 export interface T2ArtifactGateway {
   loadOrder(orderId: string): Promise<T2ProducerOrder | null>
   loadFulfillment(fulfillmentId: string): Promise<T2ProducerFulfillment | null>
-  loadCountyData(order: T2ProducerOrder): Promise<T2ProducerCountyData | null>
+  /**
+   * County evidence, a NAMED refusal, or `null`.
+   *
+   * The refusal arm is what lets the official reader in
+   * `lib/fulfillment-runtime/t2-county-gateway.ts` report which official record
+   * was unavailable rather than collapsing every cause into one code. The union
+   * is widening only: an implementation that returns data or `null` — including
+   * every gateway the existing tests inject — still satisfies it.
+   */
+  loadCountyData(order: T2ProducerOrder): Promise<T2ProducerCountyData | CountyDataRefusal | null>
   resolvePolicy(): SignedPolicySnapshot | null
   /**
    * Resolve the deadline authority as of `at` — the single clock sample for
@@ -197,22 +212,23 @@ function defaultGateway(): T2ArtifactGateway {
       }
     },
 
-    async loadCountyData() {
-      // Deliberately unimplemented in this slice.
+    async loadCountyData(order) {
+      // The strict official reader. It hands the WHOLE assessor neighbourhood to
+      // selection, never filters or orders by an assessed value, and refuses by
+      // name on any missing or ambiguous official record rather than pruning it.
       //
-      // A production county gateway must read building area, residence type and
-      // assessed value for the subject AND for every parcel in its Assessor
-      // neighbourhood, with a retrieval timestamp per dataset, and it must hand
-      // the WHOLE neighbourhood to selection: the manifest now binds the
-      // candidate pool by count, rejection reasons and digest, so a pre-filtered
-      // pool is detectable but not prevented here. The existing
-      // `getComparableEquity` helper cannot be reused: it ranks candidates by
-      // lowest assessed dollars per square foot, which is the cherry-pick this
-      // producer exists to avoid, and it caps its cohort read at 150 unordered
-      // parcels. Wiring a correct non-directional county reader is a separate,
-      // separately reviewable slice; until it exists this returns null and the
-      // producer refuses rather than guessing.
-      return null
+      // Addresses come from the current-year Assessor Parcel Addresses dataset
+      // joined on exact PIN and tax year; the order's own address is never
+      // substituted, because the packet renders that block as what the county
+      // publishes.
+      //
+      // The import is dynamic for the same reason as the others here: a test
+      // that injects a gateway never loads this module.
+      const { loadOfficialCountyData } = await import("./t2-county-gateway")
+      return loadOfficialCountyData({
+        propertyPin: order.propertyPin,
+        township: order.township,
+      })
     },
 
     resolvePolicy() {
@@ -336,6 +352,10 @@ export async function generateT2Artifact(
 
   const county = await gateway.loadCountyData(order)
   if (!county) return { ok: false, blocker: "COMPARABLE_SOURCE_UNAVAILABLE" }
+  // A named county refusal is reported as itself. Reducing it to the generic
+  // code here would discard the only signal that distinguishes an unreachable
+  // source from a contradictory official record.
+  if ("blocker" in county) return { ok: false, blocker: county.blocker }
   if (!county.subject) return { ok: false, blocker: "SUBJECT_RECORD_UNAVAILABLE" }
 
   const content = buildT2ArtifactContent({
