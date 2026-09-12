@@ -50,3 +50,12 @@ test("parser/transport failure and incomplete roster refuse without partial succ
   const unavailable = setup(); unavailable.fetchSource.mockRejectedValue(new Error("network failure"));
   expect(await collectInformationalSnapshot(unavailable)).toBeNull();
 });
+
+test.each(["text/html; charset=iso-8859-1", "text/html; charset=utf-8; charset=latin1", "text/html; charset=", "text/html; charset=utf-8, text/html; charset=latin1"])("rejects unsupported or ambiguous encoding %s", async mime => {
+  const input = setup(Buffer.from("fixture"), 200, URL, mime);
+  expect(await collectInformationalSnapshot(input)).toBeNull();
+  expect(input.parseHtml).not.toHaveBeenCalled();
+});
+test.each(['text/html', 'Text/HTML; Charset="UTF-8"'])("accepts unambiguous supported encoding %s", async mime => {
+  expect(await collectInformationalSnapshot(setup(Buffer.from("fixture"), 200, URL, mime))).not.toBeNull();
+});

@@ -34,7 +34,11 @@ const schema = z.object({
 export function decodeInformationalSnapshot(raw: string, now: Date): OfficialDeadlineSnapshot | null {
   try {
     if (raw.length > MAX_INFORMATIONAL_SNAPSHOT_LENGTH || !Number.isFinite(now.getTime())) return null;
-    const parsed = schema.safeParse(JSON.parse(raw));
+    const input = JSON.parse(raw);
+    const rows = input?.townships;
+    if (!rows || typeof rows !== "object" || Array.isArray(rows) || Object.keys(rows).length !== 38 ||
+      TOWNSHIPS.some(t => !Object.hasOwn(rows, t.slug))) return null;
+    const parsed = schema.safeParse(input);
     if (!parsed.success || TOWNSHIPS.length !== 38) return null;
     const snapshot = parsed.data;
     if (Object.keys(snapshot.townships).length !== 38 || TOWNSHIPS.some(t =>

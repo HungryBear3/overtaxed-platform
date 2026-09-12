@@ -21,7 +21,7 @@ export async function collectInformationalSnapshot({ fetchSource, parseHtml, now
     if (!response.body) return null;
     reader = response.body.getReader();
     if (response.status !== 200 || response.url !== INFORMATIONAL_SOURCE_URL ||
-      response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "text/html") return null;
+      !/^text\/html(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?$/i.test(response.headers.get("content-type")?.trim() ?? "")) return null;
     const chunks: Buffer[] = []; let size = 0;
     for (;;) {
       const { done, value } = await reader.read(); if (done) break;

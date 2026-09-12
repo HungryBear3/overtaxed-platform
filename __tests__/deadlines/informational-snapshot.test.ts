@@ -54,3 +54,10 @@ test("TTL boundary is canonical; same-day expiry remains the projector's decisio
 test.each(["not-json", "x".repeat(100001), JSON.stringify({ ...fixture(), synthetic: true })])("malformed/synthetic input refuses", raw => {
   expect(decodeInformationalSnapshot(raw, AT)).toBeNull();
 });
+
+test.each(["__proto__", "constructor", "prototype"])("rejects extra raw own key %s before schema normalization", key => {
+  const value = fixture();
+  Object.defineProperty(value.townships, key, { value: value.townships.barrington, enumerable: true });
+  expect(Object.keys(JSON.parse(JSON.stringify(value)).townships)).toHaveLength(39);
+  expect(decodeInformationalSnapshot(JSON.stringify(value), AT)).toBeNull();
+});
