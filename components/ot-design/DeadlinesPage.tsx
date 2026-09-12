@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { TOWNSHIPS, TOWNSHIPS_BY_SLUG } from "@/lib/townships";
 import { OT_PUBLIC_CONTACT } from "@/components/ot-design/SiteChrome";
@@ -12,54 +12,16 @@ import {
 import { analytics } from "@/lib/analytics/events";
 import { cc08 } from "@/lib/copy/canonical";
 import {
-  buildTownship2026Views,
-  count2026Views,
-  official2026Provenance,
   type Deadline2026Status,
   type Township2026View,
 } from "@/lib/deadlines-2026";
 
-// One evaluated state array for the whole page. The hero counts, the map dots,
-// the table, and the grid all read this — they used to be able to disagree,
-// because each derived its own notion of open from the same seed dates.
-//
-// A township with no verified state is "pending" and never shows a date. One
-// with a window the county has published but not yet opened is "upcoming",
-// which is a fact about the calendar; "pending" is a fact about us.
-const VIEWS: Township2026View[] = buildTownship2026Views();
-const COUNTS = count2026Views(VIEWS);
-const PROVENANCE = official2026Provenance(VIEWS);
+import { unavailableCalendar, useInformationalCalendar } from "@/lib/deadlines/use-informational-calendar";
+import type { OfficialDeadlineSnapshot } from "@/lib/deadlines/official-source-state";
+
+// Every surface observes one mounted, canonically evaluated informational state.
+const CalendarContext = createContext(unavailableCalendar);
 const PENDING_LABEL = "Pending official date";
-
-/**
- * Reasons that are about *our* source, not about the county's calendar.
- *
- * The distinction is load-bearing in the copy below. "The Assessor has not
- * posted this township yet" is a claim about the county, and it is only true
- * when we read the calendar and the row was absent. When the snapshot itself
- * is synthetic, stale, unfetched, or unparsed, we do not know what the county
- * has posted, and saying otherwise attributes our own gap to them.
- */
-const SOURCE_LEVEL_PENDING_REASONS = new Set([
-  "source_unavailable",
-  "synthetic_source",
-  "source_stale",
-  "source_from_future",
-  "parse_failed",
-]);
-
-/** True when nothing on this page is backed by a reading of the calendar. */
-const NOTHING_VERIFIED = COUNTS.official === 0;
-
-/** True when every pending row is pending because of our source, not the county's. */
-const ALL_PENDING_AT_SOURCE =
-  COUNTS.pending > 0 &&
-  VIEWS.every(
-    (v) =>
-      v.official ||
-      (v.pendingReason !== undefined &&
-        SOURCE_LEVEL_PENDING_REASONS.has(v.pendingReason)),
-  );
 const MAP_BBOX = "-88.45,41.45,-87.2055556,42.15";
 const MAP_IMAGE_SIZE = "1600,900";
 const SATELLITE_MAP_URL =
@@ -171,6 +133,7 @@ function StatusPill({
 }
 
 function DeadlinesHero() {
+  const { COUNTS, PROVENANCE, NOTHING_VERIFIED } = useContext(CalendarContext);
   return (
     <section className="ot-page-hero">
       <div className="ot-page-hero-inner">
@@ -223,6 +186,7 @@ function DeadlinesHero() {
 }
 
 function PageReminderCapture() {
+  const { VIEWS } = useContext(CalendarContext);
   const [email, setEmail] = useState("");
   const [slug, setSlug] = useState("");
   const [outcome, setOutcome] = useState<"idle" | "scheduled" | "recorded">("idle");
@@ -347,10 +311,8 @@ function normalizeName(name: string) {
   return name.trim().toLowerCase().replace(/\s+township$/i, "");
 }
 
-const VIEWS_BY_NAME = new Map(VIEWS.map((v) => [normalizeName(v.name), v]));
-
-function viewForMapTownship(township: Pick<MapDot, "name">) {
-  return VIEWS_BY_NAME.get(normalizeName(township.name));
+function viewForMapTownship(township: Pick<MapDot, "name">, views: Township2026View[]) {
+  return views.find(v => normalizeName(v.name) === normalizeName(township.name));
 }
 
 function mapDotClass(status: Deadline2026Status) {
@@ -358,11 +320,12 @@ function mapDotClass(status: Deadline2026Status) {
 }
 
 function DeadlineSatelliteMap() {
+  const { VIEWS } = useContext(CalendarContext);
   const [activeName, setActiveName] = useState<string | null>(null);
   const activeTownship = activeName
     ? MAP_DOTS.find((t) => t.name === activeName) ?? null
     : null;
-  const activeView = activeTownship ? viewForMapTownship(activeTownship) : null;
+  const activeView = activeTownship ? viewForMapTownship(activeTownship, VIEWS) : null;
 
   const activeTitle = activeView?.name ?? activeTownship?.name ?? "Township";
   const activeDeadline = activeView
@@ -392,7 +355,7 @@ function DeadlineSatelliteMap() {
           aria-label="Cook County township deadline status dots over official township boundaries"
         >
           {MAP_DOTS.map((township) => {
-            const view = viewForMapTownship(township);
+            const view = viewForMapTownship(township, VIEWS);
             const status = view?.status ?? "pending";
             const isActive = activeName === township.name;
             const trackingView = view;
@@ -438,13 +401,14 @@ function DeadlineSatelliteMap() {
 }
 
 function TownshipsTable() {
+  const { VIEWS, COUNTS, ALL_PENDING_AT_SOURCE } = useContext(CalendarContext);
   const [filter, setFilter] = useState<"all" | Deadline2026Status>("all");
   const [sort, setSort] = useState<"soonest" | "alpha">("soonest");
 
   const rows = useMemo(() => {
     const filtered = filter === "all" ? VIEWS : VIEWS.filter((t) => t.status === filter);
     return [...filtered].sort(SORTERS[sort]);
-  }, [filter, sort]);
+  }, [filter, sort, VIEWS]);
 
   const filterButtons: Array<{ id: "all" | Deadline2026Status; label: string; count: number }> = [
     { id: "all", label: "All", count: VIEWS.length },
@@ -611,6 +575,7 @@ function BottomCheckCta() {
  * "Pending official date" — never an inferred window.
  */
 function TownshipGrid() {
+  const { VIEWS, ALL_PENDING_AT_SOURCE } = useContext(CalendarContext);
   const order: Deadline2026Status[] = ["open", "upcoming", "closed", "pending"];
   const heads: Record<Deadline2026Status, string> = {
     open: "Open now",
@@ -714,8 +679,13 @@ function VerifyAndSources() {
   );
 }
 
-export default function DeadlinesPage() {
+export default function DeadlinesPage({ snapshot }: { snapshot?: OfficialDeadlineSnapshot } = {}) {
+  const calendar = useInformationalCalendar(snapshot);
+  const { COUNTS, PROVENANCE } = calendar;
+  const [tracked, setTracked] = useState(false);
   useEffect(() => {
+    if (tracked || calendar === unavailableCalendar) return;
+    setTracked(true);
     analytics.deadlineMapView({
       officialCount: COUNTS.official,
       openCount: COUNTS.open,
@@ -725,10 +695,10 @@ export default function DeadlinesPage() {
       // nothing verified. Never the day a constant was last edited.
       sourceUpdated: PROVENANCE?.retrievedAt ?? "",
     });
-  }, []);
+  }, [calendar, tracked, COUNTS, PROVENANCE]);
 
   return (
-    <>
+    <CalendarContext.Provider value={calendar}>
       <DeadlinesHero />
       <VerifyAndSources />
       <section className="ot-reminder-section">
@@ -739,6 +709,6 @@ export default function DeadlinesPage() {
       <TownshipGrid />
       <TownshipsTable />
       <BottomCheckCta />
-    </>
+    </CalendarContext.Provider>
   );
 }

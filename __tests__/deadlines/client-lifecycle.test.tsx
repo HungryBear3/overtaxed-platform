@@ -1,7 +1,10 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, render, renderHook } from "@testing-library/react";
+import DeadlinesPage from "@/components/ot-design/DeadlinesPage";
+import { analytics } from "@/lib/analytics/events";
 import { useInformationalCalendar } from "@/lib/deadlines/use-informational-calendar";
 import type { OfficialDeadlineSnapshot } from "@/lib/deadlines/official-source-state";
 const URL = "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines";
+jest.mock("@/lib/analytics/events", () => ({ analytics: { deadlineMapView: jest.fn() } }));
 // Hypothetical source-shaped test data, never published as actual retrieval.
 export function fixture(): OfficialDeadlineSnapshot {
   return { schemaVersion: 1, synthetic: false, sources: { bor: null, assessor: {
@@ -17,6 +20,17 @@ afterEach(() => { jest.useRealTimers(); });
 test("default source renders fail-closed without an injected snapshot", () => {
   const { result } = renderHook(() => useInformationalCalendar());
   expect(result.current.COUNTS.official).toBe(0);
+});
+test("mounted page clears dates everywhere while emitting only one page-view event", () => {
+  jest.mocked(analytics.deadlineMapView).mockClear();
+  const { container } = render(<DeadlinesPage snapshot={fixture()} />);
+  const before = container.textContent!;
+  expect(before).toMatch(/Jun(e)? 8/);
+  expect(analytics.deadlineMapView).toHaveBeenCalledWith(expect.objectContaining({ officialCount: 1, openCount: 1 }));
+  act(() => jest.advanceTimersByTime(1000));
+  expect(container.textContent).not.toMatch(/Jun(e)? 8/);
+  expect(container.textContent).toContain("Pending official date");
+  expect(analytics.deadlineMapView).toHaveBeenCalledTimes(1);
 });
 test("mounted calendar invalidates at Chicago midnight without changing real retrieval", () => {
   const source = fixture();
