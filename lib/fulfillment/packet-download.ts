@@ -124,6 +124,22 @@ export type CapabilityRevocationReason =
   | "DISPUTED"
   | "CANCELLED"
   | "SUPERSEDED"
+  /**
+   * The send this capability was minted for was DEFINITELY rejected by the
+   * provider, so the value reached no mailbox and must not stay live. This is
+   * distinct from SUPERSEDED (a newer capability replaced it) and from an
+   * UNKNOWN send, which revokes nothing precisely because the mail may be in
+   * flight and the holder may yet receive it.
+   */
+  | "SEND_REJECTED"
+  /**
+   * An authenticated provider event reported a terminal delivery outcome — a
+   * bounce, a complaint, or a failure. The mail was sent; it did not land, or it
+   * landed somewhere it was not wanted. Re-establishing access after this is an
+   * operator decision (issue a fresh capability), never something a held value
+   * quietly keeps doing.
+   */
+  | "UNDELIVERABLE"
   | "ADMIN_REVOKED";
 
 export const CAPABILITY_REVOCATION_REASONS: ReadonlySet<string> =
@@ -132,6 +148,8 @@ export const CAPABILITY_REVOCATION_REASONS: ReadonlySet<string> =
     "DISPUTED",
     "CANCELLED",
     "SUPERSEDED",
+    "SEND_REJECTED",
+    "UNDELIVERABLE",
     "ADMIN_REVOKED",
   ]);
 
