@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import DeadlinesPage from "@/components/ot-design/DeadlinesPage";
+import LiveDeadlinesPage from "@/components/ot-design/LiveDeadlinesPage";
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
 import "../ot-design.css";
 
@@ -40,7 +40,7 @@ export default function Page() {
   return (
     <div className="ot-root">
       <SiteHeader active="deadlines" />
-      <DeadlinesPage />
+      <LiveDeadlinesPage />
       <SiteFooter />
     </div>
   );
