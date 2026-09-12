@@ -13,9 +13,11 @@ export async function renderT2ArtifactPdf(
   // unsupported characters visibly instead of silently dropping/replacing them.
   const printable = Array.from(text.replace(/\r\n?/g, "\n"))
     .map((c) =>
-      c === "\n" || (c >= " " && c <= "~")
-        ? c
-        : `\\u{${c.codePointAt(0)!.toString(16)}}`,
+      c === "\\"
+        ? "\\\\"
+        : c === "\n" || (c >= " " && c <= "~")
+          ? c
+          : `\\u{${c.codePointAt(0)!.toString(16)}}`,
     )
     .join("");
   const lines = printable.split("\n").flatMap((line) => {
@@ -66,7 +68,7 @@ export async function renderT2ArtifactPdf(
       color: navy,
     });
     page.drawText(
-      `Page ${index + 1} of ${pageCount} | Non-ASCII characters shown as Unicode escapes.`,
+      `Page ${index + 1} of ${pageCount} | Unicode and literal backslashes use escaped notation.`,
       { x: 48, y: 48, size: 7, font: body, color: navy },
     );
   }
