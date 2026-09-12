@@ -1,4 +1,6 @@
 /** @jest-environment node */
+import { TOWNSHIPS } from "@/lib/townships";
+import { INFORMATIONAL_SOURCE_URL as SOURCE } from "@/lib/deadlines/informational-snapshot";
 import { createInformationalSnapshotStore, informationalSnapshotStore, INFORMATIONAL_SNAPSHOT_KEY, type InformationalSnapshotClient } from "@/lib/deadlines/informational-snapshot-store";
 jest.mock("server-only", () => ({}));
 let mockDatabaseLoads = 0;
@@ -50,4 +52,19 @@ test("late read disable and oversized publication fail closed", async () => {
   process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED = "true";
   expect(await store.publish("x".repeat(100001))).toBe("REFUSED");
   expect(transaction).not.toHaveBeenCalled();
+});
+
+test("publication compares an explicit DB epoch rather than timezone-sensitive driver dates", async () => {
+  process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED = "true";
+  const at = "2026-09-12T08:22:00.000Z";
+  const raw = JSON.stringify({schemaVersion:1,synthetic:false,sources:{bor:null,assessor:{authority:"cook_county_assessor",sourceUrl:SOURCE,finalUrl:SOURCE,httpStatus:200,retrievedAt:at,sourceUpdatedAt:null,contentSha256:"a".repeat(64),parseStatus:"ok",parserVersion:"ccao-dom/1.0.0"}},townships:Object.fromEntries(TOWNSHIPS.map(t=>[t.slug,{townshipName:t.name,stages:{assessor:null}}]))});
+  const execute = jest.fn().mockResolvedValue(1);
+  let clock = String(Date.parse(at) + 1);
+  const query = jest.fn(async (sql: {text:string}) => sql.text.includes("clock_timestamp") ? [{now:clock}] : []);
+  const client = {$queryRaw:query,$transaction:async(work:Function)=>work({$queryRaw:query,$executeRaw:execute})} as unknown as InformationalSnapshotClient;
+  const store = createInformationalSnapshotStore(client);
+  expect(await store.publish(raw)).toBe("PUBLISHED");
+  expect(query.mock.calls.find(([sql])=>sql.text.includes("clock_timestamp"))?.[0].text).toContain("extract(epoch FROM clock_timestamp())");
+  execute.mockClear();clock = "2026-09-12T03:22:00Z";
+  expect(await store.publish(raw)).toBe("REFUSED");expect(execute).not.toHaveBeenCalled();
 });
