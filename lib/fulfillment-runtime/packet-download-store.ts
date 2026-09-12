@@ -1,3 +1,4 @@
+import { trustedPaymentAuthority } from "./payment-authority";
 /**
  * Transactional store for T2 packet download capabilities.
  *
@@ -197,7 +198,7 @@ async function loadContext(
   }
 
   const orders = await tx.$queryRaw<PacketDownloadOrderRow[]>(
-    Prisma.sql`SELECT ${ORDER_COLUMNS} FROM "ot_order" WHERE "id" = ${orderId} FOR UPDATE`,
+    Prisma.sql`SELECT ${ORDER_COLUMNS} FROM "ot_order" WHERE "id" = ${orderId} AND ${trustedPaymentAuthority()} FOR UPDATE`,
   );
 
   const capabilities = await tx.$queryRaw<PacketDownloadCapabilityRow[]>(
@@ -256,7 +257,7 @@ export function createPrismaPacketDownloadStore(
 
         const orders = await tx.$queryRaw<PacketDownloadOrderRow[]>(
           Prisma.sql`SELECT ${ORDER_COLUMNS} FROM "ot_order"
-                     WHERE "id" = ${fulfillment.orderId} FOR UPDATE`,
+                     WHERE "id" = ${fulfillment.orderId} AND ${trustedPaymentAuthority()} FOR UPDATE`,
         );
 
         const refreshed = await tx.$queryRaw<PacketDownloadFulfillmentRow[]>(
