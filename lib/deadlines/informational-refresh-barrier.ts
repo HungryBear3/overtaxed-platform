@@ -9,8 +9,8 @@ function decode(raw: string): Marker | null {
   try {
     const value = JSON.parse(raw);
     return value && Object.keys(value).sort().join() === "digest,id,state" &&
-      /^[0-9a-f-]{36}$/.test(value.id) &&
-      ((value.state === "pending" && value.digest === null) || (value.state === "ready" && /^[0-9a-f]{64}$/.test(value.digest))) ? value : null;
+      typeof value.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.id) &&
+      ((value.state === "pending" && value.digest === null) || (value.state === "ready" && typeof value.digest === "string" && /^[0-9a-f]{64}$/.test(value.digest))) ? value : null;
   } catch { return null; }
 }
 /** A failed attempt stays pending. Only that attempt can bind the persisted complete snapshot. */

@@ -88,3 +88,8 @@ test("failed collection never marks its pending attempt ready", async () => {
   collect.mockResolvedValue(null); expect((await refresh(request())).status).toBe(503);
   expect(store.begin).toHaveBeenCalled(); expect(store.complete).not.toHaveBeenCalled();
 });
+
+test("late disable while completion settles never reports enabled publication", async () => {
+  store.complete.mockImplementationOnce(async () => { delete process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED; return true; });
+  const response = await refresh(request()); expect(response.status).toBe(503); expect(await response.json()).toEqual({status:"refused"});
+});

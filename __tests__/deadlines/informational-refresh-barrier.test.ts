@@ -51,3 +51,13 @@ test("lost begin or completion response fails closed without raw errors", async 
   expect(await barrier.complete(id, "new")).toBe(false); expect(await barrier.permits("new")).toBe(false);
   transaction.mockRejectedValueOnce(new Error("private diagnostics")); expect(await barrier.begin()).toBeNull();
 });
+
+test.each(["id-array", "digest-array", "bad-uuid"])("refuses coercible marker %s", async kind => {
+  const { barrier, values } = setup(); values.set("snapshot", "new");
+  const id = (await barrier.begin())!; expect(await barrier.complete(id, "new")).toBe(true);
+  const marker = JSON.parse(values.get("snapshot:attempt")!);
+  if (kind === "id-array") marker.id = [marker.id];
+  if (kind === "digest-array") marker.digest = [marker.digest];
+  if (kind === "bad-uuid") marker.id = "-".repeat(36);
+  values.set("snapshot:attempt", JSON.stringify(marker)); expect(await barrier.permits("new")).toBe(false);
+});

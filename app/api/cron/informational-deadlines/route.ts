@@ -25,6 +25,6 @@ export async function GET(request: Request) {
     if (!snapshot || !enabled()) return reply("refused", 503);
     const result = await store.publish(JSON.stringify(snapshot));
     if (result === "REFUSED" || !enabled() || !await store.complete(attempt, JSON.stringify(snapshot))) return reply("refused", 503);
-    return reply(result.toLowerCase());
+    return enabled() ? reply(result.toLowerCase()) : reply("refused", 503);
   } catch { return reply("unavailable", 503); }
 }
