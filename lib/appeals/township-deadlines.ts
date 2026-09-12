@@ -82,18 +82,29 @@ export function describeTownshipCalendar(
   township: string | null,
   at: string,
   stage: DeadlineStage = "assessor",
+  snapshot: OfficialDeadlineSnapshot = OFFICIAL_DEADLINE_SNAPSHOT,
 ): DeadlineProjection {
   const name = township?.trim();
   if (!name) {
-    return projectTownshipDeadline({ township: null, stage, at });
+    return projectDeadline(
+      evaluateOfficialDeadlineState({
+        snapshot,
+        township: null,
+        stage,
+        evaluatedAt: at,
+      }),
+      at,
+    );
   }
   const key = townshipKeyFromName(name.replace(/\s*township\s*$/i, "").trim());
-  const row = OFFICIAL_DEADLINE_SNAPSHOT.townships?.[key];
-  return projectTownshipDeadline({
+  const row = snapshot.townships?.[key];
+  const state = evaluateOfficialDeadlineState({
+    snapshot,
     township: informationalTownship(key, row?.townshipName ?? name),
     stage,
-    at,
+    evaluatedAt: at,
   });
+  return projectDeadline(state, at);
 }
 
 export { ASSESSOR_CALENDAR_URL };
