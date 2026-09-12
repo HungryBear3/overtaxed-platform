@@ -5,6 +5,7 @@ import { ReferralCapture } from "@/components/ReferralCapture";
 import { AnalyticsProviderWithSuspense } from "@/components/analytics";
 import { GoogleAnalytics } from "@/components/analytics";
 import { UtmFirstTouchCapture } from "@/components/analytics/utm-first-touch";
+import { AttributionCodeCapture } from "@/components/analytics/attribution-code-capture";
 import { isProductionMarketingRuntime } from "@/lib/marketing/preview-gate";
 import "./globals.css";
 
@@ -76,6 +77,12 @@ export default function RootLayout({
             funnel. Safe in preview/dev, hence not behind the marketing gate. */}
         <Suspense fallback={null}>
           <UtmFirstTouchCapture />
+        </Suspense>
+        {/* First-touch capture of server-APPROVED acquisition codes only. The
+            shipped registry is empty, so this stores nothing until a campaign
+            is approved in lib/attribution/registry. localStorage only. */}
+        <Suspense fallback={null}>
+          <AttributionCodeCapture />
         </Suspense>
         {liveMarketing && (
           <Suspense fallback={null}>
