@@ -1,5 +1,5 @@
 import "server-only"
-import { get } from "@vercel/blob"
+import { get, put } from "@vercel/blob"
 import { computeArtifactSha256, contentAddressedT2ArtifactLocator } from "@/lib/fulfillment/artifact-digest"
 import { isValidByteSize } from "@/lib/fulfillment/validation"
 
@@ -12,15 +12,43 @@ class T2ArtifactStorageUnavailableError extends Error {
   }
 }
 
-/** Contract only. No real T2 private content-addressed store exists in this repo. */
-export async function uploadT2Artifact(_input: { locator: string; bytes: Buffer }): Promise<T2ArtifactUpload> {
-  throw new T2ArtifactStorageUnavailableError()
+/** Immutable private put. Unknown write outcomes must enter workflow reconciliation. */
+export async function uploadT2Artifact(input: { locator: string; bytes: Buffer }): Promise<T2ArtifactUpload> {
+  const locator = input.locator
+  try {
+    verifyBytes(locator, input.bytes)
+    // Freeze mutable caller bytes before the first async boundary.
+    const bytes = Buffer.from(input.bytes)
+    const existing = await readExisting(locator)
+    requireStorage(locator)
+    if (existing !== null) {
+      if (!existing.equals(bytes)) throw new T2ArtifactStorageUnavailableError()
+      return { locator, created: false }
+    }
+    const result = await put(locator, bytes, {
+      access: "private", addRandomSuffix: false, allowOverwrite: false, contentType: "application/pdf",
+    })
+    if (result.pathname !== locator || result.contentType !== "application/pdf")
+      throw new T2ArtifactStorageUnavailableError()
+    return { locator, created: true }
+  } catch {
+    // A timeout/race may have committed. Never delete, retry inline or guess success.
+    throw new T2ArtifactStorageUnavailableError()
+  }
 }
 
 function requireStorage(locator: string): void {
   const digest = /^t2-artifacts\/sha256\/([0-9a-f]{64})\.pdf$/.exec(locator)?.[1]
   if (process.env.OT_T2_PRIVATE_STORAGE_ENABLED !== "true" || !digest ||
       locator !== contentAddressedT2ArtifactLocator(digest)) throw new T2ArtifactStorageUnavailableError()
+}
+
+function verifyBytes(locator: string, bytes: Buffer): void {
+  requireStorage(locator)
+  if (!Buffer.isBuffer(bytes) || !isValidByteSize(bytes.byteLength) ||
+      !bytes.subarray(0, 5).equals(Buffer.from("%PDF-")) ||
+      contentAddressedT2ArtifactLocator(computeArtifactSha256(bytes)) !== locator)
+    throw new T2ArtifactStorageUnavailableError()
 }
 
 /** Only an explicit SDK null is absence; every ambiguous failure refuses. */
@@ -46,9 +74,7 @@ async function readExisting(locator: string): Promise<Buffer | null> {
         size += value.byteLength
       }
       if (size !== result.blob.size) throw new T2ArtifactStorageUnavailableError()
-      if (contentAddressedT2ArtifactLocator(computeArtifactSha256(bytes)) !== locator)
-        throw new T2ArtifactStorageUnavailableError()
-      requireStorage(locator)
+      verifyBytes(locator, bytes)
       complete = true
       return bytes
     } finally {
