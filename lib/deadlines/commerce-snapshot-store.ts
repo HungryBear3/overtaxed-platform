@@ -8,7 +8,6 @@ import {
 } from "./informational-snapshot"
 import type { OfficialDeadlineSnapshot } from "./official-source-state"
 
-export const COMMERCE_SNAPSHOT_HEAD_KEY = "ot:commerce-assessor:2026:head:v1"
 export const MAX_COMMERCE_CAPTURE_LENGTH = 800_000
 const enabled = () => process.env.OT_COMMERCE_DEADLINE_SNAPSHOT_ENABLED === "true"
 
@@ -17,11 +16,11 @@ type Transaction = Reader & { $executeRaw(sql: Prisma.Sql): Promise<number> }
 export type CommerceSnapshotClient = Reader & {
   $transaction<T>(work: (tx: Transaction) => Promise<T>): Promise<T>
 }
-type Stored = { value: string }
+type Stored = { id: string; value: string }
 type StoredCapture = { snapshot: OfficialDeadlineSnapshot; sourceBodyBase64: string }
 
-const readSql = () => Prisma.sql`SELECT left("value", ${MAX_COMMERCE_CAPTURE_LENGTH + 1}) AS value
-  FROM "SystemConfig" WHERE "key" = ${COMMERCE_SNAPSHOT_HEAD_KEY} LIMIT 1`
+const readSql = () => Prisma.sql`SELECT "id", left("capture_json", ${MAX_COMMERCE_CAPTURE_LENGTH + 1}) AS "value"
+  FROM "ot_commerce_deadline_capture" ORDER BY "retrieved_at" DESC, "id" DESC LIMIT 1`
 
 function decodeCapture(raw: string, now: Date): StoredCapture | null {
   try {
@@ -39,7 +38,7 @@ function decodeCapture(raw: string, now: Date): StoredCapture | null {
   }
 }
 
-/** Dedicated, server-only commerce namespace with immutable evidence rows. */
+/** Dedicated, server-only authority backed only by protected immutable captures. */
 export function createCommerceSnapshotStore(client: CommerceSnapshotClient) {
   return {
     async read(now: Date): Promise<OfficialDeadlineSnapshot | null> {
@@ -58,10 +57,9 @@ export function createCommerceSnapshotStore(client: CommerceSnapshotClient) {
         return "REFUSED" as const
       }
       const value = JSON.stringify({ snapshot, sourceBodyBase64: sourceBody.toString("base64") })
-      const immutableKey = `ot:commerce-assessor:2026:${source.retrievedAt}:${source.contentSha256}`
       try {
         return await client.$transaction(async tx => {
-          await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${COMMERCE_SNAPSHOT_HEAD_KEY}))::text AS locked`)
+          await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext('ot:commerce-assessor:2026:v1'))::text AS locked`)
           if (!enabled() || !decodeCapture(value, now)) return "REFUSED" as const
           const prior = (await tx.$queryRaw<Stored[]>(readSql()))[0]
           if (prior) {
@@ -69,12 +67,9 @@ export function createCommerceSnapshotStore(client: CommerceSnapshotClient) {
             const priorAt = decodedPrior?.snapshot.sources.assessor?.retrievedAt
             if (!priorAt || Date.parse(source.retrievedAt) <= Date.parse(priorAt)) return "REFUSED" as const
           }
-          await tx.$executeRaw(Prisma.sql`INSERT INTO "SystemConfig" ("id", "key", "value", "createdAt", "updatedAt")
-            VALUES (${randomUUID()}, ${immutableKey}, ${value}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT ("key") DO NOTHING`)
-          await tx.$executeRaw(Prisma.sql`INSERT INTO "SystemConfig" ("id", "key", "value", "createdAt", "updatedAt")
-            VALUES (${randomUUID()}, ${COMMERCE_SNAPSHOT_HEAD_KEY}, ${value}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT ("key") DO UPDATE SET "value" = EXCLUDED."value", "updatedAt" = EXCLUDED."updatedAt"`)
+          await tx.$executeRaw(Prisma.sql`INSERT INTO "ot_commerce_deadline_capture"
+            ("id", "retrieved_at", "content_sha256", "capture_json", "source_body")
+            VALUES (${randomUUID()}, ${new Date(source.retrievedAt)}, ${source.contentSha256}, ${value}, ${sourceBody})`)
           return "PUBLISHED" as const
         })
       } catch {
