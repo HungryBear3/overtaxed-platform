@@ -1,8 +1,9 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
-import { collectInformationalSnapshot } from "@/lib/deadlines/collect-informational-snapshot";
+import { collectInformationalSnapshot, sourceBodyForSnapshot } from "@/lib/deadlines/collect-informational-snapshot";
 import { parseInformationalAssessorHtml } from "@/lib/deadlines/assessor-calendar-parser";
 import { informationalSnapshotStore } from "@/lib/deadlines/informational-snapshot-store";
+import { commerceSnapshotStore } from "@/lib/deadlines/commerce-snapshot-store";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,6 +26,9 @@ export async function GET(request: Request) {
     if (!snapshot || !enabled()) return reply("refused", 503);
     const result = await store.publish(JSON.stringify(snapshot));
     if (result === "REFUSED" || !enabled() || !await store.complete(attempt, JSON.stringify(snapshot))) return reply("refused", 503);
+    const commerce = await commerceSnapshotStore();
+    const sourceBody = sourceBodyForSnapshot?.(snapshot);
+    if (commerce && (!sourceBody || await commerce.publish(snapshot, sourceBody, new Date()) === "REFUSED")) return reply("refused", 503);
     return enabled() ? reply(result.toLowerCase()) : reply("refused", 503);
   } catch { return reply("unavailable", 503); }
 }
