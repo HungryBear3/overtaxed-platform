@@ -337,7 +337,7 @@ export async function POST(request: NextRequest) {
               if (!recoveryReason && tier === "T3") {
                 recoveryReason = current.noticeEvidence
                   ? validateApprovedNoticeSettlement(current, sessionId)
-                  : validateCurrentT3Settlement(current)
+                  : await validateCurrentT3Settlement(current)
               }
 
               if (!recoveryReason) {
