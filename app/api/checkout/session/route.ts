@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db"
 import { getPropertyByPIN, normalizePIN, searchPropertiesByAddress } from "@/lib/cook-county"
 import { normalizeFreeCheckSearchInput } from "@/lib/free-check-address"
 import { getClientIdentifier, rateLimit } from "@/lib/rate-limit"
-import { projectTownshipDeadline } from "@/lib/appeals/township-deadlines"
+import { projectCommerceDeadline } from "@/lib/deadlines/commerce-deadline-authority"
 import {
   RESOLUTION_SOURCE,
   townshipKeyFromName,
@@ -396,13 +396,12 @@ async function resolveProperty(address: string, selectedPin?: string) {
  * same-day rule, and the 900-second serving ceiling all apply to *this*
  * request. There is no persisted snapshot standing in for a current check.
  */
-function snapshotFor(property: Record<string, unknown>, now: Date = new Date()): CheckoutWindowSnapshot {
+async function snapshotFor(property: Record<string, unknown>, now: Date = new Date()): Promise<CheckoutWindowSnapshot> {
   const townshipName = String(property.township ?? "").trim()
   const pin = normalizePIN(String(property.pin ?? ""))
   const at = now.toISOString()
 
-  const projection = projectTownshipDeadline({
-    township: townshipName && pin
+  const resolution = townshipName && pin
       ? {
           inputKind: "pin",
           normalizedPin: pin,
@@ -411,11 +410,13 @@ function snapshotFor(property: Record<string, unknown>, now: Date = new Date()):
           townshipName,
           resolutionSource: RESOLUTION_SOURCE,
           resolvedAt: at,
-        }
-      : null,
-    stage: "assessor",
-    at,
-  })
+        } as const
+      : null
+  const projection = resolution
+    ? await projectCommerceDeadline({ township: resolution, at: now })
+    : { available: false, reason: "township_unresolved", notice: "Official date unavailable or not freshly verified.", statusLabel: "Pending official date", officialSourceUrl: null,
+        showDates: false, showStatus: false, showCountdown: false, allowDeadlineCta: false,
+        allowReminderSignup: false, allowDeadlineEmail: false, allowCheckout: false, allowStructuredData: false } as const
 
   return checkoutSnapshotFromProjection({
     pin,
@@ -529,7 +530,7 @@ export async function POST(req: NextRequest) {
   const resolved = await resolveProperty(input.address, input.propertyPin)
   if (resolved.error) return resolved.error
   const property = resolved.property as unknown as Record<string, unknown>
-  const snapshot = snapshotFor(property)
+  const snapshot = await snapshotFor(property)
   const window = publicWindow(snapshot)
   const resolvedPropertyAddress = String(property.address ?? input.address).slice(0, 200)
   const noticeReassessmentDate = input.reassessmentNoticeDate

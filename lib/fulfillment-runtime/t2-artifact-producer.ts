@@ -245,14 +245,14 @@ function defaultGateway(): T2ArtifactGateway {
     },
 
     async resolveDeadline(order, at) {
-      const { projectTownshipDeadline } = await import("@/lib/appeals/township-deadlines")
+      const { projectCommerceDeadline } = await import("@/lib/deadlines/commerce-deadline-authority")
       const { RESOLUTION_SOURCE, townshipKeyFromName } = await import(
         "@/lib/deadlines/township-resolution"
       )
       // The single attempt clock, handed in — never a second ambient reading.
       const atIso = at.toISOString()
       const pin = order.propertyPin.replace(/\D/g, "")
-      const projection = projectTownshipDeadline({
+      const projection = await projectCommerceDeadline({
         township: {
           inputKind: "pin",
           normalizedPin: pin,
@@ -262,8 +262,7 @@ function defaultGateway(): T2ArtifactGateway {
           resolutionSource: RESOLUTION_SOURCE,
           resolvedAt: atIso,
         },
-        stage: "assessor",
-        at: atIso,
+        at,
       })
       if (!projection.available) {
         // A synthetic or unverified snapshot lands here. Never trusted.
