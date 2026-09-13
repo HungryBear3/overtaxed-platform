@@ -149,7 +149,8 @@ export type CheckoutCutoffDecision =
         | "close_date_missing"
         | "close_date_invalid"
         | "window_already_closed"
-        | "insufficient_business_days";
+        | "insufficient_business_days"
+        | "unsupported_holiday_calendar";
       businessDaysRemaining: number | null;
       evaluatedChicagoDay: string;
       closeDay: string | null;
@@ -205,6 +206,17 @@ export function evaluateCheckoutBusinessDayCutoff(input: {
       allowed: false,
       reason: "window_already_closed",
       businessDaysRemaining: 0,
+      evaluatedChicagoDay: today,
+      closeDay,
+    };
+  }
+  // Every calendar day in the interval must have an explicitly approved
+  // holiday authority. Never apply 2026's set to 2027 by omission.
+  if (!today.startsWith("2026-") || !closeDay.startsWith("2026-")) {
+    return {
+      allowed: false,
+      reason: "unsupported_holiday_calendar",
+      businessDaysRemaining: null,
       evaluatedChicagoDay: today,
       closeDay,
     };

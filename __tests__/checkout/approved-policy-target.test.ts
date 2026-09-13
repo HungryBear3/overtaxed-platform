@@ -42,4 +42,13 @@ describe("approved but unsigned A1/B2/C2/D2/E1/F1 target", () => {
       now: new Date("2026-07-01T17:00:00Z"), closeDate: "2026-07-06",
     })).toMatchObject({ allowed: false, businessDaysRemaining: 2 })
   })
+
+  it("fails closed when any cutoff date falls outside the approved 2026 calendar", () => {
+    expect(evaluateCheckoutBusinessDayCutoff({
+      now: new Date("2026-12-30T18:00:00Z"), closeDate: "2027-01-06",
+    })).toMatchObject({ allowed: false, reason: "unsupported_holiday_calendar" })
+    expect(evaluateCheckoutBusinessDayCutoff({
+      now: new Date("2027-01-04T18:00:00Z"), closeDate: "2027-01-08",
+    })).toMatchObject({ allowed: false, reason: "unsupported_holiday_calendar" })
+  })
 })
