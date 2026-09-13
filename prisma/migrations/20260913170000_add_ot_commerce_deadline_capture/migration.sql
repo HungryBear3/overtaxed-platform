@@ -38,11 +38,23 @@ SET search_path = pg_catalog, public
 AS $$
 DECLARE embedded JSONB;
 BEGIN
+  IF capture_id IS NULL
+    OR capture_retrieved_at IS NULL
+    OR capture_content_sha256 IS NULL
+    OR capture_json IS NULL
+    OR capture_source_body IS NULL
+  THEN
+    RAISE EXCEPTION 'commerce deadline capture binding is invalid';
+  END IF;
+
   embedded := capture_json::jsonb;
-  IF capture_retrieved_at <> ((embedded #>> '{snapshot,sources,assessor,retrievedAt}')::timestamptz)
-    OR capture_content_sha256 <> (embedded #>> '{snapshot,sources,assessor,contentSha256}')
-    OR capture_source_body <> decode(embedded #>> '{sourceBodyBase64}', 'base64')
-    OR capture_content_sha256 <> encode(sha256(capture_source_body), 'hex')
+  IF (embedded #>> '{snapshot,sources,assessor,retrievedAt}') IS NULL
+    OR (embedded #>> '{snapshot,sources,assessor,contentSha256}') IS NULL
+    OR (embedded #>> '{sourceBodyBase64}') IS NULL
+    OR capture_retrieved_at IS DISTINCT FROM ((embedded #>> '{snapshot,sources,assessor,retrievedAt}')::timestamptz)
+    OR capture_content_sha256 IS DISTINCT FROM (embedded #>> '{snapshot,sources,assessor,contentSha256}')
+    OR capture_source_body IS DISTINCT FROM decode(embedded #>> '{sourceBodyBase64}', 'base64')
+    OR capture_content_sha256 IS DISTINCT FROM encode(sha256(capture_source_body), 'hex')
   THEN
     RAISE EXCEPTION 'commerce deadline capture binding is invalid';
   END IF;
@@ -60,13 +72,51 @@ DO $$
 DECLARE
   api_role TEXT;
   migration_role TEXT := current_user;
+  owner_role_oid OID;
+  migration_role_is_superuser BOOLEAN;
+  owner_role_attributes_valid BOOLEAN;
 BEGIN
   -- The connection role must not own the authority table: PostgreSQL owners
   -- retain implicit DML authority even after ordinary grants are revoked.
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ot_commerce_capture_owner') THEN
     CREATE ROLE ot_commerce_capture_owner NOLOGIN NOINHERIT;
   END IF;
-  EXECUTE format('GRANT ot_commerce_capture_owner TO %I', migration_role);
+
+  SELECT oid,
+    rolcanlogin = false
+      AND rolinherit = false
+      AND rolsuper = false
+      AND rolcreaterole = false
+      AND rolcreatedb = false
+      AND rolreplication = false
+      AND rolbypassrls = false
+  INTO STRICT owner_role_oid, owner_role_attributes_valid
+  FROM pg_roles
+  WHERE rolname = 'ot_commerce_capture_owner';
+  IF NOT owner_role_attributes_valid THEN
+    RAISE EXCEPTION 'pre-existing ot_commerce_capture_owner role has unsafe attributes';
+  END IF;
+
+  -- A pre-existing global role name is accepted only when its attributes and
+  -- complete membership graph are pristine. PostgreSQL 16+ records an
+  -- unrevokable-by-the-creator ADMIN grant when a non-superuser CREATEROLE
+  -- role creates another role, so that case must fail rather than leave an
+  -- application-accessible privilege-escalation path.
+  IF EXISTS (
+    SELECT 1
+    FROM pg_auth_members
+    WHERE roleid = owner_role_oid OR member = owner_role_oid
+  ) THEN
+    RAISE EXCEPTION 'pre-existing ot_commerce_capture_owner role is not isolated';
+  END IF;
+
+  SELECT rolsuper INTO STRICT migration_role_is_superuser
+  FROM pg_roles
+  WHERE rolname = migration_role;
+  IF NOT migration_role_is_superuser THEN
+    RAISE EXCEPTION 'commerce capture owner transfer requires an isolated privileged migration connection';
+  END IF;
+
   GRANT USAGE, CREATE ON SCHEMA public TO ot_commerce_capture_owner;
   ALTER TABLE public."ot_commerce_deadline_capture" OWNER TO ot_commerce_capture_owner;
   ALTER FUNCTION public."ot_commerce_deadline_capture_append_only"() OWNER TO ot_commerce_capture_owner;
@@ -75,7 +125,13 @@ BEGIN
   EXECUTE format('GRANT EXECUTE ON FUNCTION public."ot_publish_commerce_deadline_capture"(TEXT, TIMESTAMPTZ, TEXT, TEXT, BYTEA) TO %I', migration_role);
   EXECUTE format('CREATE POLICY "ot_commerce_deadline_capture_reader" ON public."ot_commerce_deadline_capture" FOR SELECT TO %I USING (true)', migration_role);
   EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public."ot_commerce_deadline_capture" FROM %I', migration_role);
-  EXECUTE format('REVOKE ot_commerce_capture_owner FROM %I', migration_role);
+  IF EXISTS (
+    SELECT 1
+    FROM pg_auth_members
+    WHERE roleid = owner_role_oid OR member = owner_role_oid
+  ) THEN
+    RAISE EXCEPTION 'ot_commerce_capture_owner role membership was not fully removed';
+  END IF;
 
   FOREACH api_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = api_role) THEN
