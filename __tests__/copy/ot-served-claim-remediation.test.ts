@@ -25,7 +25,7 @@ describe("served OT claim remediation", () => {
     expect(read("app/hoa/hoa-client.tsx")).not.toMatch(/compares your assessment against nearby properties/i)
 
     expect(read("app/appeal-packet/page.tsx")).toMatch(/public-record comparable properties/i)
-    expect(read("app/townships/page.tsx")).toMatch(/comparable Cook County properties from the public record/i)
+    expect(read("app/townships/page.tsx")).toMatch(/<LiveDeadlinesPage/)
     expect(read("app/hoa/hoa-client.tsx")).toMatch(/public-record comparable properties/i)
   })
 })
