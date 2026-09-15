@@ -858,13 +858,122 @@ model OTOrder {
 
   // Additive back-relation for the T2 delivery-evidence foundation (Phase 1).
   // Virtual only — the foreign key lives on ot_fulfillment; ot_order is unchanged.
-  fulfillments OTFulfillment[]
+  fulfillments             OTFulfillment[]
+  neutralReportReservation OTNeutralReportReservation?
 
   @@index([email])
   @@index([stripeSessionId])
   @@index([recoveryStripeSessionId])
   @@index([createdAt])
   @@map("ot_order")
+}
+
+enum OTNeutralReservationStatus {
+  RESERVED
+  STAGED
+  PROMOTED
+  RECONCILIATION_REQUIRED
+  QUARANTINED
+  COMPROMISED
+  SUPERSEDED
+  ABANDONED
+}
+
+enum OTNeutralBlobAttemptStatus {
+  INTENDED
+  WRITE_CONFIRMED
+  WRITE_UNKNOWN
+  QUARANTINED
+}
+
+/// One durable neutral-report identity per authoritative order. This table is
+/// server-only and contains hashes/private locators, never report bytes or URLs.
+model OTNeutralReportReservation {
+  id                        String                     @id @default(cuid())
+  orderId                   String                     @unique @map("order_id")
+  policyVersion             String                     @map("policy_version")
+  propertyFingerprint       String                     @map("property_fingerprint")
+  reservationKey            String                     @unique @map("reservation_key")
+  checkoutPriceId           String                     @map("checkout_price_id")
+  checkoutProductId         String                     @map("checkout_product_id")
+  admissionSha256           String                     @map("admission_sha256")
+  dataEvidenceSha256        String                     @map("data_evidence_sha256")
+  deadlineEvidenceSha256    String                     @map("deadline_evidence_sha256")
+  sourceContentSha256       String                     @map("source_content_sha256")
+  deadlineIdentitySha256    String                     @map("deadline_identity_sha256")
+  officialRetrievedAt       DateTime                   @map("official_retrieved_at") @db.Timestamptz(3)
+  officialOldestRetrievedAt DateTime                   @map("official_oldest_retrieved_at") @db.Timestamptz(3)
+  officialMaxAgeSeconds     Int                        @map("official_max_age_seconds")
+  deadlineRetrievedAt       DateTime                   @map("deadline_retrieved_at") @db.Timestamptz(3)
+  cohortPosition            Int                        @map("cohort_position")
+  precheckoutLeaseExpiresAt DateTime                   @map("precheckout_lease_expires_at") @db.Timestamptz(3)
+  paidCohortPosition        Int?                       @unique @map("paid_cohort_position")
+  paidAdmittedAt            DateTime?                  @map("paid_admitted_at") @db.Timestamptz(3)
+  reviewerKey               String                     @map("reviewer_key")
+  reviewerWeekStart         DateTime                   @map("reviewer_week_start") @db.Date
+  qaTargetMinutes           Int                        @default(12) @map("qa_target_minutes")
+  qaHardStopMinutes         Int                        @default(20) @map("qa_hard_stop_minutes")
+  qaStartedAt               DateTime?                  @map("qa_started_at") @db.Timestamptz(3)
+  qaCompletedAt             DateTime?                  @map("qa_completed_at") @db.Timestamptz(3)
+  qaMinutes                 Int?                       @map("qa_minutes")
+  status                    OTNeutralReservationStatus @default(RESERVED)
+  bundleSha256              String?                    @map("bundle_sha256")
+  manifestSha256            String?                    @map("manifest_sha256")
+  pdfSha256                 String?                    @map("pdf_sha256")
+  csvSha256                 String?                    @map("csv_sha256")
+  privateReferences         Json?                      @map("private_references")
+  stagedAt                  DateTime?                  @map("staged_at") @db.Timestamptz(3)
+  promotedAt                DateTime?                  @map("promoted_at") @db.Timestamptz(3)
+  reconciliationCode        String?                    @map("reconciliation_code")
+  incidentCode              String?                    @map("incident_code")
+  supersededBySha256        String?                    @map("superseded_by_sha256")
+  createdAt                 DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                 DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  order            OTOrder                    @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  blobAttempts     OTNeutralBlobAttempt[]
+  checkoutAttempts OTNeutralCheckoutAttempt[]
+
+  @@index([status, updatedAt])
+  @@index([bundleSha256])
+  @@map("ot_neutral_report_reservation")
+}
+
+model OTNeutralCheckoutAttempt {
+  id              String                     @id
+  reservationId   String                     @map("reservation_id")
+  orderId         String                     @map("order_id")
+  checkoutKey     String                     @map("checkout_key")
+  idempotencyKey  String                     @unique @map("idempotency_key")
+  contractSha256  String                     @map("contract_sha256")
+  status          String                     @default("INTENDED")
+  stripeSessionId String?                    @map("stripe_session_id")
+  stripeStatus    String?                    @map("stripe_status")
+  createdAt       DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  observedAt      DateTime?                  @map("observed_at") @db.Timestamptz(3)
+  reservation     OTNeutralReportReservation @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([status, createdAt])
+  @@map("ot_neutral_checkout_attempt")
+}
+
+model OTNeutralBlobAttempt {
+  id             String                     @id @default(cuid())
+  reservationId  String                     @map("reservation_id")
+  attemptNumber  Int                        @map("attempt_number")
+  status         OTNeutralBlobAttemptStatus @default(INTENDED)
+  storageLocator String                     @map("storage_locator")
+  bundleSha256   String                     @map("bundle_sha256")
+  byteSize       Int                        @map("byte_size")
+  reasonCode     String?                    @map("reason_code")
+  createdAt      DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  observedAt     DateTime?                  @map("observed_at") @db.Timestamptz(3)
+  reservation    OTNeutralReportReservation @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([reservationId, attemptNumber])
+  @@unique([reservationId, storageLocator, bundleSha256])
+  @@index([status, createdAt])
+  @@map("ot_neutral_blob_attempt")
 }
 
 model Referral {
@@ -1206,11 +1315,11 @@ model OTFulfillment {
   createdAt      DateTime            @default(now()) @map("created_at")
   updatedAt      DateTime            @updatedAt @map("updated_at")
 
-  order     OTOrder                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  artifacts OTFulfillmentArtifact[]
-  attempts  OTDeliveryAttempt[]
-  events    OTDeliveryEvent[]
-  adminEvents OTFulfillmentAdminEvent[]
+  order                OTOrder                      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  artifacts            OTFulfillmentArtifact[]
+  attempts             OTDeliveryAttempt[]
+  events               OTDeliveryEvent[]
+  adminEvents          OTFulfillmentAdminEvent[]
   downloadCapabilities OTPacketDownloadCapability[]
 
   @@unique([orderId, kind])
@@ -1266,9 +1375,9 @@ model OTFulfillmentArtifact {
   // later drift is detectable without storing a second copy of the PIN/address.
   propertyBindingFingerprint String?   @map("property_binding_fingerprint")
 
-  fulfillment OTFulfillment       @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+  fulfillment          OTFulfillment                @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
   // Delivery attempts that sent THIS immutable artifact version (same fulfillment).
-  attempts    OTDeliveryAttempt[]
+  attempts             OTDeliveryAttempt[]
   // Download capabilities bound to THIS immutable artifact version.
   downloadCapabilities OTPacketDownloadCapability[]
 
@@ -1288,36 +1397,36 @@ model OTFulfillmentArtifact {
 /// composite FK below, so an attempt can never reference a nonexistent or
 /// foreign-fulfillment artifact; a delivery retry reuses that version (no regen).
 model OTDeliveryAttempt {
-  id                 String    @id @default(cuid())
-  fulfillmentId      String    @map("fulfillment_id")
-  attemptNumber      Int       @map("attempt_number")
-  artifactVersion    Int       @map("artifact_version")
-  idempotencyKey     String    @unique @map("idempotency_key")
-  provider           String
-  providerMessageId  String?   @map("provider_message_id")
+  id                   String    @id @default(cuid())
+  fulfillmentId        String    @map("fulfillment_id")
+  attemptNumber        Int       @map("attempt_number")
+  artifactVersion      Int       @map("artifact_version")
+  idempotencyKey       String    @unique @map("idempotency_key")
+  provider             String
+  providerMessageId    String?   @map("provider_message_id")
   // The download capability minted FOR this attempt, so a revocation or a
   // recovery can find the exact credential that attempt handed out. Nullable
   // because every attempt written before this slice has none, and because an
   // attempt exists durably before its capability does.
-  downloadCapabilityId String? @unique @map("download_capability_id")
-  requestedAt        DateTime  @default(now()) @map("requested_at")
-  providerAcceptedAt DateTime? @map("provider_accepted_at")
-  deliveredAt        DateTime? @map("delivered_at")
-  delayedAt          DateTime? @map("delayed_at")
-  failedAt           DateTime? @map("failed_at")
-  reasonCode         String?   @map("reason_code")
-  createdAt          DateTime  @default(now()) @map("created_at")
+  downloadCapabilityId String?   @unique @map("download_capability_id")
+  requestedAt          DateTime  @default(now()) @map("requested_at")
+  providerAcceptedAt   DateTime? @map("provider_accepted_at")
+  deliveredAt          DateTime? @map("delivered_at")
+  delayedAt            DateTime? @map("delayed_at")
+  failedAt             DateTime? @map("failed_at")
+  reasonCode           String?   @map("reason_code")
+  createdAt            DateTime  @default(now()) @map("created_at")
 
-  fulfillment OTFulfillment         @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+  fulfillment        OTFulfillment               @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
   // Intra-evidence identity FK: NoAction (non-destructive). Deleting an artifact
   // must never silently erase attempts, and an artifact-version change must never
   // rewrite this downstream identity. Parent teardown removes attempts via the
   // fulfillment Cascade above; NoAction's end-of-statement check then passes.
-  artifact    OTFulfillmentArtifact @relation(fields: [fulfillmentId, artifactVersion], references: [fulfillmentId, version], onDelete: NoAction, onUpdate: NoAction)
+  artifact           OTFulfillmentArtifact       @relation(fields: [fulfillmentId, artifactVersion], references: [fulfillmentId, version], onDelete: NoAction, onUpdate: NoAction)
   // Same non-destructive posture: losing a capability row must never erase the
   // attempt that records a send happened.
   downloadCapability OTPacketDownloadCapability? @relation(fields: [downloadCapabilityId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  events      OTDeliveryEvent[]
+  events             OTDeliveryEvent[]
 
   @@unique([fulfillmentId, attemptNumber])
   @@unique([provider, providerMessageId])
@@ -1391,10 +1500,10 @@ model OTPacketDownloadCapability {
   revokedReasonCode          String?   @map("revoked_reason_code")
   createdAt                  DateTime  @default(now()) @map("created_at")
 
-  fulfillment OTFulfillment         @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+  fulfillment     OTFulfillment         @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
   /// Same composite identity FK the delivery attempt uses: a capability can only
   /// ever name an immutable artifact version of its OWN fulfillment.
-  artifact    OTFulfillmentArtifact @relation(fields: [fulfillmentId, artifactVersion], references: [fulfillmentId, version], onDelete: NoAction, onUpdate: NoAction)
+  artifact        OTFulfillmentArtifact @relation(fields: [fulfillmentId, artifactVersion], references: [fulfillmentId, version], onDelete: NoAction, onUpdate: NoAction)
   /// Virtual back-relation for the attempt that minted this capability.
   deliveryAttempt OTDeliveryAttempt?
 
