@@ -860,6 +860,8 @@ model OTOrder {
   // Virtual only — the foreign key lives on ot_fulfillment; ot_order is unchanged.
   fulfillments             OTFulfillment[]
   neutralReportReservation OTNeutralReportReservation?
+  neutralRefundWork        OTNeutralRefundWork?
+  neutralQaReview          OTNeutralQaReview?
 
   @@index([email])
   @@index([stripeSessionId])
@@ -921,6 +923,11 @@ model OTNeutralReportReservation {
   manifestSha256            String?                    @map("manifest_sha256")
   pdfSha256                 String?                    @map("pdf_sha256")
   csvSha256                 String?                    @map("csv_sha256")
+  customerZipSha256         String?                    @unique @map("customer_zip_sha256")
+  customerZipByteSize       Int?                       @map("customer_zip_byte_size")
+  customerZipLocator        String?                    @unique @map("customer_zip_locator")
+  customerZipMediaType      String?                    @map("customer_zip_media_type")
+  customerZipFilename       String?                    @map("customer_zip_filename")
   privateReferences         Json?                      @map("private_references")
   stagedAt                  DateTime?                  @map("staged_at") @db.Timestamptz(3)
   promotedAt                DateTime?                  @map("promoted_at") @db.Timestamptz(3)
@@ -930,13 +937,100 @@ model OTNeutralReportReservation {
   createdAt                 DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt                 DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  order            OTOrder                    @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  blobAttempts     OTNeutralBlobAttempt[]
-  checkoutAttempts OTNeutralCheckoutAttempt[]
+  order               OTOrder                       @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  blobAttempts        OTNeutralBlobAttempt[]
+  checkoutAttempts    OTNeutralCheckoutAttempt[]
+  qaReview            OTNeutralQaReview?
+  customerZipAttempts OTNeutralCustomerZipAttempt[]
 
   @@index([status, updatedAt])
   @@index([bundleSha256])
   @@map("ot_neutral_report_reservation")
+}
+
+model OTNeutralCustomerZipAttempt {
+  id             String                     @id @default(cuid())
+  reservationId  String                     @map("reservation_id")
+  zipSha256      String                     @map("zip_sha256")
+  byteSize       Int                        @map("byte_size")
+  storageLocator String                     @map("storage_locator")
+  status         String                     @default("INTENDED")
+  reasonCode     String?                    @map("reason_code")
+  createdAt      DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  observedAt     DateTime?                  @map("observed_at") @db.Timestamptz(3)
+  reservation    OTNeutralReportReservation @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([reservationId, zipSha256])
+  @@index([status, createdAt])
+  @@map("ot_neutral_customer_zip_attempt")
+}
+
+/// Durable QA-only decision for one promoted neutral bundle. No PII is stored.
+model OTNeutralQaReview {
+  id                         String            @id @default(cuid())
+  reservationId              String            @unique @map("reservation_id")
+  orderId                    String            @unique @map("order_id")
+  status                     OTNeutralQaStatus @default(PENDING)
+  reviewerKey                String            @map("reviewer_key")
+  reviewerWeekStart          DateTime          @map("reviewer_week_start") @db.Date
+  startedAt                  DateTime?         @map("started_at") @db.Timestamptz(3)
+  decidedAt                  DateTime?         @map("decided_at") @db.Timestamptz(3)
+  minutesSpent               Int?              @map("minutes_spent")
+  reasonCode                 String?           @map("reason_code")
+  policyVersion              String            @map("policy_version")
+  artifactSha256             String            @map("artifact_sha256")
+  customerArtifactSha256     String?           @map("customer_artifact_sha256")
+  evidenceDigestSha256       String            @map("evidence_digest_sha256")
+  paymentBindingSha256       String            @map("payment_binding_sha256")
+  propertyBindingFingerprint String            @map("property_binding_fingerprint")
+  fulfillmentId              String?           @unique @map("fulfillment_id")
+  createdAt                  DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                  DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  reservation OTNeutralReportReservation @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  order       OTOrder                    @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  fulfillment OTFulfillment?             @relation(fields: [fulfillmentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  refundWork  OTNeutralRefundWork?
+
+  @@index([reviewerKey, reviewerWeekStart, status])
+  @@index([status, updatedAt])
+  @@map("ot_neutral_qa_review")
+}
+
+enum OTNeutralRefundStatus {
+  REFUND_REQUIRED
+  REFUND_CLAIMED
+  RECEIPT_RECORDED_PENDING_VERIFICATION
+  RECEIPT_VERIFICATION_HELD
+  REFUND_CONFIRMED
+}
+
+/// Operator work queue only. It records refund evidence but never initiates a
+/// provider mutation; activation is controlled by a separate exact flag.
+model OTNeutralRefundWork {
+  id                    String                @id @default(cuid())
+  qaReviewId            String                @unique @map("qa_review_id")
+  orderId               String                @unique @map("order_id")
+  status                OTNeutralRefundStatus @default(REFUND_REQUIRED)
+  reasonCode            String                @map("reason_code")
+  paymentBindingSha256  String                @map("payment_binding_sha256")
+  artifactSha256        String                @map("artifact_sha256")
+  claimedBy             String?               @map("claimed_by")
+  claimedAt             DateTime?             @map("claimed_at") @db.Timestamptz(3)
+  providerAttemptKey    String?               @unique @map("provider_attempt_key")
+  providerReceiptId     String?               @unique @map("provider_receipt_id")
+  providerReceiptSha256 String?               @unique @map("provider_receipt_sha256")
+  verificationReason    String?               @map("verification_reason")
+  verifiedAt            DateTime?             @map("verified_at") @db.Timestamptz(3)
+  confirmedBy           String?               @map("confirmed_by")
+  confirmedAt           DateTime?             @map("confirmed_at") @db.Timestamptz(3)
+  createdAt             DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  qaReview              OTNeutralQaReview     @relation(fields: [qaReviewId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  order                 OTOrder               @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([status, createdAt])
+  @@map("ot_neutral_refund_work")
 }
 
 model OTNeutralCheckoutAttempt {
@@ -1262,6 +1356,17 @@ model OutreachApprovalEvent {
 
 enum OTFulfillmentKind {
   T2_APPEAL_EVIDENCE
+  NEUTRAL_RECORDS_REPORT
+}
+
+enum OTNeutralQaStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  HARD_STOP
+  REFUND_REQUIRED
+  HELD
 }
 
 enum OTFulfillmentStatus {
@@ -1321,6 +1426,7 @@ model OTFulfillment {
   events               OTDeliveryEvent[]
   adminEvents          OTFulfillmentAdminEvent[]
   downloadCapabilities OTPacketDownloadCapability[]
+  neutralQaReview      OTNeutralQaReview?
 
   @@unique([orderId, kind])
   @@index([status])

@@ -25,7 +25,7 @@ import { trustedPaymentAuthority } from "./payment-authority";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { t2PacketDownloadEnabled } from "@/lib/fulfillment/flag";
+import { neutralDeliveryEnabled, t2PacketDownloadEnabled } from "@/lib/fulfillment/flag";
 import {
   CAPABILITY_REVOCATION_REASONS,
   decideCapabilityIssuance,
@@ -169,6 +169,30 @@ function toInstant(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+async function withNeutralQa(
+  tx: PacketDownloadTransaction,
+  fulfillment: PacketDownloadFulfillmentRow | null,
+): Promise<PacketDownloadFulfillmentRow | null> {
+  if (!fulfillment || fulfillment.kind !== "NEUTRAL_RECORDS_REPORT") return fulfillment;
+  if (!neutralDeliveryEnabled()) return {...fulfillment, neutralQaApproved:false};
+  const rows = await tx.$queryRaw<Array<{ approved: boolean }>>(Prisma.sql`
+    SELECT EXISTS (
+      SELECT 1 FROM "ot_neutral_qa_review" q
+      JOIN "ot_neutral_report_reservation" r ON r."id"=q."reservation_id"
+      JOIN "ot_fulfillment_artifact" a ON a."fulfillment_id"=q."fulfillment_id"
+      WHERE q."fulfillment_id"=${fulfillment.id} AND q."order_id"=${fulfillment.orderId}
+        AND q."status"='APPROVED' AND r."status"='PROMOTED'
+        AND r."superseded_by_sha256" IS NULL
+        AND q."customer_artifact_sha256"=a."artifact_sha256"
+        AND q."artifact_sha256"=r."bundle_sha256"
+        AND q."property_binding_fingerprint"=a."property_binding_fingerprint"
+        AND q."policy_version"=a."template_version"
+        AND a."version"=(SELECT max(x."version") FROM "ot_fulfillment_artifact" x WHERE x."fulfillment_id"=q."fulfillment_id")
+    ) AS "approved"
+  `);
+  return {...fulfillment, neutralQaApproved: rows[0]?.approved === true};
+}
+
 /**
  * Read every row the decision needs, under the authoritative order lock.
  *
@@ -232,7 +256,7 @@ async function loadContext(
   return {
     capability,
     order: orders[0] ?? null,
-    fulfillment: fulfillments[0] ?? null,
+    fulfillment: await withNeutralQa(tx, fulfillments[0] ?? null),
     artifact: artifacts[0] ?? null,
     trustedNow: toInstant(clock[0]?.now),
   };
@@ -264,7 +288,9 @@ export function createPrismaPacketDownloadStore(
           Prisma.sql`SELECT ${FULFILLMENT_COLUMNS} FROM "ot_fulfillment"
                      WHERE "id" = ${input.fulfillmentId} FOR UPDATE`,
         );
-        fulfillment = refreshed[0] ?? null;
+        const authorizedFulfillment = await withNeutralQa(tx, refreshed[0] ?? null);
+        if (!authorizedFulfillment) return { ok: false, blocker: "FULFILLMENT_NOT_FOUND" };
+        fulfillment = authorizedFulfillment;
 
         // Order → fulfillment → attempt, the same lock ordering the delivery
         // store and the binder use, so the three can never deadlock.

@@ -211,6 +211,8 @@ export type PacketDownloadFulfillmentRow = {
   orderId: string;
   kind: string;
   status: OTFulfillmentStatus | string;
+  /** Required only for NEUTRAL_RECORDS_REPORT; read from the durable QA join. */
+  neutralQaApproved?: boolean;
 };
 
 export type PacketDownloadOrderRow = {
@@ -341,7 +343,8 @@ export function decidePacketDownload(
   if (!fulfillment) return refuse("FULFILLMENT_NOT_FOUND");
   if (fulfillment.id !== capability.fulfillmentId)
     return refuse("CAPABILITY_BINDING_MISMATCH");
-  if (fulfillment.kind !== "T2_APPEAL_EVIDENCE")
+  if (fulfillment.kind !== "T2_APPEAL_EVIDENCE" &&
+      !(fulfillment.kind === "NEUTRAL_RECORDS_REPORT" && fulfillment.neutralQaApproved === true))
     return refuse("CAPABILITY_BINDING_MISMATCH");
 
   const order = input.order;
@@ -501,7 +504,8 @@ export function decideCapabilityIssuance(
 
   const fulfillment = input.fulfillment;
   if (!fulfillment) return { ok: false, blocker: "FULFILLMENT_NOT_FOUND" };
-  if (fulfillment.kind !== "T2_APPEAL_EVIDENCE")
+  if (fulfillment.kind !== "T2_APPEAL_EVIDENCE" &&
+      !(fulfillment.kind === "NEUTRAL_RECORDS_REPORT" && fulfillment.neutralQaApproved === true))
     return { ok: false, blocker: "CAPABILITY_BINDING_MISMATCH" };
   const order = input.order;
   if (!order) return { ok: false, blocker: "ORDER_NOT_FOUND" };

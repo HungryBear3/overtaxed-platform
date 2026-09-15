@@ -36,6 +36,8 @@ import {
   type PacketDownloadStore,
 } from "@/lib/fulfillment-runtime/packet-download-store";
 import { readT2ArtifactBytes } from "@/lib/fulfillment-runtime/t2-artifact-storage";
+import { readNeutralCustomerZip } from "@/lib/fulfillment-runtime/neutral-customer-zip-storage";
+import { NEUTRAL_CUSTOMER_ZIP_FILENAME, NEUTRAL_CUSTOMER_ZIP_MEDIA_TYPE } from "@/lib/fulfillment/neutral-customer-zip";
 
 export type PacketDownloadRefusal =
   | PacketDownloadBlocker
@@ -48,6 +50,8 @@ export type PacketDownloadResult =
       bytes: Buffer;
       artifactSha256: string;
       byteSize: number;
+      mediaType?: "application/zip";
+      filename?: "overtaxed-records-report.zip";
     }
   | { ok: false; blocker: PacketDownloadRefusal };
 
@@ -80,11 +84,13 @@ export async function readT2PacketForCapability(
     return { ok: false, blocker: "INVALID_CAPABILITY" };
 
   const store = deps.store ?? prismaPacketDownloadStore;
-  const readBytes = deps.readBytes ?? readT2ArtifactBytes;
-
   const authorized = await store.authorize({ capabilityHash });
   if (!authorized.ok) return { ok: false, blocker: authorized.blocker };
   const grant = authorized.grant;
+  const neutralZip = grant.storageLocator.startsWith("ot-neutral-customer/sha256/")
+  const readBytes = deps.readBytes ?? (neutralZip
+    ? ({locator}:{locator:string}) => readNeutralCustomerZip(locator)
+    : readT2ArtifactBytes);
 
   let bytes: Buffer;
   try {
@@ -118,10 +124,11 @@ export async function readT2PacketForCapability(
   if (!t2PacketDownloadEnabled(env))
     return { ok: false, blocker: "FLAG_DISABLED" };
 
-  return {
+  const base = {
     ok: true,
     bytes,
     artifactSha256: grant.artifactSha256,
     byteSize: grant.byteSize,
-  };
+  } as const;
+  return neutralZip ? {...base,mediaType:NEUTRAL_CUSTOMER_ZIP_MEDIA_TYPE,filename:NEUTRAL_CUSTOMER_ZIP_FILENAME} : base;
 }

@@ -1,4 +1,5 @@
 import { trustedPaymentAuthority } from "./payment-authority";
+import { neutralDeliveryEnabled } from "@/lib/fulfillment/flag";
 /**
  * The real T2 delivery adapter: a plain-code packet handoff over Resend.
  *
@@ -144,6 +145,7 @@ export type T2SendContext = {
   orderTier: string;
   fulfillmentOrderId: string;
   fulfillmentKind: string;
+  neutralQaApproved?: boolean;
   fulfillmentStatus: string;
   attemptCount: number;
   currentArtifactVersion: number;
@@ -167,6 +169,7 @@ type ContextRow = {
   orderTier: string;
   fulfillmentOrderId: string;
   fulfillmentKind: string;
+  neutralQaApproved?: boolean;
   fulfillmentStatus: string;
   attemptCount: number;
   currentArtifactVersion: number;
@@ -194,6 +197,16 @@ export function createPrismaT2SendContextReader(
                  o."tier" AS "orderTier",
                  f."order_id" AS "fulfillmentOrderId",
                  f."kind"::text AS "fulfillmentKind",
+                 CASE WHEN f."kind"::text='NEUTRAL_RECORDS_REPORT' THEN EXISTS (
+                   SELECT 1 FROM "ot_neutral_qa_review" q
+                   JOIN "ot_neutral_report_reservation" r ON r."id"=q."reservation_id"
+                   WHERE q."fulfillment_id"=f."id" AND q."order_id"=o."id" AND q."status"='APPROVED'
+                     AND r."status"='PROMOTED' AND r."superseded_by_sha256" IS NULL
+                     AND q."customer_artifact_sha256"=a."artifact_sha256"
+                     AND q."artifact_sha256"=r."bundle_sha256"
+                     AND q."property_binding_fingerprint"=a."property_binding_fingerprint"
+                     AND q."policy_version"=a."template_version"
+                 ) ELSE FALSE END AS "neutralQaApproved",
                  f."status"::text AS "fulfillmentStatus",
                  f."attempt_count" AS "attemptCount",
                  a."version" AS "currentArtifactVersion",
@@ -422,10 +435,9 @@ export function createT2ResendAdapter(
       // what the caller passed. Settlement first.
       if (context.orderStatus !== "PAID" || context.orderTier !== "T2")
         return rejected("MANUAL_REVIEW");
-      if (
-        context.fulfillmentOrderId !== input.orderId ||
-        context.fulfillmentKind !== "T2_APPEAL_EVIDENCE"
-      )
+      const kindAllowed = context.fulfillmentKind === "T2_APPEAL_EVIDENCE" ||
+        (context.fulfillmentKind === "NEUTRAL_RECORDS_REPORT" && neutralDeliveryEnabled(deps.env ?? process.env) && context.neutralQaApproved === true);
+      if (context.fulfillmentOrderId !== input.orderId || !kindAllowed)
         return rejected("MANUAL_REVIEW");
       // The attempt this send belongs to must be the current, in-flight one.
       if (
