@@ -13,6 +13,7 @@ import { join } from "node:path"
 import type { Prisma } from "@prisma/client"
 import {
   NO_IN_FLIGHT_EVIDENCE,
+  RECONCILABLE_STATUSES,
   RESOLVE_REASON_CODES,
   runT2DeliveryRecovery,
   type DeliveryRecoveryInput,
@@ -325,7 +326,7 @@ describe("reconciling stored provider evidence", () => {
         client: fakeClient(state),
         reconcile: (async (input: unknown) => {
           calls.push(input)
-          return { examined: 2, applied: 1, stillUnmatched: 1 }
+          return { examined: 2, applied: 1, stillUnmatched: 1, skipped: 0 }
         }) as never,
       }),
     ).resolves.toEqual({
@@ -334,6 +335,7 @@ describe("reconciling stored provider evidence", () => {
       examined: 2,
       applied: 1,
       stillUnmatched: 1,
+      skipped: 0,
     })
     expect(calls).toEqual([{ providerMessageId: MESSAGE_ID }])
     // Reconciliation writes no local evidence of its own.
@@ -419,5 +421,119 @@ describe("recovery cannot reach a sender, a generator, or an issuer", () => {
     expect(source).not.toMatch(/INSERT INTO "ot_fulfillment_artifact"/)
     expect(source).not.toMatch(/INSERT INTO "ot_delivery_attempt"/)
     expect(source).not.toMatch(/INSERT INTO "ot_packet_download_capability"/)
+  })
+})
+
+/**
+ * Reconciliation re-offers evidence we already hold to a binding that now
+ * exists. That can only change something while the send is still UNRESOLVED.
+ *
+ * From DELIVERED or a terminal-lock status the fold refuses every edge, so a
+ * pass could do nothing but spend replay budget and write REFUSED rows — while
+ * returning `ok: true` and looking to an operator like it had worked. The
+ * refusal is at the ROW, under the lock, not at what the operator typed.
+ */
+describe("reconciliation is bounded to a send that is still unresolved", () => {
+  const reconcileFrom = (status: string) => ({
+    orderId: ORDER_ID,
+    actorUserId: ACTOR,
+    action: "RECONCILE_PROVIDER_CALLBACKS" as const,
+    expectedStatus: status as never,
+    expectedStatusRevision: 4,
+  })
+
+  it.each(["DELIVERY_PENDING", "PROVIDER_ACCEPTED", "DELAYED"])(
+    "runs from %s, where nothing durable yet says what happened",
+    async (status) => {
+      const state = world({ summary: { ...world().summary!, status } })
+      const reconcile = jest.fn(async () => ({
+        examined: 0, applied: 0, stillUnmatched: 0, skipped: 0,
+      }))
+      await expect(
+        runT2DeliveryRecovery(reconcileFrom(status), {
+          env: on, client: fakeClient(state), reconcile: reconcile as never,
+        }),
+      ).resolves.toMatchObject({ ok: true })
+      expect(reconcile).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it.each(["DELIVERED", "BOUNCED", "COMPLAINED", "FAILED", "CANCELLED", "ARTIFACT_READY"])(
+    "refuses from %s without calling the reconciler at all",
+    async (status) => {
+      const state = world({ summary: { ...world().summary!, status } })
+      const reconcile = jest.fn()
+      await expect(
+        runT2DeliveryRecovery(reconcileFrom(status), {
+          env: on, client: fakeClient(state), reconcile: reconcile as never,
+        }),
+      ).resolves.toEqual({ ok: false, code: "NOT_RECONCILABLE" })
+      expect(reconcile).not.toHaveBeenCalled()
+      expect(state.events).toEqual([])
+      expect(state.adminEvents).toEqual([])
+    },
+  )
+
+  it("still refuses a stale revision before it looks at the status at all", async () => {
+    const state = world()
+    const reconcile = jest.fn()
+    await expect(
+      runT2DeliveryRecovery(
+        { ...reconcileFrom("DELIVERY_PENDING"), expectedStatusRevision: 3 },
+        { env: on, client: fakeClient(state), reconcile: reconcile as never },
+      ),
+    ).resolves.toEqual({ ok: false, code: "STALE_STATE" })
+    expect(reconcile).not.toHaveBeenCalled()
+  })
+
+  it("reports the reconciler's full accounting, skipped rows included", async () => {
+    const state = world()
+    await expect(
+      runT2DeliveryRecovery(reconcileFrom("DELIVERY_PENDING"), {
+        env: on,
+        client: fakeClient(state),
+        reconcile: (async () => ({
+          examined: 3, applied: 1, stillUnmatched: 1, skipped: 1,
+        })) as never,
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      action: "RECONCILE_PROVIDER_CALLBACKS",
+      examined: 3,
+      applied: 1,
+      stillUnmatched: 1,
+      skipped: 1,
+    })
+  })
+})
+
+/**
+ * The HTTP boundary states the same bound as the store. Two places, one rule:
+ * if they drift, a request the route accepts is refused under the lock, which
+ * an operator reads as a flaky control rather than as a deliberate refusal.
+ */
+describe("the route's accepted statuses match the store's authority", () => {
+  const ROUTE = readFileSync(
+    join(
+      process.cwd(),
+      "app/api/admin/evidence/[orderId]/delivery-recovery/route.ts",
+    ),
+    "utf8",
+  )
+
+  it("offers exactly the reconcilable statuses and no others", () => {
+    const enumerated = ROUTE.match(/expectedStatus: z\.enum\(\[([^\]]*)\]\)/)
+    expect(enumerated).not.toBeNull()
+    const listed = [...enumerated![1].matchAll(/"([A-Z_]+)"/g)].map((m) => m[1])
+    expect(listed.sort()).toEqual([...RECONCILABLE_STATUSES].sort())
+  })
+
+  it("no longer accepts DELIVERED, which it used to", () => {
+    expect(RECONCILABLE_STATUSES.has("DELIVERED")).toBe(false)
+    const reconcileBranch = ROUTE.slice(
+      ROUTE.indexOf('z.literal("RECONCILE_PROVIDER_CALLBACKS")'),
+      ROUTE.indexOf('z.literal("RESOLVE_UNRESOLVED_SEND")'),
+    )
+    expect(reconcileBranch).not.toContain('"DELIVERED"')
   })
 })

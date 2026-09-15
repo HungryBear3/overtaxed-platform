@@ -86,6 +86,8 @@ type World = {
   historicalArtifact?: Record<string, unknown> | null
   capability: CapabilityRow | null
   locks: string[]
+  /** `locks.length` observed at each trusted-clock read, for ordering proof. */
+  clockReads: number[]
   inserted: Array<Record<string, unknown>>
   rolledBack: boolean
 }
@@ -118,6 +120,7 @@ function world(patch: Partial<World> = {}): World {
     },
     capability: liveCapability(),
     locks: [],
+    clockReads: [],
     inserted: [],
     rolledBack: false,
     ...patch,
@@ -132,7 +135,10 @@ function fakeClient(
   const tx: PacketDownloadTransaction = {
     async $queryRaw<T>(query: Prisma.Sql): Promise<T> {
       const sql = query.sql
-      if (sql.includes("clock_timestamp()")) return [{ now: state.now }] as T
+      if (sql.includes("clock_timestamp()")) {
+        state.clockReads.push(state.locks.length)
+        return [{ now: state.now }] as T
+      }
       if (sql.includes('SELECT "source_order_id" AS "sourceOrderId"')) {
         return (state.capability
           ? [{ sourceOrderId: state.capability.sourceOrderId }]
@@ -548,5 +554,69 @@ describe("fresh current-artifact authority", () => {
     }))
     expect(await store.issue({ capabilityHash: HASH, fulfillmentId: FULFILLMENT_ID, ttlSeconds: 60, maxUses: 1 })).toMatchObject({ ok: false })
     expect(state.inserted).toHaveLength(0)
+  })
+})
+
+/**
+ * `CURRENT_TIMESTAMP` (and its aliases `now()` / `transaction_timestamp()`) is
+ * frozen at TRANSACTION START in PostgreSQL. `loadContext` reads the trusted
+ * clock only after taking `FOR UPDATE` on `ot_order` and on the capability row,
+ * and those locks can block for an unbounded time behind another writer. With a
+ * transaction-start clock, a request that queued behind a slow holder would judge
+ * expiry against an instant from before the wait and serve a packet under a
+ * capability that died while it waited.
+ *
+ * The fake adapter here answers instantly and returns whatever instant the test
+ * scripted, so it behaves identically under either clock function — it cannot
+ * prove the real timing. Only the SQL text can, so that is what is asserted.
+ */
+describe("source contract: expiry is measured against the DB wall clock", () => {
+  const source = require("node:fs").readFileSync(
+    require("node:path").join(process.cwd(), "lib/fulfillment-runtime/packet-download-store.ts"),
+    "utf8",
+  ) as string
+  // Prose is allowed to name CURRENT_TIMESTAMP while explaining why it is wrong.
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+
+  it("reads the trusted clock with clock_timestamp(), which advances mid-transaction", () => {
+    expect(code).toContain("clock_timestamp() AT TIME ZONE 'UTC'")
+  })
+
+  it("uses no transaction-start clock function anywhere in its SQL", () => {
+    expect(code).not.toMatch(/CURRENT_TIMESTAMP/)
+    expect(code).not.toMatch(/\btransaction_timestamp\s*\(/)
+    // `now()` is the alias for CURRENT_TIMESTAMP, not for clock_timestamp().
+    expect(code).not.toMatch(/\bnow\s*\(/)
+  })
+
+  it("still renders the instant with to_char, never a driver date mapping", () => {
+    expect(code).toContain(`'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'`)
+  })
+})
+
+describe("the trusted clock is read after the locks, not before them", () => {
+  it("authorize reads the clock only once both FOR UPDATE locks are held", async () => {
+    const state = world()
+    await createPrismaPacketDownloadStore(fakeClient(state)).authorize({
+      capabilityHash: HASH,
+    })
+    expect(state.locks).toEqual(["order", "capability"])
+    // Every clock read observed both locks already taken.
+    expect(state.clockReads.length).toBeGreaterThan(0)
+    for (const locksHeld of state.clockReads) expect(locksHeld).toBe(2)
+  })
+
+  it("reassert re-reads the clock after re-taking both locks", async () => {
+    const state = world()
+    const store = createPrismaPacketDownloadStore(fakeClient(state))
+    const granted = await store.authorize({ capabilityHash: HASH })
+    if (!granted.ok) throw new Error(`expected a grant, got ${granted.blocker}`)
+    state.clockReads.length = 0
+    state.locks.length = 0
+    await store.reassert({ capabilityHash: HASH, grant: granted.grant })
+    expect(state.clockReads.length).toBeGreaterThan(0)
+    for (const locksHeld of state.clockReads) expect(locksHeld).toBe(2)
   })
 })

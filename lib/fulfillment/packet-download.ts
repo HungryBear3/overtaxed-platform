@@ -219,6 +219,13 @@ export type PacketDownloadOrderRow = {
   status: string;
   propertyPin: string | null;
   propertyAddress: string | null;
+  /**
+   * Optional because `ot_order` has no such columns: on that table a refund or a
+   * dispute shows up as a non-`PAID` `status`, which is what actually ends
+   * access. These two exist so a caller with a settlement source that DOES
+   * distinguish them can refuse on them explicitly; absent means "not stated",
+   * never "not refunded".
+   */
   refunded?: boolean;
   disputed?: boolean;
 };
@@ -377,8 +384,10 @@ export function decidePacketDownload(
     return refuse("INVALID_STORAGE_LOCATOR");
   }
 
-  // 9. Authoritative settlement, read fresh. A refund, dispute, cancellation or
-  //    any non-PAID status ends access with no revocation step required.
+  // 9. Authoritative settlement, read fresh. Any non-PAID status — which is how
+  //    a refund, dispute or cancellation presents on `ot_order` — ends access
+  //    with no revocation step required. The two explicit flags are belt and
+  //    braces for a caller whose settlement source states them separately.
   if (String(order.tier ?? "").trim() !== "T2")
     return refuse("ORDER_NOT_ELIGIBLE");
   if (order.refunded === true || order.disputed === true)
