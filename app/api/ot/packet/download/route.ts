@@ -192,8 +192,8 @@ export async function POST(request: NextRequest) {
     status: 200,
     headers: {
       ...PRIVATE_HEADERS,
-      "Content-Type": "application/pdf",
-      "Content-Disposition": 'attachment; filename="overtaxed-appeal-evidence.pdf"',
+      "Content-Type": result.mediaType ?? "application/pdf",
+      "Content-Disposition": `attachment; filename="${result.filename ?? "overtaxed-appeal-evidence.pdf"}"`,
       "Content-Length": String(result.byteSize),
     },
   })
