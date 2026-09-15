@@ -1,0 +1,147 @@
+# OT acquisition attribution — exact scope and limitations
+
+Base commit: `d5ae760`. Worktree: `ot-attribution-20260912`.
+
+This document is the scope contract for the change. It is deliberately written
+before the code, and it states what this slice does **not** do as precisely as
+what it does, so nothing here can be read as a claim that acquisition tracking
+is working end to end.
+
+## What ships
+
+A bounded, privacy-safe, durable first-touch acquisition attribution binding for
+the OT checkout, expressed as:
+
+1. A **finite server-approved code registry** (`lib/attribution/registry.ts`).
+   The shipped registry is **EMPTY**. No campaign and no creative is approved.
+2. A **client capture module** (`lib/attribution/client-codes.ts`) plus a
+   root-layout capture component. It forwards **only** code references that are
+   present in the approved registry. Because the shipped registry is empty, it
+   forwards nothing and stores nothing.
+3. A **dedicated table** `ot_order_attribution`, one row per canonical
+   `ot_order.id`, created by a dedicated local SQL migration. The Prisma schema
+   is **not** touched; the table is read and written through a parameterized raw
+   SQL helper (`lib/attribution/record.ts`).
+4. A **route binding** in `app/api/checkout/session/route.ts` that binds
+   first-touch attribution to the canonical `orderId` **before** the Stripe
+   Checkout Session is created, and stamps Stripe metadata from a **readback of
+   the immutable row**, never from the current request.
+
+## The privacy boundary
+
+The only values that can ever reach the database are **codes drawn from the
+server's own approved registry**, plus the sentinel for "no campaign".
+
+- No raw UTM values are persisted. The existing `lib/analytics/utm-tracking.ts`
+  localStorage UTM capture is untouched and is **not** a source for this table.
+- No email, no PIN, no property address, no name, no URL, no `document.referrer`
+  and no free-text label is accepted, forwarded, or stored.
+- A code is accepted only if it matches `^[a-z0-9][a-z0-9_]{1,39}$` **and** is a
+  member of the server's approved registry. Shape alone is not sufficient. The
+  charset makes an email (`@`), a URL (`:`, `/`, `.`), or an address (spaces,
+  commas) unrepresentable; registry membership is what rejects everything else,
+  including a 14-digit PIN, which is shape-legal but never an approved code.
+- The same charset restriction is re-asserted as a SQL `CHECK` constraint, so
+  the column cannot hold a PII-shaped value even if the application layer were
+  bypassed.
+
+Rejection is an error, not a silent downgrade: an unknown or tampered code
+returns `400 INVALID_ATTRIBUTION_CODE` and **no** order row and **no** provider
+call happens on that request. Silently falling back to "organic" would let a
+tampered code mint a durable organic row that then permanently blocks the real
+attribution, so the request is refused instead.
+
+## Server is the authority
+
+The client module validates before forwarding purely to avoid pointless
+requests. That validation is **not** load-bearing. The route re-resolves every
+submitted code against `shippedAttributionRegistry()` on the server, before the
+Stripe client is used, and the persisted row is built only from the server's
+resolution. A client that posts a code the server does not approve is rejected
+regardless of what the client-side check did.
+
+## Why an explicit organic row exists (and why this needs the table even when
+## there is no campaign)
+
+The requirement is that a retry can never overwrite or "upgrade" the original
+attribution, *including* an original of no-attribution/organic.
+
+Absence of a row cannot express organic. Absence is indistinguishable from
+"not yet bound". If organic were represented by writing nothing, then the first
+checkout attempt from untagged traffic would leave the order unbound, and a
+second attempt that arrived carrying an approved campaign code would bind that
+campaign — an upgrade on retry, which is exactly the failure mode being
+prevented. So organic is written as an **explicit row** with
+`campaign_code IS NULL` and `creative_code IS NULL`. That row is what makes the
+original organic first touch immutable.
+
+The binding write is `INSERT ... ON CONFLICT (order_id) DO NOTHING` followed by
+a `SELECT` readback. The application issues no `UPDATE` against this table, and
+the migration installs a `BEFORE UPDATE` trigger that raises, so immutability is
+enforced by the database and not merely by convention.
+
+## Compatibility with the existing no-campaign flow
+
+The tension: binding must be fail-closed before a provider side effect, but the
+existing untagged checkout flow must keep working on a deployment where this
+migration has not been applied.
+
+These are reconciled with a single explicit server gate, `OT_ATTRIBUTION_ENABLED`,
+default **off**:
+
+- **Off (default, and the state this branch ships in):** no attribution row is
+  read or written, no attribution metadata key is added to the Stripe session,
+  and the checkout request path is behaviourally identical to `d5ae760`. Codes
+  submitted by a client are still validated and still rejected if unknown —
+  the gate controls persistence, not the privacy boundary.
+- **On:** binding is **mandatory for every order, including organic**. If the
+  insert or the readback fails for any reason — table missing, constraint
+  violation, readback returning anything other than exactly one row — the route
+  returns `503 ATTRIBUTION_BINDING_UNAVAILABLE` and **no Stripe Checkout Session
+  is created**. The failure happens before the `CHECKOUT_CREATING` claim, so no
+  order is left in a claiming state by it.
+
+Turning the gate on without applying the migration therefore takes checkout
+down rather than silently losing attribution. That is the intended fail-closed
+ordering, and it is why the gate exists and defaults to off.
+
+## Reused open Stripe sessions
+
+Attribution is bound before the branch that reuses an already-open Stripe
+session, and Stripe metadata is only ever written at session-create time from
+the readback row. A retry that arrives carrying different tags therefore
+receives the original session URL with the original metadata: the `ON CONFLICT
+DO NOTHING` insert is a no-op, the readback returns the first-touch row, and no
+metadata write of any kind is issued against the existing session. A reused open
+session cannot receive a contradictory new attribution.
+
+## Explicitly out of scope
+
+- **No migration is executed.** The SQL file is added; nothing runs it. No
+  database connection is opened by this work.
+- **No Prisma schema change.** `prisma/schema.prisma` is owned elsewhere and is
+  not edited. No Prisma model exists for `ot_order_attribution`; access is
+  parameterized raw SQL only.
+- **No `eligibilitySnapshot` reuse.** That JSON column is not read into, written
+  from, or repurposed for attribution.
+- **No change to eligibility, acknowledgment, held-product, window, or price
+  gates**, and no change to the sanitized GA identifiers
+  (`sanitizeAnonymousGaIdentifiers`) already stamped into Stripe metadata.
+- **No reporting, dashboard, aggregation, backfill, or webhook consumer.** The
+  row is written and read back for metadata; nothing else consumes it yet.
+- **No attribution on the Stripe webhook / settlement path.** Only the checkout
+  session creation path binds.
+- **No network, provider, customer, Stripe, or deployment calls.** Tests are
+  fully mocked.
+- **No multi-touch, last-touch, decay, or channel modelling.** First touch only.
+
+## Honest statement of what this does and does not prove
+
+With the shipped empty registry and the gate off, this branch tracks **nothing**.
+It ships the mechanism and the refusal behaviour, not live attribution. No
+campaign is live, no tagged traffic is accepted, and no row will be written in
+production until (a) codes are added to the registry by a server change and
+(b) the migration is applied and the gate is turned on deliberately.
+
+Tests inject a synthetic registry to exercise the accept path. That injection is
+test-local and does not change the shipped registry.
