@@ -1,7 +1,7 @@
 import { ASSESSOR_CONTEXT } from "@/lib/deadlines/assessor-calendar-context"
 import { TOWNSHIPS } from "@/lib/townships"
 import { produceNeutralReport } from "@/lib/fulfillment-runtime/neutral-report-producer"
-import { installNeutralTestRuntime, TestNeutralRepository } from "@/__tests__/helpers/neutral-report-runtime"
+import { installNeutralTestRuntime, TestNeutralRepository } from "@/test-support/neutral-report-runtime"
 
 const pin = "14000000000000", other = "14000000000001"
 const field = (label: string, key: string) => `<div><span class="label-a">${label}</span><div class="field--name-field-${key}"><time datetime="2026-09-${key === "last-file-date" ? "24" : "01"}T12:00:00Z">9/${key === "last-file-date" ? "24" : "01"}/2026</time></div></div>`
