@@ -648,3 +648,287 @@ describe("improvement characteristics", () => {
     }
   })
 
+  it("refuses a year built after the tax year being assessed", async () => {
+    const county = makeCounty(4)
+    findRow(county, COUNTY_DATASETS.characteristics.id, pinAt(1)).char_yrblt = String(
+      OFFICIAL_TAX_YEAR + 1,
+    )
+    await expectBlocker(county, "CANDIDATE_CHARACTERISTICS_INCOMPLETE")
+  })
+})
+
+/* --------------------------------------------------------- values, addresses */
+
+describe("assessed values", () => {
+  it("refuses a parcel with no mailed value rather than dropping it from the pool", async () => {
+    const county = makeCounty(5)
+    dropRow(county, COUNTY_DATASETS.assessedValues.id, pinAt(2))
+    await expectBlocker(county, "CANDIDATE_ASSESSED_VALUE_INCOMPLETE")
+  })
+
+  it("refuses an empty or non-positive mailed total", async () => {
+    for (const value of ["", "0", "-5", "n/a"]) {
+      const county = makeCounty(4)
+      findRow(county, COUNTY_DATASETS.assessedValues.id, pinAt(1)).mailed_tot = value
+      await expectBlocker(county, "CANDIDATE_ASSESSED_VALUE_INCOMPLETE")
+    }
+  })
+
+  it("refuses duplicate assessed-value rows for one parcel", async () => {
+    const county = makeCounty(4)
+    rowsFor(county, COUNTY_DATASETS.assessedValues.id).push({
+      ...findRow(county, COUNTY_DATASETS.assessedValues.id, pinAt(1)),
+    })
+    await expectBlocker(county, "CANDIDATE_ASSESSED_VALUE_AMBIGUOUS")
+  })
+})
+
+describe("published addresses", () => {
+  it("refuses a parcel with no address row", async () => {
+    const county = makeCounty(5)
+    dropRow(county, COUNTY_DATASETS.addresses.id, pinAt(4))
+    await expectBlocker(county, "CANDIDATE_ADDRESS_INCOMPLETE")
+  })
+
+  it("refuses an empty address, an empty city, or a state outside Illinois", async () => {
+    const cases: Array<[string, unknown]> = [
+      ["prop_address_full", ""],
+      ["prop_address_city_name", ""],
+      ["prop_address_state", "IN"],
+      ["prop_address_state", ""],
+    ]
+    for (const [field, value] of cases) {
+      const county = makeCounty(4)
+      findRow(county, COUNTY_DATASETS.addresses.id, pinAt(1))[field] = value
+      await expectBlocker(county, "CANDIDATE_ADDRESS_INCOMPLETE")
+    }
+  })
+
+  it("refuses duplicate address rows for one parcel", async () => {
+    const county = makeCounty(4)
+    rowsFor(county, COUNTY_DATASETS.addresses.id).push({
+      ...findRow(county, COUNTY_DATASETS.addresses.id, pinAt(2)),
+    })
+    await expectBlocker(county, "CANDIDATE_ADDRESS_AMBIGUOUS")
+  })
+})
+
+/* --------------------------------------------------------------- pagination */
+
+describe("pagination and pool stability", () => {
+  it("walks a single short page", async () => {
+    const { result, sim } = await run(makeCounty(6))
+    expect(result.ok).toBe(true)
+    const pages = sim.calls.filter(({ url }) => url.includes("%24offset"))
+    expect(pages).toHaveLength(1)
+  })
+
+  it("continues past a full page and stops on the short one", async () => {
+    const { result, sim } = await run(makeCounty(POOL_PAGE_SIZE + 7))
+    if (!result.ok) throw new Error(`expected success, got ${result.blocker}`)
+    expect(result.evidence.comparableCandidates).toHaveLength(POOL_PAGE_SIZE + 7)
+
+    const offsets = sim.calls
+      .filter(({ url }) => url.includes("%24offset"))
+      .map(({ url }) => Number(new URL(url).searchParams.get("$offset")))
+    expect(offsets).toEqual([0, POOL_PAGE_SIZE])
+  })
+
+  it("issues one further page when the result set ends exactly on a page boundary", async () => {
+    const { result, sim } = await run(makeCounty(POOL_PAGE_SIZE))
+    if (!result.ok) throw new Error(`expected success, got ${result.blocker}`)
+    expect(result.evidence.comparableCandidates).toHaveLength(POOL_PAGE_SIZE)
+
+    const offsets = sim.calls
+      .filter(({ url }) => url.includes("%24offset"))
+      .map(({ url }) => Number(new URL(url).searchParams.get("$offset")))
+    expect(offsets).toEqual([0, POOL_PAGE_SIZE])
+  })
+
+  it("rejects a pool larger than the bound instead of truncating it", async () => {
+    const county = makeCounty(8)
+    await expectBlocker(county, "CANDIDATE_POOL_TOO_LARGE", {
+      countOverride: (_datasetId, trueCount) => Math.max(trueCount, POOL_MAX_ROWS + 1),
+    })
+  })
+
+  it("rejects a walk that outruns a count which under-reported the pool", async () => {
+    const county = makeCounty(POOL_PAGE_SIZE + 7)
+    await expectBlocker(county, "CANDIDATE_POOL_UNSTABLE", {
+      countOverride: (datasetId, trueCount) =>
+        datasetId === COUNTY_DATASETS.parcelUniverse.id ? 12 : trueCount,
+    })
+  })
+
+  it("rejects a pool whose count drifts across the walk", async () => {
+    const county = makeCounty(6)
+    let counts = 0
+    await expectBlocker(county, "CANDIDATE_POOL_UNSTABLE", {
+      countOverride: (_datasetId, trueCount) => {
+        counts += 1
+        return counts === 1 ? trueCount : trueCount + 1
+      },
+    })
+  })
+
+  it("rejects duplicated parcels inside the pool", async () => {
+    const county = makeCounty(6)
+    rowsFor(county, COUNTY_DATASETS.parcelUniverse.id).push({
+      ...findRow(county, COUNTY_DATASETS.parcelUniverse.id, pinAt(2)),
+    })
+    await expectBlocker(county, "CANDIDATE_POOL_UNSTABLE")
+  })
+
+  it("rejects a pool that is not returned in stable ascending parcel order", async () => {
+    await expectBlocker(makeCounty(6), "CANDIDATE_POOL_UNSTABLE", { sort: false })
+  })
+
+  it("rejects an empty neighbourhood", async () => {
+    const county = makeCounty(1)
+    // The subject alone is a pool; removing it would fail the by-PIN read first,
+    // so drive the empty case through a pool read that returns nothing.
+    await expectBlocker(county, "CANDIDATE_POOL_EMPTY", {
+      transform: (datasetId, rows, callIndex) =>
+        datasetId === COUNTY_DATASETS.parcelUniverse.id && callIndex > 0 ? [] : rows,
+    })
+  })
+
+  it("validates each join chunk against that chunk's own parcels", async () => {
+    const county = makeCounty(JOIN_CHUNK_SIZE + 5)
+    // The source answers a chunk with a parcel from a different chunk.
+    await expectBlocker(county, "CANDIDATE_CHARACTERISTICS_AMBIGUOUS", {
+      transform: (datasetId, rows) => {
+        if (datasetId !== COUNTY_DATASETS.characteristics.id || rows.length === 0) return rows
+        const foreign = rows.some((row) => row.pin === pinAt(0))
+        return foreign ? [...rows, { ...rows[0], pin: pinAt(JOIN_CHUNK_SIZE + 1) }] : rows
+      },
+    })
+  })
+})
+
+/* ---------------------------------------------------------- upstream failure */
+
+describe("upstream failures", () => {
+  const county = () => makeCounty(4)
+
+  it("refuses a non-200 response", async () => {
+    await expectBlocker(county(), "COUNTY_SOURCE_UNAVAILABLE", {
+      respond: () => ({ ok: false, status: 503 }),
+    })
+  })
+
+  it("refuses a response that reports having been redirected", async () => {
+    await expectBlocker(county(), "COUNTY_SOURCE_UNAVAILABLE", {
+      respond: () => ({ redirected: true }),
+    })
+  })
+
+  it("refuses a body that is not JSON, and one that is not an array", async () => {
+    await expectBlocker(county(), "COUNTY_SOURCE_UNAVAILABLE", {
+      respond: () => ({ body: bodyOf("<html>nope</html>"), text: async () => "<html>nope</html>" }),
+    })
+    await expectBlocker(county(), "COUNTY_SOURCE_UNAVAILABLE", {
+      respond: () => ({ body: bodyOf('{"error":true}'), text: async () => '{"error":true}' }),
+    })
+  })
+
+  it("refuses when fetch itself rejects", async () => {
+    const result = await fetchCountyEvidence(ORDER, {
+      fetch: async () => {
+        throw new Error("network down")
+      },
+      now: makeClock().now,
+    })
+    expect(result).toMatchObject({ ok: false, blocker: "COUNTY_SOURCE_UNAVAILABLE" })
+  })
+
+  it("sends GET only, with no credentials, no cache and redirects rejected", async () => {
+    const seen: Array<Record<string, unknown>> = []
+    await fetchCountyEvidence(ORDER, {
+      fetch: async (_url, init) => {
+        seen.push(init as unknown as Record<string, unknown>)
+        throw new Error("stop after recording")
+      },
+      now: makeClock().now,
+    })
+    expect(seen[0]).toMatchObject({
+      method: "GET",
+      cache: "no-store",
+      redirect: "error",
+      credentials: "omit",
+    })
+  })
+
+  it("cancels and refuses a streamed body that exceeds the bound", async () => {
+    const oversized = "x".repeat(MAX_RESPONSE_BYTES + 1024)
+    let cancelled = false
+    const streaming: CountyBody = {
+      getReader: () => ({
+        async read() {
+          return { done: false, value: new Uint8Array(Buffer.from(oversized, "utf8")) }
+        },
+        async cancel() {
+          cancelled = true
+        },
+      }),
+    }
+    await expectBlocker(county(), "COUNTY_SOURCE_UNAVAILABLE", {
+      respond: () => ({ body: streaming }),
+    })
+    expect(cancelled).toBe(true)
+  })
+
+  it("refuses an oversized body on a response modelled without a stream", async () => {
+    const oversized = "x".repeat(MAX_RESPONSE_BYTES + 1)
+    await expectBlocker(county(), "COUNTY_SOURCE_UNAVAILABLE", {
+      respond: () => ({ body: null, text: async () => oversized }),
+    })
+  })
+
+  it("refuses a page carrying more rows than were requested", async () => {
+    // The subject read is bounded at two rows; answer it with three.
+    const oversized = JSON.stringify([{ pin: pinAt(0) }, { pin: pinAt(1) }, { pin: pinAt(2) }])
+    await expectBlocker(makeCounty(4), "CANDIDATE_POOL_UNSTABLE", {
+      respond: (_url, _body, callIndex) =>
+        callIndex === 0 ? { body: bodyOf(oversized), text: async () => oversized } : null,
+    })
+  })
+})
+
+/* ------------------------------------------------------- freshness and clock */
+
+describe("retrieval freshness", () => {
+  it("refuses when the retrieval outruns its window", async () => {
+    const county = makeCounty(4)
+    await expectBlocker(
+      county,
+      "COUNTY_RETRIEVAL_WINDOW_EXCEEDED",
+      {},
+      makeClock("2026-09-12T15:00:00Z", MAX_RETRIEVAL_WINDOW_MS).now,
+    )
+  })
+
+  it("refuses a clock that steps backwards mid-retrieval", async () => {
+    const clock = makeClock("2026-09-12T15:00:00Z")
+    let readings = 0
+    const now = () => {
+      readings += 1
+      if (readings > 4) clock.set("2026-09-12T14:00:00Z")
+      return clock.now()
+    }
+    await expectBlocker(makeCounty(4), "COUNTY_CLOCK_UNRELIABLE", {}, now)
+  })
+
+  it("refuses an unreadable clock", async () => {
+    const result = await fetchCountyEvidence(ORDER, {
+      fetch: makeSim(makeCounty(4)).fetch,
+      now: () => new Date(Number.NaN),
+    })
+    expect(result).toMatchObject({ ok: false, blocker: "COUNTY_CLOCK_UNRELIABLE" })
+  })
+
+  it("completes inside the window for an ordinary neighbourhood", async () => {
+    const { result } = await run(makeCounty(20), {}, makeClock("2026-09-12T15:00:00Z", 50).now)
+    expect(result.ok).toBe(true)
+  })
+})
