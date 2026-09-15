@@ -1,0 +1,600 @@
++  })
++
++  it("records the refusal rather than dropping the evidence", async () => {
++    const state = world()
++    state.attempts = [
++      ...state.attempts,
++      { ...state.attempts[0], fulfillmentId: "ful_other", attemptNumber: 1 },
++    ]
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await store.ingest(event())
++    expect(state.callbacks[0]).toMatchObject({
++      disposition: "REFUSED",
++      dispositionCode: "AMBIGUOUS_MESSAGE_BINDING",
++      // Deliberately unbound: naming one of the two would be the same guess.
++      fulfillmentId: null,
++      attemptNumber: null,
++    })
++  })
+ })
+ 
+ describe("nothing free-form is ever persisted", () => {
+diff --git a/__tests__/fulfillment/retry.test.ts b/__tests__/fulfillment/retry.test.ts
+index 710e896..4768497 100644
+--- a/__tests__/fulfillment/retry.test.ts
++++ b/__tests__/fulfillment/retry.test.ts
+@@ -20,13 +20,27 @@ describe("decideDeliverySend — a retry never regenerates (row 7)", () => {
+     expect(d).toEqual({ send: true, attemptNumber: 1, regenerate: false });
+   });
+ 
+-  it("permits a retry after a transient DELAYED, reusing the artifact (regenerate:false)", () => {
++  /**
++   * DELAYED used to be a retry state. It is not one, and treating it as one is a
++   * duplicate-delivery defect: `email.delivery_delayed` says the provider still
++   * HOLDS the message and is retrying it to the recipient's mail server, so a
++   * second attempt mails a second, differently-keyed code for one order.
++   */
++  it("refuses to resend from DELAYED: the provider is still trying", () => {
+     const d = decideDeliverySend({
+       status: "DELAYED",
+       attemptCount: 1,
+       maxAttempts: 3,
+     });
+-    expect(d).toEqual({ send: true, attemptNumber: 2, regenerate: false });
++    expect(d).toEqual({ send: false, reason: "PROVIDER_DELAY_IN_FLIGHT" });
++  });
++
++  it("refuses from DELAYED no matter how few attempts have been made", () => {
++    for (const attemptCount of [0, 1, 2]) {
++      expect(
++        decideDeliverySend({ status: "DELAYED", attemptCount, maxAttempts: 3 }),
++      ).toEqual({ send: false, reason: "PROVIDER_DELAY_IN_FLIGHT" });
++    }
+   });
+ 
+   it("fails closed on an unresolved in-flight send (duplicate-send caution)", () => {
+@@ -81,7 +95,7 @@ describe("decideDeliverySend — a retry never regenerates (row 7)", () => {
+   it("stops at the attempt ceiling", () => {
+     expect(
+       decideDeliverySend({
+-        status: "DELAYED",
++        status: "ARTIFACT_READY",
+         attemptCount: 3,
+         maxAttempts: 3,
+       }),
+@@ -94,7 +108,7 @@ describe("decideDeliverySend — a retry never regenerates (row 7)", () => {
+   it("stops at the attempt ceiling", () => {
+     expect(
+       decideDeliverySend({
+-        status: "DELAYED",
++        status: "ARTIFACT_READY",
+         attemptCount: 3,
+         maxAttempts: 3,
+       }),
+diff --git a/__tests__/fulfillment/t2-delivery-acceptance.test.ts b/__tests__/fulfillment/t2-delivery-acceptance.test.ts
+index a837e03..b0f3f1d 100644
+--- a/__tests__/fulfillment/t2-delivery-acceptance.test.ts
++++ b/__tests__/fulfillment/t2-delivery-acceptance.test.ts
+@@ -199,6 +199,9 @@ function currentArtifact(): Row | undefined {
+ 
+ function query(sql: string, values: readonly unknown[]): unknown {
+   if (sql.includes("clock_timestamp()")) return [{ now: db.now }]
++  // The unmatched-spool cap serializes on a transaction advisory lock. Nothing
++  // in this single-threaded fake contends for it; it only has to answer.
++  if (sql.includes("pg_advisory_xact_lock")) return [{ locked: true }]
+ 
+   // The callback store's message-id lookup.
+   if (sql.includes('JOIN "ot_fulfillment" f ON f."id" = t."fulfillment_id"')) {
+@@ -243,13 +246,16 @@ function query(sql: string, values: readonly unknown[]): unknown {
+     }]
+   }
+   if (sql.includes('FROM "ot_delivery_provider_callback"')) {
+-    const [provider, messageId, horizon] = values as [string, string, Date]
++    // … AND "received_at" >= $3 AND "replay_count" < $4
++    const [provider, messageId, horizon, ceiling] = values as [string, string, Date, number]
+     return db.callbacks
+       .filter((c) =>
+         c.provider === provider && c.providerMessageId === messageId &&
+         c.disposition === "UNMATCHED" && c.resolvedAt === null &&
+-        (c.receivedAt as Date) >= horizon)
++        (c.receivedAt as Date) >= horizon && Number(c.replayCount) < ceiling)
+       .sort((a, b) => (a.occurredAt as Date).getTime() - (b.occurredAt as Date).getTime())
++      // Copies, as a real query returns — never live references.
++      .map((row) => ({ ...row }))
+   }
+ 
+   if (sql.includes('FROM "ot_packet_download_capability"')) {
+@@ -315,10 +321,12 @@ function execute(sql: string, values: readonly unknown[]): number {
+   }
+ 
+   if (sql.includes('UPDATE "ot_delivery_provider_callback"')) {
+-    if (sql.includes('"replay_count" = LEAST')) {
+-      const [id, expected] = values
++    if (sql.includes('SET "replay_count" = "replay_count" + 1')) {
++      // … AND "replay_count" = $2 AND "replay_count" < $3
++      const [id, expected, ceiling] = values as [string, number, number]
+       const row = db.callbacks.find(
+-        (c) => c.id === id && c.disposition === "UNMATCHED" && c.resolvedAt === null && c.replayCount === expected,
++        (c) => c.id === id && c.disposition === "UNMATCHED" && c.resolvedAt === null &&
++          c.replayCount === expected && Number(c.replayCount) < ceiling,
+       )
+       if (!row) return 0
+       row.replayCount = Number(row.replayCount) + 1
+diff --git a/__tests__/fulfillment/t2-delivery-recovery.test.ts b/__tests__/fulfillment/t2-delivery-recovery.test.ts
+index 9a840f4..f437c42 100644
+--- a/__tests__/fulfillment/t2-delivery-recovery.test.ts
++++ b/__tests__/fulfillment/t2-delivery-recovery.test.ts
+@@ -13,6 +13,7 @@ import { join } from "node:path"
+ import type { Prisma } from "@prisma/client"
+ import {
+   NO_IN_FLIGHT_EVIDENCE,
++  RECONCILABLE_STATUSES,
+   RESOLVE_REASON_CODES,
+   runT2DeliveryRecovery,
+   type DeliveryRecoveryInput,
+@@ -325,7 +326,7 @@ describe("reconciling stored provider evidence", () => {
+         client: fakeClient(state),
+         reconcile: (async (input: unknown) => {
+           calls.push(input)
+-          return { examined: 2, applied: 1, stillUnmatched: 1 }
++          return { examined: 2, applied: 1, stillUnmatched: 1, skipped: 0 }
+         }) as never,
+       }),
+     ).resolves.toEqual({
+@@ -334,6 +335,7 @@ describe("reconciling stored provider evidence", () => {
+       examined: 2,
+       applied: 1,
+       stillUnmatched: 1,
++      skipped: 0,
+     })
+     expect(calls).toEqual([{ providerMessageId: MESSAGE_ID }])
+     // Reconciliation writes no local evidence of its own.
+@@ -421,3 +423,117 @@ describe("recovery cannot reach a sender, a generator, or an issuer", () => {
+     expect(source).not.toMatch(/INSERT INTO "ot_packet_download_capability"/)
+   })
+ })
++
++/**
++ * Reconciliation re-offers evidence we already hold to a binding that now
++ * exists. That can only change something while the send is still UNRESOLVED.
++ *
++ * From DELIVERED or a terminal-lock status the fold refuses every edge, so a
++ * pass could do nothing but spend replay budget and write REFUSED rows — while
++ * returning `ok: true` and looking to an operator like it had worked. The
++ * refusal is at the ROW, under the lock, not at what the operator typed.
++ */
++describe("reconciliation is bounded to a send that is still unresolved", () => {
++  const reconcileFrom = (status: string) => ({
++    orderId: ORDER_ID,
++    actorUserId: ACTOR,
++    action: "RECONCILE_PROVIDER_CALLBACKS" as const,
++    expectedStatus: status as never,
++    expectedStatusRevision: 4,
++  })
++
++  it.each(["DELIVERY_PENDING", "PROVIDER_ACCEPTED", "DELAYED"])(
++    "runs from %s, where nothing durable yet says what happened",
++    async (status) => {
++      const state = world({ summary: { ...world().summary!, status } })
++      const reconcile = jest.fn(async () => ({
++        examined: 0, applied: 0, stillUnmatched: 0, skipped: 0,
++      }))
++      await expect(
++        runT2DeliveryRecovery(reconcileFrom(status), {
++          env: on, client: fakeClient(state), reconcile: reconcile as never,
++        }),
++      ).resolves.toMatchObject({ ok: true })
++      expect(reconcile).toHaveBeenCalledTimes(1)
++    },
++  )
++
++  it.each(["DELIVERED", "BOUNCED", "COMPLAINED", "FAILED", "CANCELLED", "ARTIFACT_READY"])(
++    "refuses from %s without calling the reconciler at all",
++    async (status) => {
++      const state = world({ summary: { ...world().summary!, status } })
++      const reconcile = jest.fn()
++      await expect(
++        runT2DeliveryRecovery(reconcileFrom(status), {
++          env: on, client: fakeClient(state), reconcile: reconcile as never,
++        }),
++      ).resolves.toEqual({ ok: false, code: "NOT_RECONCILABLE" })
++      expect(reconcile).not.toHaveBeenCalled()
++      expect(state.events).toEqual([])
++      expect(state.adminEvents).toEqual([])
++    },
++  )
++
++  it("still refuses a stale revision before it looks at the status at all", async () => {
++    const state = world()
++    const reconcile = jest.fn()
++    await expect(
++      runT2DeliveryRecovery(
++        { ...reconcileFrom("DELIVERY_PENDING"), expectedStatusRevision: 3 },
++        { env: on, client: fakeClient(state), reconcile: reconcile as never },
++      ),
++    ).resolves.toEqual({ ok: false, code: "STALE_STATE" })
++    expect(reconcile).not.toHaveBeenCalled()
++  })
++
++  it("reports the reconciler's full accounting, skipped rows included", async () => {
++    const state = world()
++    await expect(
++      runT2DeliveryRecovery(reconcileFrom("DELIVERY_PENDING"), {
++        env: on,
++        client: fakeClient(state),
++        reconcile: (async () => ({
++          examined: 3, applied: 1, stillUnmatched: 1, skipped: 1,
++        })) as never,
++      }),
++    ).resolves.toEqual({
++      ok: true,
++      action: "RECONCILE_PROVIDER_CALLBACKS",
++      examined: 3,
++      applied: 1,
++      stillUnmatched: 1,
++      skipped: 1,
++    })
++  })
++})
++
++/**
++ * The HTTP boundary states the same bound as the store. Two places, one rule:
++ * if they drift, a request the route accepts is refused under the lock, which
++ * an operator reads as a flaky control rather than as a deliberate refusal.
++ */
++describe("the route's accepted statuses match the store's authority", () => {
++  const ROUTE = readFileSync(
++    join(
++      process.cwd(),
++      "app/api/admin/evidence/[orderId]/delivery-recovery/route.ts",
++    ),
++    "utf8",
++  )
++
++  it("offers exactly the reconcilable statuses and no others", () => {
++    const enumerated = ROUTE.match(/expectedStatus: z\.enum\(\[([^\]]*)\]\)/)
++    expect(enumerated).not.toBeNull()
++    const listed = [...enumerated![1].matchAll(/"([A-Z_]+)"/g)].map((m) => m[1])
++    expect(listed.sort()).toEqual([...RECONCILABLE_STATUSES].sort())
++  })
++
++  it("no longer accepts DELIVERED, which it used to", () => {
++    expect(RECONCILABLE_STATUSES.has("DELIVERED")).toBe(false)
++    const reconcileBranch = ROUTE.slice(
++      ROUTE.indexOf('z.literal("RECONCILE_PROVIDER_CALLBACKS")'),
++      ROUTE.indexOf('z.literal("RESOLVE_UNRESOLVED_SEND")'),
++    )
++    expect(reconcileBranch).not.toContain('"DELIVERED"')
++  })
++})
+diff --git a/__tests__/fulfillment/t2-delivery.test.ts b/__tests__/fulfillment/t2-delivery.test.ts
+index 1705f94..7682218 100644
+--- a/__tests__/fulfillment/t2-delivery.test.ts
++++ b/__tests__/fulfillment/t2-delivery.test.ts
+@@ -89,16 +89,17 @@ describe("dispatch decisions reuse the existing send authority", () => {
+     expect(decision.plan.idempotencyKey).toContain(`sha=${sha}`)
+   })
+ 
+-  it("treats a retry from DELAYED as a send of the SAME artifact version", () => {
+-    const decision = decideDeliveryDispatch({
+-      ...dispatch,
+-      status: "DELAYED",
+-      attemptCount: 1,
+-    })
+-    expect(decision).toMatchObject({
+-      ok: true,
+-      plan: { attemptNumber: 2, artifactVersion: 1 },
+-    })
++  /**
++   * `email.delivery_delayed` means the provider ACCEPTED the message and is
++   * still retrying it downstream. Dispatching again from DELAYED creates a
++   * second attempt under a second idempotency key, which mints and mails a
++   * second code the provider's own deduplication cannot suppress — two
++   * different codes for one order, the first of them superseded and dead.
++   */
++  it("refuses a second send from DELAYED: a delay is not a failure", () => {
++    expect(
++      decideDeliveryDispatch({ ...dispatch, status: "DELAYED", attemptCount: 1 }),
++    ).toEqual({ ok: false, blocker: "PROVIDER_DELAY_IN_FLIGHT" })
+   })
+ 
+   it("refuses an unresolved in-flight send rather than risking a duplicate", () => {
+@@ -128,7 +129,7 @@ describe("dispatch decisions reuse the existing send authority", () => {
+     expect(
+       decideDeliveryDispatch({
+         ...dispatch,
+-        status: "DELAYED",
++        status: "ARTIFACT_READY",
+         attemptCount: T2_MAX_DELIVERY_ATTEMPTS,
+       }),
+     ).toEqual({ ok: false, blocker: "MAX_ATTEMPTS" })
+@@ -144,14 +145,10 @@ describe("dispatch decisions reuse the existing send authority", () => {
+     expect(decideDeliveryDispatch({ ...dispatch, ...patch })).toEqual({ ok: false, blocker })
+   })
+ 
+-  it("never plans a send from a pre-artifact status", () => {
++  it("plans a send from ARTIFACT_READY and from no other status at all", () => {
+     for (const status of FULFILLMENT_STATUSES) {
+       const decision = decideDeliveryDispatch({ ...dispatch, status })
+-      if (status === "ARTIFACT_READY" || status === "DELAYED") {
+-        expect(decision.ok).toBe(true)
+-      } else {
+-        expect(decision.ok).toBe(false)
+-      }
++      expect([status, decision.ok]).toEqual([status, status === "ARTIFACT_READY"])
+     }
+   })
+ })
+@@ -820,6 +817,40 @@ describe("a lease is proved against the database, never against a caller", () =>
+     expect(state.summary?.leaseOwner).toBe("ot-t2-delivery:other")
+   })
+ 
++  /**
++   * The claim is the outermost gate on a send, so it must agree with
++   * [[decideDeliverySend]] about which statuses have nothing in flight. DELAYED
++   * has a message in flight by definition — the provider said so — and a lease
++   * taken from it is a lease taken to mail a duplicate.
++   */
++  it.each([
++    "DELAYED",
++    "DELIVERY_PENDING",
++    "PROVIDER_ACCEPTED",
++    "DELIVERED",
++    "BOUNCED",
++    "ARTIFACT_PENDING",
++  ])("refuses to lease a %s fulfillment for a send", async (status) => {
++    const state = world()
++    if (state.summary) state.summary.status = status
++    await expect(claim(state)).resolves.toBe(false)
++    expect(state.summary?.leaseOwner).toBeNull()
++  })
++
++  it("leases ARTIFACT_READY, the one status that has sent nothing", async () => {
++    const state = world()
++    await expect(claim(state)).resolves.toBe(true)
++    expect(state.summary?.leaseOwner).toBe(OWNER)
++  })
++
++  it("keeps the status predicate in the write, not only in the read", async () => {
++    const state = world()
++    await claim(state)
++    const write = state.sql.find((sql) => sql.includes('SET "lease_owner" ='))
++    expect(write).toContain(`"status"::text = 'ARTIFACT_READY'`)
++    expect(write).not.toContain("DELAYED")
++  })
++
+   it("refuses to persist an attempt with no lease at all", async () => {
+     const state = world()
+     const store = createPrismaT2DeliveryStore(fakeClient(state))
+diff --git a/__tests__/fulfillment/t2-resend-adapter.test.ts b/__tests__/fulfillment/t2-resend-adapter.test.ts
+index ad439a9..6dbc601 100644
+--- a/__tests__/fulfillment/t2-resend-adapter.test.ts
++++ b/__tests__/fulfillment/t2-resend-adapter.test.ts
+@@ -37,6 +37,14 @@ const ENV = {
+   NEXT_PUBLIC_APP_URL: "https://www.overtaxed-il.com",
+ }
+ 
++/**
++ * The orchestrator's pre-send gate, as the adapter receives it.
++ *
++ * Defaulting to "still authorized" keeps every pre-existing assertion about
++ * ordinary sends unchanged; the tests that care supply a refusing gate instead.
++ */
++const ALLOW = async () => ({ ok: true }) as const
++
+ const SEND = {
+   orderId: ORDER_ID,
+   fulfillmentId: FULFILLMENT_ID,
+@@ -44,6 +52,7 @@ const SEND = {
+   artifactVersion: 1,
+   artifactSha256: SHA,
+   idempotencyKey: KEY,
++  assertSendable: ALLOW,
+ }
+ 
+ function context(patch: Partial<T2SendContext> = {}): T2SendContext {
+@@ -68,7 +77,14 @@ type Harness = {
+   sent: Array<{ message: Record<string, string>; idempotencyKey: string }>
+   issued: unknown[]
+   revoked: unknown[]
+-  send(patch?: Partial<T2SendContext>): Promise<DeliverySendOutcome>
++  /**
++   * `assertSendable` is the orchestrator's pre-send gate. It defaults to one
++   * that still authorizes, so only the tests that care about it mention it.
++   */
++  send(
++    patch?: Partial<T2SendContext>,
++    assertSendable?: () => Promise<{ ok: true } | { ok: false; blocker: string }>,
++  ): Promise<DeliverySendOutcome>
+ }
+ 
+ function harness(
+@@ -126,9 +142,9 @@ function harness(
+     sent,
+     issued,
+     revoked,
+-    async send(patch = {}) {
++    async send(patch = {}, assertSendable = ALLOW) {
+       current = context(patch)
+-      return adapter.send(SEND)
++      return adapter.send({ ...SEND, assertSendable })
+     },
+   }
+ }
+@@ -383,3 +399,64 @@ describe("an ambiguous send is never re-minted under the same key", () => {
+     ])
+   })
+ })
++
++/**
++ * The window this closes: the orchestrator proves the send is authorized, then
++ * the adapter does real asynchronous work — a context read, an address check,
++ * and a capability-minting transaction — before any provider call. A refund, a
++ * withdrawn flag, property drift or a lost lease landing inside THAT window was
++ * previously invisible, and a live code would have been mailed anyway.
++ */
++describe("authority is re-asserted after issuance and before the provider call", () => {
++  const deny = async () => ({ ok: false, blocker: "INELIGIBLE_SETTLEMENT" }) as const
++
++  it("mints, then refuses to send when authority is gone", async () => {
++    const h = harness()
++    await expect(h.send({}, deny)).resolves.toEqual({
++      kind: "REJECTED",
++      provider: "resend",
++      reasonCode: "MANUAL_REVIEW",
++    })
++    // The credential was minted — that is what makes the gate necessary here
++    // rather than only in the orchestrator — and nothing reached the provider.
++    expect(h.issued).toHaveLength(1)
++    expect(h.sent).toEqual([])
++  })
++
++  it("revokes the code it just minted, because it reached no mailbox", async () => {
++    const h = harness()
++    await h.send({}, deny)
++    expect(h.revoked).toEqual([
++      { fulfillmentId: FULFILLMENT_ID, reasonCode: "SEND_REJECTED" },
++    ])
++  })
++
++  it("refuses on an unprovable gate exactly as on a denied one", async () => {
++    const h = harness()
++    const unprovable = async () =>
++      ({ ok: false, blocker: "PRE_SEND_CHECK_UNKNOWN" }) as const
++    await expect(h.send({}, unprovable)).resolves.toMatchObject({ kind: "REJECTED" })
++    expect(h.sent).toEqual([])
++  })
++
++  it("runs the gate AFTER issuance, not before it", async () => {
++    const order: string[] = []
++    const h = harness()
++    const gate = async () => {
++      order.push("gate")
++      return { ok: true } as const
++    }
++    await h.send({}, gate)
++    // Issuance is observable through the minted record; the gate records itself.
++    expect(h.issued).toHaveLength(1)
++    expect(order).toEqual(["gate"])
++    expect(h.sent).toHaveLength(1)
++  })
++
++  it("still sends when the gate holds, revoking nothing", async () => {
++    const h = harness()
++    await expect(h.send()).resolves.toMatchObject({ kind: "ACCEPTED" })
++    expect(h.sent).toHaveLength(1)
++    expect(h.revoked).toEqual([])
++  })
++})
+diff --git a/__tests__/fulfillment/t2-resend-callback-signature.test.ts b/__tests__/fulfillment/t2-resend-callback-signature.test.ts
+index 42f5471..abe4056 100644
+--- a/__tests__/fulfillment/t2-resend-callback-signature.test.ts
++++ b/__tests__/fulfillment/t2-resend-callback-signature.test.ts
+@@ -69,7 +69,7 @@ function store(): ProviderCallbackStore & {
+     },
+     async reconcile(input) {
+       reconciled.push(input)
+-      return { examined: 0, applied: 0, stillUnmatched: 0 }
++      return { examined: 0, applied: 0, stillUnmatched: 0, skipped: 0 }
+     },
+   }
+ }
+diff --git a/app/api/admin/evidence/[orderId]/delivery-recovery/route.ts b/app/api/admin/evidence/[orderId]/delivery-recovery/route.ts
+index 52ffd1e..9c34d03 100644
+--- a/app/api/admin/evidence/[orderId]/delivery-recovery/route.ts
++++ b/app/api/admin/evidence/[orderId]/delivery-recovery/route.ts
+@@ -41,12 +41,15 @@ const Body = z.discriminatedUnion("action", [
+   z
+     .object({
+       action: z.literal("RECONCILE_PROVIDER_CALLBACKS"),
+-      expectedStatus: z.enum([
+-        "DELIVERY_PENDING",
+-        "PROVIDER_ACCEPTED",
+-        "DELAYED",
+-        "DELIVERED",
+-      ]),
++      // Only from a state whose send is still unresolved. DELIVERED was here
++      // and is deliberately gone: it already holds the evidence a replay looks
++      // for, so a pass from it could only spend replay budget and write REFUSED
++      // rows while appearing to succeed.
++      //
++      // Written as literals so the parsed value keeps its narrow type. The
++      // authority is RECONCILABLE_STATUSES in the store, and a test asserts
++      // this list equals it, so the two cannot drift apart unobserved.
++      expectedStatus: z.enum(["DELIVERY_PENDING", "PROVIDER_ACCEPTED", "DELAYED"]),
+       expectedStatusRevision: z.number().int().min(0).max(2_147_483_646),
+     })
+     .strict(),
+diff --git a/lib/fulfillment-runtime/delivery-store.ts b/lib/fulfillment-runtime/delivery-store.ts
+index 4b0ed40..71547e7 100644
+--- a/lib/fulfillment-runtime/delivery-store.ts
++++ b/lib/fulfillment-runtime/delivery-store.ts
+@@ -3,8 +3,8 @@
+  *
+  * The ordering invariant this store exists to enforce: **the attempt is durable
+  * before the send happens.** `persistAttempt` inserts the attempt row, its
+- * REQUESTED event, and the ARTIFACT_READY/DELAYED → DELIVERY_PENDING transition
+- * in one transaction, and only then may a caller hand anything to a provider. A
++ * REQUESTED event, and the ARTIFACT_READY → DELIVERY_PENDING transition in one
++ * transaction, and only then may a caller hand anything to a provider. A
+  * process that dies between the two leaves a DELIVERY_PENDING summary — which
+  * [[decideDeliverySend]] refuses as UNRESOLVED_SEND — rather than a silent
+  * possible duplicate.
+@@ -382,10 +382,10 @@ export function createPrismaT2DeliveryStore(
+         ) {
+           return false;
+         }
+-        // Only a state a send could legally begin from may be leased. A
+-        // DELIVERY_PENDING row is unresolved, not claimable.
+-        if (summary.status !== "ARTIFACT_READY" && summary.status !== "DELAYED")
+-          return false;
++        // Only a state a send could legally begin from may be leased.
++        // DELIVERY_PENDING, PROVIDER_ACCEPTED and DELAYED are all unresolved —
++        // a provider still holds a message in each — so none is claimable.
++        if (summary.status !== "ARTIFACT_READY") return false;
+ 
+         // The database's wall clock, read AFTER the locks above, decides both
+         // whether the incumbent lease has expired and when ours will. A
+@@ -415,7 +415,7 @@ export function createPrismaT2DeliveryStore(
+                      SET "lease_owner" = ${input.owner}, "lease_token" = ${input.token},
+                          "lease_expires_at" = ${expiresAt}
+                      WHERE "id" = ${input.fulfillmentId}
+-                       AND "status"::text IN ('ARTIFACT_READY', 'DELAYED')
++                       AND "status"::text = 'ARTIFACT_READY'
+                        AND ("lease_owner" IS NULL
+                             OR "lease_expires_at" IS NULL
+                             OR "lease_expires_at" <= ${new Date(nowMs)}
+diff --git a/lib/fulfillment-runtime/provider-callback-store.ts b/lib/fulfillment-runtime/provider-callback-store.ts
+index 80c2ba5..965f30b 100644
+--- a/lib/fulfillment-runtime/provider-callback-store.ts
++++ b/lib/fulfillment-runtime/provider-callback-store.ts
+@@ -30,6 +30,7 @@ import { Prisma } from "@prisma/client";
+ import { prisma } from "@/lib/db";
+ import {
+   decideCallbackApplication,
++  MAX_CALLBACK_REPLAYS,
+   MAX_RECONCILIATION_BATCH,
+   MAX_UNMATCHED_CALLBACKS,
+   UNMATCHED_RECONCILIATION_WINDOW_MS,
+@@ -48,7 +49,16 @@ export type CallbackIngestResult =
+   /** Recorded, correlation not yet possible. Reconciled once the id is bound. */
+   | { outcome: "UNMATCHED" }
+   /** Recorded, deliberately not applied. */
+-  | { outcome: "REFUSED"; code: CallbackNonApplicationCode };
++  | { outcome: "REFUSED"; code: CallbackNonApplicationCode }
++  /**
++   * Reconciliation only. This pass did not own the replay: a concurrent
++   * reconciler claimed the row, it was resolved between the batch read and the
++   * claim, or it has spent its replay budget. Distinct from DUPLICATE — which
++   * means the signed delivery had already been admitted — because conflating
++   * them made a lost race look like a de-duplicated one, and made `examined`
++   * silently fail to account for its own rows.
++   */
++  | { outcome: "CONFLICTED" };
+ 
+ export interface ProviderCallbackStore {
+   ingest(event: SanitizedProviderCallback): Promise<CallbackIngestResult>;
+@@ -60,9 +70,26 @@ export interface ProviderCallbackStore {
+   reconcile(input: {
+     provider: string;
+     providerMessageId: string;
