@@ -50,12 +50,32 @@ export type IssueCapabilityOutcome =
     }
   | { ok: false; blocker: PacketDownloadBlocker };
 
+/**
+ * Optional association between a freshly minted capability and the delivery
+ * attempt that is about to hand it out.
+ *
+ * When present, three extra things happen inside the SAME transaction as the
+ * insert, so there is no window in which any of them is half-done:
+ *   - the attempt is locked and required to have NO capability yet, which is
+ *     what makes "an ambiguous send is never re-minted under the same key" an
+ *     invariant of the database rather than a habit of the caller;
+ *   - every other live capability for the fulfillment is revoked as SUPERSEDED,
+ *     so a newly issued credential invalidates the ones it replaces;
+ *   - the attempt records the capability id, so a later revocation or operator
+ *     recovery can name the exact credential that attempt issued.
+ */
+export type CapabilityAttemptBinding = {
+  attemptNumber: number;
+  provider: string;
+};
+
 export interface PacketDownloadStore {
   issue(input: {
     capabilityHash: string;
     fulfillmentId: string;
     ttlSeconds: number;
     maxUses: number;
+    attempt?: CapabilityAttemptBinding;
   }): Promise<IssueCapabilityOutcome>;
   authorize(input: { capabilityHash: string }): Promise<AuthorizeDownloadOutcome>;
   reassert(input: {
@@ -115,6 +135,13 @@ export type PacketDownloadTransaction = {
 };
 export type PacketDownloadClient = {
   $transaction<T>(work: (tx: PacketDownloadTransaction) => Promise<T>): Promise<T>;
+};
+
+/** The narrow attempt shape the optional binding needs. */
+type AttemptBindingRow = {
+  attemptNumber: number;
+  provider: string;
+  downloadCapabilityId: string | null;
 };
 
 type ContextRows = {
@@ -225,6 +252,33 @@ export function createPrismaPacketDownloadStore(
         );
         fulfillment = refreshed[0] ?? null;
 
+        // Order → fulfillment → attempt, the same lock ordering the delivery
+        // store and the binder use, so the three can never deadlock.
+        const binding = input.attempt;
+        if (binding) {
+          const attempts = await tx.$queryRaw<AttemptBindingRow[]>(
+            Prisma.sql`SELECT "attempt_number" AS "attemptNumber", "provider",
+                              "download_capability_id" AS "downloadCapabilityId"
+                       FROM "ot_delivery_attempt"
+                       WHERE "fulfillment_id" = ${input.fulfillmentId}
+                         AND "attempt_number" = ${binding.attemptNumber}
+                       FOR UPDATE`,
+          );
+          const attempt = attempts[0] ?? null;
+          // No attempt, a different sender, or an attempt that ALREADY issued a
+          // credential. The last case is the important one: a retry of an
+          // ambiguous send must never mint a second value under the same logical
+          // key, because the first value is deliberately not recoverable and the
+          // two messages could never be identical.
+          if (
+            !attempt ||
+            attempt.provider !== binding.provider ||
+            attempt.downloadCapabilityId !== null
+          ) {
+            return { ok: false, blocker: "CAPABILITY_BINDING_MISMATCH" };
+          }
+        }
+
         // The CURRENT artifact is the highest bound version. Nothing here may
         // mint a capability for a version that has been superseded.
         const artifacts = await tx.$queryRaw<PacketDownloadArtifactRow[]>(
@@ -270,6 +324,32 @@ export function createPrismaPacketDownloadStore(
                        ${capability.maxUses}, 0
                      )`,
         );
+
+        if (binding) {
+          // A newly issued credential supersedes the ones it replaces. Scoped to
+          // live rows other than the one just written, so this is idempotent and
+          // can never revoke the capability it is issuing.
+          await tx.$executeRaw(
+            Prisma.sql`UPDATE "ot_packet_download_capability"
+                       SET "revoked_at" = ${new Date(capability.issuedAt)},
+                           "revoked_reason_code" = ${"SUPERSEDED"}
+                       WHERE "fulfillment_id" = ${input.fulfillmentId}
+                         AND "id" <> ${id}
+                         AND "revoked_at" IS NULL`,
+          );
+          // Conditional on the attempt STILL having no capability, so a
+          // concurrent issuer that won the race invalidates this one rather than
+          // both handing out a live value.
+          const bound = await tx.$executeRaw(
+            Prisma.sql`UPDATE "ot_delivery_attempt"
+                       SET "download_capability_id" = ${id}
+                       WHERE "fulfillment_id" = ${input.fulfillmentId}
+                         AND "attempt_number" = ${binding.attemptNumber}
+                         AND "download_capability_id" IS NULL`,
+          );
+          if (bound !== 1) throw new PacketDownloadRollback();
+        }
+
         return {
           ok: true,
           capabilityId: id,
@@ -278,6 +358,13 @@ export function createPrismaPacketDownloadStore(
           expiresAt: capability.expiresAt,
           maxUses: capability.maxUses,
         };
+      }).catch((error: unknown): IssueCapabilityOutcome => {
+        // The rollback signal unwound the transaction, so nothing — not the
+        // capability row, not the supersession, not the attempt binding —
+        // committed. Everything else propagates.
+        if (error instanceof PacketDownloadRollback)
+          return { ok: false, blocker: "CAPABILITY_BINDING_MISMATCH" };
+        throw error;
       });
     },
 

@@ -5,16 +5,15 @@
  * The lease expiry is the only recovery path, exactly as in the artifact
  * orchestrator this mirrors.
  *
- * **No provider adapter ships in this slice, and that is deliberate.** A sender
- * is not a small last step: it needs a verified sending identity, a webhook
- * endpoint whose signatures are verified before any event is admitted, and a
- * normalization layer that maps provider payloads into the bounded event
- * vocabulary. Until those exist, an adapter would be a half-wired path that can
- * send mail but cannot learn whether it arrived — which is precisely the
- * accepted-is-not-delivered confusion the whole evidence model exists to
- * prevent. So the adapter is a required, explicitly injected dependency with no
- * default: with none supplied, this function returns BLOCKED having made zero
- * store calls and zero writes.
+ * **The adapter is a required, explicitly injected dependency with no default.**
+ * With none supplied, this function returns BLOCKED having made zero store calls
+ * and zero writes. A sender is not a small last step: it needs a verified
+ * sending identity, a callback endpoint whose signatures are verified before any
+ * event is admitted, and a normalization layer that maps provider payloads into
+ * the bounded event vocabulary. A real adapter satisfying all three now exists
+ * (t2-resend-adapter.ts), and it is still injected rather than imported here, so
+ * this module keeps no provider dependency of its own and a test can drive the
+ * whole ordering with a synthetic one.
  *
  * The ordering it enforces when an adapter IS supplied:
  *
@@ -70,12 +69,27 @@ export type T2DeliveryOrchestrationResult =
       recorded: boolean;
       unresolved: boolean;
       released: boolean;
+      /** Stored callbacks this send's message id made correlatable, if any. */
+      reconciled: number;
     };
 
 export type T2DeliveryOrchestrationDeps = {
   env?: Readonly<Record<string, string | undefined>>;
   store?: T2DeliveryStore;
   adapter?: T2DeliveryAdapter;
+  /**
+   * Optional hook, invoked ONLY after an accepted send has durably recorded its
+   * provider message id.
+   *
+   * This closes the send/callback race from the other side. A provider can
+   * report `delivered` before this call returns, and no correlation tag is
+   * assumed, so such an event was stored as unmatched. The moment the message id
+   * becomes a real binding, that stored evidence is offered to it. Purely
+   * additive: it sends nothing, mints nothing, and a failure here changes no
+   * outcome, because the stored events remain available to the operator
+   * recovery control.
+   */
+  reconcile?: (input: { providerMessageId: string }) => Promise<unknown>;
   now?: () => Date;
 };
 
@@ -177,11 +191,30 @@ export async function runT2Delivery(
     unresolved = true;
   }
 
+  // Only once the message id is DURABLY bound to this attempt. Reconciling on an
+  // unrecorded outcome would offer stored evidence to a correlation that does
+  // not exist yet, which is the guess this whole design refuses to make.
+  let reconciled = 0;
+  if (recorded && sendOutcome.kind === "ACCEPTED" && deps.reconcile) {
+    try {
+      const result = (await deps.reconcile({
+        providerMessageId: sendOutcome.providerMessageId,
+      })) as { applied?: unknown } | undefined;
+      reconciled =
+        typeof result?.applied === "number" ? result.applied : 0;
+    } catch {
+      // Never rethrown and never logged. The stored events are durable and stay
+      // available to the bounded operator recovery control.
+      reconciled = 0;
+    }
+  }
+
   return {
     outcome: "ATTEMPTED",
     attemptNumber: persisted.attemptNumber,
     recorded,
     unresolved,
     released: await releaseQuietly(store, lease),
+    reconciled,
   };
 }
