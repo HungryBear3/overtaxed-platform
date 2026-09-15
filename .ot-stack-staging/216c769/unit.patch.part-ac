@@ -1,0 +1,600 @@
++    providerMessageId: MESSAGE_ID,
++    eventType: "DELIVERED",
++    reasonCode: null,
++    occurredAt: "2026-09-12T11:59:30.000Z",
++    ...patch,
++  }
++}
++
++describe("an applied callback folds exactly once, under the authoritative lock", () => {
++  it("locks order → fulfillment → attempt, matching every other store", async () => {
++    const state = world()
++    await createPrismaProviderCallbackStore(fakeClient(state)).ingest(event())
++    expect(state.locks).toEqual(["order", "fulfillment", "attempt"])
++  })
++
++  it("applies delivery to the current attempt and records the binding", async () => {
++    const state = world({ summary: { ...world().summary!, status: "PROVIDER_ACCEPTED" } })
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await expect(store.ingest(event())).resolves.toEqual({
++      outcome: "APPLIED",
++      fulfillmentId: FULFILLMENT_ID,
++      attemptNumber: 1,
++      status: "DELIVERED",
++    })
++    expect(state.summary).toMatchObject({ status: "DELIVERED", statusRevision: 5 })
++    expect(state.events).toHaveLength(1)
++    expect(state.callbacks[0]).toMatchObject({
++      disposition: "APPLIED",
++      fulfillmentId: FULFILLMENT_ID,
++      attemptNumber: 1,
++    })
++  })
++
++  it("records a provider acceptance as PROVIDER_ACCEPTED, never DELIVERED", async () => {
++    const state = world()
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await store.ingest(event({ eventType: "ACCEPTED" }))
++    expect(state.summary).toMatchObject({ status: "PROVIDER_ACCEPTED" })
++  })
++
++  it("ends live customer access the moment a terminal outcome lands", async () => {
++    const state = world()
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await store.ingest(event({ eventType: "BOUNCED", reasonCode: "HARD_BOUNCE" }))
++    expect(state.summary).toMatchObject({ status: "BOUNCED" })
++    expect(state.capabilities[0]).toMatchObject({
++      revokedAt: expect.any(Date),
++      revokedReasonCode: "UNDELIVERABLE",
++    })
++  })
++
++  it("leaves capabilities alone for a non-terminal outcome", async () => {
++    const state = world()
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await store.ingest(event({ eventType: "ACCEPTED" }))
++    expect(state.capabilities[0].revokedAt).toBeNull()
++  })
++})
++
++describe("replay of a signed delivery is a no-op", () => {
++  it("writes nothing the second time", async () => {
++    const state = world()
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await store.ingest(event())
++    const revision = state.summary!.statusRevision
++    const events = state.events.length
++
++    await expect(store.ingest(event())).resolves.toEqual({ outcome: "DUPLICATE" })
++    expect(state.callbacks).toHaveLength(1)
++    expect(state.events).toHaveLength(events)
++    expect(state.summary!.statusRevision).toBe(revision)
++  })
++
++  it("treats a different signed envelope as a different event", async () => {
++    const state = world({ summary: { ...world().summary!, status: "PROVIDER_ACCEPTED" } })
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await store.ingest(event({ providerEventId: "evt_a" }))
++    // A second, distinct signed envelope. It is admitted and recorded; the fold
++    // authority decides whether it may move anything.
++    await store.ingest(event({ providerEventId: "evt_b", eventType: "COMPLAINED", reasonCode: "SPAM_COMPLAINT" }))
++    expect(state.callbacks).toHaveLength(2)
++    expect(state.summary).toMatchObject({ status: "COMPLAINED" })
++  })
++})
++
++describe("an event that cannot be correlated yet is kept, never dropped", () => {
++  it("stores it as UNMATCHED when no attempt owns the message id", async () => {
++    const state = world({ attempts: [] })
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await expect(store.ingest(event())).resolves.toEqual({ outcome: "UNMATCHED" })
++    expect(state.callbacks[0]).toMatchObject({
++      disposition: "UNMATCHED",
++      providerMessageId: MESSAGE_ID,
++      fulfillmentId: null,
++    })
++    // Nothing was guessed onto an order.
++    expect(state.events).toEqual([])
++    expect(state.summary).toMatchObject({ status: "DELIVERY_PENDING", statusRevision: 4 })
++  })
++
++  it("applies it once the send binds the message id — the race, closed", async () => {
++    // The callback arrives BEFORE the send response.
++    const state = world({ attempts: [] })
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await store.ingest(event())
++    expect(state.callbacks[0].disposition).toBe("UNMATCHED")
++
++    // Now the send returns and the message id becomes a real binding.
++    state.attempts = world().attempts
++    await expect(
++      store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
++    ).resolves.toEqual({ examined: 1, applied: 1, stillUnmatched: 0 })
++    expect(state.summary).toMatchObject({ status: "DELIVERED" })
++    expect(state.callbacks[0]).toMatchObject({ disposition: "APPLIED", replayCount: 1 })
++  })
++
++  it("cannot apply the same stored event twice", async () => {
++    const state = world({ attempts: [] })
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await store.ingest(event())
++    state.attempts = world().attempts
++    await store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID })
++    const revision = state.summary!.statusRevision
++    await expect(
++      store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
++    ).resolves.toEqual({ examined: 0, applied: 0, stillUnmatched: 0 })
++    expect(state.summary!.statusRevision).toBe(revision)
++  })
++
++  it("reconciles stored events oldest-first so the fold sees provider order", async () => {
++    const state = world({ attempts: [] })
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await store.ingest(event({ providerEventId: "evt_late", eventType: "DELIVERED", occurredAt: "2026-09-12T11:59:50.000Z" }))
++    await store.ingest(event({ providerEventId: "evt_early", eventType: "ACCEPTED", occurredAt: "2026-09-12T11:59:10.000Z" }))
++    state.attempts = world().attempts
++    await expect(
++      store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
++    ).resolves.toEqual({ examined: 2, applied: 2, stillUnmatched: 0 })
++    expect(state.events.map((e) => e.eventType)).toEqual(["ACCEPTED", "DELIVERED"])
++    expect(state.summary).toMatchObject({ status: "DELIVERED" })
++  })
++
++  it("leaves it unmatched when the id is still unbound", async () => {
++    const state = world({ attempts: [] })
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await store.ingest(event())
++    await expect(
++      store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
++    ).resolves.toEqual({ examined: 1, applied: 0, stillUnmatched: 1 })
++    expect(state.callbacks[0].disposition).toBe("UNMATCHED")
++  })
++
++  it("never reconciles across providers", async () => {
++    const state = world({ attempts: [] })
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await store.ingest(event())
++    state.attempts = world().attempts
++    await expect(
++      store.reconcile({ provider: "postmark", providerMessageId: MESSAGE_ID }),
++    ).resolves.toEqual({ examined: 0, applied: 0, stillUnmatched: 0 })
++  })
++})
++
++describe("an event we decline to apply is recorded with its reason", () => {
++  it.each([
++    ["a refunded order", { order: { id: ORDER_ID, tier: "T2", status: "REFUNDED" } }, "INELIGIBLE_SETTLEMENT"],
++    ["a superseded artifact", { artifactVersion: 2 }, "ARTIFACT_SUPERSEDED"],
++    ["a stale attempt", { summary: { ...world().summary!, attemptCount: 2 } }, "STALE_ATTEMPT"],
++    ["a terminal fulfillment", { summary: { ...world().summary!, status: "BOUNCED" } }, "TERMINAL_LOCKED"],
++    ["a pre-send fulfillment", { summary: { ...world().summary!, status: "ARTIFACT_READY" } }, "NOT_APPLICABLE"],
++  ])("records %s as REFUSED and changes nothing", async (_label, patch, code) => {
++    const state = world(patch as Partial<World>)
++    const before = structuredClone(state.summary)
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await expect(store.ingest(event())).resolves.toEqual({ outcome: "REFUSED", code })
++    expect(state.callbacks[0]).toMatchObject({ disposition: "REFUSED", dispositionCode: code })
++    expect(state.summary).toEqual(before)
++    expect(state.events).toEqual([])
++  })
++
++  it("refuses an event whose attempt belongs to another provider", async () => {
++    const state = world({
++      attempts: [{ ...world().attempts[0], provider: "postmark" }],
++    })
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    // The lookup is keyed on (provider, message id), so a resend event simply
++    // finds no attempt — it can never resolve another sender's message.
++    await expect(store.ingest(event())).resolves.toEqual({ outcome: "UNMATCHED" })
++    expect(state.events).toEqual([])
++  })
++})
++
++describe("a lost compare-and-set rolls the whole callback back", () => {
++  it("writes no event when the summary moved underneath it", async () => {
++    const state = world({ casMiss: true })
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await expect(store.ingest(event())).resolves.toEqual({
++      outcome: "REFUSED",
++      code: "STALE_ATTEMPT",
++    })
++    // The rollback took the callback row with it, so the provider's retry of the
++    // same signed delivery is admitted again rather than seen as a duplicate.
++    expect(state.callbacks).toEqual([])
++    expect(state.events).toEqual([])
++    expect(state.summary).toMatchObject({ status: "DELIVERY_PENDING", statusRevision: 4 })
++  })
++})
++
++describe("the durable unmatched store is bounded", () => {
++  it("stops accepting new unresolved rows past the ceiling and says so", async () => {
++    const state = world({ attempts: [] })
++    // One below the ceiling, so the next arrival crosses it.
++    state.callbacks = Array.from({ length: 1000 }, (_, i) => ({
++      id: `c${i}`, provider: RESEND_PROVIDER, providerEventId: `evt_old_${i}`,
++      providerMessageId: `msg_${i}`, eventType: "DELIVERED", reasonCode: null,
++      occurredAt: new Date(NOW), receivedAt: new Date(NOW), disposition: "UNMATCHED",
++      dispositionCode: null, fulfillmentId: null, attemptNumber: null,
++      resolvedAt: null, replayCount: 0,
++    }))
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await expect(store.ingest(event())).resolves.toEqual({
++      outcome: "REFUSED",
++      code: "UNMATCHED_STORE_FULL",
++    })
++    // The evidence is still kept — it simply stops being queued for replay.
++    expect(state.callbacks).toHaveLength(1001)
++    expect(state.callbacks[1000]).toMatchObject({
++      disposition: "REFUSED",
++      dispositionCode: "UNMATCHED_STORE_FULL",
++    })
++  })
++})
++
++describe("nothing free-form is ever persisted", () => {
++  it("keeps no recipient, subject, payload or capability in any row", async () => {
++    const state = world()
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await store.ingest(event({ eventType: "BOUNCED", reasonCode: "HARD_BOUNCE" }))
++    const serialized = JSON.stringify({
++      callbacks: state.callbacks,
++      events: state.events,
++    })
++    expect(serialized).not.toContain("@")
++    expect(serialized.toLowerCase()).not.toContain("subject")
++    expect(serialized.toLowerCase()).not.toContain("capability")
++  })
++})
+diff --git a/__tests__/fulfillment/t2-artifact-scheduling.test.ts b/__tests__/fulfillment/t2-artifact-scheduling.test.ts
+index f988e71..ab72988 100644
+--- a/__tests__/fulfillment/t2-artifact-scheduling.test.ts
++++ b/__tests__/fulfillment/t2-artifact-scheduling.test.ts
+@@ -16,9 +16,10 @@ function setup() {
+     callbacks.push(callback);
+   });
+   const run = jest.fn(
+-    async (_input: { orderId: string; fulfillmentId: string }) => {},
++    async (_input: { orderId: string; fulfillmentId: string }): Promise<unknown> =>
++      undefined,
+   );
+-  return { callbacks, after, run, env: { ...on } };
++  return { callbacks, after, run, env: { ...on } as Record<string, string | undefined> };
+ }
+ test.each([undefined, "", " ", "false", "TRUE", "True", "1", "yes", "true "])(
+   "flag %s schedules nothing",
+@@ -102,3 +103,92 @@ test("registration failure propagates to the webhook retry path", () => {
+   );
+   expect(deps.run).not.toHaveBeenCalled();
+ });
++
++/**
++ * The delivery handoff.
++ *
++ * Delivery is reached from exactly one place: an artifact workflow that reported
++ * BOUND with its producing lease already released. Every other outcome must
++ * leave the sender untouched — not blocked at a later gate, but never invoked.
++ */
++describe("delivery runs only after a bound artifact and a released lease", () => {
++  function delivery() {
++    const deps = setup();
++    const deliver = jest.fn(async () => ({ outcome: "ATTEMPTED" }));
++    return { ...deps, deliver };
++  }
++
++  it("delivers once the workflow bound an artifact and gave the lease back", async () => {
++    const deps = delivery();
++    deps.run.mockResolvedValue({
++      outcome: "RAN",
++      workflowOutcome: "BOUND",
++      released: true,
++    } as never);
++    scheduleT2ArtifactOrchestration(paid, pending, deps);
++    await deps.callbacks[0]();
++    expect(deps.deliver).toHaveBeenCalledWith({
++      orderId: "ord_test",
++      fulfillmentId: "ful_test",
++    });
++  });
++
++  it.each([
++    ["a workflow that produced nothing", { outcome: "RAN", workflowOutcome: "REFUSED", released: true }],
++    ["a workflow that could not reconcile", { outcome: "RAN", workflowOutcome: "RECONCILIATION_REQUIRED", released: true }],
++    ["a workflow that was disabled", { outcome: "RAN", workflowOutcome: "DISABLED", released: true }],
++    ["a bound artifact whose lease was NOT released", { outcome: "RAN", workflowOutcome: "BOUND", released: false }],
++    ["an orchestrator that never claimed", { outcome: "NOT_CLAIMED" }],
++    ["an orchestrator that threw", { outcome: "THREW", released: true }],
++    ["an orchestrator that returned nothing", undefined],
++  ])("never delivers after %s", async (_label, result) => {
++    const deps = delivery();
++    deps.run.mockResolvedValue(result as never);
++    scheduleT2ArtifactOrchestration(paid, pending, deps);
++    await deps.callbacks[0]();
++    expect(deps.deliver).not.toHaveBeenCalled();
++  });
++
++  it("never delivers when the artifact orchestrator throws", async () => {
++    const deps = delivery();
++    deps.run.mockRejectedValue(new Error("synthetic-private-detail"));
++    const log = jest.spyOn(console, "error").mockImplementation(() => {});
++    try {
++      scheduleT2ArtifactOrchestration(paid, pending, deps);
++      await deps.callbacks[0]();
++      expect(deps.deliver).not.toHaveBeenCalled();
++    } finally {
++      log.mockRestore();
++    }
++  });
++
++  it("contains a thrown delivery and logs only a fixed code", async () => {
++    const deps = delivery();
++    deps.run.mockResolvedValue({ outcome: "RAN", workflowOutcome: "BOUND", released: true } as never);
++    deps.deliver.mockRejectedValue(new Error("synthetic-provider-detail") as never);
++    const log = jest.spyOn(console, "error").mockImplementation(() => {});
++    try {
++      scheduleT2ArtifactOrchestration(paid, pending, deps);
++      await expect(deps.callbacks[0]()).resolves.toBeUndefined();
++      expect(log.mock.calls).toEqual([["[ot-t2-delivery] outcome=THREW"]]);
++    } finally {
++      log.mockRestore();
++    }
++  });
++
++  it("builds no real delivery caller while the delivery flag is shut", async () => {
++    // No injected deliverer: the module must resolve one itself, and it must
++    // refuse to. A thrown dynamic import would surface as the THREW log.
++    const deps = setup();
++    deps.run.mockResolvedValue({ outcome: "RAN", workflowOutcome: "BOUND", released: true } as never);
++    const log = jest.spyOn(console, "error").mockImplementation(() => {});
++    try {
++      deps.env.OT_T2_DELIVERY_ENABLED = "false";
++      scheduleT2ArtifactOrchestration(paid, pending, deps);
++      await expect(deps.callbacks[0]()).resolves.toBeUndefined();
++      expect(log).not.toHaveBeenCalled();
++    } finally {
++      log.mockRestore();
++    }
++  });
++});
+diff --git a/__tests__/fulfillment/t2-callback-route.test.ts b/__tests__/fulfillment/t2-callback-route.test.ts
+new file mode 100644
+index 0000000..3552c66
+--- /dev/null
++++ b/__tests__/fulfillment/t2-callback-route.test.ts
+@@ -0,0 +1,134 @@
++/**
++ * @jest-environment node
++ *
++ * The HTTP boundary for provider callbacks.
++ *
++ * Two things it must get right: a probing caller learns nothing from the status
++ * code about WHY it was refused, and a provider that sends something we do not
++ * model is not told to retry forever.
++ */
++const ingestMock = jest.fn()
++jest.mock("@/lib/fulfillment-runtime/t2-resend-events", () => ({
++  ingestT2ResendCallback: (...args: unknown[]) => ingestMock(...args),
++  MAX_SIGNATURE_AGE_MS: 300_000,
++}))
++
++import { MAX_CALLBACK_BODY_BYTES } from "@/lib/fulfillment/provider-callbacks"
++import { GET, POST } from "@/app/api/ot/webhooks/resend/route"
++
++const PRIOR = process.env.OT_T2_DELIVERY_CALLBACK_ENABLED
++
++function request(body = "{}", headers: Record<string, string> = {}) {
++  return new Request("https://www.overtaxed-il.com/api/ot/webhooks/resend", {
++    method: "POST",
++    headers: { "svix-id": "msg_1", "svix-timestamp": "1", "svix-signature": "v1,x", ...headers },
++    body,
++  }) as unknown as import("next/server").NextRequest
++}
++
++beforeEach(() => {
++  jest.clearAllMocks()
++  jest.spyOn(console, "warn").mockImplementation(() => {})
++  jest.spyOn(console, "info").mockImplementation(() => {})
++  jest.spyOn(console, "error").mockImplementation(() => {})
++  process.env.OT_T2_DELIVERY_CALLBACK_ENABLED = "true"
++  ingestMock.mockResolvedValue({ ok: true, result: { outcome: "APPLIED" } })
++})
++afterEach(() => { jest.restoreAllMocks() })
++afterAll(() => {
++  if (PRIOR === undefined) delete process.env.OT_T2_DELIVERY_CALLBACK_ENABLED
++  else process.env.OT_T2_DELIVERY_CALLBACK_ENABLED = PRIOR
++})
++
++describe("the route does not exist while the flag is not exactly true", () => {
++  it.each([undefined, "", "false", "TRUE", "1", "true "])("flag %j 404s", async (flag) => {
++    if (flag === undefined) delete process.env.OT_T2_DELIVERY_CALLBACK_ENABLED
++    else process.env.OT_T2_DELIVERY_CALLBACK_ENABLED = flag
++    const response = await POST(request())
++    expect(response.status).toBe(404)
++    expect(ingestMock).not.toHaveBeenCalled()
++  })
++})
++
++describe("the body is bounded before it is read", () => {
++  it("refuses a declared length over the ceiling without reading it", async () => {
++    const response = await POST(
++      request("{}", { "content-length": String(MAX_CALLBACK_BODY_BYTES + 1) }),
++    )
++    expect(response.status).toBe(413)
++    expect(ingestMock).not.toHaveBeenCalled()
++  })
++})
++
++describe("only signature headers reach the verifier", () => {
++  it("passes exactly the allowlisted headers and the raw body", async () => {
++    await POST(request('{"type":"email.sent"}', { "x-forwarded-for": "1.2.3.4", cookie: "a=b" }))
++    const [input] = ingestMock.mock.calls[0] as [{ rawBody: string; headers: Record<string, unknown> }]
++    expect(input.rawBody).toBe('{"type":"email.sent"}')
++    expect(Object.keys(input.headers).sort()).toEqual([
++      "svix-id", "svix-signature", "svix-timestamp",
++      "webhook-id", "webhook-signature", "webhook-timestamp",
++    ])
++    expect(JSON.stringify(input.headers)).not.toContain("1.2.3.4")
++    expect(JSON.stringify(input.headers)).not.toContain("a=b")
++  })
++})
++
++describe("refusals are coarse on the wire and precise in the log", () => {
++  it.each([
++    ["INVALID_SIGNATURE", 401],
++    ["INVALID_PROVIDER_EVENT_ID", 401],
++    ["SECRET_NOT_CONFIGURED", 503],
++    ["BODY_TOO_LARGE", 413],
++    ["INVALID_JSON", 400],
++    ["MISSING_MESSAGE_ID", 400],
++    ["INVALID_TIMESTAMP", 400],
++    ["IMPLAUSIBLE_TIMESTAMP", 400],
++    ["FLAG_DISABLED", 400],
++  ])("maps %s to %i", async (code, status) => {
++    ingestMock.mockResolvedValue({ ok: false, code })
++    const response = await POST(request())
++    expect(response.status).toBe(status)
++    // The body never distinguishes one refusal from another.
++    await expect(response.json()).resolves.toEqual({ ok: false })
++  })
++
++  it.each(["IGNORED_EVENT_TYPE", "UNSUPPORTED_EVENT_TYPE"])(
++    "accepts %s so the provider does not retry forever",
++    async (code) => {
++      ingestMock.mockResolvedValue({ ok: false, code })
++      const response = await POST(request())
++      expect(response.status).toBe(200)
++      await expect(response.json()).resolves.toEqual({ ok: true, received: true })
++    },
++  )
++
++  it("answers 500 on a throw, so the provider's retry can succeed later", async () => {
++    ingestMock.mockRejectedValue(new Error("synthetic connection detail"))
++    const response = await POST(request())
++    expect(response.status).toBe(500)
++    // Nothing from the thrown value is logged.
++    expect(console.error).toHaveBeenCalledWith("[ot-t2-callback] outcome=THREW")
++  })
++})
++
++describe("responses carry no identifier and are never cached", () => {
++  it.each(["APPLIED", "UNMATCHED", "DUPLICATE"])("returns a bare receipt for %s", async (outcome) => {
++    ingestMock.mockResolvedValue({ ok: true, result: { outcome, fulfillmentId: "ful_secret", attemptNumber: 1 } })
++    const response = await POST(request())
++    expect(response.status).toBe(200)
++    const body = await response.json()
++    expect(body).toEqual({ ok: true, received: true })
++    expect(JSON.stringify(body)).not.toContain("ful_secret")
++    expect(response.headers.get("cache-control")).toContain("no-store")
++    expect(response.headers.get("x-robots-tag")).toContain("noindex")
++    expect(response.headers.get("referrer-policy")).toBe("no-referrer")
++  })
++})
++
++describe("a signed callback is a POST", () => {
++  it("refuses GET", async () => {
++    const response = await GET()
++    expect(response.status).toBe(405)
++  })
++})
+diff --git a/__tests__/fulfillment/t2-delivery-acceptance.test.ts b/__tests__/fulfillment/t2-delivery-acceptance.test.ts
+new file mode 100644
+index 0000000..849bc9c
+--- /dev/null
++++ b/__tests__/fulfillment/t2-delivery-acceptance.test.ts
+@@ -0,0 +1,835 @@
++/**
++ * @jest-environment node
++ *
++ * INTEGRATED SYNTHETIC ACCEPTANCE for the whole T2 delivery flow.
++ *
++ * One settled paid T2 order is driven end to end against an in-memory database
++ * that answers the stores' REAL SQL, a fake blob store, and a FAKE mail
++ * provider:
++ *
++ *   settled paid T2
++ *     → signed-policy TEST FIXTURE generation (a real, parseable PDF)
++ *     → immutable artifact bound to exact bytes
++ *     → durable delivery attempt, persisted BEFORE any send
++ *     → internal capability issuance, bound to that exact attempt
++ *     → fake provider acceptance (a message id, and nothing more)
++ *     → signed synthetic provider callback
++ *     → the customer pastes the code into the real POST route
++ *     → the exact PDF digest comes back
++ *
++ * No credential is read, no provider is called, no mail is sent, no real
++ * database is touched, and no network socket is opened. The eligibility policy
++ * used is an explicit TEST FIXTURE — the production registry stays unsigned and
++ * the real producer still refuses it, which the final test here re-proves.
++ *
++ * The property this file exists to defend above all others: a fake provider
++ * ACCEPTANCE alone never yields DELIVERED.
++ */
++import { createHash, randomUUID } from "node:crypto"
++import { PDFDocument } from "pdf-lib"
++import { Webhook as SvixWebhook } from "svix"
++import type { Prisma } from "@prisma/client"
++import { get, put } from "@vercel/blob"
++
++import {
++  computeArtifactSha256,
++  computePropertyBindingFingerprint,
++  contentAddressedT2ArtifactLocator,
++} from "@/lib/fulfillment/artifact-digest"
++import { RESEND_PROVIDER } from "@/lib/fulfillment/provider-callbacks"
++import {
++  generateT2Artifact,
++  type T2ArtifactGateway,
++} from "@/lib/fulfillment-runtime/t2-artifact-producer"
++import { prismaArtifactBindingStore } from "@/lib/fulfillment-runtime/artifact-binding-store"
++import { runT2ArtifactBindingWorkflow } from "@/lib/fulfillment-runtime/t2-artifact-workflow"
++import { createPrismaT2DeliveryStore } from "@/lib/fulfillment-runtime/delivery-store"
++import { createPrismaPacketDownloadStore } from "@/lib/fulfillment-runtime/packet-download-store"
++import { createPrismaProviderCallbackStore } from "@/lib/fulfillment-runtime/provider-callback-store"
++import { createT2ResendAdapter, type T2MailProvider } from "@/lib/fulfillment-runtime/t2-resend-adapter"
++import { createPrismaT2SendContextReader } from "@/lib/fulfillment-runtime/t2-resend-adapter"
++import { runT2Delivery } from "@/lib/fulfillment-runtime/t2-delivery-orchestrator"
++import { ingestT2ResendCallback } from "@/lib/fulfillment-runtime/t2-resend-events"
++import { POST as downloadPacket } from "@/app/api/ot/packet/download/route"
++
++jest.mock("server-only", () => ({}))
++jest.mock("@vercel/blob", () => ({ get: jest.fn(), put: jest.fn() }))
++jest.mock("@/lib/db", () => ({ prisma: {} }))
++jest.mock("@/lib/fulfillment-runtime/artifact-binding-store", () => ({
++  prismaArtifactBindingStore: { bind: jest.fn() },
++}))
++jest.mock("@/lib/fulfillment-runtime/t2-artifact-producer", () => ({
++  ...jest.requireActual("@/lib/fulfillment-runtime/t2-artifact-producer"),
++  generateT2Artifact: jest.fn((input) =>
++    jest
++      .requireActual("@/lib/fulfillment-runtime/t2-artifact-producer")
++      .generateT2Artifact(input, gateway()),
++  ),
++}))
++// The download ROUTE resolves its store from the module singleton, so the
++// singleton is redirected at the in-memory database rather than the route being
++// handed a test double. The route under test is the real one.
++jest.mock("@/lib/fulfillment-runtime/packet-download-store", () => {
++  const actual = jest.requireActual("@/lib/fulfillment-runtime/packet-download-store")
++  return {
++    ...actual,
++    prismaPacketDownloadStore: {
++      issue: (...args: unknown[]) => packetStore.issue(...(args as [never])),
++      authorize: (...args: unknown[]) => packetStore.authorize(...(args as [never])),
++      reassert: (...args: unknown[]) => packetStore.reassert(...(args as [never])),
++      revoke: (...args: unknown[]) => packetStore.revoke(...(args as [never])),
++    },
++  }
++})
++
++const ORDER_ID = "ord_acceptance_t2"
++const FULFILLMENT_ID = "ful_acceptance_t2"
++const RECIPIENT = "owner@example.com"
++const PIN = "99010010010000"
++const ADDRESS = "1 EXAMPLE ST"
++const AT = "2026-06-08T12:00:00Z"
++const SECRET = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"
++
++const CALLBACK_ENV = {
++  OT_T2_DELIVERY_CALLBACK_ENABLED: "true",
++  OT_T2_RESEND_WEBHOOK_SECRET: SECRET,
++}
++const ADAPTER_ENV = {
