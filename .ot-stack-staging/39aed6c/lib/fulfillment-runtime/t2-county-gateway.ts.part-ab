@@ -1,0 +1,411 @@
+}
+
+/* ------------------------------------------------------ row-level validation */
+
+/** Every row on every dataset must carry the tax year that was asked for. */
+function requireTaxYear(row: Record<string, unknown>): void {
+  if (asExactInteger(row.year) !== OFFICIAL_TAX_YEAR) {
+    throw new CountyRefusal("COUNTY_RESPONSE_YEAR_MISMATCH")
+  }
+}
+
+type LocalityKeys = { neighborhoodCode: string; townshipCode: string }
+
+type CharacteristicsRow = {
+  propertyClass: string
+  buildingSqft: number
+  yearBuilt: number
+  residentialSubtype: string
+}
+
+/**
+ * Reduce a PIN's improvement rows to the one complete, unambiguous record the
+ * packet can use, or refuse.
+ *
+ * The single-improvement conditions are the county's own multi-card and
+ * multi-land markers, applied as the 1,200-PIN study applied them and then
+ * tightened: each marker must be explicitly present and explicitly singular. A
+ * PIN with more than one improvement row, an absent marker, or a tieback to
+ * another parcel has no single building area to divide by. That is an ambiguity
+ * in the official record, and the packet's arithmetic is not defined over it.
+ *
+ * `tieback_key_pin` and the two proration rates are read conservatively: a
+ * tieback naming a DIFFERENT parcel, or any proration rate that is present and
+ * not exactly 1, means this row describes a share of a larger improvement rather
+ * than a whole one. Their ABSENCE is permitted — the county leaves them empty
+ * for ordinary single-parcel improvements, which are the overwhelming majority —
+ * and that permission is deliberate and recorded here rather than silent.
+ */
+function readCharacteristics(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  pin: string,
+  locality: LocalityKeys,
+): CharacteristicsRow {
+  if (rows.length !== 1) throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS")
+  const row = rows[0]
+  requireTaxYear(row)
+
+  // The join carries a township; it must be the subject's. The same assessor
+  // neighbourhood code can appear under more than one township.
+  if (asText(row.township_code) !== locality.townshipCode) {
+    throw new CountyRefusal("CANDIDATE_LOCALITY_MISMATCH")
+  }
+
+  if (
+    asExactInteger(row.pin_num_cards) !== 1 ||
+    asExactInteger(row.pin_num_landlines) !== 1 ||
+    !isExplicitlyFalse(row.pin_is_multiland)
+  ) {
+    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS")
+  }
+
+  const tieback = asText(row.tieback_key_pin)
+  if (tieback !== "" && tieback.replace(/-/g, "") !== pin) {
+    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS")
+  }
+  for (const rate of [row.tieback_proration_rate, row.card_proration_rate]) {
+    if (asText(rate) === "") continue
+    if (asExactDecimal(rate) !== 1) throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS")
+  }
+
+  // No imputation: every feature the selector reads must be published, and
+  // published as something the arithmetic is defined over.
+  const buildingSqft = asExactDecimal(row.char_bldg_sf)
+  const yearBuilt = asExactInteger(row.char_yrblt)
+  const residentialSubtype = asText(row.char_type_resd)
+  const propertyClass = asText(row.class)
+  if (
+    buildingSqft === null ||
+    buildingSqft <= 0 ||
+    yearBuilt === null ||
+    yearBuilt <= 1700 ||
+    // A building cannot have been built after the year being assessed, and a
+    // fractional year is not a year. Either means the column is not what it says.
+    yearBuilt > OFFICIAL_TAX_YEAR ||
+    residentialSubtype === "" ||
+    propertyClass === ""
+  ) {
+    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_INCOMPLETE")
+  }
+
+  return { propertyClass, buildingSqft, yearBuilt, residentialSubtype }
+}
+
+/** The mailed total for the exact year, or a refusal. Never certified, never board. */
+function readMailedTotal(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  locality: LocalityKeys,
+): { propertyClass: string; mailedTotal: number } {
+  if (rows.length !== 1) throw new CountyRefusal("CANDIDATE_ASSESSED_VALUE_AMBIGUOUS")
+  const row = rows[0]
+  requireTaxYear(row)
+
+  // This dataset publishes both locality keys, so both are checked against the
+  // universe rather than assumed from the query that asked for the PIN.
+  if (
+    asText(row.township_code) !== locality.townshipCode ||
+    asText(row.nbhd) !== locality.neighborhoodCode
+  ) {
+    throw new CountyRefusal("CANDIDATE_LOCALITY_MISMATCH")
+  }
+
+  const mailedTotal = asExactDecimal(row.mailed_tot)
+  const propertyClass = asText(row.class)
+  if (mailedTotal === null || mailedTotal <= 0 || propertyClass === "") {
+    throw new CountyRefusal("CANDIDATE_ASSESSED_VALUE_INCOMPLETE")
+  }
+  return { propertyClass, mailedTotal }
+}
+
+/**
+ * The published street address for the exact year, or a refusal.
+ *
+ * This dataset carries no township and no neighbourhood, so none is checked and
+ * none is inferred: it contributes an address and nothing else.
+ */
+function readAddress(rows: ReadonlyArray<Record<string, unknown>>): {
+  address: string
+  city: string
+} {
+  if (rows.length !== 1) throw new CountyRefusal("CANDIDATE_ADDRESS_AMBIGUOUS")
+  const row = rows[0]
+  requireTaxYear(row)
+
+  const address = asText(row.prop_address_full)
+  const city = asText(row.prop_address_city_name)
+  const state = asText(row.prop_address_state).toUpperCase()
+  if (address === "" || city === "" || state !== OFFICIAL_ADDRESS_STATE) {
+    throw new CountyRefusal("CANDIDATE_ADDRESS_INCOMPLETE")
+  }
+  return { address, city }
+}
+
+/* ------------------------------------------------------------- the retrieval */
+
+/**
+ * Retrieve and assemble the complete official evidence for one parcel.
+ *
+ * Reusable on its own, and the only place any of this is implemented:
+ * [[loadOfficialCountyData]] is a thin producer-facing wrapper around it.
+ */
+export async function fetchCountyEvidence(
+  order: CountyOrderIdentity,
+  deps: CountyGatewayDeps = defaultDeps(),
+): Promise<CountyEvidenceResult> {
+  let reader: CountyReader
+  try {
+    reader = new CountyReader(deps)
+  } catch (error) {
+    const blocker = error instanceof CountyRefusal ? error.blocker : "COUNTY_SOURCE_UNAVAILABLE"
+    return { ok: false, blocker, sources: [] }
+  }
+  try {
+    const evidence = await assemble(reader, order, deps)
+    return { ok: true, evidence, sources: reader.receipts }
+  } catch (error) {
+    if (error instanceof CountyRefusal) {
+      return { ok: false, blocker: error.blocker, sources: reader.receipts }
+    }
+    return { ok: false, blocker: "COUNTY_SOURCE_UNAVAILABLE", sources: reader.receipts }
+  }
+}
+
+async function assemble(
+  reader: CountyReader,
+  order: CountyOrderIdentity,
+  deps: CountyGatewayDeps,
+): Promise<CountyEvidence> {
+  // 1. The tax year is verified against the clock before anything is requested.
+  //    A rollover must refuse, not read a year nobody validated.
+  const calendarYear = chicagoCalendarYear(deps.now())
+  if (calendarYear === null || calendarYear !== OFFICIAL_TAX_YEAR) {
+    throw new CountyRefusal("COUNTY_TAX_YEAR_UNVERIFIED")
+  }
+
+  const subjectPin = parseOrderPin(order.propertyPin ?? "")
+  if (!subjectPin) throw new CountyRefusal("SUBJECT_PIN_INVALID")
+
+  // 2. The subject's parcel record: locality, class and township, for the exact
+  //    year. Exactly one row, or the parcel's identity is not established.
+  const universe = COUNTY_DATASETS.parcelUniverse
+  const subjectRows = await reader.rows(
+    universe,
+    socrataUrl(universe.id, {
+      select: universe.select,
+      where: `year=${OFFICIAL_TAX_YEAR} AND pin='${subjectPin}'`,
+      order: "pin",
+      limit: 2,
+    }),
+    2,
+  )
+  if (subjectRows.length === 0) throw new CountyRefusal("SUBJECT_PARCEL_NOT_FOUND")
+  if (subjectRows.length > 1) throw new CountyRefusal("SUBJECT_PARCEL_AMBIGUOUS")
+  const subjectParcel = subjectRows[0]
+  requireTaxYear(subjectParcel)
+
+  // The row that came back must be the row that was asked for. A filter is a
+  // request, not a promise.
+  if (parseSourcePin(subjectParcel.pin) !== subjectPin) {
+    throw new CountyRefusal("SUBJECT_PARCEL_AMBIGUOUS")
+  }
+
+  const subjectClass = asText(subjectParcel.class)
+  if (!isClass2NonCondo(subjectClass)) throw new CountyRefusal("SUBJECT_CLASS_OUT_OF_SCOPE")
+
+  const neighborhoodCode = parseLocalityCode(subjectParcel.nbhd_code)
+  if (asText(subjectParcel.nbhd_code) === "") {
+    throw new CountyRefusal("SUBJECT_NEIGHBORHOOD_UNAVAILABLE")
+  }
+  const townshipCode = parseLocalityCode(subjectParcel.township_code)
+  if (!neighborhoodCode || !townshipCode) {
+    throw new CountyRefusal("SUBJECT_LOCALITY_UNRECOGNIZED")
+  }
+  const locality: LocalityKeys = { neighborhoodCode, townshipCode }
+
+  // 3. The township the order was sold against must be the township the county
+  //    records for the parcel: the filing window in the packet is a township
+  //    fact, and a packet carrying another township's window is wrong even if
+  //    every figure in it is right.
+  const townshipName = asText(subjectParcel.township_name)
+  if (
+    townshipName === "" ||
+    townshipKeyFromName(townshipName) !== townshipKeyFromName(order.township ?? "")
+  ) {
+    throw new CountyRefusal("SUBJECT_TOWNSHIP_MISMATCH")
+  }
+
+  // 4. The WHOLE class-2 non-condominium pool of the subject's neighbourhood AND
+  //    township, from the parcel universe rather than the assessed-value
+  //    dataset: the latter omits parcels that carry no mailed value, so reading
+  //    the pool from it would silently define the neighbourhood as "parcels that
+  //    happen to have a value", which is exactly the kind of invisible narrowing
+  //    the pool digest exists to rule out.
+  const poolWhere =
+    `year=${OFFICIAL_TAX_YEAR} AND nbhd_code='${neighborhoodCode}' ` +
+    `AND township_code='${townshipCode}' AND starts_with(class, '2') AND class != '299'`
+  const poolRows = await reader.allPages(universe, universe.select, poolWhere)
+  if (poolRows.length === 0) throw new CountyRefusal("CANDIDATE_POOL_EMPTY")
+
+  const poolClassByPin = new Map<string, string>()
+  let previousPin = ""
+  for (const row of poolRows) {
+    requireTaxYear(row)
+    const pin = parseSourcePin(row.pin)
+    const rowClass = asText(row.class)
+    // Every condition that was sent is re-checked on what came back, and the
+    // parcel order is required to be strictly ascending across the whole walk:
+    // pagination by offset over an unordered or re-ordered result set silently
+    // skips and repeats rows.
+    if (!pin || poolClassByPin.has(pin) || pin <= previousPin) {
+      throw new CountyRefusal("CANDIDATE_POOL_UNSTABLE")
+    }
+    if (!isClass2NonCondo(rowClass)) throw new CountyRefusal("CANDIDATE_POOL_UNSTABLE")
+    if (
+      asText(row.nbhd_code) !== neighborhoodCode ||
+      asText(row.township_code) !== townshipCode ||
+      asText(row.township_name) !== townshipName
+    ) {
+      throw new CountyRefusal("CANDIDATE_LOCALITY_MISMATCH")
+    }
+    previousPin = pin
+    poolClassByPin.set(pin, rowClass)
+  }
+
+  // 5. The subject's own pool row must agree with the row read in step 2 — not
+  //    merely exist. Two reads of one parcel that disagree about its class or
+  //    its locality are two different parcels as far as the packet is concerned.
+  const subjectPoolClass = poolClassByPin.get(subjectPin)
+  if (subjectPoolClass === undefined) throw new CountyRefusal("CANDIDATE_POOL_UNSTABLE")
+  if (subjectPoolClass !== subjectClass) throw new CountyRefusal("SUBJECT_RECORD_INCONSISTENT")
+
+  const pins = [...poolClassByPin.keys()].sort()
+  const pinCount = pins.length
+
+  // 6. The joins. Every pooled parcel must resolve, on all three datasets, to
+  //    exactly one complete unambiguous record. Nothing is dropped and nothing
+  //    is synthesised: an unavailable record refuses the whole retrieval,
+  //    because a pool quietly missing its unavailable members is not the
+  //    neighbourhood the packet says it is.
+  const chars = COUNTY_DATASETS.characteristics
+  const charsByPin = await reader.byPins(
+    chars,
+    chars.select,
+    pins,
+    "CANDIDATE_CHARACTERISTICS_AMBIGUOUS",
+  )
+  if (charsByPin.size !== pinCount) throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_INCOMPLETE")
+
+  const values = COUNTY_DATASETS.assessedValues
+  const valuesByPin = await reader.byPins(
+    values,
+    values.select,
+    pins,
+    "CANDIDATE_ASSESSED_VALUE_AMBIGUOUS",
+  )
+  if (valuesByPin.size !== pinCount) throw new CountyRefusal("CANDIDATE_ASSESSED_VALUE_INCOMPLETE")
+
+  const addresses = COUNTY_DATASETS.addresses
+  const addressesByPin = await reader.byPins(
+    addresses,
+    addresses.select,
+    pins,
+    "CANDIDATE_ADDRESS_AMBIGUOUS",
+  )
+  if (addressesByPin.size !== pinCount) throw new CountyRefusal("CANDIDATE_ADDRESS_INCOMPLETE")
+
+  const comparableCandidates: ComparableMatchAttributes[] = []
+  const comparableAssessedValues = new Map<string, number>()
+  const comparableAddresses = new Map<string, string>()
+  let subjectCharacteristics: CharacteristicsRow | null = null
+  let subjectAddress: { address: string; city: string } | null = null
+
+  for (const pin of pins) {
+    const characteristics = readCharacteristics(charsByPin.get(pin) ?? [], pin, locality)
+    const { propertyClass: valueClass, mailedTotal } = readMailedTotal(
+      valuesByPin.get(pin) ?? [],
+      locality,
+    )
+    const address = readAddress(addressesByPin.get(pin) ?? [])
+    const universeClass = poolClassByPin.get(pin) ?? ""
+
+    // Three datasets each publish the class. They have to agree, or the parcel's
+    // classification — the thing Rule 15 requires comparables to share — is not
+    // established by the record.
+    if (characteristics.propertyClass !== universeClass || valueClass !== universeClass) {
+      throw new CountyRefusal("CANDIDATE_CLASS_AMBIGUOUS")
+    }
+
+    comparableCandidates.push({
+      pin,
+      neighborhoodCode,
+      propertyClass: universeClass,
+      residentialSubtype: characteristics.residentialSubtype,
+      buildingSqft: characteristics.buildingSqft,
+      yearBuilt: characteristics.yearBuilt,
+    })
+    comparableAssessedValues.set(pin, mailedTotal)
+    comparableAddresses.set(pin, address.address)
+    if (pin === subjectPin) {
+      subjectCharacteristics = characteristics
+      subjectAddress = address
+    }
+  }
+
+  if (!subjectCharacteristics || !subjectAddress) {
+    throw new CountyRefusal("CANDIDATE_POOL_UNSTABLE")
+  }
+  const subjectMailedTotal = comparableAssessedValues.get(subjectPin)
+  if (subjectMailedTotal == null) throw new CountyRefusal("CANDIDATE_POOL_UNSTABLE")
+
+  const subject: SubjectRecord = {
+    pin: subjectPin,
+    address: subjectAddress.address,
+    city: subjectAddress.city,
+    township: townshipName,
+    neighborhoodCode,
+    propertyClass: subjectClass,
+    residentialSubtype: subjectCharacteristics.residentialSubtype,
+    buildingSqft: subjectCharacteristics.buildingSqft,
+    yearBuilt: subjectCharacteristics.yearBuilt,
+    assessedTotalValue: subjectMailedTotal,
+    assessmentStage: OFFICIAL_ASSESSMENT_STAGE,
+    taxYear: OFFICIAL_TAX_YEAR,
+    // Established by the single-card, single-landline, no-foreign-tieback
+    // improvement check in [[readCharacteristics]] — never from the card count
+    // on its own.
+    pinCount: 1,
+    // Every dataset read here is a Cook County Assessor publication covering
+    // Cook County alone, so a parcel present in them is in Cook County.
+    inCookCounty: true,
+  }
+
+  // The window is checked once more now that the last byte is in: a retrieval
+  // whose tail ran long is not one bounded read, whatever its individual
+  // requests did.
+  reader.finish()
+
+  return {
+    subject,
+    comparableCandidates,
+    comparableAssessedValues,
+    comparableAddresses,
+    sources: reader.receipts,
+  }
+}
+
+/* ------------------------------------------------------------ producer entry */
+
+/**
+ * The producer-facing adapter: official county evidence, or a named refusal.
+ *
+ * There is no separate capability gate here. Every condition this module
+ * enforces is enforced inside [[fetchCountyEvidence]], so the two callers cannot
+ * drift apart.
+ */
+export async function loadOfficialCountyData(
+  order: CountyOrderIdentity,
+  deps: CountyGatewayDeps = defaultDeps(),
+): Promise<CountyEvidence | CountyDataRefusal> {
+  const result = await fetchCountyEvidence(order, deps)
+  return result.ok ? result.evidence : { blocker: result.blocker }
+}
