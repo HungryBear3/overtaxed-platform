@@ -120,8 +120,10 @@ const TRUSTED_CLOCK_SQL = Prisma.sql`
  * The key is an arbitrary fixed constant pair, namespaced by the first element
  * so another advisory-lock user in this database cannot collide with it.
  */
+// Prisma cannot deserialize PostgreSQL void. Cast only the returned value;
+// the transaction-scoped lock itself is still acquired and held until commit.
 const SPOOL_CAP_LOCK_SQL = Prisma.sql`
-  SELECT pg_advisory_xact_lock(19260912, 1) AS "locked"
+  SELECT pg_advisory_xact_lock(19260912, 1)::text AS "locked"
 `;
 
 export type ProviderCallbackTransaction = {
