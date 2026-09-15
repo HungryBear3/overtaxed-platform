@@ -50,6 +50,8 @@ export type PersistAttemptInput = {
   orderId: string;
   fulfillmentId: string;
   provider: string;
+  owner: string;
+  token: string;
 };
 
 export type PersistAttemptOutcome =
@@ -88,7 +90,7 @@ export interface T2DeliveryStore {
 
 const TRUSTED_CLOCK_SQL = Prisma.sql`
   SELECT to_char(
-    CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
+    clock_timestamp() AT TIME ZONE 'UTC',
     'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
   ) AS "now"
 `;
@@ -271,6 +273,12 @@ export function createPrismaT2DeliveryStore(
           if (trustedNow === "")
             return { ok: false, blocker: "UNTRUSTED_CLOCK" };
 
+          if (evaluateLease({
+            lease: leaseSnapshot(summary), now: trustedNow,
+            requester: input.owner, requesterToken: input.token,
+          }).decision !== "RENEWABLE")
+            return { ok: false, blocker: "LEASE_NOT_OWNED" };
+
           const decision = decideDeliveryDispatch({
             flagEnabled: t2DeliveryEnabled(process.env),
             orderId: input.orderId,
@@ -337,7 +345,7 @@ export function createPrismaT2DeliveryStore(
                          AND "status_revision" = ${plan.expectedStatusRevision}`,
           );
           if (advanced !== 1)
-            return { ok: false, blocker: "DELIVERY_ATTEMPT_CONFLICT" };
+            throw new DeliveryRollback("DELIVERY_ATTEMPT_CONFLICT");
 
           // A withdrawal observed while the writes awaited PostgreSQL rolls the
           // whole attempt back, so no send is ever authorized under a shut flag.
@@ -367,6 +375,25 @@ export function createPrismaT2DeliveryStore(
           );
           if (!order || !summary)
             return { ok: false, blocker: "FULFILLMENT_NOT_FOUND" };
+
+          if (!settlementOk(order))
+            return { ok: false, blocker: "INELIGIBLE_SETTLEMENT" };
+          if (summary.orderId !== input.orderId)
+            return { ok: false, blocker: "FULFILLMENT_ORDER_MISMATCH" };
+          if (summary.kind !== "T2_APPEAL_EVIDENCE")
+            return { ok: false, blocker: "INELIGIBLE_FULFILLMENT_STATUS" };
+          if (!Number.isSafeInteger(input.attemptNumber) || input.attemptNumber < 1)
+            return { ok: false, blocker: "ATTEMPT_NOT_FOUND" };
+          const attempts = await tx.$queryRaw<Array<{ provider: string }>>(
+            Prisma.sql`SELECT "provider" FROM "ot_delivery_attempt"
+              WHERE "fulfillment_id" = ${input.fulfillmentId}
+                AND "attempt_number" = ${input.attemptNumber} FOR UPDATE`,
+          );
+          if (!attempts[0]) return { ok: false, blocker: "ATTEMPT_NOT_FOUND" };
+          if (attempts[0].provider !== input.outcome.provider)
+            return { ok: false, blocker: "ATTEMPT_PROVIDER_MISMATCH" };
+          if (summary.attemptCount !== input.attemptNumber)
+            return { ok: false, blocker: "STALE_ATTEMPT" };
 
           const clock = await tx.$queryRaw<Array<{ now: unknown }>>(
             TRUSTED_CLOCK_SQL,
@@ -408,7 +435,7 @@ export function createPrismaT2DeliveryStore(
                          AND "attempt_number" = ${input.attemptNumber}`,
           );
           if (updatedAttempt !== 1)
-            return { ok: false, blocker: "ATTEMPT_NOT_FOUND" };
+            throw new DeliveryRollback("ATTEMPT_NOT_FOUND");
 
           const sequences = await tx.$queryRaw<Array<{ next: number }>>(
             Prisma.sql`SELECT COALESCE(MAX("sequence"), 0) + 1 AS "next"
@@ -440,7 +467,7 @@ export function createPrismaT2DeliveryStore(
                          AND "status_revision" = ${summary.statusRevision}`,
           );
           if (advanced !== 1)
-            return { ok: false, blocker: "DELIVERY_ATTEMPT_CONFLICT" };
+            throw new DeliveryRollback("DELIVERY_ATTEMPT_CONFLICT");
 
           return {
             ok: true,
@@ -449,7 +476,7 @@ export function createPrismaT2DeliveryStore(
             status: record.nextStatus,
           };
         },
-      );
+      ).catch(unwind) as Promise<RecordOutcomeResult>;
     },
   };
 }
