@@ -8,6 +8,7 @@
 - Terminal-review input head: `ab94a2343384ac679ccf010c92017a69a958b85e`
 - Preview migration entrypoint remediation head: `ee3320272996f3fce93a52b33e54f85d6dd6d1e5`
 - Complete disabled-feature guard implementation head: `b2f221b27590e3fd4758e06fdad5d24aa5dd25e8`
+- Commerce-read/refund-retry remediation candidate: `9f0c697b94e4774f6f0cd32c0363fada22eede52`
 - Product: **Cook County Assessment Records & Matching Property Report**
 - Price: **$69 USD**
 - Strict automated qualification remains separate, unsigned, and inactive.
@@ -34,10 +35,11 @@
 - Focused final delivery/security: 314 passed; terminal security closure 183 passed.
 - TypeScript: passed (`tsc --noEmit`).
 - Production build: passed, 144 static pages generated.
-- Fresh PostgreSQL 18: all 34 migrations applied from zero.
+- Fresh PostgreSQL 18: all 35 migrations applied from zero.
 - Four identities proved: migration, normal app, neutral repository, neutral delivery.
 - Disposable-local post-migration grant/RLS preflight: passed before PR creation. The separate Preview **PRE-MIGRATION identity/marker preflight** and the post-migration grant/RLS preflight have **not** run against Preview because the four separate Preview credentials and durable Preview database marker have not been provisioned.
 - Native Phase 2 and Phase 3 journeys: 2/2 passed with `--detectOpenHandles`.
+- The neutral repository role cannot select `ot_order`, `ot_payment_binding`, or `ot_settlement_reversal`; native proof shows legacy rows absent from its constrained projection. A transient synthetic provider lookup leaves the recorded receipt pending with audited retry evidence, and a later successful lookup converges to `REFUND_CONFIRMED` without creating a refund.
 - Synthetic owner journey: paid binding → QA → ZIP promotion → capability → POST download; exact ZIP hash/members and one-use exhaustion passed.
 - Playwright production server: 12/12 passed across desktop Chrome and iPhone viewport; no horizontal overflow or application errors.
 - Representative three-page PDF rendered and visually inspected.
@@ -61,10 +63,11 @@
 - Repository: `813e404da095a5e1e75a052dc2067925e7f41ac931e4e1f7f5834b79d734c8f6`
 - QA/delivery: `0fa316caf8b70620fbc411180f87b40105b821287b14da62361bb05b7bdb4194`
 - Delivery runtime: `c2916caffc314a3a5f887e3086fc4ce16e79190a6e72803d4492748a700e43d3`
+- Neutral commerce projection/refund retry audit: `84e4ad3e148d1b4146106ca59b0a0192e4af3e71a18ba3e01dcefd371789bfe4`
 
 ## Production remains inactive
 
-PR #47 exists and Vercel successfully created the automatic features-disabled Preview for implementation head `b2f221b27590e3fd4758e06fdad5d24aa5dd25e8` (deployment `BEBrYfZdmynZwTVKCAacoe8VHD4G`). No database was provisioned, marked, migrated, or granted; no environment was changed; and no Production migration/deployment, feature activation, live checkout mutation, real order, Stripe call, email, Blob write, delivery, or refund was performed.
+PR #47 exists. The exact implementation candidate is `9f0c697b94e4774f6f0cd32c0363fada22eede52`; its automatic features-disabled Preview is tracked at Vercel dashboard deployment `8aMNG3bJWXn64AYXCmqNpqPAqVnN`. No database was provisioned, marked, migrated, or granted; no environment was changed; and no Production migration/deployment, feature activation, live checkout mutation, real order, Stripe call, email, Blob write, delivery, or refund was performed.
 
 GitHub deployment record `6461605045` is inert metadata only. Its `environment` label is `production`, but GitHub reports `production_environment: false`, it has no deployment statuses, and no provider performed or recorded a deployment from it. The record was not deleted or altered and is not evidence of a Production provider action.
 
@@ -88,3 +91,7 @@ Approve:
 8. Only after both preflights pass in order, run synthetic checkout/QA/download smokes, desktop/mobile browser checks, and deployment file tracing.
 
 This approval does **not** authorize Production migration/deployment, feature activation, live charges, customer contact, email delivery, refunds, marketing, or real orders. Those remain a separate gate after Preview evidence.
+
+## PR-size blocker
+
+Against current `origin/main`, PR #47 is 215+ files and 36k+ added lines because the neutral work descends from a large unmerged T2 delivery stack. Even the neutral-only range is 112 files and 5,722 added lines before the final remediation. A blind rebase/cherry-pick would omit required payment, artifact, capability, and delivery dependencies. The safe six-PR stacked decomposition and explicit alternative exception request are recorded in `docs/ops/ot-neutral-report-pr-split-plan-2026-09-15.md`. Merge remains blocked pending that owner decision.
