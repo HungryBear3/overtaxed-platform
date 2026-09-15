@@ -5,6 +5,10 @@ import { prisma } from "@/lib/db"
 import { generatePacketForInvoice } from "@/lib/packet/generate-and-deliver"
 import { sendNewOrderAlert, sendOrderConfirmation } from "@/lib/email/send"
 import {
+  confirmationEvidenceWritesEnabled,
+  sendOrderConfirmationWithEvidence,
+} from "@/lib/fulfillment-runtime/confirmation-evidence"
+import {
   kickOffT2FulfillmentEvidence,
   t2FulfillmentEvidenceWritesEnabled,
 } from "@/lib/fulfillment-runtime/kickoff"
@@ -393,13 +397,25 @@ export async function POST(request: NextRequest) {
             sessionId,
           }).catch((err) => console.error("[webhook] sendNewOrderAlert failed:", err))
           if (customerEmail) {
-            sendOrderConfirmation({
+            const confirmationArgs = {
               tier,
               customerEmail,
               customerName,
               address: resolvedAddress || persistedOrder.propertyPin || undefined,
               amountPaid,
-            }).catch((err) => console.error("[webhook] sendOrderConfirmation failed:", err))
+            }
+            if (confirmationEvidenceWritesEnabled()) {
+              // Phase 1 delivery evidence (strict default-off): awaited so the
+              // attempt/outcome rows are durable before the webhook acks, and
+              // strictly best-effort — the helper never throws and never
+              // releases the StripeEvent claim, so send or evidence-write
+              // failures cannot trigger a retry or duplicate notification.
+              await sendOrderConfirmationWithEvidence(persistedOrder.id, confirmationArgs)
+            } else {
+              sendOrderConfirmation(confirmationArgs).catch((err) =>
+                console.error("[webhook] sendOrderConfirmation failed:", err),
+              )
+            }
           }
         }
 

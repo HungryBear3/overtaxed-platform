@@ -53,15 +53,22 @@ export async function sendContactEmail(args: {
   return { supportEmail: { success: supportEmail }, confirmationEmail: { success: confirmationEmail } }
 }
 
-export async function sendEmail({
-  to,
-  subject,
-  text,
-  html,
-  from = FROM_EMAIL,
-  attachments,
-  headers,
-}: {
+/**
+ * Bounded, non-PII error classes for the structured send receipt. This is a
+ * closed allowlist: values are persisted verbatim as delivery evidence, so no
+ * dynamic content (addresses, subjects, provider error text) may appear here.
+ */
+export type EmailSendErrorClass =
+  | "PROVIDER_NOT_CONFIGURED"
+  | "PROVIDER_ERROR"
+  | "SEND_EXCEPTION"
+  | "HELD_TIER_REFUSED"
+
+export type EmailSendReceipt =
+  | { ok: true; providerMessageId: string | null }
+  | { ok: false; errorClass: EmailSendErrorClass }
+
+type SendEmailArgs = {
   to: string
   subject: string
   text: string
@@ -69,10 +76,26 @@ export async function sendEmail({
   from?: string
   attachments?: Array<{ filename: string; content: Buffer }>
   headers?: Record<string, string>
-}): Promise<boolean> {
+}
+
+/**
+ * Structured-receipt seam. Same provider call, logging, and failure behavior
+ * as the historical boolean `sendEmail`, but the Resend message id is no
+ * longer discarded and failures carry a bounded class instead of `false`.
+ * Never throws.
+ */
+export async function sendEmailWithReceipt({
+  to,
+  subject,
+  text,
+  html,
+  from = FROM_EMAIL,
+  attachments,
+  headers,
+}: SendEmailArgs): Promise<EmailSendReceipt> {
   if (!resend) {
     console.warn("[email] Skipping send – RESEND_API_KEY not configured")
-    return false
+    return { ok: false, errorClass: "PROVIDER_NOT_CONFIGURED" }
   }
 
   try {
@@ -84,17 +107,22 @@ export async function sendEmail({
       }))
     }
     if (headers) payload.headers = headers
-    const { error } = await resend.emails.send(payload)
+    const { data, error } = await resend.emails.send(payload)
     if (error) {
       console.error("[email] Resend provider error")
-      return false
+      return { ok: false, errorClass: "PROVIDER_ERROR" }
     }
     console.log(`[email] Sent: "${subject}"`)
-    return true
+    return { ok: true, providerMessageId: data?.id ?? null }
   } catch {
     console.error("[email] Exception sending")
-    return false
+    return { ok: false, errorClass: "SEND_EXCEPTION" }
   }
+}
+
+/** Backward-compatible boolean adapter — every existing caller is preserved. */
+export async function sendEmail(args: SendEmailArgs): Promise<boolean> {
+  return (await sendEmailWithReceipt(args)).ok
 }
 
 // ── Appeal-packet emails (shared across T1/T2/T3/T4 packet fulfillment) ────────
@@ -240,20 +268,29 @@ export async function sendNewOrderAlert(args: {
   return sendEmail({ to: OPS_EMAIL, subject, text, html })
 }
 
-export async function sendOrderConfirmation(args: {
+type OrderConfirmationArgs = {
   tier: string
   customerEmail: string
   customerName?: string
   address?: string
   amountPaid: number
-}): Promise<boolean> {
+}
+
+/** Backward-compatible boolean adapter — existing callers are preserved. */
+export async function sendOrderConfirmation(args: OrderConfirmationArgs): Promise<boolean> {
+  return (await sendOrderConfirmationWithReceipt(args)).ok
+}
+
+export async function sendOrderConfirmationWithReceipt(
+  args: OrderConfirmationArgs,
+): Promise<EmailSendReceipt> {
   const { tier, customerEmail, customerName, address, amountPaid } = args
   if (heldTier(tier)) {
     // Confirming a held tier is the worst of the two failures: it tells a
     // customer their purchase is in hand and sets them waiting on a fulfilment
     // step that will not happen, against a deadline that is running.
     console.error(`[email] Refusing order confirmation for held tier "${tier}"`)
-    return false
+    return { ok: false, errorClass: "HELD_TIER_REFUSED" }
   }
   const tierLabels: Record<string, string> = {
     T1: "DIY Starter",
@@ -289,7 +326,7 @@ export async function sendOrderConfirmation(args: {
       <p style="color:#6b7280;font-size:13px;">— OverTaxed IL</p>
     </div>
   `
-  return sendEmail({ to: customerEmail, subject, text, html })
+  return sendEmailWithReceipt({ to: customerEmail, subject, text, html })
 }
 
 function escapeHtml(v: string): string {
