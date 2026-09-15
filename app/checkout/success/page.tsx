@@ -73,7 +73,7 @@ export default async function CheckoutSuccessPage({ searchParams }: Props) {
           <div className="space-y-3">
             <p className="text-gray-600">
               We received your payment and will be in touch within{" "}
-              <strong>24 hours</strong> to get started on your appeal.
+              <strong>one business day</strong> to get started on your appeal.
             </p>
             <p className="text-gray-500 text-sm">
               You&apos;ll receive a confirmation email with next steps. Keep an eye
