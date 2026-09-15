@@ -12,6 +12,9 @@ import { join } from "node:path"
 import PacketPage, { metadata } from "@/app/packet/page"
 import { PacketForm } from "@/app/packet/packet-form"
 
+import { PrivateDocumentBoundary } from "@/components/analytics/private-document-boundary"
+jest.mock("next/navigation", () => ({ usePathname: () => "/packet" }))
+
 const CODE = "Zm9vYmFyYmF6cXV1eGNvcmdlZ3JhdWx0Z2FycGx5Z2g"
 const PDF = new Uint8Array([0x25, 0x50, 0x44, 0x46])
 
@@ -191,7 +194,7 @@ describe("the page is private, accessible, and works on a small screen", () => {
   })
 
   it("renders a labelled input with a live status region", () => {
-    render(<PacketPage />)
+    render(<PrivateDocumentBoundary><PacketPage /></PrivateDocumentBoundary>)
     const input = screen.getByLabelText(/one-time code/i)
     expect(input).toHaveAttribute("autocomplete", "off")
     expect(input).toHaveAttribute("spellcheck", "false")
@@ -201,7 +204,7 @@ describe("the page is private, accessible, and works on a small screen", () => {
   })
 
   it("lays out fluidly rather than at a fixed desktop width", () => {
-    const { container } = render(<PacketPage />)
+    const { container } = render(<PrivateDocumentBoundary><PacketPage /></PrivateDocumentBoundary>)
     const main = container.querySelector("main")!
     // A max-width with responsive padding and a full-width control: usable at
     // 320px and not stretched across a desktop monitor.
@@ -212,7 +215,7 @@ describe("the page is private, accessible, and works on a small screen", () => {
   })
 
   it("tells the customer the code is never in a link and never asked for by reply", () => {
-    render(<PacketPage />)
+    render(<PrivateDocumentBoundary><PacketPage /></PrivateDocumentBoundary>)
     expect(screen.getByText(/never put the code in a link/i)).toBeInTheDocument()
   })
 })
