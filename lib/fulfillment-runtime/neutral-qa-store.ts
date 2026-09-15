@@ -34,9 +34,9 @@ const contextSql = (orderId:string) => Prisma.sql`
  q."payment_binding_sha256" AS "reviewPaymentSha256",q."property_binding_fingerprint" AS "reviewPropertyFingerprint",
  q."policy_version" AS "reviewPolicyVersion"
  ,q."reviewer_week_start" AS "reviewWeekStart",q."started_at" AS "reviewStartedAt"
- FROM "ot_neutral_report_reservation" r JOIN "ot_order" o ON o."id"=r."order_id"
- LEFT JOIN "ot_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId"
- LEFT JOIN "ot_settlement_reversal" x ON x."payment_intent"=b."payment_intent"
+ FROM "ot_neutral_report_reservation" r JOIN "ot_neutral_runtime_order" o ON o."id"=r."order_id"
+ LEFT JOIN "ot_neutral_runtime_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId"
+ LEFT JOIN "ot_neutral_runtime_settlement_reversal" x ON x."payment_intent"=b."payment_intent"
  LEFT JOIN "ot_neutral_qa_review" q ON q."reservation_id"=r."id"
  WHERE r."order_id"=${orderId}`
 
@@ -117,10 +117,10 @@ export async function decideNeutralQaReview(input:{orderId:string;reviewerKey:st
     const decision=decideNeutralQa({decision:input.decision,minutesSpent:timing.minutes,reasonCode:input.reasonCode,reservationStatus:row.reservationStatus,currentStatus:row.reviewStatus,weeklyDecisions:counts[0]?.n??0})
     if (!decision.ok) return decision
     const changed=decision.status==="APPROVED"
-      ? await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_qa_review" q SET "status"='APPROVED',"minutes_spent"=${timing.minutes},"reason_code"=${input.reasonCode},"decided_at"=clock_timestamp(),"updated_at"=clock_timestamp() WHERE q."id"=${row.reviewId} AND q."reviewer_key"=${input.reviewerKey} AND q."status" IN ('PENDING','IN_REVIEW') AND EXISTS (SELECT 1 FROM "ot_order" o JOIN "ot_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId" WHERE o."id"=q."order_id" AND o."status"='PAID' AND o."tier"='T2' AND NOT EXISTS (SELECT 1 FROM "ot_settlement_reversal" x WHERE x."payment_intent"=b."payment_intent"))`)
+      ? await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_qa_review" q SET "status"='APPROVED',"minutes_spent"=${timing.minutes},"reason_code"=${input.reasonCode},"decided_at"=clock_timestamp(),"updated_at"=clock_timestamp() WHERE q."id"=${row.reviewId} AND q."reviewer_key"=${input.reviewerKey} AND q."status" IN ('PENDING','IN_REVIEW') AND EXISTS (SELECT 1 FROM "ot_neutral_runtime_order" o JOIN "ot_neutral_runtime_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId" WHERE o."id"=q."order_id" AND o."status"='PAID' AND o."tier"='T2' AND NOT EXISTS (SELECT 1 FROM "ot_neutral_runtime_settlement_reversal" x WHERE x."payment_intent"=b."payment_intent"))`)
       : await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_qa_review" SET "status"=${decision.status}::"OTNeutralQaStatus","minutes_spent"=${timing.minutes},"reason_code"=${input.reasonCode},"decided_at"=clock_timestamp(),"updated_at"=clock_timestamp() WHERE "id"=${row.reviewId} AND "reviewer_key"=${input.reviewerKey} AND "status" IN ('PENDING','IN_REVIEW')`)
     if(changed!==1 && decision.status==="APPROVED") {
-      const held=await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_qa_review" q SET "status"='HELD',"minutes_spent"=${timing.minutes},"reason_code"='PAYMENT_REVERSED',"decided_at"=clock_timestamp(),"updated_at"=clock_timestamp() WHERE q."id"=${row.reviewId} AND q."status" IN ('PENDING','IN_REVIEW') AND EXISTS (SELECT 1 FROM "ot_order" o JOIN "ot_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId" JOIN "ot_settlement_reversal" x ON x."payment_intent"=b."payment_intent" WHERE o."id"=q."order_id")`)
+      const held=await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_qa_review" q SET "status"='HELD',"minutes_spent"=${timing.minutes},"reason_code"='PAYMENT_REVERSED',"decided_at"=clock_timestamp(),"updated_at"=clock_timestamp() WHERE q."id"=${row.reviewId} AND q."status" IN ('PENDING','IN_REVIEW') AND EXISTS (SELECT 1 FROM "ot_neutral_runtime_order" o JOIN "ot_neutral_runtime_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId" JOIN "ot_neutral_runtime_settlement_reversal" x ON x."payment_intent"=b."payment_intent" WHERE o."id"=q."order_id")`)
       if(held===1)return {ok:false as const,blocker:"PAYMENT_NOT_AUTHORITATIVE"}
     }
     if(changed!==1) return {ok:false as const,blocker:"QA_CONFLICT"}

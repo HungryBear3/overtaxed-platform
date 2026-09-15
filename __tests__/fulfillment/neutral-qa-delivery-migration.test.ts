@@ -54,4 +54,13 @@ describe("neutral QA/delivery migration authority", () => {
     expect(sql).toContain("provider_receipt_id\" ~ '^re_[A-Za-z0-9]{8,64}$'")
     expect(sql).not.toMatch(/stripe.*refund/i)
   })
+
+  it("removes shared-commerce access in favor of neutral-only projections",()=>{
+    const constrained=fs.readFileSync(path.join(process.cwd(),"prisma/migrations/20260915230000_constrain_ot_neutral_runtime_commerce_reads/migration.sql"),"utf8")
+    expect(constrained).toContain('REVOKE ALL ON TABLE "ot_order", "ot_payment_binding", "ot_settlement_reversal"')
+    expect(constrained).toContain('CREATE VIEW "ot_neutral_runtime_order"')
+    expect(constrained).toContain("policyVersion' = 'ot-neutral-records-report/2026-09-15'")
+    expect(constrained).toContain('JOIN "ot_neutral_report_reservation" r ON r."order_id" = b."order_id"')
+    expect(constrained).not.toContain('GRANT SELECT ON TABLE "ot_order"')
+  })
 })
