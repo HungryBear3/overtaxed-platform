@@ -1,4 +1,8 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import {
+  NEUTRAL_RUNTIME_FEATURE_ACTIVATORS,
   PRE_MIGRATION_COMMAND,
   PRISMA_MIGRATE_DEPLOY_COMMAND,
   runNeutralPreviewMigrationEntrypoint,
@@ -60,19 +64,45 @@ describe("neutral Preview migration entrypoint", () => {
     },
   );
 
-  test.each([
-    ["OT_NEUTRAL_REPORT_CHECKOUT_ENABLED", "true"],
-    ["OT_NEUTRAL_DELIVERY_ENABLED", "1"],
-    ["OT_NEUTRAL_REFUND_QUEUE_ENABLED", "true"],
-  ])("fails closed when feature %s is %s", (name, value) => {
-    const run = jest.fn(() => ({ status: 0 }));
-    expect(() =>
-      runNeutralPreviewMigrationEntrypoint(
-        { ...previewEnv(), [name]: value },
-        run,
-      ),
-    ).toThrow("requires disabled features");
-    expect(run).not.toHaveBeenCalled();
+  test.each(NEUTRAL_RUNTIME_FEATURE_ACTIVATORS)(
+    "fails closed when feature %s has its runtime-active value %s",
+    (name, value) => {
+      const run = jest.fn(() => ({ status: 0 }));
+      expect(() =>
+        runNeutralPreviewMigrationEntrypoint(
+          { ...previewEnv(), [name]: value },
+          run,
+        ),
+      ).toThrow("requires disabled features");
+      expect(run).not.toHaveBeenCalled();
+    },
+  );
+
+  test("guard registry covers every runtime neutral feature switch", () => {
+    const runtimeRoots = ["app", "lib"];
+    const sourceFiles: string[] = [];
+    const visit = (entry: string) => {
+      for (const child of fs.readdirSync(entry, { withFileTypes: true })) {
+        const childPath = path.join(entry, child.name);
+        if (child.isDirectory()) visit(childPath);
+        else if (/\.(?:ts|tsx)$/.test(child.name)) sourceFiles.push(childPath);
+      }
+    };
+    runtimeRoots.forEach(visit);
+
+    const discovered = new Set<string>();
+    for (const file of sourceFiles) {
+      const source = fs.readFileSync(file, "utf8");
+      for (const match of source.matchAll(
+        /OT_NEUTRAL_[A-Z0-9_]+(?:ENABLED|ACTIVE)/g,
+      )) {
+        discovered.add(match[0]);
+      }
+    }
+
+    expect([...discovered].sort()).toEqual(
+      NEUTRAL_RUNTIME_FEATURE_ACTIVATORS.map(([name]) => name).sort(),
+    );
   });
 
   test("stops after a failed migration", () => {
