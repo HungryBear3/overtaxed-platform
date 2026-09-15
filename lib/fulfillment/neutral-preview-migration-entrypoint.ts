@@ -1,0 +1,67 @@
+export type MigrationCommand = {
+  command: string;
+  args: readonly string[];
+};
+
+export type MigrationCommandResult = {
+  status: number | null;
+  error?: Error;
+};
+
+export type MigrationCommandRunner = (
+  command: MigrationCommand,
+) => MigrationCommandResult;
+
+export type PreviewMigrationEnvironment = Record<string, string | undefined>;
+
+export const PRE_MIGRATION_COMMAND: MigrationCommand = {
+  command: "npm",
+  args: ["run", "neutral-report:pre-migration-identity-preflight"],
+};
+
+export const PRISMA_MIGRATE_DEPLOY_COMMAND: MigrationCommand = {
+  command: "npx",
+  args: ["prisma", "migrate", "deploy"],
+};
+
+const neutralFeatureFlags = [
+  "OT_NEUTRAL_REPORT_CHECKOUT_ENABLED",
+  "OT_NEUTRAL_QA_ENABLED",
+  "OT_NEUTRAL_DELIVERY_ENABLED",
+  "OT_NEUTRAL_REPORT_PRIVATE_STORAGE_ENABLED",
+  "OT_NEUTRAL_REFUND_QUEUE_ENABLED",
+  "OT_NEUTRAL_REFUND_VERIFICATION_ENABLED",
+  "OT_NEUTRAL_CUSTOMER_ZIP_STORAGE_ENABLED",
+  "OT_NEUTRAL_CUSTOMER_ZIP_PROMOTION_ENABLED",
+  "OT_NEUTRAL_CHECKOUT_RECONCILIATION_ENABLED",
+] as const;
+
+function succeeded(result: MigrationCommandResult): boolean {
+  return !result.error && result.status === 0;
+}
+
+export function runNeutralPreviewMigrationEntrypoint(
+  env: PreviewMigrationEnvironment,
+  run: MigrationCommandRunner,
+): void {
+  if (env.VERCEL_ENV !== "preview") {
+    throw new Error("Neutral migration entrypoint is restricted to Preview");
+  }
+
+  const enabledFlag = neutralFeatureFlags.find(
+    (name) => env[name] === "true" || env[name] === "1",
+  );
+  if (enabledFlag) {
+    throw new Error("Neutral migration entrypoint requires disabled features");
+  }
+
+  const preflight = run(PRE_MIGRATION_COMMAND);
+  if (!succeeded(preflight)) {
+    throw new Error("PRE-MIGRATION identity proof failed");
+  }
+
+  const migration = run(PRISMA_MIGRATE_DEPLOY_COMMAND);
+  if (!succeeded(migration)) {
+    throw new Error("Prisma migrate deploy failed");
+  }
+}
