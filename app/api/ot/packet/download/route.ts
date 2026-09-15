@@ -115,6 +115,8 @@ async function readBoundedBody(request: NextRequest): Promise<BoundedBody> {
  * between a support ticket and a mystery.
  */
 function refusal(blocker: PacketDownloadRefusal): NextResponse {
+  if (blocker === "CAPABILITY_SPENT_REISSUE_REQUIRED")
+    return json({ ok: false, code: "REISSUE_REQUIRED", message: "This download attempt could not be completed. Contact support for a replacement code." }, 409)
   if (blocker === "CAPABILITY_EXPIRED") return json({ ok: false, code: "EXPIRED" }, 410)
   if (blocker === "CAPABILITY_REVOKED") return json({ ok: false, code: "REVOKED" }, 410)
   if (blocker === "CAPABILITY_EXHAUSTED" || blocker === "CAPABILITY_USE_NOT_CLAIMED")
