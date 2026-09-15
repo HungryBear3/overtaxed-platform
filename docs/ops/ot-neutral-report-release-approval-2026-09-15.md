@@ -28,14 +28,14 @@
 
 ## Verification
 
-- Full Jest at remediated head: 4,074 passed, 80 skipped; 202 suites passed and 7 native suites skipped because no test database URLs were supplied.
+- Full Jest after PRE-MIGRATION remediation: 4,093 passed, 80 skipped; 203 suites passed and 7 native suites skipped because no test database URLs were supplied.
 - Fulfillment suite after Phase 3: 1,910 passed; native suites excluded without test URLs.
 - Focused final delivery/security: 314 passed; terminal security closure 183 passed.
 - TypeScript: passed (`tsc --noEmit`).
 - Production build: passed, 144 static pages generated.
 - Fresh PostgreSQL 18: all 34 migrations applied from zero.
 - Four identities proved: migration, normal app, neutral repository, neutral delivery.
-- Disposable-local migration preflight: passed before PR creation. Preview migration preflight has **not** run because the four separate Preview credentials and durable Preview database marker have not been provisioned.
+- Disposable-local post-migration grant/RLS preflight: passed before PR creation. The separate Preview **PRE-MIGRATION identity/marker preflight** and the post-migration grant/RLS preflight have **not** run against Preview because the four separate Preview credentials and durable Preview database marker have not been provisioned.
 - Native Phase 2 and Phase 3 journeys: 2/2 passed with `--detectOpenHandles`.
 - Synthetic owner journey: paid binding → QA → ZIP promotion → capability → POST download; exact ZIP hash/members and one-use exhaustion passed.
 - Playwright production server: 12/12 passed across desktop Chrome and iPhone viewport; no horizontal overflow or application errors.
@@ -47,6 +47,9 @@
 - Migration preflight now connects through all four required credentials: `DIRECT_URL`, `DATABASE_URL`, `OT_NEUTRAL_DATABASE_URL`, and `OT_NEUTRAL_DELIVERY_DATABASE_URL`.
 - All four connections must resolve to one database name and one durable database-comment marker with schema `ot.database-environment.v1`, purpose `ot-neutral-report`, environment `preview`, `isolated: true`, `production: false`, and a UUID instance id. Hostnames are intentionally ignored so direct and pooler endpoints can identify the same database safely.
 - Hostile tests prove fail-closed behavior for missing/malformed markers, Production and contradictory markers, non-isolated databases, wrong purpose, invalid instance ids, and mismatched database names or instance ids.
+- A separate `neutral-report:pre-migration-identity-preflight` now runs **before any `prisma migrate` command**. It uses only PostgreSQL catalog/identity queries, so it does not require neutral tables, group roles, or migrations to exist. All four URLs must connect as the exact roles declared in their credentials; `current_user` and `session_user` must both match that declared role; all four roles must be distinct; all four must resolve to the same explicitly isolated non-Production Preview marker; the migration role must have schema and role-migration authority; and the app, neutral repository, and neutral delivery roles must be non-superuser, non-BYPASSRLS, non-CREATEROLE, and unable to create in `public`.
+- The existing `neutral-report:migration-preflight` remains a separate **post-migration** check. It proves installed neutral tables, exact group-role membership, grants, ownership, RLS, and denied mutations after migrations and restricted memberships have been applied.
+- PRE-MIGRATION hostile tests reject duplicate or aliased identities, `SET ROLE`/session-role indirection, elevated app/runtime/delivery privileges, insufficient migration authority, database/marker divergence, Production markers, malformed/role-less credentials, and non-PostgreSQL URLs. Focused evidence: `npx jest __tests__/fulfillment/neutral-preview-database-marker.test.ts __tests__/fulfillment/neutral-preview-pre-migration.test.ts --runInBand` → 28/28 passed; `npm run type-check` → passed.
 
 ## Migration hashes
 
@@ -62,7 +65,7 @@ All neutral flags remain fail-closed. Required protected configuration includes 
 
 ## Current gate
 
-Code review remediation, focused tests, the full Jest suite, type-check, and production build are green. The database phase is intentionally **blocked** until separate Preview-only credentials exist for the migration owner, normal app, neutral repository, and neutral delivery identities. Do not reuse Production credentials or a Production database. Once those protected Preview credentials exist, rerun the hardened preflight before any synthetic database smoke.
+Code review remediation, focused tests, the full Jest suite, type-check, and production build are green. The database phase is intentionally **blocked** until separate Preview-only credentials exist for the migration owner, normal app, neutral repository, and neutral delivery identities. Do not reuse Production credentials or a Production database. Once those protected Preview credentials exist, run the PRE-MIGRATION identity/marker preflight before any migration. After migrations and restricted grants, run the existing post-migration grant/RLS preflight before any synthetic database smoke.
 
 ## Requested approval — next gate only
 
@@ -71,8 +74,10 @@ Approve:
 1. Push the reviewed remediation to PR #47 and run CI/independent review on its exact head.
 2. Keep the automatic Preview features disabled.
 3. Separately provision and protect the four Preview-only database credentials and durable database marker.
-4. Only after credential provisioning, apply the three migrations to that isolated Preview database using its privileged migration identity.
-5. Grant the Preview app, neutral repository, and neutral delivery logins their exact restricted role memberships.
-6. Run hardened Preview preflight, synthetic checkout/QA/download smokes, desktop/mobile browser checks, and deployment file tracing.
+4. Run `npm run neutral-report:pre-migration-identity-preflight` with all four protected Preview URLs. Stop on any failure. This is the mandatory evidence gate before any Prisma migration and requires no neutral schema objects.
+5. Only after the PRE-MIGRATION identity/marker preflight passes, apply the three migrations to that isolated Preview database using its privileged migration identity.
+6. Grant the Preview app, neutral repository, and neutral delivery logins their exact restricted role memberships.
+7. Run `npm run neutral-report:migration-preflight` as the post-migration grant/RLS proof. Stop on any failure.
+8. Only after both preflights pass in order, run synthetic checkout/QA/download smokes, desktop/mobile browser checks, and deployment file tracing.
 
 This approval does **not** authorize Production migration/deployment, feature activation, live charges, customer contact, email delivery, refunds, marketing, or real orders. Those remain a separate gate after Preview evidence.
