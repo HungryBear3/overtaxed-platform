@@ -3,6 +3,7 @@ import Link from "next/link"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { getAnonymousGaIdentifiersForRequest } from "@/lib/analytics/ga4"
+import { getApprovedAttributionCodesForRequest } from "@/lib/attribution/client-codes"
 import { isClientPreviewStubMode } from "@/lib/marketing/preview-gate-client"
 
 /**
@@ -101,6 +102,10 @@ export default function CheckoutPage({ initialPlan = "diy" }: { initialPlan?: Pl
     setError(null)
     try {
       const gaIdentifiers = getAnonymousGaIdentifiersForRequest()
+      // Code references from the server-approved registry only — never a raw
+      // UTM value, a referrer, or a free-text label. Empty registry means this
+      // is `{}`, and the server re-validates whatever it does carry.
+      const attributionCodes = getApprovedAttributionCodesForRequest()
       const res = await fetch("/api/checkout/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -117,6 +122,7 @@ export default function CheckoutPage({ initialPlan = "diy" }: { initialPlan?: Pl
           ...(showNoticeForm && noticeDate && noticeAddress
             ? { reassessmentNoticeDate: noticeDate, reassessmentNoticeAddress: noticeAddress }
             : {}),
+          ...attributionCodes,
           ...gaIdentifiers,
         }),
       })
