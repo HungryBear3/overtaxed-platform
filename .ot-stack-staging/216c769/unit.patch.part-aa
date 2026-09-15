@@ -1,0 +1,600 @@
+diff --git a/__tests__/acceptance/page-route-governance.test.tsx b/__tests__/acceptance/page-route-governance.test.tsx
+index f218d8d..5f94e82 100644
+--- a/__tests__/acceptance/page-route-governance.test.tsx
++++ b/__tests__/acceptance/page-route-governance.test.tsx
+@@ -29,7 +29,10 @@
+  *   robots-disallowed       `/dashboard /properties /appeals /account /admin
+  *                           /auth` are authenticated and excluded from indexing
+  *                           by `app/robots.ts`, which this file reads rather
+- *                           than assumes.
++ *                           than assumes. `/packet` joins them as a private
++ *                           transactional surface — excluded from indexing for
++ *                           the same reason, though authorized by a pasted
++ *                           capability rather than by a session.
+  *
+  * Every exclusion is asserted, not assumed, so an exclusion cannot quietly grow
+  * into a hiding place.
+@@ -140,7 +143,15 @@ describe("the route set is derived from what Next serves", () => {
+       dynamic: DYNAMIC_ROUTES.length,
+       authenticated: AUTHENTICATED.length,
+       crawlable: CRAWLABLE.length,
+-    }).toEqual({ all: 58, dynamic: 11, authenticated: 20, crawlable: 27 })
++      // 58 → 59 and 20 → 21: `/packet` was added as a private transactional
++      // surface where a customer redeems a one-time code. It is excluded from
++      // indexing by `app/robots.ts`, so it lands in the non-crawlable bucket and
++      // the crawlable count is unchanged. Note the bucket is named
++      // `authenticated` for its original members: `/packet` is deliberately NOT
++      // session-authenticated, because an OT order is anonymous and there is no
++      // account to authenticate. What authorizes it is the pasted capability,
++      // checked by `/api/ot/packet/download`, not a session.
++    }).toEqual({ all: 59, dynamic: 11, authenticated: 21, crawlable: 27 })
+   })
+ 
+   it("classifies a route handler as not a page", () => {
+@@ -161,7 +172,7 @@ describe("the route set is derived from what Next serves", () => {
+   })
+ 
+   it("takes the disallowed prefixes from robots.ts rather than assuming them", () => {
+-    expect(DISALLOWED).toEqual(["/account", "/admin", "/appeals", "/auth", "/dashboard", "/properties"])
++    expect(DISALLOWED).toEqual(["/account", "/admin", "/appeals", "/auth", "/dashboard", "/packet", "/properties"])
+     for (const route of AUTHENTICATED) {
+       expect({ route, disallowed: isDisallowed(route) }).toEqual({ route, disallowed: true })
+     }
+diff --git a/__tests__/fulfillment/delivery-callback-schema-and-wiring.test.ts b/__tests__/fulfillment/delivery-callback-schema-and-wiring.test.ts
+new file mode 100644
+index 0000000..13d47d0
+--- /dev/null
++++ b/__tests__/fulfillment/delivery-callback-schema-and-wiring.test.ts
+@@ -0,0 +1,248 @@
++/** @jest-environment node */
++
++import { existsSync, readFileSync, readdirSync } from "node:fs"
++import { join } from "node:path"
++
++const ROOT = process.cwd()
++const SCHEMA = readFileSync(join(ROOT, "prisma/schema.prisma"), "utf8")
++const MIGRATION_DIR = "prisma/migrations/20260912160000_add_ot_t2_delivery_callbacks"
++const SQL = readFileSync(join(ROOT, MIGRATION_DIR, "migration.sql"), "utf8")
++
++function model(name: string): string {
++  const start = SCHEMA.indexOf(`model ${name} {`)
++  expect(start).toBeGreaterThan(-1)
++  const end = SCHEMA.indexOf("\n}", start)
++  return SCHEMA.slice(start, end)
++}
++
++describe("the provider-callback log schema", () => {
++  const callback = () => model("OTDeliveryProviderCallback")
++
++  it("dedups on the signed envelope identity", () => {
++    expect(callback()).toMatch(/providerEventId\s+String\s+@map\("provider_event_id"\)/)
++    expect(callback()).toMatch(/@@unique\(\[provider,\s*providerEventId\]\)/)
++  })
++
++  it("keeps the provider message id, which is the only correlation there is", () => {
++    expect(callback()).toMatch(/providerMessageId\s+String\s+@map\("provider_message_id"\)/)
++    expect(callback()).toMatch(/@@index\(\[providerMessageId\]\)/)
++  })
++
++  it("stores a bounded disposition and reason, never a payload or recipient", () => {
++    expect(callback()).toMatch(/disposition\s+String/)
++    expect(callback()).toMatch(/dispositionCode\s+String\?\s+@map\("disposition_code"\)/)
++    expect(callback()).toMatch(/reasonCode\s+String\?\s+@map\("reason_code"\)/)
++    expect(callback()).not.toMatch(/payload|recipient|subject|body|rawEvent|capability/i)
++  })
++
++  it("keeps the binding nullable, because an early event has nothing to bind to", () => {
++    expect(callback()).toMatch(/fulfillmentId\s+String\?\s+@map\("fulfillment_id"\)/)
++    expect(callback()).toMatch(/attemptNumber\s+Int\?\s+@map\("attempt_number"\)/)
++    expect(callback()).toMatch(/resolvedAt\s+DateTime\?\s+@map\("resolved_at"\)/)
++  })
++
++  it("bounds replay so an unresolvable row cannot be retried forever", () => {
++    expect(callback()).toMatch(/replayCount\s+Int\s+@default\(0\)\s+@map\("replay_count"\)/)
++  })
++
++  it("deliberately has NO cascade to ot_fulfillment", () => {
++    // A cascade would delete the record of what a provider said about an order
++    // at the moment that order row goes away — the evidence a dispute needs.
++    expect(callback()).not.toMatch(/@relation\(/)
++    expect(SQL).not.toMatch(
++      /ALTER TABLE "ot_delivery_provider_callback"[\s\S]*?FOREIGN KEY/,
++    )
++  })
++})
++
++describe("the attempt/capability association", () => {
++  const attempt = () => model("OTDeliveryAttempt")
++
++  it("records which credential an attempt handed out, and only one per capability", () => {
++    expect(attempt()).toMatch(
++      /downloadCapabilityId\s+String\?\s+@unique\s+@map\("download_capability_id"\)/,
++    )
++    expect(attempt()).toMatch(
++      /downloadCapability\s+OTPacketDownloadCapability\?\s+@relation\([\s\S]*?onDelete:\s*NoAction/,
++    )
++  })
++
++  it("is nullable, because an attempt is durable before its capability exists", () => {
++    expect(attempt()).toMatch(/downloadCapabilityId\s+String\?/)
++    expect(SQL).toMatch(/ADD COLUMN "download_capability_id" TEXT;/)
++    expect(SQL).not.toMatch(/"download_capability_id" TEXT NOT NULL/)
++  })
++
++  it("is reachable from the capability it names", () => {
++    expect(model("OTPacketDownloadCapability")).toMatch(
++      /deliveryAttempt\s+OTDeliveryAttempt\?/,
++    )
++  })
++})
++
++describe("the migration is additive and discoverable", () => {
++  it("ships as one timestamped directory Prisma will find", () => {
++    expect(existsSync(join(ROOT, MIGRATION_DIR, "migration.sql"))).toBe(true)
++    expect(readdirSync(join(ROOT, "prisma/migrations"))).toContain(
++      "20260912160000_add_ot_t2_delivery_callbacks",
++    )
++  })
++
++  it("creates exactly one table and adds exactly one column", () => {
++    expect([...SQL.matchAll(/CREATE TABLE /g)]).toHaveLength(1)
++    expect(SQL).toContain('CREATE TABLE "ot_delivery_provider_callback"')
++    expect([...SQL.matchAll(/ADD COLUMN /g)]).toHaveLength(1)
++  })
++
++  it("destroys, retypes and backfills nothing", () => {
++    expect(SQL).not.toMatch(/\bDROP\b|\bTRUNCATE\b|\bALTER COLUMN\b/i)
++    expect(SQL).not.toMatch(/^\s*(INSERT|UPDATE|DELETE)\s/im)
++  })
++
++  it("touches no settlement or payment table", () => {
++    expect(SQL).not.toMatch(/ALTER TABLE "ot_order"/)
++    expect(SQL).not.toMatch(/"stripe_event"|"Invoice"|"User"/)
++  })
++
++  it("enforces the callback invariants in the database, not only in code", () => {
++    expect(SQL).toMatch(/"disposition" IN \('APPLIED', 'UNMATCHED', 'REFUSED'\)/)
++    // A bounded, uppercase-only reason: free provider text cannot be stored.
++    expect(SQL).toMatch(/"reason_code" IS NULL OR "reason_code" ~ '\^\[A-Z_\]\{1,64\}\$'/)
++    expect(SQL).toMatch(/"disposition_code" IS NULL OR "disposition_code" ~ '\^\[A-Z_\]\{1,64\}\$'/)
++    // An APPLIED row that points at nothing would be a lie.
++    expect(SQL).toMatch(/"disposition" <> 'APPLIED'/)
++    // A callback can never claim an attempt without naming its fulfillment.
++    expect(SQL).toMatch(/"attempt_number" IS NULL OR "fulfillment_id" IS NOT NULL/)
++    expect(SQL).toMatch(/"replay_count" >= 0 AND "replay_count" <= 1000/)
++    expect(SQL).toContain('CREATE UNIQUE INDEX "ot_delivery_provider_callback_provider_event_key"')
++    expect(SQL).toContain('CREATE UNIQUE INDEX "ot_delivery_attempt_download_capability_id_key"')
++  })
++
++  it("keeps the new evidence out of reach of every API role", () => {
++    expect(SQL).toMatch(/ENABLE ROW LEVEL SECURITY/)
++    expect(SQL).toMatch(/REVOKE ALL ON TABLE "ot_delivery_provider_callback" FROM PUBLIC/)
++    expect(SQL).toMatch(/ARRAY\['anon', 'authenticated'\]/)
++  })
++})
++
++describe("every new switch is its own strict, default-off gate", () => {
++  const flags = readFileSync(join(ROOT, "lib/fulfillment/flag.ts"), "utf8")
++
++  it.each([
++    "OT_T2_DELIVERY_ADAPTER_ENABLED",
++    "OT_T2_DELIVERY_CALLBACK_ENABLED",
++    "OT_T2_DELIVERY_RECOVERY_ENABLED",
++  ])("%s exists and is compared with strict equality", (name) => {
++    expect(flags).toContain(name)
++  })
++
++  it("has no truthy fallback that could enable anything", () => {
++    expect(flags).not.toMatch(/===\s*"true"\s*\|\||\?\?\s*true/)
++    expect([...flags.matchAll(/=== "true"/g)].length).toBeGreaterThanOrEqual(10)
++  })
++})
++
++describe("runtime wiring guards", () => {
++  const read = (path: string) => readFileSync(join(ROOT, path), "utf8")
++
++  /**
++   * Source with comments removed.
++   *
++   * Several of these modules document at length the exact things they promise
++   * not to do — "never a correlation tag", "never `request.json()`". A scan that
++   * could not tell prose from code would force them to stop explaining
++   * themselves, so the checks below run over code only. Line comments are
++   * stripped only when they start a line, so a `https://` inside a string is
++   * untouched.
++   */
++  const codeOnly = (source: string) =>
++    source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
++  const sources = {
++    callbackRoute: read("app/api/ot/webhooks/resend/route.ts"),
++    callbackService: read("lib/fulfillment-runtime/t2-resend-events.ts"),
++    callbackStore: read("lib/fulfillment-runtime/provider-callback-store.ts"),
++    adapter: read("lib/fulfillment-runtime/t2-resend-adapter.ts"),
++    issuance: read("lib/fulfillment-runtime/t2-packet-issuance.ts"),
++    orchestrator: read("lib/fulfillment-runtime/t2-delivery-orchestrator.ts"),
++    scheduling: read("lib/fulfillment-runtime/t2-artifact-scheduling.ts"),
++    recoveryRoute: read("app/api/admin/evidence/[orderId]/delivery-recovery/route.ts"),
++    pureCallbacks: read("lib/fulfillment/provider-callbacks.ts"),
++    packetPage: read("app/packet/page.tsx"),
++    packetForm: read("app/packet/packet-form.tsx"),
++  }
++
++  it("the T2 callback path never reuses the outreach secret or verifier", () => {
++    for (const key of ["callbackRoute", "callbackService", "callbackStore"] as const) {
++      expect(sources[key]).not.toContain("OUTREACH_RESEND_WEBHOOK_SECRET")
++      expect(sources[key]).not.toContain("lib/outreach")
++      expect(sources[key]).not.toContain("verifyResendSignature")
++    }
++    expect(sources.callbackService).toContain("OT_T2_RESEND_WEBHOOK_SECRET")
++  })
++
++  it("the T2 verifier has no environment exception and no HMAC fallback", () => {
++    // The outreach verifier permits an absent secret outside production and
++    // carries a legacy raw-HMAC path. Neither may exist here.
++    expect(sources.callbackService).not.toMatch(/NODE_ENV/)
++    expect(sources.callbackService).not.toMatch(/createHmac|timingSafeEqual|resend-signature/)
++  })
++
++  it("the callback route reads raw bytes, never a parsed body", () => {
++    expect(sources.callbackRoute).toContain("request.text()")
++    expect(codeOnly(sources.callbackRoute)).not.toContain("request.json()")
++  })
++
++  it("no correlation tag is ever sent or read", () => {
++    // The provider is not required to echo one and this system never assumes it
++    // does. Correlation is the provider message id, and only that.
++    for (const key of ["adapter", "pureCallbacks", "callbackStore", "callbackService"] as const) {
++      expect(codeOnly(sources[key])).not.toMatch(/\btags\b/)
++    }
++  })
++
++  it("the pure callback layer reaches no database, framework or provider", () => {
++    expect(sources.pureCallbacks).not.toMatch(
++      /@\/lib\/db|@prisma\/client|next\/server|from "resend"|from "svix"/,
++    )
++  })
++
++  it("the issuer has no public entry point", () => {
++    // Nothing reachable by order id, email, or session may mint a capability.
++    expect(sources.issuance).not.toMatch(/NextRequest|NextResponse|getSession/)
++    const routes = join(ROOT, "app/api/ot")
++    const names = readdirSync(routes)
++    expect(names).toEqual(expect.arrayContaining(["packet", "webhooks"]))
++    expect(names).not.toContain("issue")
++  })
++
++  it("delivery runs only after a BOUND artifact and a released lease", () => {
++    expect(sources.scheduling).toMatch(/workflowOutcome === "BOUND"/)
++    expect(sources.scheduling).toMatch(/released === true/)
++    // The adapter is injected, never imported by the orchestrator itself.
++    expect(codeOnly(sources.orchestrator)).not.toContain("t2-resend-adapter")
++  })
++
++  it("the customer surface builds no URL that could carry the code", () => {
++    for (const key of ["packetPage", "packetForm"] as const) {
++      expect(sources[key]).not.toMatch(/searchParams|URLSearchParams|\?capability=|#/)
++    }
++  })
++
++  it("the recovery route reuses the existing admin authentication and CSRF pattern", () => {
++    const manualReview = read("app/api/admin/evidence/[orderId]/manual-review/route.ts")
++    for (const fragment of [
++      'getSession(request)',
++      'user?.role !== "ADMIN"',
++      'const origin = request.headers.get("origin")',
++      'new URL(request.url).origin',
++      'request.headers.get("content-type") !== "application/json"',
++    ]) {
++      expect(manualReview).toContain(fragment)
++      expect(sources.recoveryRoute).toContain(fragment)
++    }
++  })
++
++  it("the recovery route exposes no resend or regenerate action", () => {
++    expect(sources.recoveryRoute).not.toMatch(/RESEND|REGENERATE|RETRY_DELIVERY/)
++  })
++})
+diff --git a/__tests__/fulfillment/idempotency.test.ts b/__tests__/fulfillment/idempotency.test.ts
+index 254d6e6..129005a 100644
+--- a/__tests__/fulfillment/idempotency.test.ts
++++ b/__tests__/fulfillment/idempotency.test.ts
+@@ -7,6 +7,10 @@
+  */
+ import { buildFulfillmentIdempotencyKey } from "@/lib/fulfillment/idempotency";
+ import type { FulfillmentIdempotencyContract } from "@/lib/fulfillment/idempotency";
++import {
++  T2_PRODUCER_VERSION,
++  T2_TEMPLATE_VERSION,
++} from "@/lib/fulfillment/t2-artifact-content";
+ 
+ const base: FulfillmentIdempotencyContract = {
+   orderId: "ord_abc",
+@@ -189,3 +193,35 @@ describe("buildFulfillmentIdempotencyKey", () => {
+     ).toBe(true);
+   });
+ });
++
++describe("the key grammar admits the version strings the real producer emits", () => {
++  it("accepts the production generator and template versions", () => {
++    // Regression: `t2-evidence-packet/1.2.0` was rejected, so every delivery
++    // dispatch for a genuinely produced packet failed closed with
++    // INVALID_GENERATOR_VERSION. A packet could be generated and bound, and then
++    // never sent.
++    const result = buildFulfillmentIdempotencyKey({
++      ...base,
++      generatorVersion: T2_PRODUCER_VERSION,
++      templateVersion: T2_TEMPLATE_VERSION,
++    })
++    expect(result.ok).toBe(true)
++    if (result.ok) expect(result.key).toContain(T2_PRODUCER_VERSION)
++  })
++
++  it("still refuses the three structural characters in a version", () => {
++    for (const generatorVersion of ["gen:1", "gen=1", "gen~1"]) {
++      expect(
++        buildFulfillmentIdempotencyKey({ ...base, generatorVersion }),
++      ).toEqual({ ok: false, reason: "INVALID_GENERATOR_VERSION" })
++    }
++  })
++
++  it("keeps slashed versions unambiguous through the length prefix", () => {
++    // Two different versions that would collide under naive concatenation.
++    const a = buildFulfillmentIdempotencyKey({ ...base, generatorVersion: "a/b", templateVersion: "c" })
++    const b = buildFulfillmentIdempotencyKey({ ...base, generatorVersion: "a", templateVersion: "b/c" })
++    expect(a.ok && b.ok).toBe(true)
++    expect(a.ok && b.ok && a.key).not.toBe(b.ok && b.key)
++  })
++})
+diff --git a/__tests__/fulfillment/packet-page.test.tsx b/__tests__/fulfillment/packet-page.test.tsx
+new file mode 100644
+index 0000000..83b6f4d
+--- /dev/null
++++ b/__tests__/fulfillment/packet-page.test.tsx
+@@ -0,0 +1,249 @@
++/**
++ * The `/packet` redemption surface.
++ *
++ * The code is the whole authorization, so most of what is asserted here is about
++ * where the value does NOT go: not into storage, not into the URL, not into an
++ * analytics call, and not left sitting in the input after the request resolves.
++ */
++import "@testing-library/jest-dom"
++import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
++import { readFileSync } from "node:fs"
++import { join } from "node:path"
++import PacketPage, { metadata } from "@/app/packet/page"
++import { PacketForm } from "@/app/packet/packet-form"
++
++const CODE = "Zm9vYmFyYmF6cXV1eGNvcmdlZ3JhdWx0Z2FycGx5Z2g"
++const PDF = new Uint8Array([0x25, 0x50, 0x44, 0x46])
++
++/**
++ * A minimal stand-in for the fetch Response the form consumes. jsdom does not
++ * provide the global, and the form only ever reads `ok`, `json()` and `blob()`.
++ */
++function fakeResponse(
++  init: { ok: boolean; body?: unknown } = { ok: true },
++): Response {
++  return {
++    ok: init.ok,
++    async json() { return init.body ?? {} },
++    async blob() { return new Blob([PDF], { type: "application/pdf" }) },
++  } as unknown as Response
++}
++
++const originalFetch = global.fetch
++const originalCreate = URL.createObjectURL
++const originalRevoke = URL.revokeObjectURL
++
++let fetchMock: jest.Mock
++let created: string[]
++let revoked: string[]
++let clicked: HTMLAnchorElement[]
++
++beforeEach(() => {
++  created = []
++  revoked = []
++  clicked = []
++  fetchMock = jest.fn(async () => fakeResponse({ ok: true }))
++  global.fetch = fetchMock as never
++  URL.createObjectURL = jest.fn(() => {
++    const href = `blob:packet-${created.length}`
++    created.push(href)
++    return href
++  }) as never
++  URL.revokeObjectURL = jest.fn((href: string) => { revoked.push(href) }) as never
++  jest
++    .spyOn(HTMLAnchorElement.prototype, "click")
++    .mockImplementation(function (this: HTMLAnchorElement) { clicked.push(this) })
++  localStorage.clear()
++  sessionStorage.clear()
++})
++
++afterEach(() => {
++  jest.restoreAllMocks()
++  global.fetch = originalFetch
++  URL.createObjectURL = originalCreate
++  URL.revokeObjectURL = originalRevoke
++})
++
++/** Paste a value into the field, the way a customer does from their email. */
++function paste(value: string): HTMLInputElement {
++  const input = screen.getByLabelText(/one-time code/i) as HTMLInputElement
++  fireEvent.change(input, { target: { value } })
++  return input
++}
++
++async function submit(code: string) {
++  render(<PacketForm />)
++  const input = paste(code)
++  await act(async () => {
++    fireEvent.click(screen.getByRole("button", { name: /download packet/i }))
++  })
++  return { input }
++}
++
++describe("the code is POSTed and never navigated", () => {
++  it("submits a JSON body to the download route with no credentials", async () => {
++    await submit(CODE)
++    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
++    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
++    expect(url).toBe("/api/ot/packet/download")
++    expect(init.method).toBe("POST")
++    expect(init.credentials).toBe("omit")
++    expect(init.referrerPolicy).toBe("no-referrer")
++    expect(init.cache).toBe("no-store")
++    expect(JSON.parse(String(init.body))).toEqual({ capability: CODE })
++    // The value is in the body and nowhere in the URL.
++    expect(url).not.toContain(CODE)
++  })
++
++  it("never writes the code to browser storage or the URL", async () => {
++    await submit(CODE)
++    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
++    expect(JSON.stringify(localStorage)).not.toContain(CODE)
++    expect(JSON.stringify(sessionStorage)).not.toContain(CODE)
++    expect(window.location.href).not.toContain(CODE)
++    expect(window.location.search).toBe("")
++    expect(window.location.hash).toBe("")
++    expect(document.cookie).not.toContain(CODE)
++  })
++
++  it("downloads the bytes and revokes the object URL immediately", async () => {
++    await submit(CODE)
++    await waitFor(() => expect(clicked).toHaveLength(1))
++    expect(clicked[0].download).toBe("overtaxed-appeal-evidence.pdf")
++    expect(created).toHaveLength(1)
++    // The page keeps no handle on the packet bytes.
++    expect(revoked).toEqual(created)
++    expect(document.querySelector(`a[href="${created[0]}"]`)).toBeNull()
++  })
++
++  it("clears the input once the request resolves", async () => {
++    const { input } = await submit(CODE)
++    await waitFor(() => expect((input as HTMLInputElement).value).toBe(""))
++    await screen.findByText(/your packet has downloaded/i)
++  })
++})
++
++describe("refusals are coarse and the input is still cleared", () => {
++  it.each([
++    ["EXPIRED", /expired/i],
++    ["REVOKED", /no longer active/i],
++    ["EXHAUSTED", /maximum number of times/i],
++    ["TEMPORARILY_UNAVAILABLE", /try again in a few minutes/i],
++    ["NOT_AVAILABLE", /not valid/i],
++    ["SOMETHING_NEW", /something went wrong/i],
++  ])("shows a message for %s", async (code, pattern) => {
++    fetchMock.mockResolvedValue(fakeResponse({ ok: false, body: { ok: false, code } }))
++    const { input } = await submit(CODE)
++    await screen.findByText(pattern)
++    expect((input as HTMLInputElement).value).toBe("")
++    expect(created).toEqual([])
++  })
++
++  it("never echoes the submitted code back into the page", async () => {
++    fetchMock.mockResolvedValue(
++      fakeResponse({ ok: false, body: { ok: false, code: "NOT_AVAILABLE" } }),
++    )
++    await submit(CODE)
++    await screen.findByText(/not valid/i)
++    expect(document.body.textContent).not.toContain(CODE)
++  })
++
++  it("clears the input when the network itself fails", async () => {
++    fetchMock.mockRejectedValue(new Error("offline"))
++    const { input } = await submit(CODE)
++    await screen.findByText(/could not be completed/i)
++    expect((input as HTMLInputElement).value).toBe("")
++  })
++})
++
++describe("the form refuses to submit anything malformed", () => {
++  it.each(["", "short", `${CODE}=`, `${CODE}x`])(
++    "keeps the button disabled for %j",
++    async (value) => {
++      render(<PacketForm />)
++      if (value) paste(value)
++      expect(screen.getByRole("button", { name: /download packet/i })).toBeDisabled()
++      expect(fetchMock).not.toHaveBeenCalled()
++    },
++  )
++
++  it("cannot be double-submitted into spending two uses", async () => {
++    let release: (value: Response) => void = () => {}
++    fetchMock.mockImplementation(
++      () => new Promise<Response>((resolve) => { release = resolve }),
++    )
++    render(<PacketForm />)
++    paste(CODE)
++    const button = screen.getByRole("button", { name: /download packet/i })
++    await act(async () => { fireEvent.click(button) })
++    expect(button).toBeDisabled()
++    await act(async () => { fireEvent.click(button) })
++    expect(fetchMock).toHaveBeenCalledTimes(1)
++    await act(async () => { release(fakeResponse({ ok: true })) })
++    await waitFor(() => expect(clicked).toHaveLength(1))
++  })
++})
++
++describe("the page is private, accessible, and works on a small screen", () => {
++  it("is marked noindex and no-referrer", () => {
++    expect(metadata.robots).toMatchObject({ index: false, follow: false })
++    expect(metadata.referrer).toBe("no-referrer")
++  })
++
++  it("renders a labelled input with a live status region", () => {
++    render(<PacketPage />)
++    const input = screen.getByLabelText(/one-time code/i)
++    expect(input).toHaveAttribute("autocomplete", "off")
++    expect(input).toHaveAttribute("spellcheck", "false")
++    const status = screen.getByRole("status")
++    expect(status).toHaveAttribute("aria-live", "polite")
++    expect(input).toHaveAttribute("aria-describedby", status.id)
++  })
++
++  it("lays out fluidly rather than at a fixed desktop width", () => {
++    const { container } = render(<PacketPage />)
++    const main = container.querySelector("main")!
++    // A max-width with responsive padding and a full-width control: usable at
++    // 320px and not stretched across a desktop monitor.
++    expect(main.className).toMatch(/max-w-/)
++    expect(main.className).toMatch(/sm:/)
++    expect(screen.getByRole("button", { name: /download packet/i }).className).toMatch(/w-full/)
++    expect(screen.getByLabelText(/one-time code/i).className).toMatch(/w-full/)
++  })
++
++  it("tells the customer the code is never in a link and never asked for by reply", () => {
++    render(<PacketPage />)
++    expect(screen.getByText(/never put the code in a link/i)).toBeInTheDocument()
++  })
++})
++
++describe("nothing on this surface observes what is typed", () => {
++  const source = readFileSync(join(process.cwd(), "app/packet/packet-form.tsx"), "utf8")
++  const page = readFileSync(join(process.cwd(), "app/packet/page.tsx"), "utf8")
++
++  // Comments are stripped first: the module's own documentation names the very
++  // APIs it promises not to use, and a scan that could not tell the two apart
++  // would force the file to stop explaining itself.
++  const code = source
++    .replace(/\/\*[\s\S]*?\*\//g, "")
++    .replace(/^\s*\/\/.*$/gm, "")
++
++  it.each([
++    "localStorage",
++    "sessionStorage",
++    "document.cookie",
++    "gtag",
++    "dataLayer",
++    "@vercel/analytics",
++    "Sentry",
++    "router.push",
++    "window.location",
++    "history.pushState",
++  ])("the form never references %s", (forbidden) => {
++    expect(code).not.toContain(forbidden)
++  })
++
++  it("the page ships no third-party widget or analytics import", () => {
++    expect(page).not.toMatch(/@vercel\/analytics|gtag|Script from "next\/script"/)
