@@ -1,3 +1,4 @@
+import { trustedPaymentAuthority } from "./payment-authority";
 /**
  * The real T2 delivery adapter: a plain-code packet handoff over Resend.
  *
@@ -214,6 +215,7 @@ export function createPrismaT2SendContextReader(
            AND t."attempt_number" = ${input.attemptNumber}
           WHERE f."id" = ${input.fulfillmentId}
             AND f."order_id" = ${input.orderId}
+            AND ${trustedPaymentAuthority("o")}
         `,
       );
       return rows[0] ?? null;

@@ -14,6 +14,7 @@
 import type { DeliverySendOutcome } from "@/lib/fulfillment/delivery-orchestration"
 import {
   buildPacketHandoffMessage,
+  createPrismaT2SendContextReader,
   createT2ResendAdapter,
   resolveT2ResendAdapterConfig,
   type T2MailProvider,
@@ -458,5 +459,19 @@ describe("authority is re-asserted after issuance and before the provider call",
     await expect(h.send()).resolves.toMatchObject({ kind: "ACCEPTED" })
     expect(h.sent).toHaveLength(1)
     expect(h.revoked).toEqual([])
+  })
+})
+
+ describe("production provider context payment gate", () => {
+  it.each([true, false])("only returns a bound context (authority=%s)", async (bound) => {
+    const reader = createPrismaT2SendContextReader({
+      async $queryRaw<T>(query: import("@prisma/client").Prisma.Sql): Promise<T> {
+        expect(query.sql).toContain('b.order_id = "o"."id"')
+        expect(query.sql).toContain('b.session_id = "o"."stripeSessionId"')
+        expect(query.sql).toContain('r.payment_intent = b.payment_intent')
+        return (bound ? [context()] : []) as T
+      },
+    })
+    expect(await reader.load(SEND)).toEqual(bound ? context() : null)
   })
 })
