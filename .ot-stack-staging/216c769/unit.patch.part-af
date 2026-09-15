@@ -1,0 +1,600 @@
++import {
++  issueT2PacketCapability,
++  T2_PACKET_CAPABILITY_MAX_USES,
++  T2_PACKET_CAPABILITY_TTL_SECONDS,
++} from "@/lib/fulfillment-runtime/t2-packet-issuance"
++
++jest.mock("server-only", () => ({}))
++
++const ORDER_ID = "ord_paid_t2"
++const FULFILLMENT_ID = "ful_t2"
++const PIN = "09000000000000"
++const ADDRESS = "123 Main St"
++const NOW = "2026-09-12T12:00:00.000Z"
++
++const bytes = Buffer.from("%PDF-1.7 bound evidence\n")
++const sha = computeArtifactSha256(bytes)
++const locator = contentAddressedT2ArtifactLocator(sha)
++const fingerprint = computePropertyBindingFingerprint({
++  orderId: ORDER_ID,
++  propertyPin: PIN,
++  propertyAddress: ADDRESS,
++})
++
++type Capability = {
++  id: string
++  capabilityHash: string
++  fulfillmentId: string
++  revokedAt: Date | null
++  revokedReasonCode: string | null
++}
++
++type World = {
++  now: string
++  capabilities: Capability[]
++  attempts: Array<{
++    attemptNumber: number
++    provider: string
++    downloadCapabilityId: string | null
++  }>
++  locks: string[]
++  rolledBack: boolean
++}
++
++function world(patch: Partial<World> = {}): World {
++  return {
++    now: NOW,
++    capabilities: [],
++    attempts: [{ attemptNumber: 1, provider: "resend", downloadCapabilityId: null }],
++    locks: [],
++    rolledBack: false,
++    ...patch,
++  }
++}
++
++function fakeClient(
++  state: World,
++  hooks: { afterInsert?: () => void } = {},
++): PacketDownloadClient {
++  const tx: PacketDownloadTransaction = {
++    async $queryRaw<T>(query: Prisma.Sql): Promise<T> {
++      const sql = query.sql
++      if (sql.includes("clock_timestamp()")) return [{ now: state.now }] as T
++      if (sql.includes('FROM "ot_order"')) {
++        state.locks.push("order")
++        return [{ id: ORDER_ID, tier: "T2", status: "PAID", propertyPin: PIN, propertyAddress: ADDRESS }] as T
++      }
++      if (sql.includes('FROM "ot_fulfillment_artifact"'))
++        return [{
++          id: "art_v1", fulfillmentId: FULFILLMENT_ID, version: 1,
++          artifactSha256: sha, byteSize: bytes.byteLength, storageLocator: locator,
++          sourceOrderId: ORDER_ID, propertyBindingFingerprint: fingerprint,
++        }] as T
++      if (sql.includes('FROM "ot_fulfillment"')) {
++        if (sql.includes("FOR UPDATE")) state.locks.push("fulfillment")
++        return [{ id: FULFILLMENT_ID, orderId: ORDER_ID, kind: "T2_APPEAL_EVIDENCE", status: "DELIVERY_PENDING" }] as T
++      }
++      if (sql.includes('FROM "ot_delivery_attempt"')) {
++        state.locks.push("attempt")
++        const number = query.values[1]
++        return state.attempts.filter((a) => a.attemptNumber === number) as T
++      }
++      throw new Error(`unexpected query: ${sql}`)
++    },
++    async $executeRaw(query: Prisma.Sql): Promise<number> {
++      const sql = query.sql
++      if (sql.includes('INSERT INTO "ot_packet_download_capability"')) {
++        const [id, capabilityHash] = query.values as [string, string]
++        state.capabilities.push({
++          id, capabilityHash, fulfillmentId: FULFILLMENT_ID,
++          revokedAt: null, revokedReasonCode: null,
++        })
++        hooks.afterInsert?.()
++        return 1
++      }
++      if (sql.includes('UPDATE "ot_packet_download_capability"')) {
++        const [revokedAt, reason, , exceptId] = query.values as [Date, string, string, string]
++        let revoked = 0
++        for (const capability of state.capabilities) {
++          if (capability.id !== exceptId && capability.revokedAt === null) {
++            capability.revokedAt = revokedAt
++            capability.revokedReasonCode = reason
++            revoked += 1
++          }
++        }
++        return revoked
++      }
++      if (sql.includes('UPDATE "ot_delivery_attempt"')) {
++        const [capabilityId, , attemptNumber] = query.values as [string, string, number]
++        const attempt = state.attempts.find(
++          (a) => a.attemptNumber === attemptNumber && a.downloadCapabilityId === null,
++        )
++        if (!attempt) return 0
++        attempt.downloadCapabilityId = capabilityId
++        return 1
++      }
++      throw new Error(`unexpected execute: ${sql}`)
++    },
++  }
++  return {
++    async $transaction<T>(work: (t: PacketDownloadTransaction) => Promise<T>): Promise<T> {
++      const snapshot = structuredClone(state)
++      try {
++        return await work(tx)
++      } catch (error) {
++        Object.assign(state, snapshot, { rolledBack: true })
++        throw error
++      }
++    },
++  }
++}
++
++const PRIOR = process.env.OT_T2_PACKET_DOWNLOAD_ENABLED
++beforeEach(() => { process.env.OT_T2_PACKET_DOWNLOAD_ENABLED = "true" })
++afterAll(() => {
++  if (PRIOR === undefined) delete process.env.OT_T2_PACKET_DOWNLOAD_ENABLED
++  else process.env.OT_T2_PACKET_DOWNLOAD_ENABLED = PRIOR
++})
++
++const issue = (state: World, patch: Record<string, unknown> = {}) =>
++  issueT2PacketCapability(
++    { fulfillmentId: FULFILLMENT_ID, attemptNumber: 1, provider: "resend", ...patch },
++    { store: createPrismaPacketDownloadStore(fakeClient(state)) },
++  )
++
++describe("the value is high-entropy, and only its digest is stored", () => {
++  it("mints a well-formed capability and persists the hash, never the value", async () => {
++    const state = world()
++    const result = await issue(state)
++    expect(result.ok).toBe(true)
++    if (!result.ok) throw new Error("unreachable")
++
++    expect(isValidPacketDownloadCapability(result.issuance.value)).toBe(true)
++    const digest = hashPacketDownloadCapability(result.issuance.value)
++    expect(state.capabilities).toHaveLength(1)
++    expect(state.capabilities[0].capabilityHash).toBe(digest)
++    // The digest is not the value, and the value is nowhere in the world.
++    expect(state.capabilities[0].capabilityHash).not.toBe(result.issuance.value)
++    expect(JSON.stringify(state)).not.toContain(result.issuance.value)
++  })
++
++  it("produces a different value every time", async () => {
++    const values = new Set<string>()
++    for (let i = 0; i < 25; i++) {
++      const state = world()
++      const result = await issue(state)
++      if (result.ok) values.add(result.issuance.value)
++    }
++    expect(values.size).toBe(25)
++  })
++
++  it("fails closed rather than hashing a malformed generated value", async () => {
++    const state = world()
++    await expect(
++      issueT2PacketCapability(
++        { fulfillmentId: FULFILLMENT_ID, attemptNumber: 1, provider: "resend" },
++        {
++          store: createPrismaPacketDownloadStore(fakeClient(state)),
++          randomValue: () => "too-short",
++        },
++      ),
++    ).resolves.toEqual({ ok: false, blocker: "INVALID_CAPABILITY" })
++    expect(state.capabilities).toEqual([])
++  })
++
++  it("carries a bounded lifetime and use budget", () => {
++    expect(T2_PACKET_CAPABILITY_TTL_SECONDS).toBe(7 * 24 * 60 * 60)
++    expect(T2_PACKET_CAPABILITY_MAX_USES).toBe(5)
++  })
++})
++
++describe("issuance is atomic with the attempt binding", () => {
++  it("locks order → fulfillment → attempt", async () => {
++    const state = world()
++    await issue(state)
++    expect(state.locks).toEqual(["order", "fulfillment", "attempt"])
++  })
++
++  it("records the capability on the exact attempt", async () => {
++    const state = world()
++    const result = await issue(state)
++    if (!result.ok) throw new Error("unreachable")
++    expect(state.attempts[0].downloadCapabilityId).toBe(result.issuance.capabilityId)
++  })
++
++  it("supersedes every older live credential for the fulfillment", async () => {
++    const state = world({
++      capabilities: [
++        { id: "cap_old", capabilityHash: "b".repeat(64), fulfillmentId: FULFILLMENT_ID, revokedAt: null, revokedReasonCode: null },
++      ],
++    })
++    await issue(state)
++    expect(state.capabilities[0]).toMatchObject({
++      id: "cap_old",
++      revokedReasonCode: "SUPERSEDED",
++    })
++    expect(state.capabilities[1].revokedAt).toBeNull()
++  })
++
++  it("refuses a second issuance against the same attempt, and writes nothing", async () => {
++    const state = world()
++    await issue(state)
++    const capabilities = state.capabilities.length
++    // A retry after an ambiguous send. The first value is deliberately not
++    // recoverable, so a second mint could only mail a DIFFERENT code — a second
++    // delivery wearing the first one's identity.
++    await expect(issue(state)).resolves.toEqual({
++      ok: false,
++      blocker: "CAPABILITY_BINDING_MISMATCH",
++    })
++    expect(state.capabilities).toHaveLength(capabilities)
++  })
++
++  it("rolls the capability back when the binding loses a race", async () => {
++    const state = world()
++    // A concurrent issuer claims the attempt after this one passed its
++    // pre-check and inserted its row, but before the conditional binding write.
++    const store = createPrismaPacketDownloadStore(
++      fakeClient(state, {
++        afterInsert: () => {
++          state.attempts[0].downloadCapabilityId = "cap_concurrent"
++        },
++      }),
++    )
++    await expect(
++      issueT2PacketCapability(
++        { fulfillmentId: FULFILLMENT_ID, attemptNumber: 1, provider: "resend" },
++        { store },
++      ),
++    ).resolves.toEqual({ ok: false, blocker: "CAPABILITY_BINDING_MISMATCH" })
++    // The whole transaction unwound, so the loser handed out nothing: both
++    // callers cannot end up with a live value for one attempt.
++    expect(state.rolledBack).toBe(true)
++    expect(state.capabilities).toEqual([])
++  })
++
++  it("refuses an attempt recorded against another provider", async () => {
++    const state = world({
++      attempts: [{ attemptNumber: 1, provider: "postmark", downloadCapabilityId: null }],
++    })
++    await expect(issue(state)).resolves.toEqual({
++      ok: false,
++      blocker: "CAPABILITY_BINDING_MISMATCH",
++    })
++    expect(state.capabilities).toEqual([])
++  })
++
++  it("refuses an attempt number that does not exist", async () => {
++    const state = world()
++    await expect(issue(state, { attemptNumber: 7 })).resolves.toEqual({
++      ok: false,
++      blocker: "CAPABILITY_BINDING_MISMATCH",
++    })
++    expect(state.capabilities).toEqual([])
++  })
++})
++
++describe("a disabled deployment mints nothing", () => {
++  it.each([undefined, "", "false", "TRUE", "1", "true "])(
++    "flag %j opens no transaction",
++    async (flag) => {
++      if (flag === undefined) delete process.env.OT_T2_PACKET_DOWNLOAD_ENABLED
++      else process.env.OT_T2_PACKET_DOWNLOAD_ENABLED = flag
++      const state = world()
++      const client = fakeClient(state)
++      const transaction = jest.spyOn(client, "$transaction")
++      await expect(
++        issueT2PacketCapability(
++          { fulfillmentId: FULFILLMENT_ID, attemptNumber: 1, provider: "resend" },
++          { store: createPrismaPacketDownloadStore(client) },
++        ),
++      ).resolves.toEqual({ ok: false, blocker: "FLAG_DISABLED" })
++      expect(transaction).not.toHaveBeenCalled()
++    },
++  )
++})
+diff --git a/__tests__/fulfillment/t2-resend-adapter.test.ts b/__tests__/fulfillment/t2-resend-adapter.test.ts
+new file mode 100644
+index 0000000..ad439a9
+--- /dev/null
++++ b/__tests__/fulfillment/t2-resend-adapter.test.ts
+@@ -0,0 +1,385 @@
++/**
++ * @jest-environment node
++ *
++ * The real provider adapter, driven with a FAKE provider. No credential, no
++ * network, and no message leaves this process.
++ *
++ * The properties under test:
++ *   - it refuses to exist at all without complete, validated configuration;
++ *   - the capability travels as a CODE in the body and never as a URL;
++ *   - a definite rejection revokes the unsent code; an ambiguous one never does;
++ *   - an attempt that already minted a code is never re-minted under the same
++ *     key, and that case reports UNKNOWN rather than "not sent".
++ */
++import type { DeliverySendOutcome } from "@/lib/fulfillment/delivery-orchestration"
++import {
++  buildPacketHandoffMessage,
++  createT2ResendAdapter,
++  resolveT2ResendAdapterConfig,
++  type T2MailProvider,
++  type T2SendContext,
++  type T2SendContextReader,
++} from "@/lib/fulfillment-runtime/t2-resend-adapter"
++
++jest.mock("server-only", () => ({}))
++
++const ORDER_ID = "ord_paid_t2"
++const FULFILLMENT_ID = "ful_t2"
++const SHA = "a".repeat(64)
++const CODE = "Zm9vYmFyYmF6cXV1eGNvcmdlZ3JhdWx0Z2FycGx5Z2g"
++const KEY = "otf:v1:purpose=DELIVERY:kind=T2_APPEAL_EVIDENCE:order=present.10~ord_paid_t2:tier=T2:attempt=1:sha=" + SHA
++
++const ENV = {
++  OT_T2_DELIVERY_ADAPTER_ENABLED: "true",
++  OT_T2_PACKET_DOWNLOAD_ENABLED: "true",
++  RESEND_API_KEY: "re_test_key_not_a_real_credential",
++  OT_T2_DELIVERY_FROM: "OverTaxed IL <support@overtaxed-il.com>",
++  NEXT_PUBLIC_APP_URL: "https://www.overtaxed-il.com",
++}
++
++const SEND = {
++  orderId: ORDER_ID,
++  fulfillmentId: FULFILLMENT_ID,
++  attemptNumber: 1,
++  artifactVersion: 1,
++  artifactSha256: SHA,
++  idempotencyKey: KEY,
++}
++
++function context(patch: Partial<T2SendContext> = {}): T2SendContext {
++  return {
++    recipient: "owner@example.com",
++    orderStatus: "PAID",
++    orderTier: "T2",
++    fulfillmentOrderId: ORDER_ID,
++    fulfillmentKind: "T2_APPEAL_EVIDENCE",
++    fulfillmentStatus: "DELIVERY_PENDING",
++    attemptCount: 1,
++    currentArtifactVersion: 1,
++    currentArtifactSha256: SHA,
++    attemptProvider: "resend",
++    attemptIdempotencyKey: KEY,
++    attemptCapabilityId: null,
++    ...patch,
++  }
++}
++
++type Harness = {
++  sent: Array<{ message: Record<string, string>; idempotencyKey: string }>
++  issued: unknown[]
++  revoked: unknown[]
++  send(patch?: Partial<T2SendContext>): Promise<DeliverySendOutcome>
++}
++
++function harness(
++  options: {
++    response?: { id: string | null; errorName: string | null }
++    throws?: boolean
++    hangs?: boolean
++    issuanceBlocker?: string
++  } = {},
++): Harness {
++  const sent: Harness["sent"] = []
++  const issued: unknown[] = []
++  const revoked: unknown[] = []
++  let current = context()
++
++  const provider: T2MailProvider = {
++    async send(message, opts) {
++      sent.push({ message: message as unknown as Record<string, string>, idempotencyKey: opts.idempotencyKey })
++      if (options.throws) throw new Error("synthetic provider failure")
++      if (options.hangs) return new Promise(() => {})
++      return options.response ?? { id: "msg_provider_accepted", errorName: null }
++    },
++  }
++  const reader: T2SendContextReader = { async load() { return current } }
++  const issue = (async (input: unknown) => {
++    issued.push(input)
++    if (options.issuanceBlocker)
++      return { ok: false, blocker: options.issuanceBlocker }
++    return {
++      ok: true,
++      issuance: {
++        value: CODE,
++        capabilityId: "cap_1",
++        artifactSha256: SHA,
++        expiresAt: "2026-09-19T12:00:00.000Z",
++        maxUses: 5,
++      },
++    }
++  }) as never
++
++  const adapter = createT2ResendAdapter({
++    env: ENV,
++    provider,
++    reader,
++    issue,
++    revoke: async (input) => {
++      revoked.push(input)
++      return { ok: true, revoked: 1 }
++    },
++    timeoutMs: 25,
++  })
++  if (!adapter) throw new Error("adapter should construct with complete config")
++
++  return {
++    sent,
++    issued,
++    revoked,
++    async send(patch = {}) {
++      current = context(patch)
++      return adapter.send(SEND)
++    },
++  }
++}
++
++describe("the adapter refuses to exist without complete configuration", () => {
++  it("resolves a complete configuration", () => {
++    expect(resolveT2ResendAdapterConfig(ENV)).toEqual({
++      ok: true,
++      config: {
++        apiKey: ENV.RESEND_API_KEY,
++        from: ENV.OT_T2_DELIVERY_FROM,
++        appOrigin: "https://www.overtaxed-il.com",
++      },
++    })
++  })
++
++  it.each([
++    ["OT_T2_DELIVERY_ADAPTER_ENABLED", { OT_T2_DELIVERY_ADAPTER_ENABLED: undefined }],
++    ["OT_T2_DELIVERY_ADAPTER_ENABLED", { OT_T2_DELIVERY_ADAPTER_ENABLED: "TRUE" }],
++    ["OT_T2_PACKET_DOWNLOAD_ENABLED", { OT_T2_PACKET_DOWNLOAD_ENABLED: undefined }],
++    ["RESEND_API_KEY", { RESEND_API_KEY: undefined }],
++    ["RESEND_API_KEY", { RESEND_API_KEY: "short" }],
++    ["OT_T2_DELIVERY_FROM", { OT_T2_DELIVERY_FROM: undefined, RESEND_FROM: undefined }],
++    ["OT_T2_DELIVERY_FROM", { OT_T2_DELIVERY_FROM: "not an address" }],
++    ["OT_T2_DELIVERY_FROM", { OT_T2_DELIVERY_FROM: "a@b.com\nBcc: victim@example.com" }],
++    ["NEXT_PUBLIC_APP_URL", { NEXT_PUBLIC_APP_URL: undefined }],
++    ["NEXT_PUBLIC_APP_URL", { NEXT_PUBLIC_APP_URL: "http://insecure.example.com" }],
++    ["NEXT_PUBLIC_APP_URL", { NEXT_PUBLIC_APP_URL: "https://evil.example.com/path?x=1" }],
++  ])("names %s as missing", (missing, patch) => {
++    expect(resolveT2ResendAdapterConfig({ ...ENV, ...patch })).toEqual({ ok: false, missing })
++  })
++
++  it("never returns an adapter under incomplete configuration", () => {
++    expect(createT2ResendAdapter({ env: { ...ENV, RESEND_API_KEY: undefined } })).toBeNull()
++    // With no adapter the delivery orchestrator makes zero writes, so an
++    // unconfigured deployment cannot manufacture a failed delivery record.
++  })
++
++  it("falls back to the existing transactional sender identity", () => {
++    const resolved = resolveT2ResendAdapterConfig({
++      ...ENV,
++      OT_T2_DELIVERY_FROM: undefined,
++      RESEND_FROM: "OverTaxed IL <support@overtaxed-il.com>",
++    })
++    expect(resolved).toMatchObject({ ok: true })
++  })
++
++  it("never echoes the API key in a refusal", () => {
++    const refusal = resolveT2ResendAdapterConfig({ ...ENV, OT_T2_DELIVERY_FROM: "bad" })
++    expect(JSON.stringify(refusal)).not.toContain(ENV.RESEND_API_KEY)
++  })
++})
++
++describe("the code travels in the body, never in a URL", () => {
++  const message = buildPacketHandoffMessage({
++    appOrigin: "https://www.overtaxed-il.com",
++    code: CODE,
++    expiresAt: "2026-09-19T12:00:00.000Z",
++  })
++
++  it("links a generic /packet page with no token, query or fragment", () => {
++    expect(message.text).toContain("https://www.overtaxed-il.com/packet")
++    expect(message.html).toContain('href="https://www.overtaxed-il.com/packet"')
++    for (const body of [message.text, message.html]) {
++      // Every URL in the message is exactly the generic one.
++      const urls = body.match(/https?:\/\/[^\s"<>]+/g) ?? []
++      expect(urls.length).toBeGreaterThan(0)
++      for (const url of urls) {
++        expect(url).toBe("https://www.overtaxed-il.com/packet")
++        expect(url).not.toContain(CODE)
++        expect(url).not.toContain("?")
++        expect(url).not.toContain("#")
++      }
++    }
++  })
++
++  it("carries no order, fulfillment or attempt identifier", () => {
++    for (const body of [message.text, message.html, message.subject]) {
++      expect(body).not.toContain(ORDER_ID)
++      expect(body).not.toContain(FULFILLMENT_ID)
++      expect(body).not.toContain(SHA)
++    }
++  })
++
++  it("prints the code as plain text so no client turns it into a link", () => {
++    expect(message.text).toContain(`\n${CODE}\n`)
++    expect(message.html).toContain(`>${CODE}<`)
++  })
++
++  it("escapes anything interpolated into the HTML body", () => {
++    const hostile = buildPacketHandoffMessage({
++      appOrigin: "https://www.overtaxed-il.com",
++      code: '"><script>alert(1)</script>',
++      expiresAt: "2026-09-19T12:00:00.000Z",
++    })
++    expect(hostile.html).not.toContain("<script>")
++    expect(hostile.html).toContain("&lt;script&gt;")
++  })
++})
++
++describe("outcomes are reported honestly", () => {
++  it("reports ACCEPTED with the provider message id, and never DELIVERED", async () => {
++    const h = harness()
++    await expect(h.send()).resolves.toEqual({
++      kind: "ACCEPTED",
++      provider: "resend",
++      providerMessageId: "msg_provider_accepted",
++    })
++    expect(h.sent).toHaveLength(1)
++    // The durable delivery key is handed to the provider, so its own retry of
++    // this exact logical send cannot produce a second message.
++    expect(h.sent[0].idempotencyKey).toBe(KEY)
++    expect(h.revoked).toEqual([])
++  })
++
++  it("never returns the capability value to its caller", async () => {
++    const h = harness()
++    const outcome = await h.send()
++    expect(JSON.stringify(outcome)).not.toContain(CODE)
++  })
++
++  it("sends to the address on the authoritative order, never a supplied one", async () => {
++    const h = harness()
++    await h.send({ recipient: "designated@example.com" })
++    expect(h.sent[0].message.to).toBe("designated@example.com")
++  })
++
++  it.each([
++    ["a definite validation error", "validation_error", "MANUAL_REVIEW"],
++    ["a suppressed recipient", "suppressed_recipient", "INVALID_RECIPIENT"],
++    ["a quota refusal", "daily_quota_exceeded", "RATE_LIMITED"],
++    ["a rejected credential", "invalid_api_Key", "MANUAL_REVIEW"],
++  ])("treats %s as REJECTED and revokes the unsent code", async (_label, errorName, reasonCode) => {
++    const h = harness({ response: { id: null, errorName } })
++    await expect(h.send()).resolves.toEqual({
++      kind: "REJECTED",
++      provider: "resend",
++      reasonCode,
++    })
++    expect(h.revoked).toEqual([
++      { fulfillmentId: FULFILLMENT_ID, reasonCode: "SEND_REJECTED" },
++    ])
++  })
++
++  it.each([
++    ["an unrecognized error name", { response: { id: null, errorName: "internal_server_error" } }],
++    ["an error name nobody has seen", { response: { id: null, errorName: "brand_new_failure" } }],
++    ["a response with neither id nor error", { response: { id: null, errorName: null } }],
++    ["a thrown call", { throws: true }],
++    ["a call that never returns", { hangs: true }],
++  ])("treats %s as UNKNOWN and revokes nothing", async (_label, options) => {
++    const h = harness(options)
++    await expect(h.send()).resolves.toEqual({ kind: "UNKNOWN", provider: "resend" })
++    // The mail may be in flight, so the code stays live — the holder may yet
++    // receive it, and claiming "not sent" here could authorize a duplicate.
++    expect(h.revoked).toEqual([])
++  })
++})
++
++describe("authority is re-verified against freshly read state", () => {
++  it.each([
++    ["a refunded order", { orderStatus: "REFUNDED" }],
++    ["a non-T2 order", { orderTier: "T3" }],
++    ["a foreign fulfillment", { fulfillmentOrderId: "ord_other" }],
++    ["a foreign kind", { fulfillmentKind: "OTHER" }],
++    ["a fulfillment with no send in flight", { fulfillmentStatus: "ARTIFACT_READY" }],
++    ["a superseded attempt", { attemptCount: 2 }],
++    ["another provider's attempt", { attemptProvider: "postmark" }],
