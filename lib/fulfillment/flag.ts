@@ -15,6 +15,8 @@ export const OT_T2_MANUAL_REVIEW_CONTROL_FLAG =
 export const OT_T2_ARTIFACT_BINDING_FLAG = "OT_T2_ARTIFACT_BINDING_ENABLED"
 export const OT_T2_ARTIFACT_ORCHESTRATION_FLAG =
   "OT_T2_ARTIFACT_ORCHESTRATION_ENABLED"
+export const OT_T2_PACKET_DOWNLOAD_FLAG = "OT_T2_PACKET_DOWNLOAD_ENABLED"
+export const OT_T2_DELIVERY_FLAG = "OT_T2_DELIVERY_ENABLED"
 
 export function t2FulfillmentEvidenceWritesEnabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
@@ -69,4 +71,35 @@ export function t2ArtifactOrchestrationEnabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
   return env[OT_T2_ARTIFACT_ORCHESTRATION_FLAG] === "true"
+}
+
+/**
+ * Independent default-off gate for the secure customer packet DOWNLOAD surface —
+ * capability issuance and the authenticated read that spends one.
+ *
+ * Separate from binding and orchestration on purpose. Those answer "may a packet
+ * exist"; this answers "may a customer fetch one". A deployment that is already
+ * producing artifacts must still be able to keep the customer-facing route shut
+ * while issuance, revocation and audit behaviour are reviewed on real data.
+ */
+export function t2PacketDownloadEnabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return env[OT_T2_PACKET_DOWNLOAD_FLAG] === "true"
+}
+
+/**
+ * Independent default-off gate for DELIVERY orchestration — claiming a lease,
+ * persisting a delivery attempt, and handing it to a transactional adapter.
+ *
+ * Being exactly "true" is necessary and deliberately not sufficient: delivery
+ * additionally requires an explicitly injected provider adapter, and no adapter
+ * ships in this slice (see lib/fulfillment-runtime/t2-delivery-orchestrator.ts).
+ * Two independent things must therefore be true before anything can be sent, and
+ * neither can be satisfied by an environment variable alone.
+ */
+export function t2DeliveryEnabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return env[OT_T2_DELIVERY_FLAG] === "true"
 }
