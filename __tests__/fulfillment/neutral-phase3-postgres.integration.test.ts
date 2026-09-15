@@ -106,6 +106,8 @@ native("neutral report Phase 3 native PostgreSQL acceptance", () => {
     expect(await recordNeutralRefundReceipt({id:refundId!,actor:"admin:native",providerReceiptId:"bad"})).toEqual({ok:false,blocker:"INVALID_INPUT"})
     expect(await claimNeutralRefund({id:refundId!,actor:"admin:native"})).toMatchObject({ok:true,status:"REFUND_CLAIMED",refundInitiated:false,attemptKey:expect.any(String)})
     expect(await recordNeutralRefundReceipt({id:refundId!,actor:"admin:native",providerReceiptId:"re_nativeReceipt123"})).toMatchObject({ok:true,status:"RECEIPT_RECORDED_PENDING_VERIFICATION",refundInitiated:false})
+    expect(await verifyNeutralRefundReceipt({id:refundId!,actor:"admin:native",retrieve:async()=>{throw new Error("synthetic transient outage")}})).toMatchObject({ok:false,status:"RECEIPT_RECORDED_PENDING_VERIFICATION",retryable:true,refundInitiated:false})
+    expect((await owner.query(`select status,provider_lookup_attempts,last_provider_lookup_result from ot_neutral_refund_work where id=$1`,[refundId])).rows[0]).toEqual({status:"RECEIPT_RECORDED_PENDING_VERIFICATION",provider_lookup_attempts:1,last_provider_lookup_result:"RETRYABLE_PROVIDER_FAILURE"})
     expect(await verifyNeutralRefundReceipt({id:refundId!,actor:"admin:native",retrieve:async id=>({id,payment_intent:`pi_${ids[26]}`,amount:6900,currency:"usd",status:"succeeded"})})).toMatchObject({ok:true,status:"REFUND_CONFIRMED",refundInitiated:false})
     expect((await owner.query(`select status,provider_receipt_id from ot_neutral_refund_work where id=$1`,[refundId])).rows[0]).toEqual({status:"REFUND_CONFIRMED",provider_receipt_id:"re_nativeReceipt123"})
 
@@ -156,9 +158,14 @@ native("neutral report Phase 3 native PostgreSQL acceptance", () => {
     expect(await exhausted.json()).toEqual({ok:false,code:"EXHAUSTED"})
 
     await expect(delivery.query(`select * from ot_order where false`)).rejects.toThrow()
+    for(const table of ["ot_order","ot_payment_binding","ot_settlement_reversal"]){
+      expect((await runtime.query(`select has_table_privilege(current_user,$1,'SELECT') allowed`,[table])).rows[0]).toEqual({allowed:false})
+      await expect(runtime.query(`select * from ${table} where false`)).rejects.toThrow()
+    }
     await owner.query(`insert into ot_order(id,"stripeSessionId",tier,email,"propertyPin","propertyAddress","amountPaid",status,"createdAt","updatedAt") values('legacy-delivery-probe','cs_legacy','T2','legacy@example.invalid','10000000000001','101 Legacy St',69,'PAID',clock_timestamp(),clock_timestamp())`)
     await owner.query(`insert into ot_fulfillment(id,order_id,kind,status,status_revision,attempt_count,created_at,updated_at) values('legacy-fulfillment-probe','legacy-delivery-probe','T2_APPEAL_EVIDENCE','ARTIFACT_READY',0,0,clock_timestamp(),clock_timestamp())`)
     expect((await delivery.query(`select count(*)::int count from ot_neutral_delivery_order where id='legacy-delivery-probe'`)).rows[0].count).toBe(0)
+    expect((await runtime.query(`select count(*)::int count from ot_neutral_runtime_order where id='legacy-delivery-probe'`)).rows[0].count).toBe(0)
 
     // The refund-required branch never acquires fulfillment, capability, or a
     // downloadable artifact.

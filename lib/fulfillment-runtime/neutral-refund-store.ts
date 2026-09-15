@@ -54,16 +54,21 @@ async function stripeRetrieve(id:string):Promise<ProviderRefund>{
 export async function verifyNeutralRefundReceipt(input:{id:string;actor:string;retrieve?:RefundRetriever}){
   if(!enabled()||!verifyEnabled())return {ok:false as const,blocker:"FLAG_DISABLED"}
   if(!ACTOR.test(input.actor)||!input.id||input.id.length>128)return {ok:false as const,blocker:"INVALID_INPUT"}
-  const row=(await db().$queryRaw<Array<{status:string;orderId:string;receiptId:string;bindingSha:string;sessionId:string|null;paymentIntent:string|null}>>(Prisma.sql`SELECT w."status"::text "status",w."order_id" "orderId",w."provider_receipt_id" "receiptId",w."payment_binding_sha256" "bindingSha",o."stripeSessionId" "sessionId",b."payment_intent" "paymentIntent" FROM "ot_neutral_refund_work" w JOIN "ot_order" o ON o."id"=w."order_id" LEFT JOIN "ot_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId" WHERE w."id"=${input.id}`))[0]
+  const row=(await db().$queryRaw<Array<{status:string;orderId:string;receiptId:string;bindingSha:string;sessionId:string|null;paymentIntent:string|null}>>(Prisma.sql`SELECT w."status"::text "status",w."order_id" "orderId",w."provider_receipt_id" "receiptId",w."payment_binding_sha256" "bindingSha",o."stripeSessionId" "sessionId",b."payment_intent" "paymentIntent" FROM "ot_neutral_refund_work" w JOIN "ot_neutral_runtime_order" o ON o."id"=w."order_id" LEFT JOIN "ot_neutral_runtime_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId" WHERE w."id"=${input.id}`))[0]
   if(!row||row.status!=="RECEIPT_RECORDED_PENDING_VERIFICATION"||!row.receiptId||!row.sessionId||!row.paymentIntent)return {ok:false as const,blocker:"NOT_PENDING_VERIFICATION"}
   const binding=createHash("sha256").update(`neutral-payment/v1\0${row.orderId}\0${row.sessionId}\0${row.paymentIntent}`).digest("hex")
   if(binding!==row.bindingSha)return {ok:false as const,blocker:"PAYMENT_BINDING_DRIFT"}
   let check:{ok:true}|{ok:false;reason:string}
-  try{check=verifyProviderRefund(await (input.retrieve??stripeRetrieve)(row.receiptId),{receiptId:row.receiptId,paymentIntent:row.paymentIntent})}catch{check={ok:false,reason:"PROVIDER_LOOKUP_UNKNOWN"}}
+  try{check=verifyProviderRefund(await (input.retrieve??stripeRetrieve)(row.receiptId),{receiptId:row.receiptId,paymentIntent:row.paymentIntent})}catch{
+    // A provider outage is not evidence that the receipt is invalid. Preserve
+    // the pending state so the same recorded receipt can be safely reverified.
+    await db().$executeRaw(Prisma.sql`UPDATE "ot_neutral_refund_work" SET "provider_lookup_attempts"="provider_lookup_attempts"+1,"last_provider_lookup_at"=clock_timestamp(),"last_provider_lookup_result"='RETRYABLE_PROVIDER_FAILURE',"updated_at"=clock_timestamp() WHERE "id"=${input.id} AND "status"='RECEIPT_RECORDED_PENDING_VERIFICATION'`)
+    return {ok:false as const,blocker:"PROVIDER_LOOKUP_UNKNOWN",status:"RECEIPT_RECORDED_PENDING_VERIFICATION",retryable:true,refundInitiated:false}
+  }
   return db().$transaction(async tx=>{
     await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`neutral-refund:${input.id}`}))::text AS "locked"`)
-    if(!check.ok){await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_refund_work" SET "status"='RECEIPT_VERIFICATION_HELD',"verification_reason"=${check.reason},"verified_at"=clock_timestamp(),"updated_at"=clock_timestamp() WHERE "id"=${input.id} AND "status"='RECEIPT_RECORDED_PENDING_VERIFICATION'`);return {ok:false as const,blocker:check.reason,status:"RECEIPT_VERIFICATION_HELD"}}
-    const changed=await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_refund_work" SET "status"='REFUND_CONFIRMED',"verification_reason"=NULL,"verified_at"=clock_timestamp(),"confirmed_by"=${input.actor},"confirmed_at"=clock_timestamp(),"updated_at"=clock_timestamp() WHERE "id"=${input.id} AND "status"='RECEIPT_RECORDED_PENDING_VERIFICATION'`)
+    if(!check.ok){await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_refund_work" SET "status"='RECEIPT_VERIFICATION_HELD',"verification_reason"=${check.reason},"verified_at"=clock_timestamp(),"provider_lookup_attempts"="provider_lookup_attempts"+1,"last_provider_lookup_at"=clock_timestamp(),"last_provider_lookup_result"='PROVIDER_RESPONSE_RECEIVED',"updated_at"=clock_timestamp() WHERE "id"=${input.id} AND "status"='RECEIPT_RECORDED_PENDING_VERIFICATION'`);return {ok:false as const,blocker:check.reason,status:"RECEIPT_VERIFICATION_HELD"}}
+    const changed=await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_refund_work" SET "status"='REFUND_CONFIRMED',"verification_reason"=NULL,"verified_at"=clock_timestamp(),"provider_lookup_attempts"="provider_lookup_attempts"+1,"last_provider_lookup_at"=clock_timestamp(),"last_provider_lookup_result"='PROVIDER_RESPONSE_RECEIVED',"confirmed_by"=${input.actor},"confirmed_at"=clock_timestamp(),"updated_at"=clock_timestamp() WHERE "id"=${input.id} AND "status"='RECEIPT_RECORDED_PENDING_VERIFICATION'`)
     return changed===1?{ok:true as const,status:"REFUND_CONFIRMED",refundInitiated:false}:{ok:false as const,blocker:"VERIFY_CONFLICT"}
   })
 }

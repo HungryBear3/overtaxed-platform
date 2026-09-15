@@ -20,7 +20,7 @@ describe("neutral QA runtime SQL/concurrency shape",()=>{
 
   it("CASes approval against current paid binding and records reversal holds",()=>{
     expect(qa).toContain('UPDATE "ot_neutral_qa_review" q SET "status"=\'APPROVED\'')
-    expect(qa).toContain('NOT EXISTS (SELECT 1 FROM "ot_settlement_reversal"')
+    expect(qa).toContain('NOT EXISTS (SELECT 1 FROM "ot_neutral_runtime_settlement_reversal"')
     expect(qa).toContain('"status"=\'HELD\'')
     expect(qa).toContain('"reason_code"=\'PAYMENT_REVERSED\'')
   })
