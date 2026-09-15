@@ -7,6 +7,7 @@
 - Actual PR base: `e80ebf9edc5b6f8a848710652badfe83ec4297ab`
 - Terminal-review input head: `ab94a2343384ac679ccf010c92017a69a958b85e`
 - Preview migration entrypoint remediation head: `ee3320272996f3fce93a52b33e54f85d6dd6d1e5`
+- Complete disabled-feature guard implementation head: `b2f221b27590e3fd4758e06fdad5d24aa5dd25e8`
 - Product: **Cook County Assessment Records & Matching Property Report**
 - Price: **$69 USD**
 - Strict automated qualification remains separate, unsigned, and inactive.
@@ -28,7 +29,7 @@
 
 ## Verification
 
-- Full Jest after composed Preview-migration remediation: 4,105 passed, 80 skipped; 204 suites passed and 7 native suites skipped because no test database URLs were supplied.
+- Full Jest after complete disabled-feature guard remediation: 4,113 passed, 80 skipped; 204 suites passed and 7 native suites skipped because no test database URLs were supplied.
 - Fulfillment suite after Phase 3: 1,910 passed; native suites excluded without test URLs.
 - Focused final delivery/security: 314 passed; terminal security closure 183 passed.
 - TypeScript: passed (`tsc --noEmit`).
@@ -52,7 +53,8 @@
 - Operators must not run raw `prisma migrate`, `prisma migrate deploy`, `npx prisma migrate deploy`, `db push`, or any other migration command for this release. The composed entrypoint is mandatory; bypassing it invalidates the Preview evidence.
 - The existing `neutral-report:migration-preflight` remains a separate **post-migration** check. It proves installed neutral tables, exact group-role membership, grants, ownership, RLS, and denied mutations after migrations and restricted memberships have been applied.
 - PRE-MIGRATION hostile tests reject duplicate or aliased identities, `SET ROLE`/session-role indirection, elevated app/runtime/delivery privileges, insufficient migration authority, database/marker divergence, Production markers, malformed/role-less credentials, and non-PostgreSQL URLs. Focused evidence: `npx jest __tests__/fulfillment/neutral-preview-database-marker.test.ts __tests__/fulfillment/neutral-preview-pre-migration.test.ts --runInBand` → 28/28 passed; `npm run type-check` → passed.
-- Composed-entrypoint focused evidence: the entrypoint, identity, and marker suites pass 39/39; full Jest passes 4,105 with only 80 credential-gated native checks skipped; type-check and the 144-page production build pass.
+- The disabled-feature guard exports the complete runtime activation registry and checks each flag against its actual active value. It now includes `OT_NEUTRAL_REPORT_ACTIVE=1` as well as the nine `…ENABLED` switches. A source-discovery assertion scans `app/` and `lib/` for every neutral `…ENABLED` or `…ACTIVE` runtime switch and fails if the guard registry omits one.
+- Composed-entrypoint focused evidence: the entrypoint, identity, and marker suites pass 47/47; full Jest passes 4,113 with only 80 credential-gated native checks skipped; type-check and the 144-page production build pass.
 
 ## Migration hashes
 
@@ -62,7 +64,9 @@
 
 ## Production remains inactive
 
-PR #47 exists and Vercel created an automatic features-disabled Preview for the prior pushed head. No database was provisioned, marked, migrated, or granted; no environment was changed; and no Production migration/deployment, feature activation, live checkout mutation, real order, Stripe call, email, Blob write, delivery, or refund was performed.
+PR #47 exists and Vercel successfully created the automatic features-disabled Preview for implementation head `b2f221b27590e3fd4758e06fdad5d24aa5dd25e8` (deployment `BEBrYfZdmynZwTVKCAacoe8VHD4G`). No database was provisioned, marked, migrated, or granted; no environment was changed; and no Production migration/deployment, feature activation, live checkout mutation, real order, Stripe call, email, Blob write, delivery, or refund was performed.
+
+GitHub deployment record `6461605045` is inert metadata only. Its `environment` label is `production`, but GitHub reports `production_environment: false`, it has no deployment statuses, and no provider performed or recorded a deployment from it. The record was not deleted or altered and is not evidence of a Production provider action.
 
 All neutral flags remain fail-closed. Required protected configuration includes four distinct credential URLs that resolve to the same separately provisioned isolated Preview database. Before migrations, its database object must be explicitly marked with the durable JSON database comment described above. Credentials must use the supported protected-secret flow and are not placed in chat or logs.
 
