@@ -1,3 +1,4 @@
+import { trustedPaymentAuthority } from "./payment-authority";
 /**
  * Transactional store for T2 delivery attempts.
  *
@@ -277,7 +278,7 @@ async function lockedContext(
 ): Promise<{ order: OrderRow | null; summary: SummaryRow | null }> {
   const orders = await tx.$queryRaw<OrderRow[]>(
     Prisma.sql`SELECT "id", "status", "tier", "propertyPin", "propertyAddress"
-               FROM "ot_order" WHERE "id" = ${orderId} FOR UPDATE`,
+               FROM "ot_order" WHERE "id" = ${orderId} AND ${trustedPaymentAuthority()} FOR UPDATE`,
   );
   const order = orders[0] ?? null;
   if (!order) return { order: null, summary: null };
