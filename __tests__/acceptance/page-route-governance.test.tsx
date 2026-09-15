@@ -300,7 +300,7 @@ describe("the neutralized claims are gone and their replacements are live", () =
   it("the homepage replacements are present, and say less", async () => {
     const text = readable(await render("/"))
     expect(text).toContain("A one-page report — your assessed value, your comps, and where every number came from.")
-    expect(text).toContain("Cook County Assessor + Board of Review public records")
+    expect(text).toContain("Cook County Assessor public records")
     expect(text).toContain("Township schedules, as published by the county")
   })
 
