@@ -8,6 +8,7 @@ import { UtmFirstTouchCapture } from "@/components/analytics/utm-first-touch";
 import { AttributionCodeCapture } from "@/components/analytics/attribution-code-capture";
 import { InstrumentationBoundary } from "@/components/analytics/instrumentation-boundary";
 import { isProductionMarketingRuntime } from "@/lib/marketing/preview-gate";
+import { PrivateDocumentBoundary } from "@/components/analytics/private-document-boundary";
 import "./globals.css";
 
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
@@ -73,6 +74,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
+        <PrivateDocumentBoundary>
         {/*
           EVERY instrumentation mount in this layout sits inside
           <InstrumentationBoundary>, which renders nothing on the private
@@ -111,6 +113,7 @@ export default function RootLayout({
           {liveMarketing && <Analytics />}
         </InstrumentationBoundary>
         {children}
+        </PrivateDocumentBoundary>
       </body>
     </html>
   );

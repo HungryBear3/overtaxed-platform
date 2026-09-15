@@ -243,3 +243,45 @@ describe("Sentry never captures a packet body or a callback payload", () => {
     }
   })
 })
+
+
+describe("document isolation across client navigation", () => {
+  // Persistent observer intentionally has NO teardown, like evaluated analytics.
+  it("never mounts the packet form in the public document", async () => {
+    const { PrivateDocumentBoundary, PrivateDocumentGate } = await import("@/components/analytics/private-document-boundary")
+    const { useEffect } = await import("react")
+    const observed: Event[] = []
+    const listener = (event: Event) => observed.push(event)
+    const Observer = () => { useEffect(() => { document.addEventListener("input", listener) }, []); return null }
+    const tree = () => <PrivateDocumentBoundary>
+      <InstrumentationBoundary><Observer /></InstrumentationBoundary>
+      {pathname === "/packet" && <PrivateDocumentGate><input aria-label="private code" /></PrivateDocumentGate>}
+    </PrivateDocumentBoundary>
+    // jsdom cannot navigate; failure to navigate must still leave the form absent.
+    const error = jest.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      const { rerender } = render(tree())
+      document.dispatchEvent(new Event("input"))
+      expect(observed).toHaveLength(1)
+      pathname = "/packet"
+      rerender(tree())
+      expect(screen.queryByLabelText("private code")).toBeNull()
+      document.dispatchEvent(new Event("input"))
+      expect(observed).toHaveLength(2) // unmount did not remove observer
+      expect(screen.getByRole("link", { name: "Continue" }).getAttribute("href")).toBe("/packet")
+    } finally { document.removeEventListener("input", listener); error.mockRestore() }
+  })
+
+  it("permits a cold private document but never reopens it after a public visit", async () => {
+    const { PrivateDocumentBoundary, PrivateDocumentGate } = await import("@/components/analytics/private-document-boundary")
+    const tree = () => <PrivateDocumentBoundary>{pathname === "/packet" && <PrivateDocumentGate><input aria-label="private code" /></PrivateDocumentGate>}</PrivateDocumentBoundary>
+    pathname = "/packet"
+    const { rerender } = render(tree())
+    expect(screen.getByLabelText("private code")).toBeTruthy()
+    pathname = "/pricing"; rerender(tree())
+    pathname = "/packet"
+    const error = jest.spyOn(console, "error").mockImplementation(() => {})
+    try { rerender(tree()); expect(screen.queryByLabelText("private code")).toBeNull() }
+    finally { error.mockRestore() }
+  })
+})
