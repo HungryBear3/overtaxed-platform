@@ -3,8 +3,8 @@
  *
  * The ordering invariant this store exists to enforce: **the attempt is durable
  * before the send happens.** `persistAttempt` inserts the attempt row, its
- * REQUESTED event, and the ARTIFACT_READY/DELAYED → DELIVERY_PENDING transition
- * in one transaction, and only then may a caller hand anything to a provider. A
+ * REQUESTED event, and the ARTIFACT_READY → DELIVERY_PENDING transition in one
+ * transaction, and only then may a caller hand anything to a provider. A
  * process that dies between the two leaves a DELIVERY_PENDING summary — which
  * [[decideDeliverySend]] refuses as UNRESOLVED_SEND — rather than a silent
  * possible duplicate.
@@ -382,10 +382,10 @@ export function createPrismaT2DeliveryStore(
         ) {
           return false;
         }
-        // Only a state a send could legally begin from may be leased. A
-        // DELIVERY_PENDING row is unresolved, not claimable.
-        if (summary.status !== "ARTIFACT_READY" && summary.status !== "DELAYED")
-          return false;
+        // Only a state a send could legally begin from may be leased.
+        // DELIVERY_PENDING, PROVIDER_ACCEPTED and DELAYED are all unresolved —
+        // a provider still holds a message in each — so none is claimable.
+        if (summary.status !== "ARTIFACT_READY") return false;
 
         // The database's wall clock, read AFTER the locks above, decides both
         // whether the incumbent lease has expired and when ours will. A
@@ -415,7 +415,7 @@ export function createPrismaT2DeliveryStore(
                      SET "lease_owner" = ${input.owner}, "lease_token" = ${input.token},
                          "lease_expires_at" = ${expiresAt}
                      WHERE "id" = ${input.fulfillmentId}
-                       AND "status"::text IN ('ARTIFACT_READY', 'DELAYED')
+                       AND "status"::text = 'ARTIFACT_READY'
                        AND ("lease_owner" IS NULL
                             OR "lease_expires_at" IS NULL
                             OR "lease_expires_at" <= ${new Date(nowMs)}

@@ -24,10 +24,18 @@
  *
  * ## Ordering and honesty about outcomes
  *
- * The delivery orchestrator has already persisted a durable attempt before this
- * function is entered. Here the order is: re-verify authority against freshly
- * read state → mint the capability (durably bound to THIS attempt, inside one
- * transaction, conditional on the attempt having none) → send.
+ * The delivery orchestrator has already persisted a durable attempt AND proved
+ * it was still sendable before this function is entered. Here the order is:
+ * re-verify authority against freshly read state → mint the capability (durably
+ * bound to THIS attempt, inside one transaction, conditional on the attempt
+ * having none) → re-assert the orchestrator's gate one last time → send.
+ *
+ * That final re-assert is the point of the whole ordering. Minting a credential
+ * is real asynchronous work, and the orchestrator's own gate closed before it
+ * started. Without a gate AFTER issuance and immediately before the provider
+ * call, a refund or a withdrawn flag landing during issuance would still mail a
+ * live code. A denial there revokes the unsent code and reports REJECTED — the
+ * one thing that is certain is that no bytes reached a provider.
  *
  * A message id back means ACCEPTED — the provider took custody. It never means
  * delivered. A recognized definite provider rejection means REJECTED, and the
@@ -468,6 +476,27 @@ export function createT2ResendAdapter(
         expiresAt: issued.issuance.expiresAt,
       });
 
+      // THE LAST THING BEFORE THE PROVIDER CALL.
+      //
+      // Everything above — the context read, the address check, the issuance
+      // transaction — is asynchronous work done after the orchestrator already
+      // proved this send was authorized. A refund, a withdrawn flag, property
+      // drift, a superseding artifact or a lost lease landing in that window
+      // must stop the send, and only a fresh read under the lock can see it.
+      // The orchestrator supplies this gate bound to the lease and the exact
+      // durable attempt; nothing here can widen it or skip it and still send.
+      //
+      // A denial is DEFINITE about the one thing that matters: no bytes were
+      // handed to a provider, because this runs before the only call that
+      // could. It is therefore recorded like every other authority failure the
+      // adapter detects before sending — REJECTED, not UNKNOWN — and the code
+      // minted moments ago is revoked, because it reached no mailbox.
+      const stillSendable = await input.assertSendable();
+      if (!stillSendable.ok) {
+        await revokeQuietly(revoke, input.fulfillmentId);
+        return rejected("MANUAL_REVIEW");
+      }
+
       let result: { id: string | null; errorName: string | null };
       try {
         result = await withTimeout(
@@ -513,18 +542,30 @@ export function createT2ResendAdapter(
       // Best effort by contract: a revocation that fails leaves the capability
       // alive, but the fulfillment is about to become terminal FAILED, which is
       // not a downloadable status, so access ends regardless.
-      try {
-        await revoke({
-          fulfillmentId: input.fulfillmentId,
-          reasonCode: "SEND_REJECTED",
-        });
-      } catch {
-        // Never rethrown and never logged: the thrown value may carry provider
-        // or connection detail.
-      }
+      await revokeQuietly(revoke, input.fulfillmentId);
       return rejected(definite);
     },
   };
+}
+
+/**
+ * Best effort by contract. A revocation that fails leaves the capability alive,
+ * but a definitely-unsent attempt is about to become terminal FAILED, which is
+ * not a downloadable status, so access ends regardless. Never rethrown and
+ * never logged: the thrown value may carry provider or connection detail.
+ */
+async function revokeQuietly(
+  revoke: (input: {
+    fulfillmentId: string;
+    reasonCode: "SEND_REJECTED";
+  }) => Promise<unknown>,
+  fulfillmentId: string,
+): Promise<void> {
+  try {
+    await revoke({ fulfillmentId, reasonCode: "SEND_REJECTED" });
+  } catch {
+    // Deliberately swallowed; see above.
+  }
 }
 
 function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
