@@ -57,10 +57,17 @@ describe("neutral QA/delivery migration authority", () => {
 
   it("removes shared-commerce access in favor of neutral-only projections",()=>{
     const constrained=fs.readFileSync(path.join(process.cwd(),"prisma/migrations/20260915230000_constrain_ot_neutral_runtime_commerce_reads/migration.sql"),"utf8")
+    const postMigrationPreflight=fs.readFileSync(path.join(process.cwd(),"scripts/preflight-neutral-report-migration.ts"),"utf8")
     expect(constrained).toContain('REVOKE ALL ON TABLE "ot_order", "ot_payment_binding", "ot_settlement_reversal"')
     expect(constrained).toContain('CREATE VIEW "ot_neutral_runtime_order"')
     expect(constrained).toContain("policyVersion' = 'ot-neutral-records-report/2026-09-15'")
     expect(constrained).toContain('JOIN "ot_neutral_report_reservation" r ON r."order_id" = b."order_id"')
     expect(constrained).not.toContain('GRANT SELECT ON TABLE "ot_order"')
+    expect(postMigrationPreflight).toContain("has_table_privilege(current_user,'ot_neutral_runtime_order','SELECT')")
+    expect(postMigrationPreflight).toContain("has_table_privilege(current_user,'ot_neutral_runtime_payment_binding','SELECT')")
+    expect(postMigrationPreflight).toContain("has_table_privilege(current_user,'ot_neutral_runtime_settlement_reversal','SELECT')")
+    expect(postMigrationPreflight).toContain("Runtime direct shared-commerce read unexpectedly succeeded")
+    expect(postMigrationPreflight).toContain("shobj_description(oid, 'pg_database')")
+    expect(postMigrationPreflight).not.toContain("has_column_privilege(current_user,'ot_order'")
   })
 })

@@ -36,7 +36,7 @@ async function main() {
     const deliveryIdentity = await delivery.query(
       `select current_user as role,current_database() as db,r.rolsuper,r.rolbypassrls,pg_has_role(current_user,'ot_neutral_delivery_runtime','member') delivery_member,has_schema_privilege(current_user,'public','CREATE') can_migrate from pg_roles r where r.rolname=current_user`,
     );
-    const databaseIdentitySql = `select current_database() as "databaseName", obj_description(oid, 'pg_database') as marker from pg_database where datname=current_database()`;
+    const databaseIdentitySql = `select current_database() as "databaseName", shobj_description(oid, 'pg_database') as marker from pg_database where datname=current_database()`;
     const [migrationDatabase, appDatabase, runtimeDatabase, deliveryDatabase] =
       await Promise.all([
         migration.query(databaseIdentitySql),
@@ -168,11 +168,11 @@ async function main() {
         );
     }
     const authorityGrants = await runtime.query(
-      `select has_column_privilege(current_user,'ot_order','id','SELECT') and has_column_privilege(current_user,'ot_order','propertyPin','SELECT') and has_column_privilege(current_user,'ot_order','status','SELECT') and has_column_privilege(current_user,'ot_order','settledAmountCents','SELECT') and has_column_privilege(current_user,'ot_payment_binding','payment_intent','SELECT') and has_column_privilege(current_user,'ot_settlement_reversal','payment_intent','SELECT') as allowed, has_table_privilege(current_user,'ot_order','INSERT,DELETE,TRUNCATE') or has_table_privilege(current_user,'ot_payment_binding','INSERT,UPDATE,DELETE,TRUNCATE') or has_table_privilege(current_user,'ot_settlement_reversal','INSERT,UPDATE,DELETE,TRUNCATE') as excessive`,
+      `select has_table_privilege(current_user,'ot_neutral_runtime_order','SELECT') and has_table_privilege(current_user,'ot_neutral_runtime_payment_binding','SELECT') and has_table_privilege(current_user,'ot_neutral_runtime_settlement_reversal','SELECT') as allowed, has_table_privilege(current_user,'ot_order','SELECT,INSERT,UPDATE,DELETE,TRUNCATE') or has_table_privilege(current_user,'ot_payment_binding','SELECT,INSERT,UPDATE,DELETE,TRUNCATE') or has_table_privilege(current_user,'ot_settlement_reversal','SELECT,INSERT,UPDATE,DELETE,TRUNCATE') as excessive`,
     );
     if (!authorityGrants.rows[0]?.allowed || authorityGrants.rows[0]?.excessive)
       throw new Error(
-        "Runtime authority-source grants are incomplete or excessive",
+        "Runtime neutral authority views are incomplete or shared commerce access is excessive",
       );
     const appNeutral = await app.query(
       `select has_column_privilege(current_user,'ot_neutral_report_reservation','bundle_sha256','SELECT') and has_column_privilege(current_user,'ot_neutral_report_reservation','superseded_by_sha256','SELECT') and has_column_privilege(current_user,'ot_neutral_qa_review','customer_artifact_sha256','SELECT') and has_column_privilege(current_user,'ot_neutral_qa_review','fulfillment_id','SELECT') as allowed, has_table_privilege(current_user,'ot_neutral_report_reservation','INSERT,UPDATE,DELETE,TRUNCATE') or has_table_privilege(current_user,'ot_neutral_qa_review','INSERT,UPDATE,DELETE,TRUNCATE') as excessive`,
@@ -210,7 +210,7 @@ async function main() {
     try {
       await runtime.query(`select count(*) from ot_neutral_report_reservation`);
       await runtime.query(
-        `select o."id" from ot_order o left join ot_payment_binding b on b.order_id=o."id" left join ot_settlement_reversal r on r.payment_intent=b.payment_intent where false`,
+        `select o."id" from ot_neutral_runtime_order o left join ot_neutral_runtime_payment_binding b on b."order_id"=o."id" left join ot_neutral_runtime_settlement_reversal r on r."payment_intent"=b."payment_intent" where false`,
       );
       await runtime.query(
         `update ot_neutral_report_reservation set updated_at=updated_at where false`,
@@ -235,6 +235,25 @@ async function main() {
       await runtime.query(
         `insert into ot_neutral_report_reservation (id,order_id,policy_version,property_fingerprint,reservation_key,checkout_price_id,checkout_product_id,admission_sha256,data_evidence_sha256,deadline_evidence_sha256,source_content_sha256,deadline_identity_sha256,official_retrieved_at,deadline_retrieved_at,cohort_position,reviewer_key,reviewer_week_start) select '', '', '', repeat('a',64), '', '', '', repeat('a',64),repeat('a',64),repeat('a',64),repeat('a',64),repeat('a',64),current_timestamp,current_timestamp,1,'x',current_date where false`,
       );
+      for (const tableName of [
+        "ot_order",
+        "ot_payment_binding",
+        "ot_settlement_reversal",
+      ]) {
+        let directReadDenied = false;
+        const savepoint = `deny_direct_read_${tableName}`;
+        await runtime.query(`savepoint ${savepoint}`);
+        try {
+          await runtime.query(`select * from ${tableName} where false`);
+        } catch {
+          directReadDenied = true;
+          await runtime.query(`rollback to savepoint ${savepoint}`);
+        }
+        if (!directReadDenied)
+          throw new Error(
+            `Runtime direct shared-commerce read unexpectedly succeeded for ${tableName}`,
+          );
+      }
       let deleteDenied = false;
       await runtime.query("savepoint deny_delete");
       try {
@@ -299,7 +318,9 @@ async function main() {
     ]);
   }
 }
-main().catch(() => {
+main().catch((error) => {
+  if (process.env.OT_NEUTRAL_PREFLIGHT_DEBUG === "1")
+    process.stderr.write(`${error instanceof Error ? error.message : "unknown error"}\n`);
   process.stderr.write("neutral-report migration preflight: FAIL\n");
   process.exitCode = 1;
 });
