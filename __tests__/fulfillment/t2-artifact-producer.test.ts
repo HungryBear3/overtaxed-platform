@@ -13,39 +13,54 @@ import {
   buildT2ArtifactContent,
   encodeT2Artifact,
   T2_PRODUCER_VERSION,
+  T2_TEMPLATE_VERSION,
   type DeadlineAuthoritySnapshot,
   type SignedPolicySnapshot,
   type SourceRecord,
   type SubjectRecord,
   type T2ArtifactInputs,
-} from "@/lib/fulfillment/t2-artifact-content"
-import { CC_01, CC_07, CC_10, CC_12, CC_13, CC_14, CC_17 } from "@/lib/copy/canonical"
-import { resolveEligibilityPolicy, signedPolicyVersion } from "@/lib/checkout/ot-contract"
+} from "@/lib/fulfillment/t2-artifact-content";
 import {
+  CC_01,
+  CC_07,
+  CC_10,
+  CC_12,
+  CC_13,
+  CC_14,
+  CC_17,
+} from "@/lib/copy/canonical";
+import {
+  resolveEligibilityPolicy,
+  signedPolicyVersion,
+} from "@/lib/checkout/ot-contract";
+import {
+  COMPARABLE_REJECTION_REASONS,
   NON_DIRECTIONAL_RULE_ID,
   attachAssessedValues,
+  candidatePoolSha256,
   measureUniformity,
   selectNonDirectionalComparables,
   type ComparableMatchAttributes,
-} from "@/lib/fulfillment/t2-comparables"
+} from "@/lib/fulfillment/t2-comparables";
 import {
   generateT2Artifact,
   type T2ArtifactGateway,
   type T2ProducerCountyData,
+  type T2ProducerFulfillment,
   type T2ProducerOrder,
-} from "@/lib/fulfillment-runtime/t2-artifact-producer"
+} from "@/lib/fulfillment-runtime/t2-artifact-producer";
 
-jest.mock("server-only", () => ({}))
+jest.mock("server-only", () => ({}));
 
 /* ── synthetic fixtures ─────────────────────────────────────────────────── */
 
-const SUBJECT_PIN = "99010010010000"
+const SUBJECT_PIN = "99010010010000";
 const ORDER: T2ProducerOrder = {
   id: "ord_synthetic_0001",
   propertyPin: SUBJECT_PIN,
   propertyAddress: "1 EXAMPLE ST",
   township: "Example",
-}
+};
 
 const SUBJECT: SubjectRecord = {
   pin: SUBJECT_PIN,
@@ -62,19 +77,19 @@ const SUBJECT: SubjectRecord = {
   taxYear: 2025,
   pinCount: 1,
   inCookCounty: true,
-}
+};
 
 /** Six qualifying comparables at $20.00/sqft, so the subject sits +25% above. */
 function comparableFixtures(): {
-  candidates: ComparableMatchAttributes[]
-  values: Map<string, number>
-  addresses: Map<string, string>
+  candidates: ComparableMatchAttributes[];
+  values: Map<string, number>;
+  addresses: Map<string, string>;
 } {
-  const candidates: ComparableMatchAttributes[] = []
-  const values = new Map<string, number>()
-  const addresses = new Map<string, string>()
+  const candidates: ComparableMatchAttributes[] = [];
+  const values = new Map<string, number>();
+  const addresses = new Map<string, string>();
   for (let i = 1; i <= 6; i += 1) {
-    const pin = `990100100200${String(i).padStart(2, "0")}`
+    const pin = `990100100200${String(i).padStart(2, "0")}`;
     candidates.push({
       pin,
       neighborhoodCode: "99010",
@@ -82,12 +97,15 @@ function comparableFixtures(): {
       residentialSubtype: "1 Story",
       buildingSqft: 1200,
       yearBuilt: 1955,
-    })
-    values.set(pin, 24000) // 24000 / 1200 = $20.00/sqft
-    addresses.set(pin, `${i} EXAMPLE AVE`)
+    });
+    values.set(pin, 24000); // 24000 / 1200 = $20.00/sqft
+    addresses.set(pin, `${i} EXAMPLE AVE`);
   }
-  return { candidates, values, addresses }
+  return { candidates, values, addresses };
 }
+
+/** A synthetic 64-hex digest standing in for an authoritative source content hash. */
+const SYNTHETIC_SOURCE_SHA256 = "a".repeat(32) + "b".repeat(32);
 
 const SOURCES: SourceRecord[] = [
   {
@@ -95,35 +113,52 @@ const SOURCES: SourceRecord[] = [
     datasetTitle: "Assessor - Assessed Values",
     url: "https://datacatalog.cookcountyil.gov/resource/uzyt-m557.json",
     retrievedAt: "2026-06-08T12:00:00Z",
+    contentSha256: SYNTHETIC_SOURCE_SHA256,
   },
   {
     datasetId: "x54s-btds",
-    datasetTitle: "Assessor - Single and Multi-Family Improvement Characteristics",
+    datasetTitle:
+      "Assessor - Single and Multi-Family Improvement Characteristics",
     url: "https://datacatalog.cookcountyil.gov/resource/x54s-btds.json",
     retrievedAt: "2026-06-08T12:00:00Z",
+    // Explicitly unavailable, never fabricated.
+    contentSha256: null,
   },
-]
+];
+
+/** The immutable instant the fulfillment row was created (entered ARTIFACT_PENDING). */
+const FULFILLMENT_CREATED_AT = new Date("2026-06-08T10:15:30.250Z");
+const FULFILLMENT: T2ProducerFulfillment = {
+  id: "ful_1",
+  orderId: ORDER.id,
+  kind: "T2_APPEAL_EVIDENCE",
+  status: "ARTIFACT_PENDING",
+  createdAt: FULFILLMENT_CREATED_AT,
+};
 
 const SIGNED_POLICY: SignedPolicySnapshot = {
   version: "test-only-policy-2026-06-08",
   ownerDecisions: ["OD-2", "OD-3"],
   signedAt: "2026-06-08",
   evidenceThreshold: { minRelativeAssessmentGap: 0.2, minComparables: 5 },
-}
+};
 
 const TRUSTED_DEADLINE: DeadlineAuthoritySnapshot = {
   trusted: true,
   status: "open",
   closeDate: "2026-06-30",
   sourceName: "Cook County Assessor",
-  sourceUrl: "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+  sourceUrl:
+    "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
   retrievedAt: "2026-06-08T12:00:00Z",
-  businessDaysRemaining: 16,
+  businessDaysRemainingAtGeneration: 16,
   businessDayCutoffAllowed: true,
-}
+};
 
-function contentInputs(overrides: Partial<T2ArtifactInputs> = {}): T2ArtifactInputs {
-  const { candidates, values, addresses } = comparableFixtures()
+function contentInputs(
+  overrides: Partial<T2ArtifactInputs> = {},
+): T2ArtifactInputs {
+  const { candidates, values, addresses } = comparableFixtures();
   return {
     orderId: ORDER.id,
     orderPropertyPin: ORDER.propertyPin,
@@ -137,20 +172,32 @@ function contentInputs(overrides: Partial<T2ArtifactInputs> = {}): T2ArtifactInp
     sources: SOURCES,
     generatedAt: "2026-06-08T12:00:00Z",
     ...overrides,
-  }
+  };
 }
 
-function testGateway(overrides: Partial<T2ArtifactGateway> = {}): T2ArtifactGateway {
-  const { candidates, values, addresses } = comparableFixtures()
+/** True if any character other than LF is a C0 control or DEL. */
+function hasControlCharacter(text: string): boolean {
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if ((code < 32 && code !== 10) || code === 127) return true;
+  }
+  return false;
+}
+
+function testGateway(
+  overrides: Partial<T2ArtifactGateway> = {},
+): T2ArtifactGateway {
+  const { candidates, values, addresses } = comparableFixtures();
   const county: T2ProducerCountyData = {
     subject: SUBJECT,
     comparableCandidates: candidates,
     comparableAssessedValues: values,
     comparableAddresses: addresses,
     sources: SOURCES,
-  }
+  };
   return {
     loadOrder: async () => ORDER,
+    loadFulfillment: async () => FULFILLMENT,
     loadCountyData: async () => county,
     resolvePolicy: () => SIGNED_POLICY,
     resolveDeadline: async () => ({
@@ -158,128 +205,153 @@ function testGateway(overrides: Partial<T2ArtifactGateway> = {}): T2ArtifactGate
       status: "open",
       closeDate: "2026-06-30",
       sourceName: "Cook County Assessor",
-      sourceUrl: "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+      sourceUrl:
+        "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
       retrievedAt: "2026-06-08T12:00:00Z",
     }),
     now: () => new Date("2026-06-08T12:00:00Z"),
     ...overrides,
-  }
+  };
 }
 
 /* ── production cannot reach success ────────────────────────────────────── */
 
 describe("the live policy registry keeps production closed", () => {
-  it("refuses with the unsigned-policy blocker when the real resolver is used", async () => {
-    // The default gateway's resolver is the live `resolveEligibilityPolicy`.
-    // SIGNED_ELIGIBILITY_POLICIES is empty, so this is the production answer.
+  it("refuses with the unsigned-policy blocker when an injected resolver returns no policy", async () => {
+    // Injected stub. The live-resolver proof is the "audit remediation" case
+    // below that calls `generateT2Artifact` with NO gateway at all; this case
+    // only pins the blocker vocabulary for a null resolver.
     const result = await generateT2Artifact(
       { orderId: ORDER.id, fulfillmentId: "ful_1" },
       testGateway({ resolvePolicy: () => null }),
-    )
-    expect(result).toEqual({ ok: false, blocker: "ELIGIBILITY_POLICY_UNSIGNED" })
-  })
+    );
+    expect(result).toEqual({
+      ok: false,
+      blocker: "ELIGIBILITY_POLICY_UNSIGNED",
+    });
+  });
 
   it("refuses before loading an order, so no lookup masks the real blocker", async () => {
-    const loadOrder = jest.fn(async () => ORDER)
+    const loadOrder = jest.fn(async () => ORDER);
     const result = await generateT2Artifact(
       { orderId: ORDER.id, fulfillmentId: "ful_1" },
       testGateway({ resolvePolicy: () => null, loadOrder }),
-    )
-    expect(result.ok).toBe(false)
-    expect(loadOrder).not.toHaveBeenCalled()
-  })
+    );
+    expect(result.ok).toBe(false);
+    expect(loadOrder).not.toHaveBeenCalled();
+  });
 
   it("emits no bytes and no provenance on any refusal", async () => {
     const result = await generateT2Artifact(
       { orderId: ORDER.id, fulfillmentId: "ful_1" },
       testGateway({ resolvePolicy: () => null }),
-    )
-    expect(result).not.toHaveProperty("bytes")
-    expect(result).not.toHaveProperty("provenance")
-  })
-})
+    );
+    expect(result).not.toHaveProperty("bytes");
+    expect(result).not.toHaveProperty("provenance");
+  });
+});
 
 /* ── success is reachable only through injected fixtures ────────────────── */
 
 describe("injected signed policy and trusted deadline", () => {
   it("produces a packet", async () => {
-    const result = await generateT2Artifact({ orderId: ORDER.id, fulfillmentId: "ful_1" }, testGateway())
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(result.bytes.byteLength).toBeGreaterThan(0)
+    const result = await generateT2Artifact(
+      { orderId: ORDER.id, fulfillmentId: "ful_1" },
+      testGateway(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.bytes.byteLength).toBeGreaterThan(0);
     expect(result.provenance).toMatchObject({
       sourceOrderId: ORDER.id,
       propertyPin: SUBJECT_PIN,
       generatorVersion: T2_PRODUCER_VERSION,
-      generatedAt: "2026-06-08T12:00:00Z",
-    })
-  })
+      // The fulfillment's creation instant at second precision — not the
+      // gateway clock, which is 12:00 in this fixture.
+      generatedAt: "2026-06-08T10:15:30Z",
+    });
+  });
 
   it("produces byte-identical output on repeated runs", async () => {
-    const a = await generateT2Artifact({ orderId: ORDER.id, fulfillmentId: "ful_1" }, testGateway())
-    const b = await generateT2Artifact({ orderId: ORDER.id, fulfillmentId: "ful_1" }, testGateway())
-    expect(a.ok && b.ok).toBe(true)
-    if (!a.ok || !b.ok) return
-    expect(a.bytes.equals(b.bytes)).toBe(true)
-  })
+    const a = await generateT2Artifact(
+      { orderId: ORDER.id, fulfillmentId: "ful_1" },
+      testGateway(),
+    );
+    const b = await generateT2Artifact(
+      { orderId: ORDER.id, fulfillmentId: "ful_1" },
+      testGateway(),
+    );
+    expect(a.ok && b.ok).toBe(true);
+    if (!a.ok || !b.ok) return;
+    expect(a.bytes.equals(b.bytes)).toBe(true);
+  });
 
   it("produces byte-identical output when the candidate order is shuffled", () => {
-    const forward = buildT2ArtifactContent(contentInputs())
+    const forward = buildT2ArtifactContent(contentInputs());
     const reversed = buildT2ArtifactContent(
-      contentInputs({ comparableCandidates: [...comparableFixtures().candidates].reverse() }),
-    )
-    expect(forward.ok && reversed.ok).toBe(true)
-    if (!forward.ok || !reversed.ok) return
-    expect(encodeT2Artifact(forward.text).equals(encodeT2Artifact(reversed.text))).toBe(true)
-  })
-})
+      contentInputs({
+        comparableCandidates: [...comparableFixtures().candidates].reverse(),
+      }),
+    );
+    expect(forward.ok && reversed.ok).toBe(true);
+    if (!forward.ok || !reversed.ok) return;
+    expect(
+      encodeT2Artifact(forward.text).equals(encodeT2Artifact(reversed.text)),
+    ).toBe(true);
+  });
+});
 
 /* ── the packet's content is bounded and truthful ───────────────────────── */
 
 describe("packet content", () => {
-  const built = buildT2ArtifactContent(contentInputs())
+  const built = buildT2ArtifactContent(contentInputs());
 
   it("records complete, non-directional comparable provenance", () => {
-    expect(built.ok).toBe(true)
-    if (!built.ok) return
-    const m = built.manifest
-    expect(m.selectionRuleId).toBe(NON_DIRECTIONAL_RULE_ID)
-    expect(m.selectionIsDirectional).toBe(false)
-    expect(m.comparableCount).toBe(6)
-    expect(m.comparablePins).toHaveLength(6)
-    expect(m.policyVersion).toBe(SIGNED_POLICY.version)
-    expect(m.policyOwnerDecisions).toEqual(["OD-2", "OD-3"])
-    expect(m.producerVersion).toBe(T2_PRODUCER_VERSION)
-    expect(m.sources).toHaveLength(2)
-    expect(m.deadlineRetrievedAt).toBe("2026-06-08T12:00:00Z")
-    expect(m.relativeGap).toBe("0.250000")
-    expect(m.rule15RecommendationMet).toBe(true)
-  })
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    const m = built.manifest;
+    expect(m.selectionRuleId).toBe(NON_DIRECTIONAL_RULE_ID);
+    expect(m.selectionIsDirectional).toBe(false);
+    expect(m.comparableCount).toBe(6);
+    expect(m.comparablePins).toHaveLength(6);
+    expect(m.policyVersion).toBe(SIGNED_POLICY.version);
+    expect(m.policyOwnerDecisions).toEqual(["OD-2", "OD-3"]);
+    expect(m.producerVersion).toBe(T2_PRODUCER_VERSION);
+    expect(m.sources).toHaveLength(2);
+    expect(m.deadlineRetrievedAt).toBe("2026-06-08T12:00:00Z");
+    expect(m.relativeGap).toBe("0.250000");
+    expect(m.rule15RecommendationMet).toBe(true);
+  });
 
   it("names every source with a retrieval timestamp", () => {
-    expect(built.ok).toBe(true)
-    if (!built.ok) return
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
     for (const source of SOURCES) {
-      expect(built.text).toContain(source.datasetId)
-      expect(built.text).toContain(source.url)
+      expect(built.text).toContain(source.datasetId);
+      expect(built.text).toContain(source.url);
     }
-    expect(built.text).toContain("retrieved 2026-06-08T12:00:00Z")
-  })
+    expect(built.text).toContain("retrieved 2026-06-08T12:00:00Z");
+  });
 
   it("states no savings, probability, grade, or recommendation to file", () => {
-    expect(built.ok).toBe(true)
-    if (!built.ok) return
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
     // The negation trap named in the frozen banned-claims lexicon: CC-12
     // legitimately contains "guarantee a reduction" and "legal advice". Strip
     // the approved canonical strings before asserting, or a correct packet
     // red-lines on its own required disclosures.
-    const withoutCanonicalCopy = [CC_01, CC_07, CC_10, CC_12, CC_13, CC_14, CC_17].reduce(
-      (text, canonical) => text.split(canonical).join(" "),
-      built.text,
-    )
+    const withoutCanonicalCopy = [
+      CC_01,
+      CC_07,
+      CC_10,
+      CC_12,
+      CC_13,
+      CC_14,
+      CC_17,
+    ].reduce((text, canonical) => text.split(canonical).join(" "), built.text);
     for (const canonical of [CC_12, CC_13]) {
-      expect(built.text).toContain(canonical)
-      expect(withoutCanonicalCopy).not.toContain(canonical)
+      expect(built.text).toContain(canonical);
+      expect(withoutCanonicalCopy).not.toContain(canonical);
     }
     const banned = [
       /you (will|could|may) save/i,
@@ -295,28 +367,32 @@ describe("packet content", () => {
       /we recommend appealing/i,
       /strong (case|comps)/i,
       /guarantee/i,
-    ]
+    ];
     for (const pattern of banned) {
-      expect(withoutCanonicalCopy).not.toMatch(pattern)
+      expect(withoutCanonicalCopy).not.toMatch(pattern);
     }
-  })
+  });
 
   it("carries the homeowner-files posture and the standing disclosures", () => {
-    expect(built.ok).toBe(true)
-    if (!built.ok) return
-    expect(built.text).toContain("You review it, sign it, and file it yourself.")
-    expect(built.text).toContain("The $69 packet is a preparation service.")
-    expect(built.text).toContain("OverTaxed IL is not a law firm")
-  })
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.text).toContain(
+      "You review it, sign it, and file it yourself.",
+    );
+    expect(built.text).toContain("The $69 packet is a preparation service.");
+    expect(built.text).toContain("OverTaxed IL is not a law firm");
+  });
 
   it("discloses that the drafted argument is omitted rather than invented", () => {
-    expect(built.ok).toBe(true)
-    if (!built.ok) return
-    expect(built.manifest.draftArgumentIncluded).toBe(false)
-    expect(built.text).toContain("does not contain a drafted argument in your own voice")
-    expect(built.manifest.draftArgumentOmissionReason).toContain("OD-5")
-  })
-})
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.manifest.draftArgumentIncluded).toBe(false);
+    expect(built.text).toContain(
+      "does not contain a drafted argument in your own voice",
+    );
+    expect(built.manifest.draftArgumentOmissionReason).toContain("OD-5");
+  });
+});
 
 /* ── refusals ───────────────────────────────────────────────────────────── */
 
@@ -351,13 +427,21 @@ describe("refusals fail closed and produce nothing", () => {
       { subject: { ...SUBJECT, propertyClass: "299", buildingSqft: 0 } },
       "MISSING_BUILDING_SQFT",
     ],
-    ["missing building area", { subject: { ...SUBJECT, buildingSqft: 0 } }, "MISSING_BUILDING_SQFT"],
+    [
+      "missing building area",
+      { subject: { ...SUBJECT, buildingSqft: 0 } },
+      "MISSING_BUILDING_SQFT",
+    ],
     [
       "missing assessed value",
       { subject: { ...SUBJECT, assessedTotalValue: 0 } },
       "MISSING_ASSESSED_VALUE",
     ],
-    ["multi-PIN property", { subject: { ...SUBJECT, pinCount: 2 } }, "MULTI_PIN_PROPERTY"],
+    [
+      "multi-PIN property",
+      { subject: { ...SUBJECT, pinCount: 2 } },
+      "MULTI_PIN_PROPERTY",
+    ],
     [
       "outside Cook County",
       { subject: { ...SUBJECT, inCookCounty: false } },
@@ -379,75 +463,94 @@ describe("refusals fail closed and produce nothing", () => {
       { sources: [{ ...SOURCES[0], retrievedAt: "" }] },
       "INCOMPLETE_SOURCE_MANIFEST",
     ],
-    ["unusable generation instant", { generatedAt: "yesterday" }, "INCOMPLETE_SOURCE_MANIFEST"],
-  ]
+    [
+      "unusable generation instant",
+      { generatedAt: "yesterday" },
+      "INCOMPLETE_SOURCE_MANIFEST",
+    ],
+  ];
 
   it.each(cases)("refuses: %s", (_label, overrides, blocker) => {
-    const result = buildT2ArtifactContent(contentInputs(overrides))
-    expect(result).toEqual({ ok: false, blocker })
-    expect(result).not.toHaveProperty("text")
-    expect(result).not.toHaveProperty("manifest")
-  })
+    const result = buildT2ArtifactContent(contentInputs(overrides));
+    expect(result).toEqual({ ok: false, blocker });
+    expect(result).not.toHaveProperty("text");
+    expect(result).not.toHaveProperty("manifest");
+  });
 
   it("refuses when too few comparables qualify", () => {
-    const { candidates, values, addresses } = comparableFixtures()
+    const { candidates, values, addresses } = comparableFixtures();
     const result = buildT2ArtifactContent(
       contentInputs({
         comparableCandidates: candidates.slice(0, 3),
         comparableAssessedValues: values,
         comparableAddresses: addresses,
       }),
-    )
-    expect(result).toEqual({ ok: false, blocker: "INSUFFICIENT_COMPARABLES" })
-  })
+    );
+    expect(result).toEqual({ ok: false, blocker: "INSUFFICIENT_COMPARABLES" });
+  });
 
   it("refuses when a selected comparable has no assessed value", () => {
-    const { candidates, values, addresses } = comparableFixtures()
-    values.delete(candidates[0].pin)
+    const { candidates, values, addresses } = comparableFixtures();
+    values.delete(candidates[0].pin);
     const result = buildT2ArtifactContent(
       contentInputs({
         comparableCandidates: candidates,
         comparableAssessedValues: values,
         comparableAddresses: addresses,
       }),
-    )
-    expect(result).toEqual({ ok: false, blocker: "COMPARABLE_VALUE_INCOMPLETE" })
-  })
+    );
+    expect(result).toEqual({
+      ok: false,
+      blocker: "COMPARABLE_VALUE_INCOMPLETE",
+    });
+  });
 
   it("refuses when the measured gap is below the signed threshold", () => {
     const result = buildT2ArtifactContent(
       contentInputs({
         policy: {
           ...SIGNED_POLICY,
-          evidenceThreshold: { minRelativeAssessmentGap: 0.5, minComparables: 5 },
+          evidenceThreshold: {
+            minRelativeAssessmentGap: 0.5,
+            minComparables: 5,
+          },
         },
       }),
-    )
-    expect(result).toEqual({ ok: false, blocker: "BELOW_SIGNED_EVIDENCE_THRESHOLD" })
-  })
+    );
+    expect(result).toEqual({
+      ok: false,
+      blocker: "BELOW_SIGNED_EVIDENCE_THRESHOLD",
+    });
+  });
 
   it("refuses when the injected policy carries no threshold", () => {
     const result = buildT2ArtifactContent(
       contentInputs({ policy: { ...SIGNED_POLICY, version: "" } }),
-    )
-    expect(result).toEqual({ ok: false, blocker: "ELIGIBILITY_POLICY_UNSIGNED" })
-  })
+    );
+    expect(result).toEqual({
+      ok: false,
+      blocker: "ELIGIBILITY_POLICY_UNSIGNED",
+    });
+  });
 
   it("refuses at the producer when county data is unavailable", async () => {
     const result = await generateT2Artifact(
       { orderId: ORDER.id, fulfillmentId: "ful_1" },
       testGateway({ loadCountyData: async () => null }),
-    )
-    expect(result).toEqual({ ok: false, blocker: "COMPARABLE_SOURCE_UNAVAILABLE" })
-  })
+    );
+    expect(result).toEqual({
+      ok: false,
+      blocker: "COMPARABLE_SOURCE_UNAVAILABLE",
+    });
+  });
 
   it("refuses at the producer when the order is missing", async () => {
     const result = await generateT2Artifact(
       { orderId: ORDER.id, fulfillmentId: "ful_1" },
       testGateway({ loadOrder: async () => null }),
-    )
-    expect(result).toEqual({ ok: false, blocker: "ORDER_NOT_FOUND" })
-  })
+    );
+    expect(result).toEqual({ ok: false, blocker: "ORDER_NOT_FOUND" });
+  });
 
   it("applies the Chicago cutoff to a real close date inside the producer", async () => {
     const result = await generateT2Artifact(
@@ -458,20 +561,24 @@ describe("refusals fail closed and produce nothing", () => {
           status: "open",
           closeDate: "2026-06-09", // one business day after Monday 2026-06-08
           sourceName: "Cook County Assessor",
-          sourceUrl: "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+          sourceUrl:
+            "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
           retrievedAt: "2026-06-08T12:00:00Z",
         }),
       }),
-    )
-    expect(result).toEqual({ ok: false, blocker: "INSUFFICIENT_BUSINESS_DAYS" })
-  })
-})
+    );
+    expect(result).toEqual({
+      ok: false,
+      blocker: "INSUFFICIENT_BUSINESS_DAYS",
+    });
+  });
+});
 
 /* ── the selector cannot be directional ─────────────────────────────────── */
 
 describe("selection is structurally non-directional", () => {
   it("accepts the same set no matter how assessed values are permuted", () => {
-    const { candidates } = comparableFixtures()
+    const { candidates } = comparableFixtures();
     const subject = {
       pin: SUBJECT_PIN,
       neighborhoodCode: "99010",
@@ -479,22 +586,31 @@ describe("selection is structurally non-directional", () => {
       residentialSubtype: "1 Story",
       buildingSqft: 1200,
       yearBuilt: 1955,
-    }
-    const first = selectNonDirectionalComparables(subject, candidates)
+    };
+    const first = selectNonDirectionalComparables(subject, candidates);
     // Values are not an input to selection at all, so no permutation of them
     // can reach it. Prove the accepted set is identical across wildly
     // different value assignments.
     for (const scale of [1, 100, 0.01]) {
-      const values = new Map(candidates.map((c, i) => [c.pin, 1000 * (i + 1) * scale]))
-      const attached = attachAssessedValues(first!.accepted, values)
-      expect(attached.valued.map((c) => c.pin)).toEqual(first!.accepted.map((c) => c.pin))
+      const values = new Map(
+        candidates.map((c, i) => [c.pin, 1000 * (i + 1) * scale]),
+      );
+      const attached = attachAssessedValues(first!.accepted, values);
+      expect(attached.valued.map((c) => c.pin)).toEqual(
+        first!.accepted.map((c) => c.pin),
+      );
     }
-    const second = selectNonDirectionalComparables(subject, [...candidates].reverse())
-    expect(second!.accepted.map((c) => c.pin)).toEqual(first!.accepted.map((c) => c.pin))
-  })
+    const second = selectNonDirectionalComparables(
+      subject,
+      [...candidates].reverse(),
+    );
+    expect(second!.accepted.map((c) => c.pin)).toEqual(
+      first!.accepted.map((c) => c.pin),
+    );
+  });
 
   it("never returns the subject as its own comparable", () => {
-    const { candidates } = comparableFixtures()
+    const { candidates } = comparableFixtures();
     const subject = {
       pin: SUBJECT_PIN,
       neighborhoodCode: "99010",
@@ -502,17 +618,17 @@ describe("selection is structurally non-directional", () => {
       residentialSubtype: "1 Story",
       buildingSqft: 1200,
       yearBuilt: 1955,
-    }
+    };
     const withSelf = selectNonDirectionalComparables(subject, [
       { ...subject },
       ...candidates,
-    ])
-    expect(withSelf!.accepted.some((c) => c.pin === SUBJECT_PIN)).toBe(false)
+    ]);
+    expect(withSelf!.accepted.some((c) => c.pin === SUBJECT_PIN)).toBe(false);
     expect(withSelf!.rejected).toContainEqual({
       pin: SUBJECT_PIN,
       reason: "same_parcel_as_subject",
-    })
-  })
+    });
+  });
 
   it("excludes candidates outside the preregistered bands, with a reason each", () => {
     const subject = {
@@ -522,49 +638,53 @@ describe("selection is structurally non-directional", () => {
       residentialSubtype: "1 Story",
       buildingSqft: 1200,
       yearBuilt: 1955,
-    }
+    };
     const selection = selectNonDirectionalComparables(subject, [
       { ...subject, pin: "99010010030001", neighborhoodCode: "99011" },
       { ...subject, pin: "99010010030002", propertyClass: "204" },
       { ...subject, pin: "99010010030003", residentialSubtype: "2 Story" },
       { ...subject, pin: "99010010030004", buildingSqft: 3000 },
       { ...subject, pin: "99010010030005", yearBuilt: 1900 },
-    ])
-    expect(selection!.accepted).toHaveLength(0)
+    ]);
+    expect(selection!.accepted).toHaveLength(0);
     expect(selection!.rejected.map((r) => r.reason).sort()).toEqual([
       "building_sqft_out_of_band",
       "different_class",
       "different_neighborhood",
       "different_subtype",
       "year_built_out_of_band",
-    ])
-  })
+    ]);
+  });
 
   it("computes the uniformity gap from published values and areas", () => {
-    const { candidates, values } = comparableFixtures()
-    const { valued } = attachAssessedValues(candidates, values)
+    const { candidates, values } = comparableFixtures();
+    const { valued } = attachAssessedValues(candidates, values);
     const measurement = measureUniformity(
       { buildingSqft: 1200, assessedTotalValue: 30000 },
       valued,
-    )
-    expect(measurement).not.toBeNull()
-    expect(measurement!.subjectAssessedPerSqft).toBeCloseTo(25, 10)
-    expect(measurement!.comparableMedianAssessedPerSqft).toBeCloseTo(20, 10)
-    expect(measurement!.relativeGap).toBeCloseTo(0.25, 10)
-  })
+    );
+    expect(measurement).not.toBeNull();
+    expect(measurement!.subjectAssessedPerSqft).toBeCloseTo(25, 10);
+    expect(measurement!.comparableMedianAssessedPerSqft).toBeCloseTo(20, 10);
+    expect(measurement!.relativeGap).toBeCloseTo(0.25, 10);
+  });
 
   it("is not the degenerate assessed-value-times-ten metric", () => {
     // The metric on main divides assessed value by (assessed value x 10) on both
     // sides, so its gap is exactly zero for every parcel. This one moves.
-    const { candidates, values } = comparableFixtures()
-    const { valued } = attachAssessedValues(candidates, values)
+    const { candidates, values } = comparableFixtures();
+    const { valued } = attachAssessedValues(candidates, values);
     const gaps = [24000, 27000, 30000, 36000].map(
-      (av) => measureUniformity({ buildingSqft: 1200, assessedTotalValue: av }, valued)!.relativeGap,
-    )
-    expect(new Set(gaps.map((g) => g.toFixed(6))).size).toBe(gaps.length)
-    expect(gaps.some((g) => g !== 0)).toBe(true)
-  })
-})
+      (av) =>
+        measureUniformity(
+          { buildingSqft: 1200, assessedTotalValue: av },
+          valued,
+        )!.relativeGap,
+    );
+    expect(new Set(gaps.map((g) => g.toFixed(6))).size).toBe(gaps.length);
+    expect(gaps.some((g) => g !== 0)).toBe(true);
+  });
+});
 
 /* ── remediation of the independent audit findings ──────────────────────── */
 
@@ -574,10 +694,16 @@ describe("audit remediation", () => {
     // to a test named "when the real resolver is used", so the candidate's most
     // important claim had no coverage at all. This call passes NO gateway, so it
     // exercises `defaultGateway()` and the live `resolveEligibilityPolicy`.
-    delete process.env.OT_ELIGIBILITY_POLICY_VERSION
-    const result = await generateT2Artifact({ orderId: ORDER.id, fulfillmentId: "ful_1" })
-    expect(result).toEqual({ ok: false, blocker: "ELIGIBILITY_POLICY_UNSIGNED" })
-  })
+    delete process.env.OT_ELIGIBILITY_POLICY_VERSION;
+    const result = await generateT2Artifact({
+      orderId: ORDER.id,
+      fulfillmentId: "ful_1",
+    });
+    expect(result).toEqual({
+      ok: false,
+      blocker: "ELIGIBILITY_POLICY_UNSIGNED",
+    });
+  });
 
   it("cannot be opened by an inherited Object.prototype key in the policy version", async () => {
     // An empty `{}` registry inherits from Object.prototype, so a lookup of
@@ -585,92 +711,450 @@ describe("audit remediation", () => {
     // reported a signed policy. That let an environment variable alone satisfy
     // the policy half of the paid-checkout gate.
     const inherited = [
-      "constructor", "hasOwnProperty", "toString", "valueOf", "__proto__",
-      "isPrototypeOf", "propertyIsEnumerable", "toLocaleString",
-      "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__",
-    ]
+      "constructor",
+      "hasOwnProperty",
+      "toString",
+      "valueOf",
+      "__proto__",
+      "isPrototypeOf",
+      "propertyIsEnumerable",
+      "toLocaleString",
+      "__defineGetter__",
+      "__defineSetter__",
+      "__lookupGetter__",
+      "__lookupSetter__",
+    ];
     for (const key of inherited) {
-      process.env.OT_ELIGIBILITY_POLICY_VERSION = key
+      process.env.OT_ELIGIBILITY_POLICY_VERSION = key;
       expect(resolveEligibilityPolicy()).toEqual({
         signed: false,
         version: null,
         reason: "eligibility_policy_unsigned",
-      })
-      expect(signedPolicyVersion()).toBeNull()
-      const result = await generateT2Artifact({ orderId: ORDER.id, fulfillmentId: "ful_1" })
-      expect(result).toEqual({ ok: false, blocker: "ELIGIBILITY_POLICY_UNSIGNED" })
+      });
+      expect(signedPolicyVersion()).toBeNull();
+      const result = await generateT2Artifact({
+        orderId: ORDER.id,
+        fulfillmentId: "ful_1",
+      });
+      expect(result).toEqual({
+        ok: false,
+        blocker: "ELIGIBILITY_POLICY_UNSIGNED",
+      });
     }
-    delete process.env.OT_ELIGIBILITY_POLICY_VERSION
-  })
+    delete process.env.OT_ELIGIBILITY_POLICY_VERSION;
+  });
 
   it("refuses ordinary unsigned policy versions too", () => {
     for (const key of ["v1", "2026-09-01", "true", "*", "", "   "]) {
-      process.env.OT_ELIGIBILITY_POLICY_VERSION = key
-      expect(resolveEligibilityPolicy().signed).toBe(false)
+      process.env.OT_ELIGIBILITY_POLICY_VERSION = key;
+      expect(resolveEligibilityPolicy().signed).toBe(false);
     }
-    delete process.env.OT_ELIGIBILITY_POLICY_VERSION
-  })
+    delete process.env.OT_ELIGIBILITY_POLICY_VERSION;
+  });
 
   it("selects the same set whatever order conflicting duplicate rows arrive in", () => {
     // A row rejected for a wrong neighbourhood used to consume the PIN, so a
     // later good row for the same parcel was dropped as a duplicate and the
     // accepted set depended on source ordering.
     const subject = {
-      pin: SUBJECT_PIN, neighborhoodCode: "99010", propertyClass: "203",
-      residentialSubtype: "1 Story", buildingSqft: 1200, yearBuilt: 1955,
-    }
-    const good = { ...subject, pin: "99010010020007" }
-    const conflicting = { ...good, neighborhoodCode: "99099" }
+      pin: SUBJECT_PIN,
+      neighborhoodCode: "99010",
+      propertyClass: "203",
+      residentialSubtype: "1 Story",
+      buildingSqft: 1200,
+      yearBuilt: 1955,
+    };
+    const good = { ...subject, pin: "99010010020007" };
+    const conflicting = { ...good, neighborhoodCode: "99099" };
 
-    const forward = selectNonDirectionalComparables(subject, [conflicting, good])!
-    const reverse = selectNonDirectionalComparables(subject, [good, conflicting])!
-    expect(forward.accepted).toEqual(reverse.accepted)
+    const forward = selectNonDirectionalComparables(subject, [
+      conflicting,
+      good,
+    ])!;
+    const reverse = selectNonDirectionalComparables(subject, [
+      good,
+      conflicting,
+    ])!;
+    expect(forward.accepted).toEqual(reverse.accepted);
     // Contradictory rows for one parcel are dropped rather than resolved by
     // arrival order: choosing between them would be choosing what to believe.
-    expect(forward.accepted).toHaveLength(0)
+    expect(forward.accepted).toHaveLength(0);
     expect(forward.rejected).toContainEqual({
       pin: "99010010020007",
       reason: "conflicting_duplicate_rows",
-    })
-  })
+    });
+  });
 
   it("collapses identical repeated rows to one instead of dropping the parcel", () => {
     const subject = {
-      pin: SUBJECT_PIN, neighborhoodCode: "99010", propertyClass: "203",
-      residentialSubtype: "1 Story", buildingSqft: 1200, yearBuilt: 1955,
-    }
-    const good = { ...subject, pin: "99010010020007" }
-    const selection = selectNonDirectionalComparables(subject, [good, { ...good }])!
-    expect(selection.accepted.map((c) => c.pin)).toEqual(["99010010020007"])
-    expect(selection.rejected).toContainEqual({ pin: "99010010020007", reason: "duplicate_pin" })
-  })
+      pin: SUBJECT_PIN,
+      neighborhoodCode: "99010",
+      propertyClass: "203",
+      residentialSubtype: "1 Story",
+      buildingSqft: 1200,
+      yearBuilt: 1955,
+    };
+    const good = { ...subject, pin: "99010010020007" };
+    const selection = selectNonDirectionalComparables(subject, [
+      good,
+      { ...good },
+    ])!;
+    expect(selection.accepted.map((c) => c.pin)).toEqual(["99010010020007"]);
+    expect(selection.rejected).toContainEqual({
+      pin: "99010010020007",
+      reason: "duplicate_pin",
+    });
+  });
 
   it("distinguishes a missing comparable address from a missing value", () => {
-    const { candidates, values, addresses } = comparableFixtures()
-    addresses.set(candidates[0].pin, "   ")
+    const { candidates, values, addresses } = comparableFixtures();
+    addresses.set(candidates[0].pin, "   ");
     const result = buildT2ArtifactContent(
       contentInputs({
         comparableCandidates: candidates,
         comparableAssessedValues: values,
         comparableAddresses: addresses,
       }),
-    )
-    expect(result).toEqual({ ok: false, blocker: "COMPARABLE_ADDRESS_MISSING" })
-  })
+    );
+    expect(result).toEqual({
+      ok: false,
+      blocker: "COMPARABLE_ADDRESS_MISSING",
+    });
+  });
 
   it("does not truncate a long comparable address", () => {
-    const { candidates, values, addresses } = comparableFixtures()
-    const long = "12345 WEST SOUTH SAMPLE BOULEVARD EXTENSION APARTMENT 1234"
-    addresses.set(candidates[0].pin, long)
+    const { candidates, values, addresses } = comparableFixtures();
+    const long = "12345 WEST SOUTH SAMPLE BOULEVARD EXTENSION APARTMENT 1234";
+    addresses.set(candidates[0].pin, long);
     const result = buildT2ArtifactContent(
       contentInputs({
         comparableCandidates: candidates,
         comparableAssessedValues: values,
         comparableAddresses: addresses,
       }),
-    )
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(result.text).toContain(long)
-  })
-})
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.text).toContain(long);
+  });
+});
+
+/* ── remediation of the independent exact-SHA review of a5628ced ────────── */
+
+describe("independent review remediation (2026-09-04)", () => {
+  /** A ten-parcel neighbourhood: five at $20/sqft and five at $40/sqft. */
+  function neighbourhood(): {
+    candidates: ComparableMatchAttributes[];
+    values: Map<string, number>;
+    addresses: Map<string, string>;
+  } {
+    const candidates: ComparableMatchAttributes[] = [];
+    const values = new Map<string, number>();
+    const addresses = new Map<string, string>();
+    for (let i = 1; i <= 10; i += 1) {
+      const pin = `990100100300${String(i).padStart(2, "0")}`;
+      candidates.push({
+        pin,
+        neighborhoodCode: "99010",
+        propertyClass: "203",
+        residentialSubtype: "1 Story",
+        buildingSqft: 1200,
+        yearBuilt: 1955,
+      });
+      values.set(pin, (i <= 5 ? 20 : 40) * 1200);
+      addresses.set(pin, `${i} EXAMPLE BLVD`);
+    }
+    return { candidates, values, addresses };
+  }
+
+  describe("M2: artifact bytes are deterministic given the stable generation instant", () => {
+    it("bumps the producer and template versions because bytes and manifest semantics changed", () => {
+      expect(T2_PRODUCER_VERSION).toBe("t2-evidence-packet/1.1.0");
+      expect(T2_TEMPLATE_VERSION).toBe("t2-evidence-packet-text/1.1.0");
+    });
+
+    it("produces byte-identical packets and hashes across attempts with different wall clocks", async () => {
+      const first = await generateT2Artifact(
+        { orderId: ORDER.id, fulfillmentId: FULFILLMENT.id },
+        testGateway({ now: () => new Date("2026-06-08T12:00:00.000Z") }),
+      );
+      // A different day, a different hour, still inside the filing window.
+      const second = await generateT2Artifact(
+        { orderId: ORDER.id, fulfillmentId: FULFILLMENT.id },
+        testGateway({ now: () => new Date("2026-06-11T21:45:10.999Z") }),
+      );
+      expect(first.ok && second.ok).toBe(true);
+      if (!first.ok || !second.ok) return;
+      expect(first.bytes.equals(second.bytes)).toBe(true);
+      expect(first.provenance).toEqual(second.provenance);
+      expect(first.provenance.generatedAt).toBe("2026-06-08T10:15:30Z");
+    });
+
+    it("embeds the fulfillment creation instant, never the wall clock, in the packet", async () => {
+      const result = await generateT2Artifact(
+        { orderId: ORDER.id, fulfillmentId: FULFILLMENT.id },
+        testGateway({ now: () => new Date("2026-06-11T21:45:10.999Z") }),
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const text = result.bytes.toString("utf8");
+      expect(text).toContain("Prepared: 2026-06-08T10:15:30Z");
+      expect(text).not.toContain("2026-06-11T21:45:10");
+      expect(text).not.toContain("2026-06-11");
+    });
+
+    it("samples the runtime clock exactly once and hands that instant to deadline resolution", async () => {
+      const sampled = new Date("2026-06-08T12:00:00.000Z");
+      const now = jest.fn(() => sampled);
+      const resolveDeadline = jest.fn(
+        async (_order: T2ProducerOrder, at: Date) => {
+          expect(at).toBe(sampled);
+          return {
+            trusted: true as const,
+            status: "open" as const,
+            closeDate: "2026-06-30",
+            sourceName: "Cook County Assessor",
+            sourceUrl:
+              "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+            retrievedAt: "2026-06-08T12:00:00Z",
+          };
+        },
+      );
+      const result = await generateT2Artifact(
+        { orderId: ORDER.id, fulfillmentId: FULFILLMENT.id },
+        testGateway({ now, resolveDeadline }),
+      );
+      expect(result.ok).toBe(true);
+      expect(now).toHaveBeenCalledTimes(1);
+      expect(resolveDeadline).toHaveBeenCalledTimes(1);
+    });
+
+    it("records business days remaining relative to the generation instant, not the attempt", () => {
+      const built = buildT2ArtifactContent(contentInputs());
+      expect(built.ok).toBe(true);
+      if (!built.ok) return;
+      expect(built.manifest.businessDaysRemainingAtGeneration).toBe(16);
+      expect(built.manifest).not.toHaveProperty("businessDaysRemaining");
+    });
+
+    it("still applies the three-business-day gate at attempt time", async () => {
+      // Generation instant is 2026-06-08; the attempt is on 2026-06-29 with the
+      // window closing 2026-06-30. The bytes would be stable, but the packet is
+      // not produced for a window the buyer can no longer file into.
+      const result = await generateT2Artifact(
+        { orderId: ORDER.id, fulfillmentId: FULFILLMENT.id },
+        testGateway({ now: () => new Date("2026-06-29T12:00:00.000Z") }),
+      );
+      expect(result).toEqual({
+        ok: false,
+        blocker: "INSUFFICIENT_BUSINESS_DAYS",
+      });
+    });
+
+    it.each([
+      [
+        "missing fulfillment",
+        { loadFulfillment: async () => null },
+        "FULFILLMENT_NOT_FOUND",
+      ],
+      [
+        "fulfillment bound to a different order",
+        {
+          loadFulfillment: async () => ({
+            ...FULFILLMENT,
+            orderId: "ord_other",
+          }),
+        },
+        "FULFILLMENT_ORDER_MISMATCH",
+      ],
+      [
+        "fulfillment with an invalid creation instant",
+        {
+          loadFulfillment: async () => ({
+            ...FULFILLMENT,
+            createdAt: new Date("nope"),
+          }),
+        },
+        "GENERATION_INSTANT_UNAVAILABLE",
+      ],
+      [
+        "fulfillment of another kind",
+        { loadFulfillment: async () => ({ ...FULFILLMENT, kind: "T3_DFY" }) },
+        "FULFILLMENT_ORDER_MISMATCH",
+      ],
+    ] as Array<[string, Partial<T2ArtifactGateway>, string]>)(
+      "fails closed with no bytes on a %s",
+      async (_label, overrides, blocker) => {
+        const result = await generateT2Artifact(
+          { orderId: ORDER.id, fulfillmentId: FULFILLMENT.id },
+          testGateway(overrides),
+        );
+        expect(result).toEqual({ ok: false, blocker });
+        expect(result).not.toHaveProperty("bytes");
+      },
+    );
+  });
+
+  describe("M3: the candidate pool is bound into provenance", () => {
+    it("gives the whole neighbourhood and a stripped pool different candidate-pool hashes", () => {
+      const whole = neighbourhood();
+      const stripped = whole.candidates.slice(0, 5);
+      expect(candidatePoolSha256(whole.candidates)).not.toBe(
+        candidatePoolSha256(stripped),
+      );
+      // Order-independent: the hash is over sorted canonical rows.
+      expect(candidatePoolSha256([...whole.candidates].reverse())).toBe(
+        candidatePoolSha256(whole.candidates),
+      );
+      expect(candidatePoolSha256(whole.candidates)).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it("lets a later reviewer tell the two apart from the manifest alone", () => {
+      const whole = neighbourhood();
+      const wholeResult = buildT2ArtifactContent(
+        contentInputs({
+          comparableCandidates: whole.candidates,
+          comparableAssessedValues: whole.values,
+          comparableAddresses: whole.addresses,
+        }),
+      );
+      // Honest pool: median $30/sqft, subject $25/sqft, gap negative — refused.
+      expect(wholeResult).toEqual({
+        ok: false,
+        blocker: "BELOW_SIGNED_EVIDENCE_THRESHOLD",
+      });
+
+      const strippedResult = buildT2ArtifactContent(
+        contentInputs({
+          comparableCandidates: whole.candidates.slice(0, 5),
+          comparableAssessedValues: whole.values,
+          comparableAddresses: whole.addresses,
+        }),
+      );
+      // A pre-filtered pool can still yield a packet — the selector cannot know
+      // what it was not shown — but the manifest now says exactly what it saw.
+      expect(strippedResult.ok).toBe(true);
+      if (!strippedResult.ok) return;
+      const m = strippedResult.manifest;
+      expect(m.candidateCount).toBe(5);
+      expect(m.candidateAcceptedCount).toBe(5);
+      expect(m.candidatePoolSha256).toBe(
+        candidatePoolSha256(whole.candidates.slice(0, 5)),
+      );
+      expect(m.candidatePoolSha256).not.toBe(
+        candidatePoolSha256(whole.candidates),
+      );
+      expect(m.candidatePoolHashDomain).toBe("ot-t2-candidate-pool/v1");
+      expect(strippedResult.text).toContain(
+        "Candidate rows handed to selection: 5",
+      );
+    });
+
+    it("records exhaustive rejected counts by bounded reason, zero-filled", () => {
+      const { candidates, values, addresses } = comparableFixtures();
+      const extra: ComparableMatchAttributes[] = [
+        { ...candidates[0], pin: "99010010040001", neighborhoodCode: "99011" },
+        { ...candidates[0], pin: "99010010040002", propertyClass: "204" },
+        { ...candidates[0], pin: "99010010040003", buildingSqft: 3000 },
+        { ...candidates[0] }, // identical repeat -> duplicate_pin
+        { ...candidates[1], yearBuilt: 1901 }, // conflicting repeat -> conflicting_duplicate_rows
+        { ...candidates[0], pin: "bad" }, // invalid
+      ];
+      const result = buildT2ArtifactContent(
+        contentInputs({
+          comparableCandidates: [...candidates, ...extra],
+          comparableAssessedValues: values,
+          comparableAddresses: addresses,
+        }),
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const counts = result.manifest.candidateRejectedByReason;
+      expect(Object.keys(counts).sort()).toEqual(
+        [...COMPARABLE_REJECTION_REASONS].sort(),
+      );
+      expect(counts).toMatchObject({
+        different_neighborhood: 1,
+        different_class: 1,
+        building_sqft_out_of_band: 1,
+        duplicate_pin: 1,
+        conflicting_duplicate_rows: 1,
+        missing_or_invalid_attributes: 1,
+        same_parcel_as_subject: 0,
+        different_subtype: 0,
+        year_built_out_of_band: 0,
+      });
+      expect(result.manifest.candidateCount).toBe(12);
+      // Six original comparables, less the one dropped as conflicting.
+      expect(result.manifest.candidateAcceptedCount).toBe(5);
+      expect(result.text).toContain("Candidate rows handed to selection: 12");
+    });
+
+    it("carries a source content hash when one is available and says so when it is not", () => {
+      const built = buildT2ArtifactContent(contentInputs());
+      expect(built.ok).toBe(true);
+      if (!built.ok) return;
+      const byId = new Map(
+        built.manifest.sources.map((s) => [s.datasetId, s.contentSha256]),
+      );
+      expect(byId.get("uzyt-m557")).toBe(SYNTHETIC_SOURCE_SHA256);
+      expect(byId.get("x54s-btds")).toBeNull();
+      expect(built.text).toContain(`content sha256 ${SYNTHETIC_SOURCE_SHA256}`);
+      expect(built.text).toContain("content hash not available from source");
+    });
+
+    it("refuses a malformed source content hash rather than rendering it", () => {
+      const result = buildT2ArtifactContent(
+        contentInputs({
+          sources: [{ ...SOURCES[0], contentSha256: "not-a-hash" }],
+        }),
+      );
+      expect(result).toEqual({
+        ok: false,
+        blocker: "INCOMPLETE_SOURCE_MANIFEST",
+      });
+    });
+  });
+
+  describe("L2: county-supplied text cannot inject lines into the packet body", () => {
+    it("collapses newline, carriage return and tab in subject and comparable text", () => {
+      const { candidates, values, addresses } = comparableFixtures();
+      addresses.set(
+        candidates[0].pin,
+        "1 EXAMPLE AVE\nYOUR ASSESSMENT IS WRONG. FILE NOW.",
+      );
+      addresses.set(candidates[1].pin, "2 EXAMPLE AVE\r\nUNIT\t2");
+      const result = buildT2ArtifactContent(
+        contentInputs({
+          subject: {
+            ...SUBJECT,
+            address: "1 EXAMPLE ST\nFAKE SECTION",
+            city: "Chi\tcago",
+            township: "Ex\rample",
+            residentialSubtype: "1 Story",
+          },
+          comparableCandidates: candidates,
+          comparableAssessedValues: values,
+          comparableAddresses: addresses,
+        }),
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const lines = result.text.split("\n");
+      expect(lines.some((l) => l.startsWith("YOUR ASSESSMENT IS WRONG"))).toBe(
+        false,
+      );
+      expect(lines.some((l) => l.startsWith("FAKE SECTION"))).toBe(false);
+      // No control character survives into the body: only LF line breaks remain.
+      expect(hasControlCharacter(result.text)).toBe(false);
+      expect(result.text).toContain(
+        "1 EXAMPLE AVE YOUR ASSESSMENT IS WRONG. FILE NOW.",
+      );
+      expect(result.text).toContain("2 EXAMPLE AVE UNIT 2");
+      expect(result.text).toContain(
+        "Address:                 1 EXAMPLE ST FAKE SECTION",
+      );
+      expect(result.text).toContain("City:                    Chi cago");
+    });
+  });
+});
