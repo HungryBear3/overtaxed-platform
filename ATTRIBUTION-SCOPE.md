@@ -26,6 +26,9 @@ the OT checkout, expressed as:
    first-touch attribution to the canonical `orderId` **before** the Stripe
    Checkout Session is created, and stamps Stripe metadata from a **readback of
    the immutable row**, never from the current request.
+5. An explicit **state** on every row — `campaign`, `organic` or
+   `legacy_unattributed` — so that "we observed no campaign" and "we never
+   observed this order's first touch at all" are different, durable claims.
 
 ## The privacy boundary
 
@@ -86,7 +89,7 @@ The tension: binding must be fail-closed before a provider side effect, but the
 existing untagged checkout flow must keep working on a deployment where this
 migration has not been applied.
 
-These are reconciled with a single explicit server gate, `OT_ATTRIBUTION_ENABLED`,
+These are reconciled with a single explicit server gate, `OT_ORDER_ATTRIBUTION_ENABLED`,
 default **off**:
 
 - **Off (default, and the state this branch ships in):** no attribution row is
