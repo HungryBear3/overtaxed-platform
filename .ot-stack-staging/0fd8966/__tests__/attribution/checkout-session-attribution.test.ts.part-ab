@@ -1,0 +1,250 @@
+    })
+    expect(recovered.status).toBe(200)
+    expect(stripeModule.__create).toHaveBeenCalledTimes(1)
+
+    const order = Array.from(state.orders.values())[0]
+    expect(state.attribution.get(order.id)).toMatchObject({
+      state: "campaign",
+      campaignCode: "synthetic_campaign_a",
+    })
+  })
+
+  it("logs a fixed classification and never the driver error or the submitted codes", async () => {
+    const logged: unknown[][] = []
+    const spy = jest.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      logged.push(args)
+    })
+    state.attributionInsertFails = true
+
+    await postT2("11111111-1111-4111-8111-111111111111", { attributionCampaignCode: "synthetic_campaign_a" })
+
+    spy.mockRestore()
+    const serialized = JSON.stringify(logged)
+    expect(serialized).toContain("reason=insert_failed")
+    // No driver text, no bound parameters, no submitted code, no buyer data.
+    expect(serialized).not.toContain("relation \"ot_order_attribution\" does not exist")
+    expect(serialized).not.toContain("synthetic_campaign_a")
+    expect(serialized).not.toContain("INSERT INTO")
+    expect(serialized).not.toContain("Buyer@example.com")
+    expect(serialized).not.toContain("1 Test St")
+    // A single Error object logged raw would serialize to `{}` and hide this,
+    // so assert the shape positively too.
+    expect(logged.every((args) => args.every((arg) => typeof arg === "string"))).toBe(true)
+  })
+
+  it("also fails closed for organic traffic — the gate is not campaign-only", async () => {
+    state.attributionInsertFails = true
+    const response = await postT2("11111111-1111-4111-8111-111111111111")
+    expect(response.status).toBe(503)
+    expect(stripeModule.__create).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * The failure this suite exists to prevent: an order whose real first touch was
+ * never observed being stamped with a LATER request's campaign.
+ *
+ * Every order here is created while the gate is OFF, which is the honest
+ * simulation of "already in the database when attribution was switched on" —
+ * a pre-feature order and a feature-off order are indistinguishable from the
+ * route's side, and both must land on `legacy_unattributed`.
+ */
+describe("pre-existing orders are never falsely attributed", () => {
+  it("binds legacy_unattributed to a LEGACY ORDER HOLDING AN OPEN SESSION, and leaves that session alone", async () => {
+    // Created before attribution existed: an order and an open Stripe session,
+    // and no attribution row anywhere.
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    const first = await postT2("11111111-1111-4111-8111-111111111111", {
+      attributionCampaignCode: "synthetic_campaign_a",
+    })
+    expect(first.status).toBe(200)
+    const originalUrl = (await first.json()).url
+    const order = Array.from(state.orders.values())[0]
+    expect(state.attribution.size).toBe(0)
+
+    // The gate is switched on, and a tagged retry arrives for the same order.
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "1"
+    const retry = await postT2("22222222-2222-4222-8222-222222222222", {
+      attributionCampaignCode: "synthetic_campaign_b",
+      attributionCreativeCode: "synthetic_creative_2",
+    })
+    expect(retry.status).toBe(200)
+
+    // The retry's campaign is NOT stamped onto the order.
+    expect(state.attribution.get(order.id)).toMatchObject({
+      state: "legacy_unattributed",
+      campaignCode: null,
+      creativeCode: null,
+    })
+    // The already-open session is reused untouched, and Stripe still knows
+    // nothing about any campaign — which is exactly what the row now says.
+    expect(await retry.json()).toEqual({ url: originalUrl })
+    expect(stripeModule.__create).toHaveBeenCalledTimes(1)
+    const sessionMetadata = state.stripeSessions.get("cs_attr_1")?.metadata as Record<string, string>
+    expect(Object.keys(sessionMetadata).some((key) => key.startsWith("attribution"))).toBe(false)
+  })
+
+  it("binds legacy_unattributed to a LEGACY PENDING ORDER that never got a session", async () => {
+    // A feature-off order whose provider call failed: the row exists, no
+    // session was ever created, and `stripeSessionId` is null — the state a
+    // null-session heuristic would misread as "brand new".
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    state.stripeCreateFails = true
+    const blocked = await postT2("11111111-1111-4111-8111-111111111111", {
+      attributionCampaignCode: "synthetic_campaign_a",
+    })
+    expect(blocked.status).toBe(502)
+    const order = Array.from(state.orders.values())[0]
+    expect(order.stripeSessionId ?? null).toBeNull()
+    expect(state.attribution.size).toBe(0)
+
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "1"
+    state.stripeCreateFails = false
+    const retry = await postT2("22222222-2222-4222-8222-222222222222", {
+      attributionCampaignCode: "synthetic_campaign_b",
+    })
+    expect(retry.status).toBe(200)
+
+    expect(state.attribution.get(order.id)).toMatchObject({
+      state: "legacy_unattributed",
+      campaignCode: null,
+    })
+    // A session IS created here, and it carries the honest marker rather than
+    // the retry's campaign or a fabricated organic.
+    const metadata = lastCreatedMetadata()
+    expect(metadata.attributionStatus).toBe("legacy_unattributed")
+    expect(Object.keys(metadata).filter((key) => key.startsWith("attribution"))).toEqual(["attributionStatus"])
+  })
+
+  it("does not let an EXPIRED-SESSION retry make a legacy order look fresh", async () => {
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    const first = await postT2("11111111-1111-4111-8111-111111111111")
+    expect(first.status).toBe(200)
+    const order = Array.from(state.orders.values())[0]
+
+    // Expiring the session resets `stripeSessionId` to null and bumps
+    // `attempt` — every property a "was this just created?" heuristic could
+    // look at now reads like a fresh order.
+    state.stripeSessions.set(String(order.stripeSessionId), {
+      id: order.stripeSessionId,
+      url: "https://checkout.stripe.test/expired",
+      status: "expired",
+      expires_at: Math.floor((nowMs - 60_000) / 1000),
+    })
+
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "1"
+    const retry = await postT2("22222222-2222-4222-8222-222222222222", {
+      attributionCampaignCode: "synthetic_campaign_a",
+      attributionCreativeCode: "synthetic_creative_1",
+    })
+    expect(retry.status).toBe(200)
+    expect(stripeModule.__create).toHaveBeenCalledTimes(2)
+
+    expect(state.attribution.get(order.id)).toMatchObject({ state: "legacy_unattributed", campaignCode: null })
+    expect(lastCreatedMetadata().attributionStatus).toBe("legacy_unattributed")
+  })
+
+  it("never promotes the legacy marker, however many tagged retries arrive", async () => {
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    await postT2("11111111-1111-4111-8111-111111111111")
+    const order = Array.from(state.orders.values())[0]
+
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "1"
+    await postT2("22222222-2222-4222-8222-222222222222", { attributionCampaignCode: "synthetic_campaign_a" })
+    await postT2("33333333-3333-4333-8333-333333333333", { attributionCampaignCode: "synthetic_campaign_b" })
+
+    expect(state.attribution.get(order.id)).toMatchObject({ state: "legacy_unattributed", campaignCode: null })
+    expect(state.attribution.size).toBe(1)
+  })
+
+  /**
+   * The legacy marker must not be mistaken for a measurement. `organic` is a
+   * positive claim about an untagged first touch we actually saw; legacy says
+   * we never saw one, and the two must stay tellable apart end to end.
+   */
+  it("keeps legacy distinct from organic even though both store no codes", async () => {
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    await postT2("11111111-1111-4111-8111-111111111111")
+    const legacyOrder = Array.from(state.orders.values())[0]
+
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "1"
+    await postT2("22222222-2222-4222-8222-222222222222")
+
+    // A genuinely new, genuinely untagged order, created with the gate on.
+    const freshOrganic = await postT2("44444444-4444-4444-8444-444444444444", {
+      email: "other@example.com",
+      name: "Other Buyer",
+    })
+    expect(freshOrganic.status).toBe(200)
+    const organicOrder = Array.from(state.orders.values()).find((row) => row.id !== legacyOrder.id)!
+
+    expect(state.attribution.get(legacyOrder.id)?.campaignCode).toBeNull()
+    expect(state.attribution.get(organicOrder.id)?.campaignCode).toBeNull()
+    expect(state.attribution.get(legacyOrder.id)?.state).toBe("legacy_unattributed")
+    expect(state.attribution.get(organicOrder.id)?.state).toBe("organic")
+    expect(lastCreatedMetadata().attributionStatus).toBe("organic")
+  })
+})
+
+/**
+ * "Off" has to mean off at the wire, not just "no metadata key". If the route
+ * read the table while the gate was off, turning the gate off would not be a
+ * safe response to the migration not having been applied.
+ */
+describe("the gate off issues no statement against the attribution table", () => {
+  it("neither reads nor writes `ot_order_attribution` across a whole successful checkout", async () => {
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    const dbModule = jest.requireMock("@/lib/db") as { prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock } }
+
+    const response = await postT2("11111111-1111-4111-8111-111111111111", {
+      attributionCampaignCode: "synthetic_campaign_a",
+    })
+
+    expect(response.status).toBe(200)
+    expect(dbModule.prisma.$executeRaw).not.toHaveBeenCalled()
+    expect(dbModule.prisma.$queryRaw).not.toHaveBeenCalled()
+    expect(state.attribution.size).toBe(0)
+  })
+
+  it("still refuses an unapproved code while off — the gate is persistence, not the privacy boundary", async () => {
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    const dbModule = jest.requireMock("@/lib/db") as { prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock } }
+
+    const response = await POST(
+      request("11111111-1111-4111-8111-111111111111", { attributionCampaignCode: "not_approved_anywhere" }),
+    )
+
+    expect(response.status).toBe(400)
+    expect(dbModule.prisma.$executeRaw).not.toHaveBeenCalled()
+    expect(dbModule.prisma.$queryRaw).not.toHaveBeenCalled()
+  })
+
+  it("does not re-bind, re-read or downgrade an existing row when the gate is turned back off", async () => {
+    const first = await postT2("11111111-1111-4111-8111-111111111111", {
+      attributionCampaignCode: "synthetic_campaign_a",
+    })
+    expect(first.status).toBe(200)
+    const order = Array.from(state.orders.values())[0]
+    const bound = { ...state.attribution.get(order.id)! }
+
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    const dbModule = jest.requireMock("@/lib/db") as { prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock } }
+    dbModule.prisma.$executeRaw.mockClear()
+    dbModule.prisma.$queryRaw.mockClear()
+
+    const retry = await postT2("22222222-2222-4222-8222-222222222222", {
+      attributionCampaignCode: "synthetic_campaign_b",
+    })
+    expect(retry.status).toBe(200)
+    expect(dbModule.prisma.$executeRaw).not.toHaveBeenCalled()
+    expect(dbModule.prisma.$queryRaw).not.toHaveBeenCalled()
+    expect(state.attribution.get(order.id)).toEqual(bound)
+  })
+})
+
+describe("the shipped registry is untouched by this suite", () => {
+  it("still approves nothing", () => {
+    const actual = jest.requireActual("@/lib/attribution/registry") as typeof import("@/lib/attribution/registry")
+    expect(actual.shippedAttributionRegistry().campaigns).toEqual([])
+  })
+})
