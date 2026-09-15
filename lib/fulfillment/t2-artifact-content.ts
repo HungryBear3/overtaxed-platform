@@ -57,6 +57,7 @@ export type T2ArtifactRefusal =
   | "INSUFFICIENT_BUSINESS_DAYS"
   | "ORDER_PROPERTY_MISMATCH"
   | "MISSING_PROPERTY_IDENTITY"
+  | "OUTSIDE_COOK_COUNTY"
   | "UNSUPPORTED_PROPERTY_CLASS"
   | "MULTI_PIN_PROPERTY"
   | "MISSING_BUILDING_SQFT"
@@ -64,6 +65,7 @@ export type T2ArtifactRefusal =
   | "MISSING_PROPERTY_CHARACTERISTICS"
   | "INSUFFICIENT_COMPARABLES"
   | "COMPARABLE_VALUE_INCOMPLETE"
+  | "COMPARABLE_ADDRESS_MISSING"
   | "UNIFORMITY_NOT_COMPUTABLE"
   | "BELOW_SIGNED_EVIDENCE_THRESHOLD"
   | "INCOMPLETE_SOURCE_MANIFEST"
@@ -230,7 +232,10 @@ export function buildT2ArtifactContent(input: T2ArtifactInputs): T2ArtifactConte
   if (orderPin !== subjectPin) return { ok: false, blocker: "ORDER_PROPERTY_MISMATCH" }
 
   // 3. Product coverage.
-  if (!subject.inCookCounty) return { ok: false, blocker: "UNSUPPORTED_PROPERTY_CLASS" }
+  // Distinct from the class blocker on purpose: an out-of-county parcel and a
+  // class-517 parcel are different coverage facts, and operations cannot tell
+  // them apart from a shared code.
+  if (!subject.inCookCounty) return { ok: false, blocker: "OUTSIDE_COOK_COUNTY" }
   if (subject.pinCount !== 1) return { ok: false, blocker: "MULTI_PIN_PROPERTY" }
   if (!isClass2Residential(subject.propertyClass)) {
     return { ok: false, blocker: "UNSUPPORTED_PROPERTY_CLASS" }
@@ -295,8 +300,10 @@ export function buildT2ArtifactContent(input: T2ArtifactInputs): T2ArtifactConte
   if (valued.length < requiredComparables) {
     return { ok: false, blocker: "INSUFFICIENT_COMPARABLES" }
   }
+  // A missing address is a different gap from a missing value, and the packet
+  // tells the reader to verify each comparable by address and PIN.
   if (valued.some((c) => !input.comparableAddresses.get(c.pin)?.trim())) {
-    return { ok: false, blocker: "COMPARABLE_VALUE_INCOMPLETE" }
+    return { ok: false, blocker: "COMPARABLE_ADDRESS_MISSING" }
   }
 
   const measurement = measureUniformity(
@@ -441,11 +448,21 @@ function renderPacket(
 
   w("3. THE COMPARABLE PROPERTIES")
   w("----------------------------")
-  w("PIN              Address                              Sq ft   Built   Assessed      $/sq ft")
+  // The address column is sized to the widest address actually present. It used
+  // to be sliced to 36 characters, which silently truncated long addresses in a
+  // document whose whole instruction is to verify every line against the
+  // county's records.
+  const addressWidth = Math.max(
+    "Address".length,
+    ...valued.map((c) => (addresses.get(c.pin) ?? "").length),
+  )
+  w(
+    `${"PIN".padEnd(16)}${"Address".padEnd(addressWidth)}   Sq ft   Built    Assessed    $/sq ft`,
+  )
   for (const c of valued) {
-    const address = (addresses.get(c.pin) ?? "").slice(0, 36).padEnd(36)
+    const address = (addresses.get(c.pin) ?? "").padEnd(addressWidth)
     w(
-      `${c.pin}  ${address} ${String(c.buildingSqft.toLocaleString("en-US")).padStart(6)}  ` +
+      `${c.pin.padEnd(16)}${address} ${String(c.buildingSqft.toLocaleString("en-US")).padStart(7)}  ` +
         `${String(c.yearBuilt).padStart(5)}  ${money(c.assessedTotalValue).padStart(10)}  ` +
         `${("$" + fixed(c.assessedPerSqft, 2)).padStart(9)}`,
     )

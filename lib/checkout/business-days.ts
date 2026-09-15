@@ -211,3 +211,77 @@ export function evaluateCheckoutBusinessDayCutoff(input: {
     closeDay,
   }
 }
+
+/**
+ * The Stripe Checkout Session expiry for a window, and whether one can exist.
+ *
+ * Separate from the product cutoff above and subordinate to it. A hosted
+ * session must live at least `minSeconds` and must never outlive the filing
+ * window it was sold against, so the expiry is the earlier of the window's last
+ * moment and the provider's maximum session life.
+ *
+ * This lived inline in the checkout route, where it could not be unit-tested;
+ * the only case that exercised it was a same-day close, which the three-
+ * business-day product cutoff now refuses earlier. It is kept as defence in
+ * depth and moved here so it has coverage of its own rather than being
+ * unreachable AND unverified.
+ *
+ * `closeDate` is a Chicago calendar date. The window's last moment is the end of
+ * that day in Chicago, not a UTC midnight.
+ */
+export function stripeSessionExpiry(input: {
+  closeDate: string | null | undefined
+  now: Date | number
+  maxSeconds: number
+  minSeconds: number
+  /** True for an approved-notice order, which is not bounded by the window. */
+  unboundedByWindow?: boolean
+}): { expiresAtEpochSeconds: number; viable: boolean; secondsAvailable: number } {
+  const nowMs = input.now instanceof Date ? input.now.getTime() : input.now
+  const maxMs = nowMs + input.maxSeconds * 1000
+  const closeDay = parseCalendarDay(input.closeDate)
+
+  let boundMs = maxMs
+  if (!input.unboundedByWindow && closeDay) {
+    // End of the close day in Chicago: the first instant of the next day, less
+    // one second. Derived through the zone formatter so DST cannot shift it.
+    const nextDayStartMs = chicagoDayStartUtcMs(addCalendarDay(closeDay))
+    if (nextDayStartMs !== null) boundMs = Math.min(maxMs, nextDayStartMs - 1000)
+  }
+  const expiresAtEpochSeconds = Math.floor(boundMs / 1000)
+  const secondsAvailable = expiresAtEpochSeconds - Math.floor(nowMs / 1000)
+  return {
+    expiresAtEpochSeconds,
+    viable: secondsAvailable >= input.minSeconds,
+    secondsAvailable,
+  }
+}
+
+function addCalendarDay(day: string): string {
+  return new Date(dayToUtcMs(day) + DAY_MS).toISOString().slice(0, 10)
+}
+
+/** UTC instant of 00:00 America/Chicago on a calendar day, DST included. */
+function chicagoDayStartUtcMs(day: string): number | null {
+  const parsed = parseCalendarDay(day)
+  if (!parsed) return null
+  // Start from the UTC midnight and correct by the zone offset observed there,
+  // then re-check, which converges for both standard and daylight offsets.
+  let guess = dayToUtcMs(parsed)
+  for (let i = 0; i < 3; i += 1) {
+    const rendered = chicagoCalendarDay(guess)
+    if (rendered === parsed) {
+      // Walk back to the first instant that still renders as this day.
+      let lo = guess - 26 * 3600_000
+      let hi = guess
+      while (hi - lo > 1000) {
+        const mid = Math.floor((lo + hi) / 2)
+        if (chicagoCalendarDay(mid) === parsed) hi = mid
+        else lo = mid
+      }
+      return hi
+    }
+    guess += 6 * 3600_000
+  }
+  return null
+}

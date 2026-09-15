@@ -77,6 +77,7 @@ export type ComparableRejection = {
     | "year_built_out_of_band"
     | "missing_or_invalid_attributes"
     | "duplicate_pin"
+    | "conflicting_duplicate_rows"
 }
 
 export type ComparableSelection = {
@@ -132,25 +133,61 @@ export function selectNonDirectionalComparables(
 
   const accepted: ComparableMatchAttributes[] = []
   const rejected: ComparableRejection[] = []
-  const seen = new Set<string>()
 
+  // Resolve duplicate PINs BEFORE any attribute filtering, and resolve them by
+  // content rather than by arrival order.
+  //
+  // An earlier version marked a PIN as seen as soon as it was encountered, so a
+  // row rejected for a wrong neighbourhood still consumed the PIN and a later
+  // good row for the same parcel was dropped as a duplicate. That made the
+  // accepted set depend on the order the source returned rows in — a
+  // determinism hole in the one module whose contract is determinism. A county
+  // feed returning a stale row and a current row for one PIN in either order
+  // would produce two different comparable sets, two different medians, and
+  // potentially two different eligibility outcomes for the same order.
+  //
+  // Identical repeats collapse to one. Rows that disagree about the same parcel
+  // are a contradiction in the source, so that PIN is dropped entirely and
+  // reported: choosing between them would be choosing which record to believe.
+  const byPin = new Map<string, ComparableMatchAttributes[]>()
+  const invalid: ComparableMatchAttributes[] = []
   for (const candidate of candidates) {
     if (!validAttributes(candidate)) {
-      rejected.push({
-        pin: typeof candidate?.pin === "string" ? candidate.pin : "",
-        reason: "missing_or_invalid_attributes",
-      })
+      invalid.push(candidate)
       continue
     }
+    const rows = byPin.get(candidate.pin)
+    if (rows) rows.push(candidate)
+    else byPin.set(candidate.pin, [candidate])
+  }
+  for (const candidate of invalid) {
+    rejected.push({
+      pin: typeof candidate?.pin === "string" ? candidate.pin : "",
+      reason: "missing_or_invalid_attributes",
+    })
+  }
+
+  const identity = (c: ComparableMatchAttributes) =>
+    [c.neighborhoodCode, c.propertyClass, c.residentialSubtype, c.buildingSqft, c.yearBuilt].join("|")
+
+  const deduped: ComparableMatchAttributes[] = []
+  for (const [pin, rows] of byPin) {
+    if (rows.length > 1) {
+      const distinct = new Set(rows.map(identity))
+      if (distinct.size > 1) {
+        rejected.push({ pin, reason: "conflicting_duplicate_rows" })
+        continue
+      }
+      rejected.push({ pin, reason: "duplicate_pin" })
+    }
+    deduped.push(rows[0])
+  }
+
+  for (const candidate of deduped) {
     if (candidate.pin === subject.pin) {
       rejected.push({ pin: candidate.pin, reason: "same_parcel_as_subject" })
       continue
     }
-    if (seen.has(candidate.pin)) {
-      rejected.push({ pin: candidate.pin, reason: "duplicate_pin" })
-      continue
-    }
-    seen.add(candidate.pin)
     if (candidate.neighborhoodCode !== subject.neighborhoodCode) {
       rejected.push({ pin: candidate.pin, reason: "different_neighborhood" })
       continue

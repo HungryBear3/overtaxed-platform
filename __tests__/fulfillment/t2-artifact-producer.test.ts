@@ -20,6 +20,7 @@ import {
   type T2ArtifactInputs,
 } from "@/lib/fulfillment/t2-artifact-content"
 import { CC_01, CC_07, CC_10, CC_12, CC_13, CC_14, CC_17 } from "@/lib/copy/canonical"
+import { resolveEligibilityPolicy, signedPolicyVersion } from "@/lib/checkout/ot-contract"
 import {
   NON_DIRECTIONAL_RULE_ID,
   attachAssessedValues,
@@ -360,7 +361,7 @@ describe("refusals fail closed and produce nothing", () => {
     [
       "outside Cook County",
       { subject: { ...SUBJECT, inCookCounty: false } },
-      "UNSUPPORTED_PROPERTY_CLASS",
+      "OUTSIDE_COOK_COUNTY",
     ],
     [
       "non-residential class",
@@ -562,5 +563,114 @@ describe("selection is structurally non-directional", () => {
     )
     expect(new Set(gaps.map((g) => g.toFixed(6))).size).toBe(gaps.length)
     expect(gaps.some((g) => g !== 0)).toBe(true)
+  })
+})
+
+/* ── remediation of the independent audit findings ──────────────────────── */
+
+describe("audit remediation", () => {
+  it("uses the real default gateway when none is injected, and still refuses", async () => {
+    // The prior version of this suite passed an injected `resolvePolicy: () => null`
+    // to a test named "when the real resolver is used", so the candidate's most
+    // important claim had no coverage at all. This call passes NO gateway, so it
+    // exercises `defaultGateway()` and the live `resolveEligibilityPolicy`.
+    delete process.env.OT_ELIGIBILITY_POLICY_VERSION
+    const result = await generateT2Artifact({ orderId: ORDER.id, fulfillmentId: "ful_1" })
+    expect(result).toEqual({ ok: false, blocker: "ELIGIBILITY_POLICY_UNSIGNED" })
+  })
+
+  it("cannot be opened by an inherited Object.prototype key in the policy version", async () => {
+    // An empty `{}` registry inherits from Object.prototype, so a lookup of
+    // `constructor` or `toString` returned a truthy member and the registry
+    // reported a signed policy. That let an environment variable alone satisfy
+    // the policy half of the paid-checkout gate.
+    const inherited = [
+      "constructor", "hasOwnProperty", "toString", "valueOf", "__proto__",
+      "isPrototypeOf", "propertyIsEnumerable", "toLocaleString",
+      "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__",
+    ]
+    for (const key of inherited) {
+      process.env.OT_ELIGIBILITY_POLICY_VERSION = key
+      expect(resolveEligibilityPolicy()).toEqual({
+        signed: false,
+        version: null,
+        reason: "eligibility_policy_unsigned",
+      })
+      expect(signedPolicyVersion()).toBeNull()
+      const result = await generateT2Artifact({ orderId: ORDER.id, fulfillmentId: "ful_1" })
+      expect(result).toEqual({ ok: false, blocker: "ELIGIBILITY_POLICY_UNSIGNED" })
+    }
+    delete process.env.OT_ELIGIBILITY_POLICY_VERSION
+  })
+
+  it("refuses ordinary unsigned policy versions too", () => {
+    for (const key of ["v1", "2026-09-01", "true", "*", "", "   "]) {
+      process.env.OT_ELIGIBILITY_POLICY_VERSION = key
+      expect(resolveEligibilityPolicy().signed).toBe(false)
+    }
+    delete process.env.OT_ELIGIBILITY_POLICY_VERSION
+  })
+
+  it("selects the same set whatever order conflicting duplicate rows arrive in", () => {
+    // A row rejected for a wrong neighbourhood used to consume the PIN, so a
+    // later good row for the same parcel was dropped as a duplicate and the
+    // accepted set depended on source ordering.
+    const subject = {
+      pin: SUBJECT_PIN, neighborhoodCode: "99010", propertyClass: "203",
+      residentialSubtype: "1 Story", buildingSqft: 1200, yearBuilt: 1955,
+    }
+    const good = { ...subject, pin: "99010010020007" }
+    const conflicting = { ...good, neighborhoodCode: "99099" }
+
+    const forward = selectNonDirectionalComparables(subject, [conflicting, good])!
+    const reverse = selectNonDirectionalComparables(subject, [good, conflicting])!
+    expect(forward.accepted).toEqual(reverse.accepted)
+    // Contradictory rows for one parcel are dropped rather than resolved by
+    // arrival order: choosing between them would be choosing what to believe.
+    expect(forward.accepted).toHaveLength(0)
+    expect(forward.rejected).toContainEqual({
+      pin: "99010010020007",
+      reason: "conflicting_duplicate_rows",
+    })
+  })
+
+  it("collapses identical repeated rows to one instead of dropping the parcel", () => {
+    const subject = {
+      pin: SUBJECT_PIN, neighborhoodCode: "99010", propertyClass: "203",
+      residentialSubtype: "1 Story", buildingSqft: 1200, yearBuilt: 1955,
+    }
+    const good = { ...subject, pin: "99010010020007" }
+    const selection = selectNonDirectionalComparables(subject, [good, { ...good }])!
+    expect(selection.accepted.map((c) => c.pin)).toEqual(["99010010020007"])
+    expect(selection.rejected).toContainEqual({ pin: "99010010020007", reason: "duplicate_pin" })
+  })
+
+  it("distinguishes a missing comparable address from a missing value", () => {
+    const { candidates, values, addresses } = comparableFixtures()
+    addresses.set(candidates[0].pin, "   ")
+    const result = buildT2ArtifactContent(
+      contentInputs({
+        comparableCandidates: candidates,
+        comparableAssessedValues: values,
+        comparableAddresses: addresses,
+      }),
+    )
+    expect(result).toEqual({ ok: false, blocker: "COMPARABLE_ADDRESS_MISSING" })
+  })
+
+  it("does not truncate a long comparable address", () => {
+    const { candidates, values, addresses } = comparableFixtures()
+    const long = "12345 WEST SOUTH SAMPLE BOULEVARD EXTENSION APARTMENT 1234"
+    addresses.set(candidates[0].pin, long)
+    const result = buildT2ArtifactContent(
+      contentInputs({
+        comparableCandidates: candidates,
+        comparableAssessedValues: values,
+        comparableAddresses: addresses,
+      }),
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.text).toContain(long)
   })
 })

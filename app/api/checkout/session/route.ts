@@ -33,6 +33,7 @@ import {
 import {
   MIN_BUSINESS_DAYS_BEFORE_CLOSE,
   evaluateCheckoutBusinessDayCutoff,
+  stripeSessionExpiry,
 } from "@/lib/checkout/business-days"
 import {
   hostFromRequest,
@@ -327,14 +328,6 @@ function publicWindow(snapshot: CheckoutWindowSnapshot) {
     retrievedAt: snapshot.retrievedAt,
     pendingReason: snapshot.pendingReason,
   }
-}
-
-function windowCloseCutoff(snapshot: CheckoutWindowSnapshot, now: Date = new Date()) {
-  if (!snapshot.closeDate) return null
-  const close = new Date(`${snapshot.closeDate}T23:59:59.000Z`)
-  if (Number.isNaN(close.getTime())) return null
-  const max = new Date(now.getTime() + STRIPE_MAX_CHECKOUT_SECONDS * 1000)
-  return close.getTime() < max.getTime() ? close : max
 }
 
 export async function POST(req: NextRequest) {
@@ -879,9 +872,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const cutoff = approvedNoticeOrder ? null : windowCloseCutoff(snapshot)
-    const expiresAt = cutoff ? Math.floor(cutoff.getTime() / 1000) : Math.floor((Date.now() + STRIPE_MAX_CHECKOUT_SECONDS * 1000) / 1000)
-    if (expiresAt - Math.floor(Date.now() / 1000) < STRIPE_MIN_CHECKOUT_SECONDS) {
+    // Provider-side clamp, subordinate to the product cutoff above. Extracted to
+    // `stripeSessionExpiry` so it has unit coverage; behind a three-business-day
+    // floor it is no longer reachable on the T2 path, and it is retained as
+    // defence in depth rather than deleted.
+    const sessionExpiry = stripeSessionExpiry({
+      closeDate: snapshot.closeDate,
+      now: Date.now(),
+      maxSeconds: STRIPE_MAX_CHECKOUT_SECONDS,
+      minSeconds: STRIPE_MIN_CHECKOUT_SECONDS,
+      unboundedByWindow: Boolean(approvedNoticeOrder),
+    })
+    const expiresAt = sessionExpiry.expiresAtEpochSeconds
+    if (!sessionExpiry.viable) {
       return NextResponse.json(
         { error: "There is not enough filing-window time left to start checkout.", code: "CHECKOUT_WINDOW_TOO_CLOSE", window },
         { status: 409 },
