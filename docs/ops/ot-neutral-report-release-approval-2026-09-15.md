@@ -5,8 +5,8 @@
 - Branch: `codex/ot-neutral-report-20260915`
 - PR: `#47`
 - Actual PR base: `e80ebf9edc5b6f8a848710652badfe83ec4297ab`
-- Independent-review input head: `12b837069a1ac85e223416da43a049cefd1a3d66`
-- Remediated code/test head before this packet refresh: `2344fa0fb5d3fb1cd0bbfbc06849c99683b4843e`
+- Terminal-review input head: `ab94a2343384ac679ccf010c92017a69a958b85e`
+- Preview migration entrypoint remediation head: `ee3320272996f3fce93a52b33e54f85d6dd6d1e5`
 - Product: **Cook County Assessment Records & Matching Property Report**
 - Price: **$69 USD**
 - Strict automated qualification remains separate, unsigned, and inactive.
@@ -28,7 +28,7 @@
 
 ## Verification
 
-- Full Jest after PRE-MIGRATION remediation: 4,093 passed, 80 skipped; 203 suites passed and 7 native suites skipped because no test database URLs were supplied.
+- Full Jest after composed Preview-migration remediation: 4,105 passed, 80 skipped; 204 suites passed and 7 native suites skipped because no test database URLs were supplied.
 - Fulfillment suite after Phase 3: 1,910 passed; native suites excluded without test URLs.
 - Focused final delivery/security: 314 passed; terminal security closure 183 passed.
 - TypeScript: passed (`tsc --noEmit`).
@@ -48,8 +48,11 @@
 - All four connections must resolve to one database name and one durable database-comment marker with schema `ot.database-environment.v1`, purpose `ot-neutral-report`, environment `preview`, `isolated: true`, `production: false`, and a UUID instance id. Hostnames are intentionally ignored so direct and pooler endpoints can identify the same database safely.
 - Hostile tests prove fail-closed behavior for missing/malformed markers, Production and contradictory markers, non-isolated databases, wrong purpose, invalid instance ids, and mismatched database names or instance ids.
 - A separate `neutral-report:pre-migration-identity-preflight` now runs **before any `prisma migrate` command**. It uses only PostgreSQL catalog/identity queries, so it does not require neutral tables, group roles, or migrations to exist. All four URLs must connect as the exact roles declared in their credentials; `current_user` and `session_user` must both match that declared role; all four roles must be distinct; all four must resolve to the same explicitly isolated non-Production Preview marker; the migration role must have schema and role-migration authority; and the app, neutral repository, and neutral delivery roles must be non-superuser, non-BYPASSRLS, non-CREATEROLE, and unable to create in `public`.
+- The single authorized migration entrypoint for this release is `npm run neutral-report:preview-migrate`. It fails closed unless `VERCEL_ENV=preview` and every neutral feature flag is disabled, runs the PRE-MIGRATION identity proof first, and invokes the exact `npx prisma migrate deploy` command only after that proof exits successfully. It uses argument-vector child processes without a shell and never prints credentials. Tests prove invocation order and prove migration is never invoked after a failed preflight or outside the disabled Preview boundary.
+- Operators must not run raw `prisma migrate`, `prisma migrate deploy`, `npx prisma migrate deploy`, `db push`, or any other migration command for this release. The composed entrypoint is mandatory; bypassing it invalidates the Preview evidence.
 - The existing `neutral-report:migration-preflight` remains a separate **post-migration** check. It proves installed neutral tables, exact group-role membership, grants, ownership, RLS, and denied mutations after migrations and restricted memberships have been applied.
 - PRE-MIGRATION hostile tests reject duplicate or aliased identities, `SET ROLE`/session-role indirection, elevated app/runtime/delivery privileges, insufficient migration authority, database/marker divergence, Production markers, malformed/role-less credentials, and non-PostgreSQL URLs. Focused evidence: `npx jest __tests__/fulfillment/neutral-preview-database-marker.test.ts __tests__/fulfillment/neutral-preview-pre-migration.test.ts --runInBand` → 28/28 passed; `npm run type-check` → passed.
+- Composed-entrypoint focused evidence: the entrypoint, identity, and marker suites pass 39/39; full Jest passes 4,105 with only 80 credential-gated native checks skipped; type-check and the 144-page production build pass.
 
 ## Migration hashes
 
@@ -65,7 +68,7 @@ All neutral flags remain fail-closed. Required protected configuration includes 
 
 ## Current gate
 
-Code review remediation, focused tests, the full Jest suite, type-check, and production build are green. The database phase is intentionally **blocked** until separate Preview-only credentials exist for the migration owner, normal app, neutral repository, and neutral delivery identities. Do not reuse Production credentials or a Production database. Once those protected Preview credentials exist, run the PRE-MIGRATION identity/marker preflight before any migration. After migrations and restricted grants, run the existing post-migration grant/RLS preflight before any synthetic database smoke.
+Code review remediation, focused tests, the full Jest suite, type-check, and production build are green. The database phase is intentionally **blocked** until separate Preview-only credentials exist for the migration owner, normal app, neutral repository, and neutral delivery identities. Do not reuse Production credentials or a Production database. Once those protected Preview credentials exist, use only the composed Preview migration entrypoint. On a fresh isolated Preview database, `prisma migrate deploy` correctly applies **all pending repository migrations**, not only the three neutral migrations. The three neutral migration files are separately pinned and hash-verified below to prove the reviewed neutral SQL bytes. After all pending migrations and restricted memberships have been applied, run the existing post-migration grant/RLS preflight before any synthetic database smoke.
 
 ## Requested approval — next gate only
 
@@ -74,8 +77,8 @@ Approve:
 1. Push the reviewed remediation to PR #47 and run CI/independent review on its exact head.
 2. Keep the automatic Preview features disabled.
 3. Separately provision and protect the four Preview-only database credentials and durable database marker.
-4. Run `npm run neutral-report:pre-migration-identity-preflight` with all four protected Preview URLs. Stop on any failure. This is the mandatory evidence gate before any Prisma migration and requires no neutral schema objects.
-5. Only after the PRE-MIGRATION identity/marker preflight passes, apply the three migrations to that isolated Preview database using its privileged migration identity.
+4. Run only `npm run neutral-report:preview-migrate` with all four protected Preview URLs. This mandatory composed entrypoint proves identities/marker first and, only on success, executes the exact safe `npx prisma migrate deploy`. It must stop on any failure. Do not invoke Prisma migration commands directly.
+5. Confirm that `migrate deploy` applied every pending repository migration to the fresh isolated Preview database. Separately verify the three neutral migration file hashes against this packet; do not interpret those three hashes as a request to selectively apply only three migrations.
 6. Grant the Preview app, neutral repository, and neutral delivery logins their exact restricted role memberships.
 7. Run `npm run neutral-report:migration-preflight` as the post-migration grant/RLS proof. Stop on any failure.
 8. Only after both preflights pass in order, run synthetic checkout/QA/download smokes, desktop/mobile browser checks, and deployment file tracing.
