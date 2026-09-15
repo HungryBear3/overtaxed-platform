@@ -1,0 +1,600 @@
+diff --git a/__tests__/fulfillment/admin-event-action-widening.test.ts b/__tests__/fulfillment/admin-event-action-widening.test.ts
+new file mode 100644
+index 0000000..6e68755
+--- /dev/null
++++ b/__tests__/fulfillment/admin-event-action-widening.test.ts
+@@ -0,0 +1,169 @@
++/**
++ * @jest-environment node
++ *
++ * The admin audit table has to be able to STORE what operator recovery writes.
++ *
++ * `20260808173000_add_ot_fulfillment_admin_events` created
++ * `ot_fulfillment_admin_event` for exactly one action and pinned four columns to
++ * it: `action = 'ENTER_MANUAL_REVIEW'`, `to_status = 'MANUAL_REVIEW'`,
++ * `reason_code = 'MANUAL_REVIEW'`, and a five-value `from_status` list.
++ *
++ * `runT2DeliveryRecovery`'s RESOLVE_UNRESOLVED_SEND writes
++ * `('RESOLVE_UNRESOLVED_SEND', 'DELIVERY_PENDING', 'FAILED', <resolve code>)`,
++ * which violates ALL FOUR. Against a real database that INSERT raises 23514 and
++ * unwinds the whole recovery transaction — the status advance, the capability
++ * revocation and the audit row together — so the operator control silently does
++ * not work. Every unit test passes, because every unit test uses a fake that has
++ * no CHECK constraints.
++ *
++ * These assertions are a source contract over the DDL and the writer. They
++ * cannot execute SQL — no database is reachable here — so what they pin is that
++ * the migration exists, that it states both shapes, that it drops the old
++ * constraints by DISCOVERY rather than by a guessed PostgreSQL auto-name, and
++ * that the values the writer actually inserts are inside the new rule.
++ */
++import { readFileSync } from "node:fs"
++import { join } from "node:path"
++import {
++  RESOLVE_REASON_CODES,
++} from "@/lib/fulfillment-runtime/t2-delivery-recovery"
++
++const ROOT = process.cwd()
++const ORIGINAL = readFileSync(
++  join(ROOT, "prisma/migrations/20260808173000_add_ot_fulfillment_admin_events/migration.sql"),
++  "utf8",
++)
++const SQL = readFileSync(
++  join(ROOT, "prisma/migrations/20260912180000_widen_ot_admin_event_actions/migration.sql"),
++  "utf8",
++)
++const RECOVERY = readFileSync(
++  join(ROOT, "lib/fulfillment-runtime/t2-delivery-recovery.ts"),
++  "utf8",
++)
++
++describe("the constraint this migration exists to repair is really there", () => {
++  it.each([
++    [`CHECK ("action" = 'ENTER_MANUAL_REVIEW')`],
++    [`CHECK ("to_status" = 'MANUAL_REVIEW')`],
++    [`CHECK ("reason_code" = 'MANUAL_REVIEW')`],
++  ])("the original migration still pins %s", (constraint) => {
++    expect(ORIGINAL).toContain(constraint)
++  })
++
++  it("the original from_status list excludes DELIVERY_PENDING", () => {
++    const list = ORIGINAL.match(/CHECK \("from_status" IN \(([^)]*)\)\)/)
++    expect(list).not.toBeNull()
++    expect(list![1]).not.toContain("DELIVERY_PENDING")
++  })
++
++  it("and the recovery writer inserts exactly the values those refuse", () => {
++    const insert = RECOVERY.slice(
++      RECOVERY.indexOf('INSERT INTO "ot_fulfillment_admin_event"'),
++    ).slice(0, 900)
++    expect(insert).toContain("RESOLVE_UNRESOLVED_SEND")
++    expect(insert).toContain("DELIVERY_PENDING")
++    expect(insert).toContain("FAILED")
++  })
++})
++
++describe("the repair drops the old constraints without guessing their names", () => {
++  it("never names a PostgreSQL auto-generated constraint", () => {
++    // "<table>_<column>_check" is an implementation detail of how an unnamed
++    // CHECK gets named, and differs if one was ever renamed or rebuilt by hand.
++    expect(SQL).not.toContain("ot_fulfillment_admin_event_action_check")
++    expect(SQL).not.toContain("ot_fulfillment_admin_event_to_status_check")
++    expect(SQL).not.toContain("ot_fulfillment_admin_event_reason_code_check")
++    expect(SQL).not.toContain("ot_fulfillment_admin_event_from_status_check")
++  })
++
++  it("discovers them from the catalogue by the columns they constrain", () => {
++    expect(SQL).toContain("pg_constraint")
++    expect(SQL).toContain("c.contype = 'c'")
++    expect(SQL).toContain("c.conkey <@ target_columns")
++    expect(SQL).toContain("DROP CONSTRAINT %I")
++  })
++
++  it("scopes the discovery to exactly the four columns being replaced", () => {
++    expect(SQL).toContain(
++      "a.attname IN ('action', 'from_status', 'to_status', 'reason_code')",
++    )
++    // The revision and actor constraints reference columns outside that set, so
++    // a subset test cannot reach them.
++    for (const survivor of ["from_revision", "to_revision", "actor_user_id"]) {
++      expect(SQL).not.toMatch(
++        new RegExp(`attname IN \\([^)]*${survivor}`),
++      )
++    }
++  })
++})
++
++describe("the replacement couples each action to the transition it may describe", () => {
++  it("keeps the manual-review shape byte-for-byte equivalent to the old rule", () => {
++    const shape = SQL.slice(SQL.indexOf("_enter_manual_review_shape"))
++    expect(shape).toContain(`"to_status" = 'MANUAL_REVIEW'`)
++    expect(shape).toContain(`"reason_code" = 'MANUAL_REVIEW'`)
++    for (const from of [
++      "NOT_STARTED",
++      "NEEDS_RECONCILIATION",
++      "INCOMPLETE_INPUT",
++      "ARTIFACT_PENDING",
++      "ARTIFACT_READY",
++    ]) {
++      expect(shape.slice(0, 800)).toContain(from)
++    }
++  })
++
++  it("admits the resolve shape, and only from the one unresolved status", () => {
++    const shape = SQL.slice(SQL.indexOf("_resolve_unresolved_send_shape"))
++    expect(shape).toContain(`"from_status" = 'DELIVERY_PENDING'`)
++    expect(shape).toContain(`"to_status" = 'FAILED'`)
++    // PROVIDER_ACCEPTED means the provider took custody and is expected to
++    // report; it is not a send an operator may end.
++    expect(shape.slice(0, 600)).not.toContain("PROVIDER_ACCEPTED")
++  })
++
++  it("admits exactly the reason codes the store will let an operator assert", () => {
++    const shape = SQL.slice(SQL.indexOf("_resolve_unresolved_send_shape")).slice(0, 800)
++    for (const code of RESOLVE_REASON_CODES) expect(shape).toContain(`'${code}'`)
++    // Provider-originated verdicts are evidence, never an operator assertion.
++    expect(shape).not.toContain("BOUNCED")
++    expect(shape).not.toContain("COMPLAINED")
++  })
++
++  it("refuses the cross-products independent column widening would have allowed", () => {
++    // Each shape is written as `action <> X OR (…)`, which constrains the
++    // transition only for its own action. Widening `action`, `to_status` and
++    // `reason_code` separately would have let an ENTER_MANUAL_REVIEW row claim
++    // DELIVERY_PENDING → FAILED, and this table is audit evidence.
++    expect(SQL).toContain(`"action" <> 'ENTER_MANUAL_REVIEW'`)
++    expect(SQL).toContain(`"action" <> 'RESOLVE_UNRESOLVED_SEND'`)
++  })
++
++  it("keeps the action vocabulary closed, so a third action is not free text", () => {
++    // Both shape constraints are vacuously true for an unknown action, so
++    // dropping the old equality check without this would have left the column
++    // unconstrained.
++    expect(SQL).toContain("ot_fulfillment_admin_event_action_closed")
++    expect(SQL).toContain(
++      `"action" IN ('ENTER_MANUAL_REVIEW', 'RESOLVE_UNRESOLVED_SEND')`,
++    )
++  })
++})
++
++describe("the migration stays additive", () => {
++  it("drops, retypes and backfills nothing", () => {
++    expect(SQL).not.toMatch(/DROP\s+COLUMN/i)
++    expect(SQL).not.toMatch(/DROP\s+TABLE/i)
++    expect(SQL).not.toMatch(/DROP\s+INDEX/i)
++    expect(SQL).not.toMatch(/ALTER\s+COLUMN/i)
++    expect(SQL).not.toMatch(/^\s*(?:TRUNCATE|DELETE|UPDATE|INSERT)\b/im)
++  })
++
++  it("touches only the admin event table", () => {
++    const tables = new Set(
++      [...SQL.matchAll(/ALTER TABLE "([a-z_]+)"/g)].map((m) => m[1]),
++    )
++    expect([...tables]).toEqual(["ot_fulfillment_admin_event"])
++  })
++})
+diff --git a/__tests__/fulfillment/admin-read-model.test.ts b/__tests__/fulfillment/admin-read-model.test.ts
+index 9022287..161a75c 100644
+--- a/__tests__/fulfillment/admin-read-model.test.ts
++++ b/__tests__/fulfillment/admin-read-model.test.ts
+@@ -522,16 +522,25 @@ describe("display-only action eligibility", () => {
+     }
+   })
+ 
+-  it("retry would be eligible from DELAYED and ineligible from a terminal bounce", () => {
++  // A provider delay means the provider still HOLDS the message, so the console
++  // must not offer a retry that would mail a second, differently-keyed code. The
++  // reason shown says which of the two it is, rather than a generic refusal.
++  it("retry is ineligible from DELAYED, and says the provider is still trying", () => {
+     const delayed = view({ fulfillment: fulfillment({ status: "DELAYED", attemptCount: 1, attempts: [attempt(1)], artifacts: [artifact(1)], events: [event(1, "ACCEPTED"), event(2, "DELAYED")] }) })
+     const retryDelayed = delayed.actions.find((a) => a.action === "RETRY_DELIVERY")!
+-    expect(retryDelayed.wouldBeEligible).toBe(true)
++    expect(retryDelayed.wouldBeEligible).toBe(false)
++    expect(retryDelayed.reason).toContain("PROVIDER_DELAY_IN_FLIGHT")
+ 
+     const bounced = view({ fulfillment: fulfillment({ status: "BOUNCED", attemptCount: 1, attempts: [attempt(1)], artifacts: [artifact(1)], events: [event(1, "BOUNCED")] }) })
+     const retryBounced = bounced.actions.find((a) => a.action === "RETRY_DELIVERY")!
+     expect(retryBounced.wouldBeEligible).toBe(false)
+   })
+ 
++  it("retry stays eligible from ARTIFACT_READY, the one state that has sent nothing", () => {
++    const ready = view({ fulfillment: fulfillment({ status: "ARTIFACT_READY", attemptCount: 0, artifacts: [artifact(1)] }) })
++    expect(ready.actions.find((a) => a.action === "RETRY_DELIVERY")?.wouldBeEligible).toBe(true)
++  })
++
+   it("uses derived truth and the real attempt count for action eligibility", () => {
+     const delivered = view({
+       fulfillment: fulfillment({
+diff --git a/__tests__/fulfillment/provider-callback-decision.test.ts b/__tests__/fulfillment/provider-callback-decision.test.ts
+index 24aafea..6fc5596 100644
+--- a/__tests__/fulfillment/provider-callback-decision.test.ts
++++ b/__tests__/fulfillment/provider-callback-decision.test.ts
+@@ -329,3 +329,95 @@ describe("reconciliation bounds", () => {
+     expect(MAX_UNMATCHED_CALLBACKS).toBeLessThanOrEqual(10_000)
+   })
+ })
++
++/**
++ * A provider writes its own timestamps, and RFC3339 lets it write them in shapes
++ * this system never produces. The strict canonical validator is right for our
++ * OWN instants and wrong for theirs: Resend documents `created_at` with six
++ * fractional digits and a `+00:00` offset, and refusing those would drop a
++ * genuine, signed, authenticated `email.delivered` on the floor — the packet
++ * would simply never be recorded as delivered.
++ *
++ * The fix is a wider grammar normalized ONCE, deliberately, with explicit
++ * arithmetic. It is emphatically not `new Date(value)`: these assertions pin
++ * both halves — what is now admitted, and what is still refused that a
++ * permissive `Date` coercion would have accepted.
++ */
++describe("provider-stated created_at is normalized, never coerced", () => {
++  const occurredAt = (patch: Record<string, unknown>) => {
++    const result = normalize(patch)
++    if (!result.ok) throw new Error(`expected admission, got ${result.code}`)
++    return result.event.occurredAt
++  }
++
++  it.each([
++    ["the canonical form unchanged", "2026-09-12T11:59:30.000Z", "2026-09-12T11:59:30.000Z"],
++    ["no fractional part at all", "2026-09-12T11:59:30Z", "2026-09-12T11:59:30.000Z"],
++    ["six fractional digits, truncated", "2026-09-12T11:59:30.674981Z", "2026-09-12T11:59:30.674Z"],
++    ["nine fractional digits, truncated", "2026-09-12T11:59:30.999999999Z", "2026-09-12T11:59:30.999Z"],
++    ["a single fractional digit as TENTHS", "2026-09-12T11:59:30.6Z", "2026-09-12T11:59:30.600Z"],
++    ["two fractional digits as HUNDREDTHS", "2026-09-12T11:59:30.06Z", "2026-09-12T11:59:30.060Z"],
++    ["a zero offset spelled +00:00", "2026-09-12T11:59:30.674981+00:00", "2026-09-12T11:59:30.674Z"],
++    ["RFC3339's unknown-offset -00:00", "2026-09-12T11:59:30.000-00:00", "2026-09-12T11:59:30.000Z"],
++    ["a lowercase z", "2026-09-12T11:59:30.000z", "2026-09-12T11:59:30.000Z"],
++    ["a positive offset, resolved by subtraction", "2026-09-12T13:29:30.000+01:30", "2026-09-12T11:59:30.000Z"],
++    ["a negative offset, resolved by addition", "2026-09-12T06:59:30.000-05:00", "2026-09-12T11:59:30.000Z"],
++    ["an offset that crosses a date boundary", "2026-09-13T00:59:30.000+13:00", "2026-09-12T11:59:30.000Z"],
++  ])("admits %s", (_label, created_at, expected) => {
++    expect(occurredAt({ created_at })).toBe(expected)
++  })
++
++  it("truncates toward the PAST, so an event can never outrun its arrival", () => {
++    // Rounding .9999 up would put this event after `receivedAt` and make a
++    // truthful provider look like it reported the future.
++    expect(occurredAt({ created_at: "2026-09-12T11:59:30.999999Z" })).toBe(
++      "2026-09-12T11:59:30.999Z",
++    )
++  })
++
++  it.each([
++    ["a naive local time", "2026-09-12T11:59:30"],
++    ["a space separator", "2026-09-12 11:59:30Z"],
++    ["a date only", "2026-09-12"],
++    ["a year only", "2026"],
++    ["a spelled-out date Date would accept", "Sep 12 2026 11:59:30 UTC"],
++    ["an impossible calendar date", "2026-02-30T00:00:00Z"],
++    ["month 13", "2026-13-01T00:00:00Z"],
++    ["hour 24", "2026-09-12T24:00:00Z"],
++    ["a leap second", "2026-09-12T11:59:60Z"],
++    ["a 60-minute offset field", "2026-09-12T11:59:30.000+00:60"],
++    ["a 24-hour offset field", "2026-09-12T11:59:30.000+24:00"],
++    ["ten fractional digits", "2026-09-12T11:59:30.0000000001Z"],
++    ["a bare offset sign", "2026-09-12T11:59:30.000+"],
++    ["an unterminated instant", "2026-09-12T11:59:30.000"],
++    ["leading whitespace", " 2026-09-12T11:59:30.000Z"],
++    ["trailing whitespace", "2026-09-12T11:59:30.000Z "],
++    ["an epoch integer as a string", "1789041570000"],
++  ])("still refuses %s", (_label, created_at) => {
++    expect(normalize({ created_at })).toEqual({
++      ok: false,
++      code: "INVALID_TIMESTAMP",
++    })
++  })
++
++  it.each([null, 1789041570000, {}, [], true, undefined])(
++    "refuses the non-string created_at %p",
++    (created_at) => {
++      expect(normalize({ created_at })).toEqual({
++        ok: false,
++        code: "INVALID_TIMESTAMP",
++      })
++    },
++  )
++
++  it("applies the plausibility window to the NORMALIZED instant, not the text", () => {
++    // 13:29:30+01:30 is 11:59:30Z — inside the window. The same wall-clock
++    // digits read naively would be 89 minutes in the future and implausible.
++    expect(normalize({ created_at: "2026-09-12T13:29:30.000+01:30" }).ok).toBe(true)
++    // And an offset that genuinely puts the event in the future is still caught.
++    expect(normalize({ created_at: "2026-09-12T12:30:00.000-00:00" })).toEqual({
++      ok: false,
++      code: "IMPLAUSIBLE_TIMESTAMP",
++    })
++  })
++})
+diff --git a/__tests__/fulfillment/provider-callback-store.test.ts b/__tests__/fulfillment/provider-callback-store.test.ts
+index 422151f..b9f1b6a 100644
+--- a/__tests__/fulfillment/provider-callback-store.test.ts
++++ b/__tests__/fulfillment/provider-callback-store.test.ts
+@@ -14,7 +14,11 @@
+  *     and a terminal state are all recorded and refused rather than applied.
+  */
+ import type { Prisma } from "@prisma/client"
+-import { RESEND_PROVIDER, type SanitizedProviderCallback } from "@/lib/fulfillment/provider-callbacks"
++import {
++  MAX_CALLBACK_REPLAYS,
++  RESEND_PROVIDER,
++  type SanitizedProviderCallback,
++} from "@/lib/fulfillment/provider-callbacks"
+ import {
+   createPrismaProviderCallbackStore,
+   type ProviderCallbackClient,
+@@ -53,6 +57,8 @@ type World = {
+   callbacks: CallbackRow[]
+   capabilities: Array<{ revokedAt: Date | null; revokedReasonCode: string | null }>
+   locks: string[]
++  /** True when the spool-cap COUNT ran while the serializing lock was held. */
++  countedUnmatchedUnderLock: boolean
+   casMiss?: boolean
+ }
+ 
+@@ -82,6 +88,7 @@ function world(patch: Partial<World> = {}): World {
+     callbacks: [],
+     capabilities: [{ revokedAt: null, revokedReasonCode: null }],
+     locks: [],
++    countedUnmatchedUnderLock: false,
+     ...patch,
+   }
+ }
+@@ -91,20 +98,30 @@ function fakeClient(state: World): ProviderCallbackClient {
+     async $queryRaw<T>(query: Prisma.Sql): Promise<T> {
+       const sql = query.sql
+       if (sql.includes("clock_timestamp()")) return [{ now: state.now }] as T
++      if (sql.includes("pg_advisory_xact_lock")) {
++        // Recorded, so the ORDER of the cap decision is assertable: the count
++        // must never be taken outside this lock.
++        state.locks.push("spool-cap")
++        return [{ locked: true }] as T
++      }
++      if (sql.includes('COUNT(*) AS "live"')) {
++        state.countedUnmatchedUnderLock = state.locks.includes("spool-cap")
++        return [{
++          live: state.callbacks.filter(
++            (c) => c.disposition === "UNMATCHED" && c.resolvedAt === null,
++          ).length,
++        }] as T
++      }
+       if (sql.includes('JOIN "ot_fulfillment" f ON f."id" = t."fulfillment_id"')) {
+         const [provider, messageId] = query.values
+-        const hit = state.attempts.find(
++        const hits = state.attempts.filter(
+           (a) => a.provider === provider && a.providerMessageId === messageId,
+         )
+-        return (hit
+-          ? [
+-              {
+-                fulfillmentId: hit.fulfillmentId,
+-                attemptNumber: hit.attemptNumber,
+-                orderId: (state.summary?.orderId as string) ?? ORDER_ID,
+-              },
+-            ]
+-          : []) as T
++        return hits.map((hit) => ({
++          fulfillmentId: hit.fulfillmentId,
++          attemptNumber: hit.attemptNumber,
++          orderId: (state.summary?.orderId as string) ?? ORDER_ID,
++        })) as T
+       }
+       if (sql.includes('FROM "ot_order"')) {
+         state.locks.push("order")
+@@ -132,7 +149,9 @@ function fakeClient(state: World): ProviderCallbackClient {
+         return [{ live }] as T
+       }
+       if (sql.includes('FROM "ot_delivery_provider_callback"')) {
+-        const [provider, messageId, horizon] = query.values as [string, string, Date]
++        // … AND "received_at" >= $3 AND "replay_count" < $4
++        const [provider, messageId, horizon, ceiling] = query.values as
++          [string, string, Date, number]
+         return state.callbacks
+           .filter(
+             (c) =>
+@@ -140,9 +159,14 @@ function fakeClient(state: World): ProviderCallbackClient {
+               c.providerMessageId === messageId &&
+               c.disposition === "UNMATCHED" &&
+               c.resolvedAt === null &&
+-              c.receivedAt >= horizon,
++              c.receivedAt >= horizon &&
++              c.replayCount < ceiling,
+           )
+-          .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime()) as T
++          .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime())
++          // COPIES, as a real query returns. Handing out live references let the
++          // compare-and-set below read a value that had changed since the batch
++          // was read, which is precisely the race it exists to lose.
++          .map((row) => ({ ...row })) as T
+       }
+       throw new Error(`unexpected query: ${sql}`)
+     },
+@@ -168,14 +192,16 @@ function fakeClient(state: World): ProviderCallbackClient {
+         return 1
+       }
+       if (sql.includes('UPDATE "ot_delivery_provider_callback"')) {
+-        if (sql.includes('"replay_count" = LEAST')) {
+-          const [id, expected] = query.values as [string, number]
++        if (sql.includes('SET "replay_count" = "replay_count" + 1')) {
++          // … AND "replay_count" = $2 AND "replay_count" < $3
++          const [id, expected, ceiling] = query.values as [string, number, number]
+           const row = state.callbacks.find(
+             (c) =>
+               c.id === id &&
+               c.disposition === "UNMATCHED" &&
+               c.resolvedAt === null &&
+-              c.replayCount === expected,
++              c.replayCount === expected &&
++              c.replayCount < ceiling,
+           )
+           if (!row) return 0
+           row.replayCount += 1
+@@ -364,7 +390,7 @@ describe("an event that cannot be correlated yet is kept, never dropped", () =>
+     state.attempts = world().attempts
+     await expect(
+       store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
+-    ).resolves.toEqual({ examined: 1, applied: 1, stillUnmatched: 0 })
++    ).resolves.toEqual({ examined: 1, applied: 1, stillUnmatched: 0, skipped: 0 })
+     expect(state.summary).toMatchObject({ status: "DELIVERED" })
+     expect(state.callbacks[0]).toMatchObject({ disposition: "APPLIED", replayCount: 1 })
+   })
+@@ -378,7 +404,7 @@ describe("an event that cannot be correlated yet is kept, never dropped", () =>
+     const revision = state.summary!.statusRevision
+     await expect(
+       store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
+-    ).resolves.toEqual({ examined: 0, applied: 0, stillUnmatched: 0 })
++    ).resolves.toEqual({ examined: 0, applied: 0, stillUnmatched: 0, skipped: 0 })
+     expect(state.summary!.statusRevision).toBe(revision)
+   })
+ 
+@@ -390,7 +416,7 @@ describe("an event that cannot be correlated yet is kept, never dropped", () =>
+     state.attempts = world().attempts
+     await expect(
+       store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
+-    ).resolves.toEqual({ examined: 2, applied: 2, stillUnmatched: 0 })
++    ).resolves.toEqual({ examined: 2, applied: 2, stillUnmatched: 0, skipped: 0 })
+     expect(state.events.map((e) => e.eventType)).toEqual(["ACCEPTED", "DELIVERED"])
+     expect(state.summary).toMatchObject({ status: "DELIVERED" })
+   })
+@@ -401,7 +427,7 @@ describe("an event that cannot be correlated yet is kept, never dropped", () =>
+     await store.ingest(event())
+     await expect(
+       store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
+-    ).resolves.toEqual({ examined: 1, applied: 0, stillUnmatched: 1 })
++    ).resolves.toEqual({ examined: 1, applied: 0, stillUnmatched: 1, skipped: 0 })
+     expect(state.callbacks[0].disposition).toBe("UNMATCHED")
+   })
+ 
+@@ -412,7 +438,7 @@ describe("an event that cannot be correlated yet is kept, never dropped", () =>
+     state.attempts = world().attempts
+     await expect(
+       store.reconcile({ provider: "postmark", providerMessageId: MESSAGE_ID }),
+-    ).resolves.toEqual({ examined: 0, applied: 0, stillUnmatched: 0 })
++    ).resolves.toEqual({ examined: 0, applied: 0, stillUnmatched: 0, skipped: 0 })
+   })
+ })
+ 
+@@ -484,6 +510,145 @@ describe("the durable unmatched store is bounded", () => {
+       dispositionCode: "UNMATCHED_STORE_FULL",
+     })
+   })
++
++  /**
++   * `SELECT COUNT(*) … > MAX` is not a cap on its own. Under READ COMMITTED a
++   * concurrent ingester's uncommitted row is invisible, so N of them can each
++   * count MAX, each conclude there is room, and each commit — MAX + N rows past
++   * a ceiling that exists precisely to bound attacker-driven growth.
++   *
++   * The fake cannot reproduce PostgreSQL's snapshot isolation, so what is pinned
++   * here is the property that makes the real thing safe: the count is never
++   * taken outside the serializing lock.
++   */
++  it("decides the cap under a serializing advisory lock, never outside one", async () => {
++    const state = world({ attempts: [] })
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await expect(store.ingest(event())).resolves.toEqual({ outcome: "UNMATCHED" })
++    expect(state.locks).toContain("spool-cap")
++    expect(state.countedUnmatchedUnderLock).toBe(true)
++  })
++
++  it("takes no cap lock at all on the matched path", async () => {
++    // A correlated event never touches the spool, so it must never queue behind
++    // the one lock every uncorrelated arrival contends for.
++    const state = world()
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await expect(store.ingest(event())).resolves.toMatchObject({ outcome: "APPLIED" })
++    expect(state.locks).not.toContain("spool-cap")
++  })
++})
++
++/**
++ * The claim that begins a replay is a compare-and-set on `replay_count`. Written
++ * as `LEAST(count + 1, 1000)` it wrote 1000 over 1000 at the ceiling, so the
++ * predicate `replay_count = <observed>` stayed satisfiable and TWO concurrent
++ * reconcilers could both claim the same row — the exact thing the statement
++ * exists to prevent. A spent row is now simply not claimable.
++ */
++describe("a spent replay budget stops being claimable, and stays evidence", () => {
++  function spooled(replayCount: number) {
++    const state = world({ attempts: [] })
++    state.callbacks = [{
++      id: "c_spent", provider: RESEND_PROVIDER, providerEventId: "evt_spent",
++      providerMessageId: MESSAGE_ID, eventType: "DELIVERED", reasonCode: null,
++      occurredAt: new Date(NOW), receivedAt: new Date(NOW), disposition: "UNMATCHED",
++      dispositionCode: null, fulfillmentId: null, attemptNumber: null,
++      resolvedAt: null, replayCount,
++    }]
++    state.attempts = world().attempts
++    return state
++  }
++
++  it("never offers a row that has reached the ceiling", async () => {
++    const state = spooled(MAX_CALLBACK_REPLAYS)
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await expect(
++      store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
++    ).resolves.toEqual({ examined: 0, applied: 0, stillUnmatched: 0, skipped: 0 })
++    // Not deleted, not refused: still exactly the evidence it always was.
++    expect(state.callbacks[0]).toMatchObject({
++      disposition: "UNMATCHED",
++      replayCount: MAX_CALLBACK_REPLAYS,
++    })
++  })
++
++  it("still replays a row one below the ceiling, exactly once more", async () => {
++    const state = spooled(MAX_CALLBACK_REPLAYS - 1)
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await expect(
++      store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
++    ).resolves.toEqual({ examined: 1, applied: 1, stillUnmatched: 0, skipped: 0 })
++    expect(state.callbacks[0].replayCount).toBe(MAX_CALLBACK_REPLAYS)
++  })
++
++  it("reports a lost claim as skipped, so the batch still accounts for itself", async () => {
++    const state = spooled(0)
++    const client = fakeClient(state)
++    // A concurrent reconciler wins the row between the batch read (the second
++    // transaction of the pass) and this pass's claim (the third).
++    let transactions = 0
++    const racing = createPrismaProviderCallbackStore({
++      async $transaction<T>(work: (tx: ProviderCallbackTransaction) => Promise<T>) {
++        transactions += 1
++        if (transactions === 3) state.callbacks[0].replayCount = 1
++        return client.$transaction(work)
++      },
++    })
++    const result = await racing.reconcile({
++      provider: RESEND_PROVIDER,
++      providerMessageId: MESSAGE_ID,
++    })
++    // The row was read, and then was not ours to act on. It is accounted for
++    // rather than vanishing between `examined` and the two outcome counters.
++    expect(result.examined).toBe(1)
++    expect(result.skipped).toBe(1)
++    expect(result.applied + result.stillUnmatched + result.skipped).toBe(result.examined)
++    // The winner's claim stands; nothing was applied twice.
++    expect(state.callbacks[0]).toMatchObject({ disposition: "UNMATCHED", replayCount: 1 })
++  })
++})
++
++/**
++ * `ot_delivery_attempt` carries a UNIQUE (provider, provider_message_id), so two
++ * attempts can never share one message id while that index exists. Reading
++ * `located[0]` out of an unordered result assumed that silently: if the index
++ * were ever dropped or rebuilt during a migration, a provider event would be
++ * folded onto whichever of two paid orders the planner returned first.
++ */
++describe("one provider message id can never resolve to two attempts", () => {
++  it("refuses an ambiguous binding instead of folding onto an arbitrary order", async () => {
++    const state = world()
++    state.attempts = [
++      ...state.attempts,
++      { ...state.attempts[0], fulfillmentId: "ful_other", attemptNumber: 1 },
++    ]
++    const store = createPrismaProviderCallbackStore(fakeClient(state))
++    await expect(store.ingest(event())).resolves.toEqual({
++      outcome: "REFUSED",
++      code: "AMBIGUOUS_MESSAGE_BINDING",
++    })
++    // Nothing was folded: no event row, and the summary never moved.
++    expect(state.events).toHaveLength(0)
++    expect(state.summary).toMatchObject({ status: "DELIVERY_PENDING" })
