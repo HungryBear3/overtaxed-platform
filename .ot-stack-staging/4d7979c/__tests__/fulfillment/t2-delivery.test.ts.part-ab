@@ -1,0 +1,88 @@
+    const again = await runT2Delivery(
+      { orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID },
+      { env: { OT_T2_DELIVERY_ENABLED: "true" }, store: storeSpy(state), adapter: send },
+    )
+    expect(again).toEqual({ outcome: "NOT_CLAIMED" })
+    expect(state.attempts).toHaveLength(1)
+  })
+
+  it("refuses to claim a terminal fulfillment, so nothing resurrects it", async () => {
+    const state = world({
+      summary: {
+        id: FULFILLMENT_ID,
+        orderId: ORDER_ID,
+        kind: "T2_APPEAL_EVIDENCE",
+        status: "BOUNCED",
+        statusRevision: 7,
+        attemptCount: 1,
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+      },
+    })
+    const send = adapter({ kind: "ACCEPTED", provider: "resend", providerMessageId: "m" })
+    await expect(
+      runT2Delivery(
+        { orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID },
+        { env: { OT_T2_DELIVERY_ENABLED: "true" }, store: storeSpy(state), adapter: send },
+      ),
+    ).resolves.toEqual({ outcome: "NOT_CLAIMED" })
+    expect(send.send).not.toHaveBeenCalled()
+    expect(state.attempts).toHaveLength(0)
+  })
+
+  it("takes a namespaced in-process lease and releases it afterwards", async () => {
+    const state = world()
+    const owners: unknown[] = []
+    const send: T2DeliveryAdapter = {
+      provider: "resend",
+      send: async () => {
+        // Observed mid-flight: the lease is held by an identity this process
+        // generated, never one a caller supplied.
+        owners.push(state.summary?.leaseOwner)
+        return { kind: "ACCEPTED", provider: "resend", providerMessageId: "m" }
+      },
+    }
+    const result = await runT2Delivery(
+      { orderId: ORDER_ID, fulfillmentId: FULFILLMENT_ID },
+      { env: { OT_T2_DELIVERY_ENABLED: "true" }, store: storeSpy(state), adapter: send },
+    )
+    expect(String(owners[0])).toMatch(/^ot-t2-delivery:/)
+    expect(result).toMatchObject({ outcome: "ATTEMPTED", released: true })
+    expect(state.summary?.leaseOwner).toBeNull()
+  })
+})
+
+describe("source contract: no half-wired sender ships in this slice", () => {
+  const ROOT = process.cwd()
+  const orchestrator = require("node:fs").readFileSync(
+    require("node:path").join(ROOT, "lib/fulfillment-runtime/t2-delivery-orchestrator.ts"),
+    "utf8",
+  )
+  const store = require("node:fs").readFileSync(
+    require("node:path").join(ROOT, "lib/fulfillment-runtime/delivery-store.ts"),
+    "utf8",
+  )
+
+  it("imports no mail client, provider SDK, or email module", () => {
+    for (const source of [orchestrator, store]) {
+      expect(source).not.toMatch(/from "(resend|nodemailer|@?[\w/-]*\/email[\w/-]*)"/)
+      expect(source).not.toMatch(/lib\/email/)
+    }
+  })
+
+  it("ships no default adapter, so an env flag alone can send nothing", () => {
+    expect(orchestrator).not.toMatch(/deps\.adapter \?\?/)
+    expect(orchestrator).toContain("NO_DELIVERY_ADAPTER")
+  })
+
+  it("never handles a recipient address in code", () => {
+    // Prose may discuss what the adapter is responsible for; the CODE may not
+    // touch it, so the comments are stripped before the check.
+    const code = (source: string) =>
+      source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
+    for (const source of [orchestrator, store]) {
+      expect(code(source)).not.toMatch(/\brecipient\b|\btoAddress\b|\bemail\b/i)
+    }
+  })
+})
