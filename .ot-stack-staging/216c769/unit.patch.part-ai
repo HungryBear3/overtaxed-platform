@@ -1,0 +1,600 @@
++
++    const decision = decideCallbackApplication({
++      event,
++      order: orders[0] ?? null,
++      fulfillment: summaries[0] ?? null,
++      attempt: attempts[0] ?? null,
++      currentArtifactVersion: artifacts[0]?.version ?? null,
++      trustedNow,
++    });
++    if (!decision.ok) {
++      await markRefused(tx, callbackId, decision.code, trustedNow, {
++        fulfillmentId: found.fulfillmentId,
++        attemptNumber: found.attemptNumber,
++      });
++      return { outcome: "REFUSED", code: decision.code };
++    }
++    const plan = decision.plan;
++    const occurredAt = new Date(plan.occurredAt);
++
++    // Append-only evidence. The authenticated provider event id is reused as the
++    // event log's dedup identity, so the two dedup surfaces agree.
++    const sequences = await tx.$queryRaw<Array<{ next: number }>>(
++      Prisma.sql`SELECT COALESCE(MAX("sequence"), 0) + 1 AS "next"
++                 FROM "ot_delivery_event"
++                 WHERE "fulfillment_id" = ${plan.fulfillmentId}`,
++    );
++    await tx.$executeRaw(
++      Prisma.sql`INSERT INTO "ot_delivery_event" (
++                   "id", "fulfillment_id", "attempt_number", "provider",
++                   "provider_event_id", "event_type", "sequence",
++                   "occurred_at", "received_at", "reason_code"
++                 ) VALUES (
++                   ${randomUUID()}, ${plan.fulfillmentId}, ${plan.attemptNumber},
++                   ${event.provider}, ${event.providerEventId},
++                   ${plan.eventType}::"OTDeliveryEventType",
++                   ${Number(sequences[0]?.next ?? 1)},
++                   ${occurredAt}, ${new Date(trustedNow)}, ${plan.reasonCode}
++                 )
++                 ON CONFLICT ("provider", "provider_event_id") DO NOTHING`,
++    );
++
++    // Lifecycle timestamps are set once and never rewritten, so a later replay
++    // cannot move the moment something happened.
++    await tx.$executeRaw(
++      Prisma.sql`UPDATE "ot_delivery_attempt"
++                 SET "provider_accepted_at" = CASE WHEN ${plan.eventType === "ACCEPTED"}
++                       THEN COALESCE("provider_accepted_at", ${occurredAt}) ELSE "provider_accepted_at" END,
++                     "delivered_at" = CASE WHEN ${plan.eventType === "DELIVERED"}
++                       THEN COALESCE("delivered_at", ${occurredAt}) ELSE "delivered_at" END,
++                     "delayed_at" = CASE WHEN ${plan.eventType === "DELAYED"}
++                       THEN COALESCE("delayed_at", ${occurredAt}) ELSE "delayed_at" END,
++                     "failed_at" = CASE WHEN ${
++                       plan.eventType === "BOUNCED" ||
++                       plan.eventType === "COMPLAINED" ||
++                       plan.eventType === "FAILED"
++                     }
++                       THEN COALESCE("failed_at", ${occurredAt}) ELSE "failed_at" END,
++                     "reason_code" = COALESCE("reason_code", ${plan.reasonCode})
++                 WHERE "fulfillment_id" = ${plan.fulfillmentId}
++                   AND "attempt_number" = ${plan.attemptNumber}`,
++    );
++
++    // Advance only from the EXACT revision the decision was made against.
++    const advanced = await tx.$executeRaw(
++      Prisma.sql`UPDATE "ot_fulfillment"
++                 SET "status" = ${plan.nextStatus}::"OTFulfillmentStatus",
++                     "status_revision" = ${plan.expectedStatusRevision + 1},
++                     "last_reason_code" = COALESCE(${plan.reasonCode}, "last_reason_code")
++                 WHERE "id" = ${plan.fulfillmentId}
++                   AND "status"::text = ${plan.fromStatus}
++                   AND "status_revision" = ${plan.expectedStatusRevision}`,
++    );
++    if (advanced !== 1) throw new CallbackRollback("STALE_ATTEMPT");
++
++    // A terminal outcome ends customer access immediately rather than waiting for
++    // the next download to notice the status is no longer downloadable.
++    if (plan.revokesCapabilities) {
++      await tx.$executeRaw(
++        Prisma.sql`UPDATE "ot_packet_download_capability"
++                   SET "revoked_at" = ${new Date(trustedNow)},
++                       "revoked_reason_code" = ${"UNDELIVERABLE"}
++                   WHERE "fulfillment_id" = ${plan.fulfillmentId}
++                     AND "revoked_at" IS NULL`,
++      );
++    }
++
++    await tx.$executeRaw(
++      Prisma.sql`UPDATE "ot_delivery_provider_callback"
++                 SET "disposition" = ${"APPLIED"}, "disposition_code" = NULL,
++                     "fulfillment_id" = ${plan.fulfillmentId},
++                     "attempt_number" = ${plan.attemptNumber},
++                     "resolved_at" = ${new Date(trustedNow)}
++                 WHERE "id" = ${callbackId}`,
++    );
++
++    return {
++      outcome: "APPLIED",
++      fulfillmentId: plan.fulfillmentId,
++      attemptNumber: plan.attemptNumber,
++      status: plan.nextStatus,
++    };
++  }
++
++  async function markRefused(
++    tx: ProviderCallbackTransaction,
++    callbackId: string,
++    code: CallbackNonApplicationCode,
++    trustedNow: string,
++    binding: { fulfillmentId: string | null; attemptNumber: number | null },
++  ): Promise<void> {
++    const resolvedAt = trustedNow === "" ? null : new Date(trustedNow);
++    await tx.$executeRaw(
++      Prisma.sql`UPDATE "ot_delivery_provider_callback"
++                 SET "disposition" = ${"REFUSED"}, "disposition_code" = ${code},
++                     "fulfillment_id" = ${binding.fulfillmentId},
++                     "attempt_number" = ${binding.attemptNumber},
++                     "resolved_at" = COALESCE("resolved_at", ${resolvedAt})
++                 WHERE "id" = ${callbackId}`,
++    );
++  }
++
++  return {
++    async ingest(event) {
++      try {
++        return await client.$transaction(
++          async (tx): Promise<CallbackIngestResult> => {
++            const clock = await tx.$queryRaw<Array<{ now: unknown }>>(
++              TRUSTED_CLOCK_SQL,
++            );
++            const trustedNow = toInstant(clock[0]?.now);
++            if (trustedNow === "")
++              return { outcome: "REFUSED", code: "UNTRUSTED_CLOCK" };
++
++            // Replay protection FIRST, before anything is read or decided. The
++            // unique index is the authority; a conflicting insert writes nothing
++            // and reports zero, which is the duplicate answer.
++            const id = randomUUID();
++            const inserted = await tx.$executeRaw(
++              Prisma.sql`INSERT INTO "ot_delivery_provider_callback" (
++                           "id", "provider", "provider_event_id", "provider_message_id",
++                           "event_type", "reason_code", "occurred_at", "received_at",
++                           "disposition", "replay_count"
++                         ) VALUES (
++                           ${id}, ${event.provider}, ${event.providerEventId},
++                           ${event.providerMessageId},
++                           ${event.eventType}::"OTDeliveryEventType",
++                           ${event.reasonCode}, ${new Date(event.occurredAt)},
++                           ${new Date(trustedNow)}, ${"UNMATCHED"}, 0
++                         )
++                         ON CONFLICT ("provider", "provider_event_id") DO NOTHING`,
++            );
++            if (inserted !== 1) return { outcome: "DUPLICATE" };
++
++            const applied = await apply(tx, id, event);
++            if (applied.outcome !== "UNMATCHED") return applied;
++
++            // Genuinely uncorrelatable: the send has not yet bound this message
++            // id to an attempt. The row stays UNMATCHED and is reconciled later.
++            // The ceiling is enforced AFTER the insert so the count includes this
++            // row; over the ceiling we keep the evidence but stop pretending it
++            // will be replayed.
++            const counts = await tx.$queryRaw<Array<{ live: bigint | number }>>(
++              Prisma.sql`SELECT COUNT(*) AS "live"
++                         FROM "ot_delivery_provider_callback"
++                         WHERE "disposition" = 'UNMATCHED' AND "resolved_at" IS NULL`,
++            );
++            if (Number(counts[0]?.live ?? 0) > MAX_UNMATCHED_CALLBACKS) {
++              await markRefused(tx, id, "UNMATCHED_STORE_FULL", trustedNow, {
++                fulfillmentId: null,
++                attemptNumber: null,
++              });
++              return { outcome: "REFUSED", code: "UNMATCHED_STORE_FULL" };
++            }
++            return { outcome: "UNMATCHED" };
++          },
++        );
++      } catch (error) {
++        if (error instanceof CallbackRollback)
++          return { outcome: "REFUSED", code: error.code };
++        throw error;
++      }
++    },
++
++    async reconcile(input) {
++      // Deliberately NOT one big transaction.
++      //
++      // `apply` can fail its compare-and-set after it has already appended an
++      // event row, and unwinding that has to roll back exactly that row's work —
++      // not the rows reconciled before it. Prisma's raw seam offers no
++      // savepoints, so each stored callback gets its own transaction. The pass is
++      // therefore re-runnable, and one poisoned row cannot undo the others.
++      const horizonNow = await client.$transaction(async (tx) => {
++        const clock = await tx.$queryRaw<Array<{ now: unknown }>>(
++          TRUSTED_CLOCK_SQL,
++        );
++        return toInstant(clock[0]?.now);
++      });
++      if (horizonNow === "")
++        return { examined: 0, applied: 0, stillUnmatched: 0 };
++      const horizon = new Date(
++        new Date(horizonNow).getTime() - UNMATCHED_RECONCILIATION_WINDOW_MS,
++      );
++
++      // Bounded in count and in age. Oldest first, so the fold sees provider
++      // events in the order the provider observed them.
++      const stored = await client.$transaction((tx) =>
++        tx.$queryRaw<StoredCallbackRow[]>(
++          Prisma.sql`SELECT "id", "provider", "provider_event_id" AS "providerEventId",
++                            "provider_message_id" AS "providerMessageId",
++                            "event_type"::text AS "eventType",
++                            "reason_code" AS "reasonCode",
++                            "occurred_at" AS "occurredAt",
++                            "received_at" AS "receivedAt",
++                            "replay_count" AS "replayCount"
++                     FROM "ot_delivery_provider_callback"
++                     WHERE "provider" = ${input.provider}
++                       AND "provider_message_id" = ${input.providerMessageId}
++                       AND "disposition" = 'UNMATCHED'
++                       AND "resolved_at" IS NULL
++                       AND "received_at" >= ${horizon}
++                     ORDER BY "occurred_at" ASC, "received_at" ASC
++                     LIMIT ${MAX_RECONCILIATION_BATCH}`,
++        ),
++      );
++
++      let applied = 0;
++      let stillUnmatched = 0;
++      for (const row of stored) {
++        let result: CallbackIngestResult;
++        try {
++          result = await client.$transaction(
++            async (tx): Promise<CallbackIngestResult> => {
++              // Claim the row conditionally. Losing this to a concurrent
++              // reconciler means somebody else owns this replay, so we do
++              // nothing rather than applying the same event twice.
++              const claimed = await tx.$executeRaw(
++                Prisma.sql`UPDATE "ot_delivery_provider_callback"
++                           SET "replay_count" = LEAST("replay_count" + 1, 1000)
++                           WHERE "id" = ${row.id}
++                             AND "disposition" = 'UNMATCHED'
++                             AND "resolved_at" IS NULL
++                             AND "replay_count" = ${row.replayCount}`,
++              );
++              if (claimed !== 1) return { outcome: "DUPLICATE" };
++              return apply(tx, row.id, {
++                provider: row.provider,
++                providerEventId: row.providerEventId,
++                providerMessageId: row.providerMessageId,
++                eventType:
++                  row.eventType as SanitizedProviderCallback["eventType"],
++                reasonCode: row.reasonCode,
++                occurredAt: asInstant(row.occurredAt),
++              });
++            },
++          );
++        } catch (error) {
++          // This row's writes rolled back with its own transaction. It stays
++          // UNMATCHED and a later pass may pick it up again.
++          if (error instanceof CallbackRollback) {
++            stillUnmatched += 1;
++            continue;
++          }
++          throw error;
++        }
++        if (result.outcome === "APPLIED") applied += 1;
++        else if (result.outcome === "UNMATCHED") stillUnmatched += 1;
++      }
++      return { examined: stored.length, applied, stillUnmatched };
++    },
++  };
++}
++
++export const prismaProviderCallbackStore = createPrismaProviderCallbackStore(
++  prisma as unknown as ProviderCallbackClient,
++);
+diff --git a/lib/fulfillment-runtime/t2-artifact-scheduling.ts b/lib/fulfillment-runtime/t2-artifact-scheduling.ts
+index 365cafa..9b1cd98 100644
+--- a/lib/fulfillment-runtime/t2-artifact-scheduling.ts
++++ b/lib/fulfillment-runtime/t2-artifact-scheduling.ts
+@@ -1,17 +1,86 @@
+ import "server-only";
+ import { after } from "next/server";
+-import { t2ArtifactOrchestrationEnabled } from "@/lib/fulfillment/flag";
++import {
++  t2ArtifactOrchestrationEnabled,
++  t2DeliveryEnabled,
++} from "@/lib/fulfillment/flag";
+ import type {
+   T2FulfillmentKickoffOrder,
+   T2FulfillmentKickoffResult,
+ } from "./kickoff";
+ 
++type OrchestrationOutcome = {
++  outcome?: unknown;
++  workflowOutcome?: unknown;
++  released?: unknown;
++};
++
+ type SchedulingDeps = {
+   env?: Readonly<Record<string, string | undefined>>;
+   after?: (callback: () => Promise<void>) => void;
+   run?: (input: { orderId: string; fulfillmentId: string }) => Promise<unknown>;
++  /**
++   * Delivery, injected so this module keeps no provider dependency. Called ONLY
++   * after the artifact workflow reports BOUND and its lease is released.
++   */
++  deliver?: (input: {
++    orderId: string;
++    fulfillmentId: string;
++  }) => Promise<unknown>;
+ };
+ 
++/**
++ * Exactly the artifact-workflow outcome that means an immutable packet now
++ * exists for this fulfillment, with its producing lease already given back.
++ *
++ * Both halves matter. BOUND without a released lease means the artifact
++ * orchestrator still holds the fulfillment, and delivery's own claim would lose
++ * the race and do nothing useful; waiting for the release makes the handoff an
++ * ordering rather than a retry. Any other outcome — REFUSED, UNAVAILABLE,
++ * RECONCILIATION_REQUIRED, DISABLED, a throw — means there is nothing to deliver,
++ * and delivery is not attempted at all rather than attempted and blocked.
++ */
++function boundAndReleased(result: unknown): boolean {
++  const value = result as OrchestrationOutcome | null | undefined;
++  return (
++    !!value &&
++    value.outcome === "RAN" &&
++    value.workflowOutcome === "BOUND" &&
++    value.released === true
++  );
++}
++
++/**
++ * Build the real delivery caller, or nothing.
++ *
++ * Returning undefined rather than a partly-wired caller is deliberate: the
++ * delivery orchestrator makes zero store calls and zero writes without an
++ * adapter, so an unconfigured deployment cannot manufacture a delivery record
++ * for a send that was never possible. The adapter itself additionally validates
++ * its full configuration and returns null if any part is missing.
++ */
++async function realDelivery(
++  env: Readonly<Record<string, string | undefined>>,
++): Promise<
++  ((input: { orderId: string; fulfillmentId: string }) => Promise<unknown>) | undefined
++> {
++  if (!t2DeliveryEnabled(env)) return undefined;
++  const { createT2ResendAdapter } = await import("./t2-resend-adapter");
++  const adapter = createT2ResendAdapter({ env });
++  if (!adapter) return undefined;
++  const { runT2Delivery } = await import("./t2-delivery-orchestrator");
++  const { reconcileT2ResendCallbacks } = await import("./t2-resend-events");
++  return (input) =>
++    runT2Delivery(input, {
++      env,
++      adapter,
++      // Offers already-stored provider evidence to the message id this send
++      // binds, closing the callback-before-send-response race without ever
++      // guessing an unmatched event onto an order.
++      reconcile: (bound) => reconcileT2ResendCallbacks(bound, { env }),
++    });
++}
++
+ // Registration errors propagate so the webhook can release its event claim.
+ export function scheduleT2ArtifactOrchestration(
+   order: T2FulfillmentKickoffOrder,
+@@ -32,14 +101,28 @@ export function scheduleT2ArtifactOrchestration(
+   const input = { orderId: order.id, fulfillmentId: result.fulfillmentId };
+   (deps.after ?? after)(async () => {
+     if (!t2ArtifactOrchestrationEnabled(env)) return;
++    let orchestration: unknown;
+     try {
+       const run =
+         deps.run ??
+         (await import("./t2-artifact-orchestrator")).runT2ArtifactOrchestration;
+-      await run(input);
++      orchestration = await run(input);
+     } catch {
+       // No raw provider/DB exception or customer identifier enters logs.
+       console.error("[ot-artifact-orchestration] outcome=THREW");
++      return;
++    }
++
++    // Delivery is a SEPARATE step behind its own gates, reached only from a
++    // bound artifact. It never regenerates, never reaches for an older artifact
++    // version, and never runs on a workflow outcome that produced no packet.
++    if (!boundAndReleased(orchestration)) return;
++    try {
++      const deliver = deps.deliver ?? (await realDelivery(env));
++      if (!deliver) return;
++      await deliver(input);
++    } catch {
++      console.error("[ot-t2-delivery] outcome=THREW");
+     }
+   });
+   return true;
+diff --git a/lib/fulfillment-runtime/t2-delivery-orchestrator.ts b/lib/fulfillment-runtime/t2-delivery-orchestrator.ts
+index 02057ff..1c58a7e 100644
+--- a/lib/fulfillment-runtime/t2-delivery-orchestrator.ts
++++ b/lib/fulfillment-runtime/t2-delivery-orchestrator.ts
+@@ -5,16 +5,15 @@
+  * The lease expiry is the only recovery path, exactly as in the artifact
+  * orchestrator this mirrors.
+  *
+- * **No provider adapter ships in this slice, and that is deliberate.** A sender
+- * is not a small last step: it needs a verified sending identity, a webhook
+- * endpoint whose signatures are verified before any event is admitted, and a
+- * normalization layer that maps provider payloads into the bounded event
+- * vocabulary. Until those exist, an adapter would be a half-wired path that can
+- * send mail but cannot learn whether it arrived — which is precisely the
+- * accepted-is-not-delivered confusion the whole evidence model exists to
+- * prevent. So the adapter is a required, explicitly injected dependency with no
+- * default: with none supplied, this function returns BLOCKED having made zero
+- * store calls and zero writes.
++ * **The adapter is a required, explicitly injected dependency with no default.**
++ * With none supplied, this function returns BLOCKED having made zero store calls
++ * and zero writes. A sender is not a small last step: it needs a verified
++ * sending identity, a callback endpoint whose signatures are verified before any
++ * event is admitted, and a normalization layer that maps provider payloads into
++ * the bounded event vocabulary. A real adapter satisfying all three now exists
++ * (t2-resend-adapter.ts), and it is still injected rather than imported here, so
++ * this module keeps no provider dependency of its own and a test can drive the
++ * whole ordering with a synthetic one.
+  *
+  * The ordering it enforces when an adapter IS supplied:
+  *
+@@ -70,12 +69,27 @@ export type T2DeliveryOrchestrationResult =
+       recorded: boolean;
+       unresolved: boolean;
+       released: boolean;
++      /** Stored callbacks this send's message id made correlatable, if any. */
++      reconciled: number;
+     };
+ 
+ export type T2DeliveryOrchestrationDeps = {
+   env?: Readonly<Record<string, string | undefined>>;
+   store?: T2DeliveryStore;
+   adapter?: T2DeliveryAdapter;
++  /**
++   * Optional hook, invoked ONLY after an accepted send has durably recorded its
++   * provider message id.
++   *
++   * This closes the send/callback race from the other side. A provider can
++   * report `delivered` before this call returns, and no correlation tag is
++   * assumed, so such an event was stored as unmatched. The moment the message id
++   * becomes a real binding, that stored evidence is offered to it. Purely
++   * additive: it sends nothing, mints nothing, and a failure here changes no
++   * outcome, because the stored events remain available to the operator
++   * recovery control.
++   */
++  reconcile?: (input: { providerMessageId: string }) => Promise<unknown>;
+   now?: () => Date;
+ };
+ 
+@@ -177,11 +191,30 @@ export async function runT2Delivery(
+     unresolved = true;
+   }
+ 
++  // Only once the message id is DURABLY bound to this attempt. Reconciling on an
++  // unrecorded outcome would offer stored evidence to a correlation that does
++  // not exist yet, which is the guess this whole design refuses to make.
++  let reconciled = 0;
++  if (recorded && sendOutcome.kind === "ACCEPTED" && deps.reconcile) {
++    try {
++      const result = (await deps.reconcile({
++        providerMessageId: sendOutcome.providerMessageId,
++      })) as { applied?: unknown } | undefined;
++      reconciled =
++        typeof result?.applied === "number" ? result.applied : 0;
++    } catch {
++      // Never rethrown and never logged. The stored events are durable and stay
++      // available to the bounded operator recovery control.
++      reconciled = 0;
++    }
++  }
++
+   return {
+     outcome: "ATTEMPTED",
+     attemptNumber: persisted.attemptNumber,
+     recorded,
+     unresolved,
+     released: await releaseQuietly(store, lease),
++    reconciled,
+   };
+ }
+diff --git a/lib/fulfillment-runtime/t2-delivery-recovery.ts b/lib/fulfillment-runtime/t2-delivery-recovery.ts
+new file mode 100644
+index 0000000..a8d5268
+--- /dev/null
++++ b/lib/fulfillment-runtime/t2-delivery-recovery.ts
+@@ -0,0 +1,386 @@
++/**
++ * Bounded operator recovery for T2 delivery.
++ *
++ * There are exactly two things an operator may do here, and a long list of
++ * things they may not.
++ *
++ * **RECONCILE_PROVIDER_CALLBACKS** re-offers provider evidence this deployment
++ * already holds to the message id now bound to the current attempt. It is the
++ * manual half of the send/callback race: the automatic pass runs the moment an
++ * accepted send records its id, and this exists for the case where that pass
++ * lost its process, or where an event arrived after it. It writes no new
++ * evidence, invents nothing, and can only ever apply events that arrived
++ * authenticated and were stored sanitized.
++ *
++ * **RESOLVE_UNRESOLVED_SEND** ends an unresolved send by recording it FAILED. It
++ * requires the operator to assert, explicitly and on the record, that they have
++ * definite evidence the provider is no longer trying. That assertion is not
++ * something this code can verify, so it is attributed to the acting admin in the
++ * append-only admin event log rather than inferred. A delayed callback is NOT
++ * evidence the provider stopped; neither is an expired lease.
++ *
++ * What is deliberately absent, and must stay absent:
++ *
++ *   - no resend. The result is terminal FAILED, which `decideDeliverySend`
++ *     refuses, so nothing downstream can turn this into a second delivery;
++ *   - no regeneration. A delivery problem is never an artifact problem, and the
++ *     county/eligibility/deadline gates that produce a packet are not reachable
++ *     from here at all;
++ *   - no re-minting. Revocation ends the credential this attempt issued; it
++ *     never issues another;
++ *   - no legacy replay. Orders excluded from artifact binding as legacy or
++ *     manual-recovery rows are not reachable: recovery acts only on an existing
++ *     fulfillment of an existing paid T2 order, and creates nothing;
++ *   - no "retry because the lease expired". Lease expiry says a worker stopped,
++ *     not that a message did.
++ *
++ * Every action is compare-and-set against an EXACT order, fulfillment, status
++ * and revision supplied by the caller, so an operator acting on a stale console
++ * view changes nothing.
++ */
++import "server-only";
++
++import { randomUUID } from "node:crypto";
++import { Prisma } from "@prisma/client";
++import { prisma } from "@/lib/db";
++import { t2DeliveryRecoveryEnabled } from "@/lib/fulfillment/flag";
++import { RESEND_PROVIDER } from "@/lib/fulfillment/provider-callbacks";
++import type { OTFulfillmentStatus } from "@/lib/fulfillment/types";
++import { reconcileT2ResendCallbacks } from "@/lib/fulfillment-runtime/t2-resend-events";
++
++export type DeliveryRecoveryAction =
++  | "RECONCILE_PROVIDER_CALLBACKS"
++  | "RESOLVE_UNRESOLVED_SEND";
++
++export const DELIVERY_RECOVERY_ACTIONS: ReadonlySet<string> = new Set<string>([
++  "RECONCILE_PROVIDER_CALLBACKS",
++  "RESOLVE_UNRESOLVED_SEND",
++]);
++
++/**
++ * The bounded reasons an operator may attach to a resolved-as-failed send.
++ *
++ * A closed subset of the shared allowlist: only codes that can honestly describe
++ * "we know this send did not complete and will not". A bounce or a complaint is
++ * absent on purpose — those arrive as authenticated provider evidence and are
++ * not something an operator types in.
++ */
++export const RESOLVE_REASON_CODES: ReadonlySet<string> = new Set<string>([
++  "PROVIDER_ERROR",
++  "TIMEOUT",
++  "INVALID_RECIPIENT",
++  "MANUAL_REVIEW",
++]);
++
++/**
++ * The operator's assertion that they hold definite evidence no message is still
++ * in flight. Spelled out as a literal the caller must send, so resolving cannot
++ * happen by omission or by a default.
++ */
++export const NO_IN_FLIGHT_EVIDENCE = "NO_IN_FLIGHT_CONFIRMED";
++
++export type DeliveryRecoveryInput = {
++  orderId: string;
++  actorUserId: string;
++  action: DeliveryRecoveryAction;
++  expectedStatus: OTFulfillmentStatus;
++  expectedStatusRevision: number;
++  /** Required, and checked, for RESOLVE_UNRESOLVED_SEND only. */
++  evidence?: string;
++  reasonCode?: string;
++};
++
++export type DeliveryRecoveryResult =
++  | {
++      ok: true;
++      action: "RECONCILE_PROVIDER_CALLBACKS";
++      examined: number;
++      applied: number;
++      stillUnmatched: number;
++    }
++  | {
++      ok: true;
++      action: "RESOLVE_UNRESOLVED_SEND";
++      status: "FAILED";
++      statusRevision: number;
++      revokedCapabilities: number;
++    }
++  | { ok: false; code: DeliveryRecoveryRefusal };
