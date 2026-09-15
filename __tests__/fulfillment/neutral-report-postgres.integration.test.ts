@@ -46,7 +46,7 @@ native("neutral-report native PostgreSQL acceptance", () => {
     const runtime = new Client({ connectionString: runtimeUrl }); await runtime.connect()
     try {
       await expect(runtime.query("delete from ot_neutral_report_reservation where false")).rejects.toThrow()
-      const rows = await runtime.query("select count(*)::int as n from ot_neutral_report_reservation")
+      const rows = await runtime.query("select count(*)::int as n from ot_neutral_report_reservation where order_id = any($1)", [ids])
       expect(rows.rows[0].n).toBe(10)
     } finally { await runtime.end() }
   })
