@@ -44,6 +44,13 @@ import {
 import { isHeldProduct } from "@/lib/products/held"
 import { heldProductResponse } from "@/lib/products/held-response"
 import { sanitizeAnonymousGaIdentifiers } from "@/lib/analytics/ga4"
+import { resolveAttributionCodes, shippedAttributionRegistry } from "@/lib/attribution/registry"
+import {
+  type OrderAttributionRow,
+  attributionBindingEnabled,
+  attributionMetadata,
+  bindFirstTouchAttribution,
+} from "@/lib/attribution/record"
 
 const PRICE_MAP: Record<"T2" | "T3", string | undefined> = {
   T2: process.env.STRIPE_PRICE_T2_DIY_PRO?.trim(),
@@ -178,6 +185,12 @@ const CheckoutInput = z.object({
   gaClientId: z.string().optional(),
   gaSessionId: z.string().optional(),
   gaSessionNumber: z.string().optional(),
+  // Acquisition attribution accepts CODE REFERENCES ONLY. These are resolved
+  // against the server's approved registry below; the bound is a cheap body
+  // guard, not the validation. No raw UTM, referrer, label or URL field exists
+  // here for a client to put one in.
+  attributionCampaignCode: z.string().trim().max(64).optional(),
+  attributionCreativeCode: z.string().trim().max(64).optional(),
 })
 
 type AddressCandidate = {
@@ -382,6 +395,29 @@ export async function POST(req: NextRequest) {
   const tierProductId = TIER_PRODUCT_IDS[input.tier]
   if (isHeldProduct(tierProductId)) {
     return heldProductResponse(tierProductId, "api/checkout/session")
+  }
+
+  // The server is the authority on acquisition codes, and it decides before a
+  // provider client exists. The client-side check in lib/attribution/client-codes
+  // only avoids pointless requests; a code that is not in the approved registry
+  // is refused here regardless of what any client believed about it.
+  //
+  // Unknown codes are REJECTED rather than quietly downgraded to organic: a
+  // downgrade would let a tampered code mint a durable organic first touch that
+  // then permanently blocks this order's real attribution.
+  const attributionRegistry = shippedAttributionRegistry()
+  const attributionResolution = resolveAttributionCodes(
+    {
+      campaignCode: input.attributionCampaignCode ?? null,
+      creativeCode: input.attributionCreativeCode ?? null,
+    },
+    attributionRegistry,
+  )
+  if (!attributionResolution.ok) {
+    return NextResponse.json(
+      { error: "Check the checkout details and try again.", code: "INVALID_ATTRIBUTION_CODE" },
+      { status: 400 },
+    )
   }
 
   const gaIdentifiers = sanitizeAnonymousGaIdentifiers(input)
@@ -807,6 +843,36 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       )
     }
+    // First touch is bound here: the canonical order is resolved and its
+    // contract verified, and every path below this point either reuses a
+    // session or creates one. Binding before the reuse branch is what stops a
+    // retry carrying different tags from reaching an already-open session with
+    // a contradictory attribution — the insert is a no-op and the readback
+    // returns the original row, so provider metadata cannot contradict it.
+    //
+    // `bindFirstTouchAttribution` returns what is DURABLE, not what was
+    // offered, and that return value is the only thing metadata is built from.
+    let attributionRow: OrderAttributionRow | null = null
+    if (attributionBindingEnabled()) {
+      try {
+        attributionRow = await bindFirstTouchAttribution(prisma, {
+          orderId: order.id,
+          campaignCode: attributionResolution.attribution?.campaignCode ?? null,
+          creativeCode: attributionResolution.attribution?.creativeCode ?? null,
+          registryVersion: attributionRegistry.version,
+        })
+      } catch (attributionError) {
+        // Fail closed, and do it here: no `CHECKOUT_CREATING` claim has been
+        // taken yet and no provider call has been made, so refusing leaves no
+        // half-claimed order and no orphaned Stripe session behind.
+        console.error(`[checkout/session] attribution binding failed for order ${order.id}`, attributionError)
+        return NextResponse.json(
+          { error: "Checkout is temporarily unavailable. Please try again.", code: "ATTRIBUTION_BINDING_UNAVAILABLE" },
+          { status: 503 },
+        )
+      }
+    }
+
     if (order.status === "NOTICE_REVIEW_REQUIRED") {
       const held = await prisma.oTOrder.updateMany({
         where: {
@@ -943,6 +1009,9 @@ export async function POST(req: NextRequest) {
         tier: input.tier,
         windowStatus: snapshot.status,
         windowRetrievedAt: snapshot.retrievedAt ?? "",
+        // Readback of the immutable row, never this request's codes. On a retry
+        // the two differ, and the durable one is the one that is true.
+        ...attributionMetadata(attributionRow),
         ...gaIdentifiers,
       },
     }, { idempotencyKey: `ot:${(order as { contractKey?: string }).contractKey}:${(order as { attempt?: number }).attempt ?? 0}` })
