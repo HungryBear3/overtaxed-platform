@@ -1295,6 +1295,11 @@ model OTDeliveryAttempt {
   idempotencyKey     String    @unique @map("idempotency_key")
   provider           String
   providerMessageId  String?   @map("provider_message_id")
+  // The download capability minted FOR this attempt, so a revocation or a
+  // recovery can find the exact credential that attempt handed out. Nullable
+  // because every attempt written before this slice has none, and because an
+  // attempt exists durably before its capability does.
+  downloadCapabilityId String? @unique @map("download_capability_id")
   requestedAt        DateTime  @default(now()) @map("requested_at")
   providerAcceptedAt DateTime? @map("provider_accepted_at")
   deliveredAt        DateTime? @map("delivered_at")
@@ -1309,6 +1314,9 @@ model OTDeliveryAttempt {
   // rewrite this downstream identity. Parent teardown removes attempts via the
   // fulfillment Cascade above; NoAction's end-of-statement check then passes.
   artifact    OTFulfillmentArtifact @relation(fields: [fulfillmentId, artifactVersion], references: [fulfillmentId, version], onDelete: NoAction, onUpdate: NoAction)
+  // Same non-destructive posture: losing a capability row must never erase the
+  // attempt that records a send happened.
+  downloadCapability OTPacketDownloadCapability? @relation(fields: [downloadCapabilityId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   events      OTDeliveryEvent[]
 
   @@unique([fulfillmentId, attemptNumber])
@@ -1387,10 +1395,70 @@ model OTPacketDownloadCapability {
   /// Same composite identity FK the delivery attempt uses: a capability can only
   /// ever name an immutable artifact version of its OWN fulfillment.
   artifact    OTFulfillmentArtifact @relation(fields: [fulfillmentId, artifactVersion], references: [fulfillmentId, version], onDelete: NoAction, onUpdate: NoAction)
+  /// Virtual back-relation for the attempt that minted this capability.
+  deliveryAttempt OTDeliveryAttempt?
 
   @@index([fulfillmentId])
   @@index([expiresAt])
   @@map("ot_packet_download_capability")
+}
+
+/// Durable, sanitized record of every authenticated provider callback this
+/// deployment has admitted.
+///
+/// One row per signed provider event, and the unique `(provider, providerEventId)`
+/// is the replay identity — taken from the SIGNED envelope, never from the body,
+/// so a forged payload cannot choose its own dedup key. A retry of the same
+/// signed delivery therefore collapses to a no-op even when the first attempt
+/// crashed mid-transaction.
+///
+/// It exists mainly for the send/callback RACE. A provider can report `delivered`
+/// before the send call has returned the message id that would let us correlate
+/// it. No correlation tag is assumed — the provider is not required to echo one
+/// and this system never relies on it — so such an event is genuinely unmatched
+/// on arrival. Rather than guess it onto an order or silently drop it, it is
+/// stored here with `disposition = UNMATCHED` and reconciled once the message id
+/// is bound to an attempt.
+///
+/// Nothing free-form is retained: no recipient, no subject, no bounce text, no
+/// raw body. Only an opaque message id, a bounded event type, an allowlisted
+/// reason code, bounded disposition codes, and instants.
+///
+/// Like the orphan quarantine, it deliberately has NO foreign key to
+/// ot_fulfillment. A cascade would delete the record of what a provider told us
+/// about an order at the moment the order row goes away, which is exactly the
+/// evidence a dispute needs. `fulfillmentId` is a soft reference, verified under
+/// a lock at application time and never trusted as a join key afterwards.
+model OTDeliveryProviderCallback {
+  id                String              @id @default(cuid())
+  provider          String
+  /// Replay identity, from the signed envelope (the Svix message id).
+  providerEventId   String              @map("provider_event_id")
+  /// The provider's opaque id for the message. The ONLY correlation available.
+  providerMessageId String              @map("provider_message_id")
+  eventType         OTDeliveryEventType @map("event_type")
+  /// Bounded non-PII reason code from the closed allowlist, when the event has one.
+  reasonCode        String?             @map("reason_code")
+  occurredAt        DateTime            @map("occurred_at")
+  receivedAt        DateTime            @default(now()) @map("received_at")
+  /// APPLIED | UNMATCHED | REFUSED. Bounded; never a provider string.
+  disposition       String
+  /// Bounded code naming WHY, when the disposition is not APPLIED.
+  dispositionCode   String?             @map("disposition_code")
+  /// Set only once the callback has been bound to an attempt.
+  fulfillmentId     String?             @map("fulfillment_id")
+  attemptNumber     Int?                @map("attempt_number")
+  /// When an UNMATCHED row stopped being unmatched, either way.
+  resolvedAt        DateTime?           @map("resolved_at")
+  /// Bounded counter so a permanently unresolvable row cannot be replayed forever.
+  replayCount       Int                 @default(0) @map("replay_count")
+  createdAt         DateTime            @default(now()) @map("created_at")
+
+  @@unique([provider, providerEventId])
+  @@index([providerMessageId])
+  @@index([disposition, receivedAt])
+  @@index([fulfillmentId])
+  @@map("ot_delivery_provider_callback")
 }
 
 /// Durable, idempotent quarantine record for stored artifact content whose bind
