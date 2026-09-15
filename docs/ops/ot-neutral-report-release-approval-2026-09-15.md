@@ -1,5 +1,32 @@
 # OT neutral report release approval packet — 2026-09-15
 
+## 2026-09-15 remediation status
+
+- Owner approval: replace oversized PR #47 with the documented reviewable
+  stack; keep Production, activation, live payments/refunds, customers,
+  marketing, and credentials untouched.
+- Replacement topology: PRs #54–#65 → #48–#51 → #66 → #67 → #52 → #53.
+  Exact heads, sizes, and attached CI run IDs are recorded in the split plan.
+- Current terminal tree before this documentation-only refresh:
+  `ceeb93a5fad6d04c7f81a29a3b4cf4196092273b`.
+- Tree proof: terminal tree
+  `a3f9257fc113db825aaab42abbef3194d0fb281c` equals approved `2203e06` plus
+  only the credential-free CI trigger and constrained-view post-migration
+  proof remediation (`b87bcd4` tree); no other content diff exists.
+- Post-migration proof now reads only
+  `ot_neutral_runtime_order`, `ot_neutral_runtime_payment_binding`, and
+  `ot_neutral_runtime_settlement_reversal`; it explicitly requires direct
+  reads of `ot_order`, `ot_payment_binding`, and `ot_settlement_reversal` to
+  fail.
+- All current PR Preview deployments report Ready after their latest build;
+  final exact-head CI/Preview evidence remains attached to each PR and must be
+  re-read after this documentation-only commit.
+- Remaining hard gate: no migration or DB-backed Preview smoke until one
+  provably isolated Preview database, its durable marker, and all four
+  restricted credentials exist.
+- PR #47 remains open and untouched. Merge and supersession remain blocked on
+  fresh independent Verification, Anti-pattern, and Code Quality reviews.
+
 ## Candidate
 
 - Branch: `codex/ot-neutral-report-20260915`
