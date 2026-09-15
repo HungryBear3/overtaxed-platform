@@ -1,0 +1,650 @@
+/**
+ * Strict official Cook County evidence retrieval for the T2 evidence packet.
+ *
+ * This module reads published Cook County Assessor datasets and assembles the
+ * subject record, the complete candidate pool, the assessed values and the
+ * published addresses that `lib/fulfillment/t2-artifact-content.ts` composes
+ * into a packet. It is the "correct non-directional county reader" the
+ * producer's HOLD comment described, and it is deliberately the strictest
+ * component in the chain: every ambiguity, every gap and every sign of an
+ * unstable read refuses by name rather than producing a partial answer.
+ *
+ * Four properties matter more than the happy path.
+ *
+ * **It cannot cherry-pick.** The only `$where` predicates it ever emits are
+ * parcel identity, tax year, assessor neighbourhood, township and property
+ * class. It never filters or orders by an assessed value, and `$order` is always
+ * `pin`. The comparable pool is therefore the WHOLE class-2 non-condominium
+ * population of the subject's assessor neighbourhood, handed to a value-blind
+ * selector that performs its own exact-class rejection and records it.
+ *
+ * **It cannot quietly shrink the pool.** A candidate whose characteristics,
+ * assessed value or address are missing, incomplete or ambiguous is not dropped
+ * and is not given a synthesised feature. The whole retrieval refuses. A median
+ * over a neighbourhood that silently lost its unavailable members is not the
+ * median of the neighbourhood the packet describes, and a pool digest over a
+ * quietly pruned pool binds the wrong universe.
+ *
+ * **It does not trust its own query.** A `$where` clause is a request, not a
+ * guarantee. Every row that comes back is re-checked against the tax year, the
+ * parcel identity, the neighbourhood, the township and the class that were
+ * asked for, on every dataset. A source that ignores, mis-parses or
+ * mis-routes a filter fails closed instead of contributing a row nobody
+ * verified.
+ *
+ * **It has no ambient dependencies.** `fetch` and the clock are injected, so
+ * tests drive it with a mock and no test in this repository opens a socket.
+ *
+ * Tax year 2026, mailed stage, explicitly
+ * ---------------------------------------
+ * [[OFFICIAL_TAX_YEAR]] is pinned to 2026 and cross-checked against the injected
+ * clock's America/Chicago calendar year, so a year rollover refuses instead of
+ * silently reading a year nobody validated. Every response row is then checked
+ * to carry that same year. The only assessed figure read is `mailed_tot` for
+ * that exact year; `certified_tot` and `board_tot` are never selected and never
+ * substituted.
+ *
+ * That is a real coverage limit, not a conservative flourish. The 2026-09-09
+ * official revalidation observed current-year mailed totals in 23 of 38
+ * townships, certified in 13, and board in 0, and observed the Assessor's
+ * calendar showing a township open while the open-data mailed totals for it were
+ * still empty. A subject in one of the 15 townships without mailed values
+ * refuses here. Falling back to 2025, to a certified value or to a board value
+ * would answer a different question than the one the packet asks.
+ *
+ * What "fresh" does and does not claim
+ * ------------------------------------
+ * Each source receipt records the instant THIS process received THAT page's
+ * bytes, and the whole retrieval must complete inside
+ * [[MAX_RETRIEVAL_WINDOW_MS]]. That is a statement about the read, not about the
+ * data: nothing here establishes when the Assessor last refreshed a dataset, and
+ * the datasets' own metadata warns that current-year content is final only after
+ * every township roll is certified.
+ *
+ * Likewise the pool stability checks — count before and after the page walk,
+ * strictly ascending parcel order across pages, per-page bounds, and identity
+ * re-verification on every joined row — detect a great many mid-read changes but
+ * do NOT amount to a transactional snapshot. Socrata offers no read isolation
+ * across requests, and this module deliberately does not issue the large
+ * metadata reads that would be needed to compare dataset update epochs. A
+ * concurrent update that preserves the row count and the parcel ordering would
+ * not be caught. The refusals below should be read as "this read was not
+ * demonstrably stable", never as "this read was provably atomic".
+ */
+
+import { createHash } from "node:crypto"
+
+import type { SourceRecord, SubjectRecord } from "@/lib/fulfillment/t2-artifact-content"
+import type { ComparableMatchAttributes } from "@/lib/fulfillment/t2-comparables"
+import { townshipKeyFromName } from "@/lib/deadlines/township-resolution"
+
+/**
+ * The tax year this module is authorised to read, cross-checked against the
+ * injected clock AND against every row returned. See the module note: never
+ * 2025, never a certified or board figure, never a fallback.
+ */
+export const OFFICIAL_TAX_YEAR = 2026
+
+/** The only assessed stage read. Recorded into the packet's subject record. */
+export const OFFICIAL_ASSESSMENT_STAGE = "mailed"
+
+/** The only state an address may carry. Cook County is in Illinois. */
+export const OFFICIAL_ADDRESS_STATE = "IL"
+
+const SOCRATA_HOST = "datacatalog.cookcountyil.gov"
+const SOCRATA_ORIGIN = `https://${SOCRATA_HOST}`
+
+/**
+ * Dataset identities, with the titles that reach the packet's source manifest.
+ *
+ * Field mappings are the ones the 1,200-PIN public-data study exercised against
+ * the live API, the published column inventory for the parcel universe, and the
+ * 2026-09-12 address-source evidence for `3723-97qp`.
+ *
+ * Every select list is the minimum the packet needs. None of these datasets
+ * publishes an owner, taxpayer, mailing or contact column, and no such column is
+ * named here.
+ */
+export const COUNTY_DATASETS = {
+  parcelUniverse: {
+    id: "pabr-t5kh",
+    title: "Assessor - Parcel Universe (Current Year Only)",
+    select: "pin,year,class,township_code,township_name,nbhd_code",
+  },
+  characteristics: {
+    id: "x54s-btds",
+    title: "Assessor - Single and Multi-Family Improvement Characteristics",
+    select:
+      "pin,year,class,township_code,pin_num_cards,pin_is_multiland,pin_num_landlines," +
+      "tieback_key_pin,tieback_proration_rate,card_proration_rate," +
+      "char_bldg_sf,char_yrblt,char_type_resd",
+  },
+  assessedValues: {
+    id: "uzyt-m557",
+    title: "Assessor - Assessed Values",
+    /** `mailed_tot` only. `certified_tot` and `board_tot` are never selected. */
+    select: "pin,year,class,township_code,nbhd,mailed_tot",
+  },
+  addresses: {
+    id: "3723-97qp",
+    title: "Assessor - Parcel Addresses",
+    /**
+     * This dataset carries no township or neighbourhood column, so it is joined
+     * on parcel identity and tax year alone and contributes no locality claim.
+     * Locality is never inferred from it.
+     */
+    select: "pin,year,prop_address_full,prop_address_city_name,prop_address_state",
+  },
+} as const
+
+/**
+ * Retrieval bounds. Small pages and a small total, so a neighbourhood that does
+ * not fit is REJECTED rather than truncated to whatever the first page held.
+ */
+export const POOL_PAGE_SIZE = 500
+export const POOL_MAX_ROWS = 5000
+export const JOIN_CHUNK_SIZE = 100
+export const MAX_REQUESTS = 200
+export const REQUEST_TIMEOUT_MS = 15_000
+export const MAX_RESPONSE_BYTES = 2_000_000
+
+/**
+ * The whole retrieval's wall-clock budget.
+ *
+ * A per-request timeout alone is not a freshness bound: 200 requests at a 15
+ * second ceiling each could span the better part of an hour and still satisfy
+ * every individual limit, leaving the first page and the last page describing
+ * the county at materially different times. The receipts must describe one
+ * bounded read.
+ */
+export const MAX_RETRIEVAL_WINDOW_MS = 120_000
+
+/**
+ * Bounded, stable, non-PII refusal vocabulary. Every one of these is a statement
+ * about the official record or about the read of it — never about a value.
+ */
+export type CountyGatewayBlocker =
+  | "COUNTY_TAX_YEAR_UNVERIFIED"
+  | "COUNTY_RESPONSE_YEAR_MISMATCH"
+  | "COUNTY_SOURCE_UNAVAILABLE"
+  | "COUNTY_REQUEST_BUDGET_EXCEEDED"
+  | "COUNTY_RETRIEVAL_WINDOW_EXCEEDED"
+  | "COUNTY_CLOCK_UNRELIABLE"
+  | "SUBJECT_PIN_INVALID"
+  | "SUBJECT_PARCEL_NOT_FOUND"
+  | "SUBJECT_PARCEL_AMBIGUOUS"
+  | "SUBJECT_TOWNSHIP_MISMATCH"
+  | "SUBJECT_CLASS_OUT_OF_SCOPE"
+  | "SUBJECT_NEIGHBORHOOD_UNAVAILABLE"
+  | "SUBJECT_LOCALITY_UNRECOGNIZED"
+  | "SUBJECT_RECORD_INCONSISTENT"
+  | "CANDIDATE_POOL_EMPTY"
+  | "CANDIDATE_POOL_TOO_LARGE"
+  | "CANDIDATE_POOL_UNSTABLE"
+  | "CANDIDATE_LOCALITY_MISMATCH"
+  | "CANDIDATE_CHARACTERISTICS_INCOMPLETE"
+  | "CANDIDATE_CHARACTERISTICS_AMBIGUOUS"
+  | "CANDIDATE_ASSESSED_VALUE_INCOMPLETE"
+  | "CANDIDATE_ASSESSED_VALUE_AMBIGUOUS"
+  | "CANDIDATE_ADDRESS_INCOMPLETE"
+  | "CANDIDATE_ADDRESS_AMBIGUOUS"
+  | "CANDIDATE_CLASS_AMBIGUOUS"
+
+/** The producer-facing refusal shape. See [[loadOfficialCountyData]]. */
+export type CountyDataRefusal = { blocker: CountyGatewayBlocker }
+
+/**
+ * Exactly the shape `T2ProducerCountyData` requires, structurally rather than by
+ * import, so this module and the producer do not depend on each other's types.
+ */
+export type CountyEvidence = {
+  subject: SubjectRecord
+  /** The WHOLE class-2 non-condominium pool of the subject's neighbourhood. */
+  comparableCandidates: ComparableMatchAttributes[]
+  comparableAssessedValues: Map<string, number>
+  comparableAddresses: Map<string, string>
+  /** One record per request actually issued, each with its own page URL and body hash. */
+  sources: SourceRecord[]
+}
+
+export type CountyEvidenceResult =
+  | { ok: true; evidence: CountyEvidence; sources: SourceRecord[] }
+  | { ok: false; blocker: CountyGatewayBlocker; sources: SourceRecord[] }
+
+/** The parcel identity this module reads. Structural, so it imports no producer type. */
+export type CountyOrderIdentity = {
+  propertyPin: string
+  township: string
+}
+
+type CountyRequestInit = {
+  method: "GET"
+  headers: Record<string, string>
+  cache: "no-store"
+  redirect: "error"
+  credentials: "omit"
+  signal: AbortSignal
+}
+
+/** The slice of a streaming body this module uses. */
+export type CountyBody = {
+  getReader(): {
+    read(): Promise<{ done: boolean; value?: Uint8Array }>
+    cancel(reason?: unknown): Promise<void>
+  }
+}
+
+export type CountyResponse = {
+  ok: boolean
+  status: number
+  redirected?: boolean
+  body?: CountyBody | null
+  text(): Promise<string>
+}
+
+export type CountyFetch = (url: string, init: CountyRequestInit) => Promise<CountyResponse>
+
+export type CountyGatewayDeps = {
+  fetch: CountyFetch
+  now: () => Date
+}
+
+function defaultDeps(): CountyGatewayDeps {
+  return {
+    fetch: async (url, init) => {
+      const response = await globalThis.fetch(url, init as RequestInit)
+      return {
+        ok: response.ok,
+        status: response.status,
+        redirected: response.redirected,
+        body: response.body as CountyBody | null,
+        text: () => response.text(),
+      }
+    },
+    now: () => new Date(),
+  }
+}
+
+/* ------------------------------------------------------------------ helpers */
+
+/** RFC3339 UTC at second precision, matching the instant format the packet embeds. */
+function rfc3339Utc(date: Date): string {
+  return `${date.toISOString().slice(0, 19)}Z`
+}
+
+function sha256Hex(body: string): string {
+  return createHash("sha256").update(body, "utf8").digest("hex")
+}
+
+function asText(value: unknown): string {
+  if (typeof value === "string") return value.trim()
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  return ""
+}
+
+/**
+ * Exact integer, or nothing.
+ *
+ * Socrata renders a number column's whole values with a trailing `.0` — the
+ * current address dataset reports tax year 2026 as the string `"2026.0"` — so an
+ * integral trailing zero is accepted and anything else is not. There is no
+ * partial parse: `"2026abc"`, `"2026.5"`, `"2e3"` and `""` all read as absent,
+ * so a malformed figure becomes a refusal rather than a coerced number.
+ */
+function asExactInteger(value: unknown): number | null {
+  if (typeof value === "number") return Number.isSafeInteger(value) ? value : null
+  if (typeof value !== "string") return null
+  const trimmed = value.trim()
+  if (!/^-?\d+(?:\.0+)?$/.test(trimmed)) return null
+  const parsed = Number(trimmed)
+  return Number.isSafeInteger(parsed) ? parsed : null
+}
+
+/** Strict decimal, or nothing. Same no-partial-parse rule as [[asExactInteger]]. */
+function asExactDecimal(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null
+  if (typeof value !== "string") return null
+  const trimmed = value.trim()
+  if (!/^-?\d+(?:\.\d+)?$/.test(trimmed)) return null
+  const parsed = Number(trimmed)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+/**
+ * Explicit boolean false, or nothing.
+ *
+ * An absent or unparseable flag must NOT read as "false". These flags are the
+ * county's own markers for the multi-parcel cases whose building area is not a
+ * single number, so treating silence as a clean single parcel is the one reading
+ * that turns missing evidence into a qualifying comparable.
+ */
+function isExplicitlyFalse(value: unknown): boolean {
+  if (typeof value === "boolean") return value === false
+  if (typeof value !== "string") return false
+  return ["false", "f", "0", "no"].includes(value.trim().toLowerCase())
+}
+
+/**
+ * A 14-digit PIN as the ORDER supplies it: bare digits, or the county's
+ * canonical hyphenation. Nothing else.
+ *
+ * Stripping every non-digit would accept `"pin 14-05-4xx"` shaped junk and any
+ * string that merely happens to contain fourteen digits, which is how a typo or
+ * a mis-mapped column becomes a confident lookup of somebody else's parcel.
+ */
+export function parseOrderPin(value: string): string | null {
+  const trimmed = (value ?? "").trim()
+  if (/^\d{14}$/.test(trimmed)) return trimmed
+  if (/^\d{2}-\d{2}-\d{3}-\d{3}-\d{4}$/.test(trimmed)) return trimmed.replace(/-/g, "")
+  return null
+}
+
+/** A PIN as a DATASET supplies it: exactly fourteen digits, never hyphenated. */
+function parseSourcePin(value: unknown): string | null {
+  const text = asText(value)
+  return /^\d{14}$/.test(text) ? text : null
+}
+
+/**
+ * Locality codes are interpolated into a SoQL string literal, so they are
+ * constrained to digits before they are ever concatenated. The current parcel
+ * universe publishes both the assessor neighbourhood code and the township code
+ * as numeric strings; anything else is an unrecognised locality and refuses,
+ * rather than being escaped and sent.
+ */
+function parseLocalityCode(value: unknown): string | null {
+  const text = asText(value)
+  return /^\d{1,10}$/.test(text) ? text : null
+}
+
+/**
+ * Class 2 residential, excluding class 299 condominiums.
+ *
+ * 299 is excluded at the source because Cook County publishes no improvement
+ * characteristics for condominiums at all — there is no building area to divide
+ * by — so including them would guarantee an incomplete pool for every subject.
+ * This is the same operational non-condominium filter the official revalidation
+ * used. It is a coverage fact about the published data, not a narrowing of the
+ * pool toward the subject.
+ */
+function isClass2NonCondo(propertyClass: string): boolean {
+  return /^2\d{2}$/.test(propertyClass) && propertyClass !== "299"
+}
+
+/** The injected clock's calendar year in America/Chicago, where the roll happens. */
+function chicagoCalendarYear(at: Date): number | null {
+  if (!(at instanceof Date) || !Number.isFinite(at.getTime())) return null
+  const formatted = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+  }).format(at)
+  const year = Number(formatted)
+  return Number.isFinite(year) ? year : null
+}
+
+class CountyRefusal extends Error {
+  constructor(readonly blocker: CountyGatewayBlocker) {
+    super(blocker)
+    this.name = "CountyRefusal"
+  }
+}
+
+/* ------------------------------------------------------------- the requester */
+
+/**
+ * Build a SoQL URL with a fixed parameter order, so the URL recorded in the
+ * source manifest is reproducible from the same inputs.
+ */
+function socrataUrl(
+  datasetId: string,
+  params: { select: string; where: string; order?: string; limit?: number; offset?: number },
+): string {
+  const search = new URLSearchParams()
+  search.set("$select", params.select)
+  search.set("$where", params.where)
+  // Ordering is always by parcel identity. There is no configuration point here
+  // through which a value-ordered read could be introduced.
+  if (params.order) search.set("$order", params.order)
+  if (params.limit != null) search.set("$limit", String(params.limit))
+  if (params.offset != null) search.set("$offset", String(params.offset))
+  return `${SOCRATA_ORIGIN}/resource/${datasetId}.json?${search.toString()}`
+}
+
+type DatasetRef = { id: string; title: string }
+
+/**
+ * The public-data request helper.
+ *
+ * GET only, HTTPS only, one pinned host, no credentials and no cookies, no
+ * cache, redirects rejected rather than followed, a bounded per-request timeout,
+ * a bounded body enforced WHILE the body is read, and a bounded window for the
+ * retrieval as a whole. Every response is hashed and recorded as its own source
+ * receipt keyed to the exact page URL that produced it — a single dataset URL
+ * standing in for a set of paged responses would claim provenance the bytes do
+ * not have.
+ */
+class CountyReader {
+  private requests = 0
+  private readonly startedAtMs: number
+  private lastClockMs: number
+  readonly receipts: SourceRecord[] = []
+
+  constructor(private readonly deps: CountyGatewayDeps) {
+    const started = this.readClock()
+    this.startedAtMs = started
+    this.lastClockMs = started
+  }
+
+  private readClock(): number {
+    const now = this.deps.now()
+    const ms = now instanceof Date ? now.getTime() : Number.NaN
+    if (!Number.isFinite(ms)) throw new CountyRefusal("COUNTY_CLOCK_UNRELIABLE")
+    return ms
+  }
+
+  /**
+   * One clock reading, checked for monotonicity and against the retrieval
+   * window. A clock that steps backwards mid-retrieval makes every "retrieved
+   * at" ordering claim in the receipts meaningless, so it refuses rather than
+   * recording timestamps it cannot justify.
+   */
+  private tick(): Date {
+    const ms = this.readClock()
+    if (ms < this.lastClockMs) throw new CountyRefusal("COUNTY_CLOCK_UNRELIABLE")
+    this.lastClockMs = ms
+    if (ms - this.startedAtMs > MAX_RETRIEVAL_WINDOW_MS) {
+      throw new CountyRefusal("COUNTY_RETRIEVAL_WINDOW_EXCEEDED")
+    }
+    return new Date(ms)
+  }
+
+  /** Called once the assembly is complete, so a slow tail cannot escape the window. */
+  finish(): void {
+    this.tick()
+  }
+
+  private async readBounded(response: CountyResponse): Promise<string> {
+    const body = response.body
+    if (!body || typeof body.getReader !== "function") {
+      // A response modelled as a whole string — injected test doubles, and any
+      // runtime that does not expose a stream. Still bounded, just after the
+      // fact rather than during.
+      const text = await response.text()
+      if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) {
+        throw new CountyRefusal("COUNTY_SOURCE_UNAVAILABLE")
+      }
+      return text
+    }
+
+    // The production path. The bound is enforced as bytes arrive and the
+    // transfer is cancelled on overrun, so an unbounded or hostile response
+    // cannot be buffered into this process first and measured afterwards.
+    const reader = body.getReader()
+    const chunks: Uint8Array[] = []
+    let total = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      total += value.byteLength
+      if (total > MAX_RESPONSE_BYTES) {
+        await reader.cancel("response exceeds the bounded size")
+        throw new CountyRefusal("COUNTY_SOURCE_UNAVAILABLE")
+      }
+      chunks.push(value)
+    }
+    return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8")
+  }
+
+  async rows(
+    dataset: DatasetRef,
+    url: string,
+    maxRows: number,
+  ): Promise<Array<Record<string, unknown>>> {
+    if (this.requests >= MAX_REQUESTS) throw new CountyRefusal("COUNTY_REQUEST_BUDGET_EXCEEDED")
+    this.requests += 1
+    // Checked BEFORE the request, so a retrieval that has already run long does
+    // not start yet another call whose result it could not honestly date.
+    this.tick()
+
+    if (!url.startsWith(`${SOCRATA_ORIGIN}/`)) throw new CountyRefusal("COUNTY_SOURCE_UNAVAILABLE")
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    let body: string
+    try {
+      const response = await this.deps.fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        redirect: "error",
+        credentials: "omit",
+        signal: controller.signal,
+      })
+      // `redirect: "error"` should already have rejected, but a fetch
+      // implementation that merely reports the hop must not slip past.
+      if (!response.ok || response.status !== 200 || response.redirected === true) {
+        throw new CountyRefusal("COUNTY_SOURCE_UNAVAILABLE")
+      }
+      body = await this.readBounded(response)
+    } catch (error) {
+      throw error instanceof CountyRefusal ? error : new CountyRefusal("COUNTY_SOURCE_UNAVAILABLE")
+    } finally {
+      clearTimeout(timer)
+    }
+
+    // The receipt is dated when the bytes were actually in hand, and is recorded
+    // before the body is interpreted: a response that fails to parse still
+    // happened, and the manifest should say so.
+    this.receipts.push({
+      datasetId: dataset.id,
+      datasetTitle: dataset.title,
+      url,
+      retrievedAt: rfc3339Utc(this.tick()),
+      contentSha256: sha256Hex(body),
+    })
+
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(body)
+    } catch {
+      throw new CountyRefusal("COUNTY_SOURCE_UNAVAILABLE")
+    }
+    if (!Array.isArray(parsed)) throw new CountyRefusal("COUNTY_SOURCE_UNAVAILABLE")
+    // More rows than were asked for means the read is not the read that was
+    // requested, so nothing downstream can rely on its bounds.
+    if (parsed.length > maxRows) throw new CountyRefusal("CANDIDATE_POOL_UNSTABLE")
+    return parsed as Array<Record<string, unknown>>
+  }
+
+  async count(dataset: DatasetRef, where: string): Promise<number> {
+    const rows = await this.rows(
+      dataset,
+      socrataUrl(dataset.id, { select: "count(1) as n", where }),
+      1,
+    )
+    const value = rows.length === 1 ? asExactInteger(rows[0].n) : null
+    if (value === null || value < 0) throw new CountyRefusal("CANDIDATE_POOL_UNSTABLE")
+    return value
+  }
+
+  /**
+   * Complete, stably ordered pagination.
+   *
+   * The row count is taken before and after the page walk and both must agree
+   * with the number of rows actually collected. A pool larger than the bound is
+   * rejected, never truncated. See the module note on what these checks do and
+   * do not establish — they are stability evidence, not a snapshot guarantee.
+   */
+  async allPages(
+    dataset: DatasetRef,
+    select: string,
+    where: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    const expected = await this.count(dataset, where)
+    if (expected > POOL_MAX_ROWS) throw new CountyRefusal("CANDIDATE_POOL_TOO_LARGE")
+
+    const collected: Array<Record<string, unknown>> = []
+    for (let offset = 0; ; offset += POOL_PAGE_SIZE) {
+      if (offset > POOL_MAX_ROWS) throw new CountyRefusal("CANDIDATE_POOL_TOO_LARGE")
+      const page = await this.rows(
+        dataset,
+        socrataUrl(dataset.id, { select, where, order: "pin", limit: POOL_PAGE_SIZE, offset }),
+        POOL_PAGE_SIZE,
+      )
+      collected.push(...page)
+      // A count that under-reported the result set is caught here rather than by
+      // silently keeping the first `POOL_MAX_ROWS` rows.
+      if (collected.length > POOL_MAX_ROWS) throw new CountyRefusal("CANDIDATE_POOL_TOO_LARGE")
+      // A short page is the end of the result set. A full page is not, so the
+      // walk continues rather than stopping at whatever the bound happened to be.
+      if (page.length < POOL_PAGE_SIZE) break
+    }
+
+    const after = await this.count(dataset, where)
+    if (after !== expected || collected.length !== expected) {
+      throw new CountyRefusal("CANDIDATE_POOL_UNSTABLE")
+    }
+    return collected
+  }
+
+  /**
+   * Join a known PIN set against a dataset in bounded chunks.
+   *
+   * The predicate is parcel identity and tax year only. Each chunk's rows are
+   * validated against THAT CHUNK's requested PIN set rather than against the
+   * global set, so a source that answers one chunk with another chunk's rows
+   * cannot be reassembled into a plausible-looking whole.
+   */
+  async byPins(
+    dataset: DatasetRef,
+    select: string,
+    pins: ReadonlyArray<string>,
+    ambiguous: CountyGatewayBlocker,
+  ): Promise<Map<string, Array<Record<string, unknown>>>> {
+    const grouped = new Map<string, Array<Record<string, unknown>>>()
+    for (let i = 0; i < pins.length; i += JOIN_CHUNK_SIZE) {
+      const chunk = pins.slice(i, i + JOIN_CHUNK_SIZE)
+      const chunkSet = new Set(chunk)
+      const list = chunk.map((pin) => `'${pin}'`).join(",")
+      const where = `year=${OFFICIAL_TAX_YEAR} AND pin in (${list})`
+      // A PIN may legitimately carry several improvement rows, so the per-chunk
+      // bound allows for that and the per-PIN arity is judged by the caller. A
+      // response at the bound is rejected rather than accepted as complete.
+      const maxRows = JOIN_CHUNK_SIZE * 8
+      const page = await this.rows(
+        dataset,
+        socrataUrl(dataset.id, { select, where, order: "pin", limit: maxRows }),
+        maxRows,
+      )
+      if (page.length >= maxRows) throw new CountyRefusal(ambiguous)
+      for (const row of page) {
+        const pin = parseSourcePin(row.pin)
+        if (!pin || !chunkSet.has(pin)) throw new CountyRefusal(ambiguous)
+        const existing = grouped.get(pin)
+        if (existing) existing.push(row)
+        else grouped.set(pin, [row])
+      }
+    }
+    return grouped
+  }
