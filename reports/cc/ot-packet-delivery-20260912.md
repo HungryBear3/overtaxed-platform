@@ -10,7 +10,7 @@ was performed or is implied by this candidate. Every new surface is default-off.
 | Worktree | `/Users/abigailclaw/cc-worktrees/ot-paid-current-20260912` |
 | Branch (local only) | `abigail/ot-paid-current-20260912` |
 | Base | `d5ae760b7a5aa8fe6388802af9b3c5096f675472` |
-| Verification | `npx jest` — 159 suites / 3141 tests passed (4 suites, 77 tests skipped, as at base); `npx tsc --noEmit` — clean |
+| Verification | `npx jest` — 159 suites / 3204 tests passed (4 suites, 77 tests skipped, as at base); `npx tsc --noEmit` — clean |
 | Dependencies | `node_modules` symlinked to `…/ot44-release-candidate-20260912/node_modules` after verifying `package.json` and `package-lock.json` are byte-identical. No install, no `prisma generate`, no generated client produced. |
 
 ---
@@ -59,8 +59,12 @@ untouched.)
 - **Revocation / expiry / refund / dispute / cancel safe.** Explicit lifecycle
   (`revoked_at` + bounded reason, `expires_at`, `max_uses`/`use_count`) *and* a
   full re-read of authoritative state on every single use: tier, `PAID` status,
-  refund/dispute flags, a downloadable (never terminal) fulfillment status, and
-  an affirmative `classifyPropertyBinding(...) === "MATCHES"`. A refund
+  a downloadable (never terminal) fulfillment status, and an affirmative
+  `classifyPropertyBinding(...) === "MATCHES"`. `ot_order` carries no
+  `refunded`/`disputed` column — a refund, dispute or cancellation presents there
+  as a non-`PAID` `status`, which is the gate that actually fires; the two
+  optional flags on `PacketDownloadOrderRow` are for a caller whose settlement
+  source states them separately and are never populated here. A refund
   therefore ends access with no revocation step required. `revoke` is idempotent
   and is deliberately *not* gated on the download flag, so shutting the surface
   off can never block ending access.
@@ -68,8 +72,13 @@ untouched.)
   excludes every `TERMINAL_LOCK_STATUSES` member by construction; a test asserts
   that intersection is empty. Restoring access after a hard bounce is an
   operator re-issue, not something a surviving token keeps doing.
-- **Re-read after the async storage boundary.** `readT2PacketForCapability`
-  calls `store.reassert` *after* the storage round trip and before responding.
+- **Re-read after the async storage boundary — a narrowed window, not a closed
+  one.** `readT2PacketForCapability` calls `store.reassert` *after* the storage
+  round trip and before responding, then re-checks activation once more after
+  that. This shrinks the exposure from "the whole storage round trip" to "the
+  moment between the re-read committing and the bytes leaving the function". It
+  does not eliminate the race: a revocation landing inside that remaining window
+  still serves one packet, and nothing can recall bytes already on the wire.
   `reassert` re-runs every gate against freshly read rows and compares the
   re-read identity field-by-field against the grant. It judges the use budget
   against the count the grant was *claimed from* — re-checking the post-claim
@@ -201,9 +210,9 @@ assertions are about the store's own logic, not a mock's scripted answers.
 |---|---|---|
 | `packet-download-decision.test.ts` | 96 | capability shape/hashing/domain separation, every gate and blocker, terminal-status exclusion, property drift, issuance bounds |
 | `packet-download-store.test.ts` | 25 | lock order, one-use CAS, concurrent claim/revoke loss, flag rollback, `reassert` incl. final-use case and mid-read refund/revoke/terminal/identity change, idempotent revoke, issuance persisting hash only |
-| `packet-download-route.test.ts` | 39 | authorize→storage→re-read ordering, digest-only to store, private headers, `GET` 405, default-off 404, status mapping, 404 oracle collapse, bounded logging, source contracts |
+| `packet-download-route.test.ts` | 65 | authorize→storage→re-read ordering, digest-only to store, private headers, `GET` 405, default-off 404, status mapping, 404 oracle collapse, bounded logging, source contracts, bounded/chunked body limit, charset-tolerant media type, query-string refusal, real-store injection across post-storage revoke/refund/terminal/drift, final-use budget, post-await flag gates |
 | `artifact-orphan-store.test.ts` | 27 | pure record decision + refusals, idempotent fold, first/last preservation, monotonic upload outcome, second-location rows, no DELETE in any branch |
-| `t2-delivery.test.ts` | 47 | dispatch/outcome decisions across all statuses, persist-before-send, accepted≠delivered, unknown records nothing and is not retried, terminal not claimable, no-adapter blocker, no-sender source contract |
+| `t2-delivery.test.ts` | 84 | dispatch/outcome decisions across all statuses, persist-before-send, accepted≠delivered, unknown records nothing and is not retried, terminal not claimable, no-adapter blocker, no-sender source contract, DB-clock leases + bounds, lease-gated persist, artifact/property drift, the pre-send gate, unknown claim/persist outcomes |
 | `packet-download-schema-and-wiring.test.ts` | 23 | schema + migration contracts (additive-only, CHECKs, unique indexes, no cascade on quarantine), runtime wiring guards, strict default-off flags |
 
 Modified: `t2-artifact-workflow.test.ts` (now asserts quarantine recording on
@@ -269,3 +278,145 @@ Nothing below was done here; each is a separate reviewed step.
     Unresolved sends are deliberately left for a provider event or an operator;
     automatic resolution is not implemented and must not be added without the
     webhook in (11).
+
+---
+
+## 6. Repair pass (same worktree, local only)
+
+Review of `e68647d` found four substantive gaps and several comments that claimed
+more than the code delivers. All were repaired in place; nothing was rewritten
+wholesale, no provider adapter was added, and no issuance caller was introduced.
+
+### 6.1 A lease is now proved against the database, not against the caller
+
+`persistAttempt` previously accepted no `owner`/`token` and checked no lease at
+all, so anything that could reach the store could persist an attempt — including
+a worker whose lease had expired minutes earlier, or one that never held it.
+
+- `persistAttempt` now takes `owner`/`token` and refuses `LEASE_NOT_HELD` unless
+  the freshly read row names exactly that pair with an unexpired
+  `lease_expires_at`, measured against `CURRENT_TIMESTAMP` inside the same
+  transaction. `evaluateLease`'s `RENEWABLE` decision is the authority; every
+  other decision (absent, expired, malformed, held by another) is a refusal.
+- The compare-and-set that advances the summary to `DELIVERY_PENDING` repeats the
+  lease predicate in SQL (`lease_owner = … AND lease_token = … AND
+  lease_expires_at > now`), so the write is conditional even if a future edit
+  weakens the read above it.
+- `claim` no longer accepts a caller instant or a caller-computed expiry. It
+  takes a bounded `leaseMs` (`T2_MIN_LEASE_MS` 30s … `T2_MAX_LEASE_MS` 15min,
+  refused rather than clamped), reads the database clock, and derives the expiry
+  from it. Its `UPDATE` carries the lease predicate too, so a live lease held by
+  someone else is never overwritten.
+
+### 6.2 A pre-send gate that re-reads authority immediately before the adapter
+
+Persisting the attempt before the send is deliberate, and it creates an
+asynchronous gap. Previously nothing re-checked anything inside that gap: a
+refund, a withdrawn flag, a superseded artifact or a stolen lease landing there
+would have been ignored and the send made anyway.
+
+`T2DeliveryStore.assertSendable` is new and read-only. Under the same lock order
+it re-verifies, against freshly read state:
+
+- the flag, before any query and again after the last await;
+- settlement is still exactly a `PAID` `T2` order;
+- the summary is still `DELIVERY_PENDING` at the exact `status_revision` and
+  `attempt_count` the persist left;
+- the lease is still live and still ours, by the database clock;
+- the CURRENT artifact is still the same `version` + `artifact_sha256`, still
+  bound to this order, and still fingerprint-matches the order's property — both
+  against the order's live property inputs and against the fingerprint the
+  attempt was persisted under;
+- the exact pending attempt row exists with the same id, attempt number,
+  idempotency key, provider and artifact version, and carries no outcome yet
+  (`provider_accepted_at` / `failed_at` both null).
+
+`runT2Delivery` now runs `claim → persist → (flag re-check) → assertSendable →
+send`, with a test asserting those calls are adjacent and in that order. It makes
+no assumption that an adapter checks any of this.
+
+`persistAttempt` also refuses untrusted drift up front — `ARTIFACT_SOURCE_ORDER_MISMATCH`
+when the artifact names a different order, `PROPERTY_BINDING_UNVERIFIED` when the
+fingerprint is absent or no longer matches — so an attempt that could never
+legitimately be sent does not become a durable record that a send was requested.
+
+Thrown-outcome handling is now bounded rather than propagating:
+
+| Failure | Result | Sent? |
+|---|---|---|
+| `claim` throws | `CLAIM_OUTCOME_UNKNOWN` + best-effort release | no |
+| `persistAttempt` throws | `PERSIST_OUTCOME_UNKNOWN` + best-effort release | no |
+| `assertSendable` refuses | `SEND_DENIED` + bounded blocker + release | no |
+| `assertSendable` throws | `SEND_DENIED` / `PRE_SEND_CHECK_UNKNOWN` | no |
+
+The release is conditional on our own owner/token, so it is safe when the lease
+state is unknown, and the expiry recovers it if the release fails too. No thrown
+value is read or logged.
+
+### 6.3 Runtime tests for the download read path, through real injected services
+
+`readT2PacketForCapability` is now exercised against an injected store that runs
+the real `decidePacketDownload` over real rows and reproduces the SQL store's
+semantics (one-use compare-and-set, flag rollback, re-read judged against the
+count the grant was claimed from), rather than only through scripted mocks:
+post-storage revocation, post-storage refund, post-storage terminal status,
+post-storage property drift, byte/length mismatch, the final use of a single-use
+capability followed by exhaustion, expiry against the store's clock, and flag
+withdrawal at each of the three await boundaries.
+
+A final activation gate was added *after* `reassert` returns — previously the
+last check was before it, so a withdrawal landing during the re-read was missed.
+
+### 6.4 The route no longer reads an unbounded body
+
+- The body is read from the request stream with a 1 KiB cap enforced on bytes
+  actually received. `Content-Length` is checked first when present, and a
+  malformed one is refused, but the cap does not depend on it: a chunked body
+  declaring no length is bounded by the same limit, with a test that streams
+  64 KiB in 64 chunks and expects `413`.
+- Content type is matched on the media type only, so `application/json;
+  charset=utf-8` and `Application/JSON` are accepted while `application/ld+json`,
+  form encodings and a missing type are refused.
+- A `POST` carrying any query string is refused `400 QUERY_NOT_ALLOWED`. Nothing
+  parses the query or reads a value out of it — the presence of `?` is the whole
+  test — so no parameter can be honoured by a later edit.
+- Rejected requests log nothing at all (asserted for `console.warn`/`log`/`error`),
+  so no raw capability can reach a log on any of the new paths.
+
+### 6.5 Comments corrected to match what the code does
+
+- The download service no longer claims the re-read "closes any window between
+  we decided and we responded". It states the window is narrowed to one
+  transaction, that a revocation inside the remainder still serves one packet,
+  and that nothing can recall bytes already sent.
+- The orchestrator no longer implies lease expiry is a send recovery path. It now
+  says expiry recovers the *lease*, that a `DELIVERY_PENDING` summary is refused
+  as `UNRESOLVED_SEND` however long its lease has been gone, and that resolving an
+  unresolved send needs a provider event or an operator.
+- `PacketDownloadOrderRow.refunded`/`disputed` are documented as optional inputs
+  that `ot_order` does not have; the report's settlement bullet was corrected to
+  match.
+
+### 6.6 Limitations this repair does not remove
+
+1. **A denied pre-send leaves the fulfillment unresolved.** The attempt is
+   durable and the summary stays `DELIVERY_PENDING`, which is never automatically
+   retried — deliberately, since re-sending after an unverifiable gap is exactly
+   the duplicate this design exists to prevent. Clearing it is an operator action
+   (or a provider event); no sweep ships.
+2. **`assertSendable` narrows the send window; it does not close it.** Anything
+   that commits between that transaction and the adapter's own network write is
+   still unobserved, and nothing here can un-send.
+3. **No provider adapter, no webhook admission, no `runT2Delivery` caller** —
+   unchanged from §5, and deliberately not added by this repair.
+4. **No issuance caller for download capabilities** — unchanged from §5.
+5. **No real database was exercised.** All store tests run against fake adapters
+   that implement the real SQL semantics. The new SQL — the lease predicates in
+   `claim` and in the `persistAttempt` CAS, and every query in `assertSendable` —
+   has not been executed against PostgreSQL. The ephemeral-Postgres migration and
+   store rehearsal is the parent's step, and it is where these predicates should
+   be proven.
+6. **`recordOutcome` is still not lease-gated.** It is idempotent, conditional on
+   `status_revision`, and can only ever record an outcome for an attempt that
+   already exists, so it does not authorize a send; threading the lease through it
+   too would be a consistency improvement, not a fix, and was left out of scope.
