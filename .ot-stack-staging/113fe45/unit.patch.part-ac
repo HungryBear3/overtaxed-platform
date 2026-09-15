@@ -1,0 +1,600 @@
+-  }): Promise<{ examined: number; applied: number; stillUnmatched: number }>;
++  }): Promise<ReconciliationSummary>;
+ }
+ 
++/**
++ * What one reconciliation pass did.
++ *
++ * `examined` is the size of the batch that was read, and the other three account
++ * for every row in it: `examined === applied + stillUnmatched + skipped`. That
++ * identity is the point — without `skipped`, a pass that lost every claim to a
++ * concurrent reconciler reported `applied: 0, stillUnmatched: 0` against a
++ * non-zero `examined` and looked like a pass that had silently dropped rows.
++ */
++export type ReconciliationSummary = {
++  examined: number;
++  applied: number;
++  stillUnmatched: number;
++  /** Claimed by someone else, resolved mid-pass, or out of replay budget. */
++  skipped: number;
++};
++
+ const TRUSTED_CLOCK_SQL = Prisma.sql`
+   SELECT to_char(
+     clock_timestamp() AT TIME ZONE 'UTC',
+@@ -70,6 +97,33 @@ const TRUSTED_CLOCK_SQL = Prisma.sql`
+   ) AS "now"
+ `;
+ 
++/**
++ * Transaction-scoped advisory lock serializing the unmatched-spool cap decision.
++ *
++ * `SELECT COUNT(*) … > MAX` is not, by itself, a cap. Under READ COMMITTED a
++ * concurrent transaction's inserted-but-uncommitted row is invisible, so N
++ * ingesters racing each other can each count MAX, each conclude there is room,
++ * and each commit — leaving MAX + N durable unresolved rows. The ceiling exists
++ * to bound unbounded attacker-driven growth, and a ceiling that a burst walks
++ * straight through is not one.
++ *
++ * Holding this lock across the count makes the decision serial, because an
++ * advisory XACT lock is held until commit: the next holder's count therefore
++ * sees every earlier holder's row already committed. Each transaction decides
++ * against (all committed rows) + (its own), which is exact.
++ *
++ * It is taken ONLY on the unmatched branch, which is reached before `apply`
++ * takes any row lock, so it can never be held while waiting on `ot_order` and
++ * cannot participate in a deadlock cycle with the delivery store. The matched
++ * path never takes it at all.
++ *
++ * The key is an arbitrary fixed constant pair, namespaced by the first element
++ * so another advisory-lock user in this database cannot collide with it.
++ */
++const SPOOL_CAP_LOCK_SQL = Prisma.sql`
++  SELECT pg_advisory_xact_lock(19260912, 1) AS "locked"
++`;
++
+ export type ProviderCallbackTransaction = {
+   $queryRaw<T>(query: Prisma.Sql): Promise<T>;
+   $executeRaw(query: Prisma.Sql): Promise<number>;
+@@ -100,6 +154,12 @@ function toInstant(value: unknown): string {
+   return typeof value === "string" ? value : "";
+ }
+ 
++/** The database's wall clock, or "" when it cannot be trusted. */
++async function readTrustedNow(tx: ProviderCallbackTransaction): Promise<string> {
++  const clock = await tx.$queryRaw<Array<{ now: unknown }>>(TRUSTED_CLOCK_SQL);
++  return toInstant(clock[0]?.now);
++}
++
+ function asInstant(value: Date | string): string {
+   return value instanceof Date ? value.toISOString() : String(value);
+ }
+@@ -135,8 +195,22 @@ export function createPrismaProviderCallbackStore(
+                  FROM "ot_delivery_attempt" t
+                  JOIN "ot_fulfillment" f ON f."id" = t."fulfillment_id"
+                  WHERE t."provider" = ${event.provider}
+-                   AND t."provider_message_id" = ${event.providerMessageId}`,
++                   AND t."provider_message_id" = ${event.providerMessageId}
++                 LIMIT 2`,
+     );
++    // `LIMIT 2`, not `LIMIT 1`, so a second row is SEEN rather than silently
++    // discarded. The schema's unique (provider, provider_message_id) should make
++    // this unreachable; reading `located[0]` out of an unordered result would
++    // turn any future loss of that index into "fold this provider event onto
++    // whichever of two orders came back first", which is not a thing to guess.
++    if (located.length > 1) {
++      const trustedNow = await readTrustedNow(tx);
++      await markRefused(tx, callbackId, "AMBIGUOUS_MESSAGE_BINDING", trustedNow, {
++        fulfillmentId: null,
++        attemptNumber: null,
++      });
++      return { outcome: "REFUSED", code: "AMBIGUOUS_MESSAGE_BINDING" };
++    }
+     const found = located[0];
+     if (!found) return { outcome: "UNMATCHED" };
+ 
+@@ -329,6 +403,11 @@ export function createPrismaProviderCallbackStore(
+             // The ceiling is enforced AFTER the insert so the count includes this
+             // row; over the ceiling we keep the evidence but stop pretending it
+             // will be replayed.
++            //
++            // Serialized: without this lock the count is a snapshot that cannot
++            // see concurrent uncommitted inserts, and a burst of ingests would
++            // each independently conclude there was room. See SPOOL_CAP_LOCK_SQL.
++            await tx.$queryRaw<Array<{ locked: unknown }>>(SPOOL_CAP_LOCK_SQL);
+             const counts = await tx.$queryRaw<Array<{ live: bigint | number }>>(
+               Prisma.sql`SELECT COUNT(*) AS "live"
+                          FROM "ot_delivery_provider_callback"
+@@ -359,14 +438,9 @@ export function createPrismaProviderCallbackStore(
+       // not the rows reconciled before it. Prisma's raw seam offers no
+       // savepoints, so each stored callback gets its own transaction. The pass is
+       // therefore re-runnable, and one poisoned row cannot undo the others.
+-      const horizonNow = await client.$transaction(async (tx) => {
+-        const clock = await tx.$queryRaw<Array<{ now: unknown }>>(
+-          TRUSTED_CLOCK_SQL,
+-        );
+-        return toInstant(clock[0]?.now);
+-      });
++      const horizonNow = await client.$transaction((tx) => readTrustedNow(tx));
+       if (horizonNow === "")
+-        return { examined: 0, applied: 0, stillUnmatched: 0 };
++        return { examined: 0, applied: 0, stillUnmatched: 0, skipped: 0 };
+       const horizon = new Date(
+         new Date(horizonNow).getTime() - UNMATCHED_RECONCILIATION_WINDOW_MS,
+       );
+@@ -388,6 +462,7 @@ export function createPrismaProviderCallbackStore(
+                        AND "disposition" = 'UNMATCHED'
+                        AND "resolved_at" IS NULL
+                        AND "received_at" >= ${horizon}
++                       AND "replay_count" < ${MAX_CALLBACK_REPLAYS}
+                      ORDER BY "occurred_at" ASC, "received_at" ASC
+                      LIMIT ${MAX_RECONCILIATION_BATCH}`,
+         ),
+@@ -395,6 +470,7 @@ export function createPrismaProviderCallbackStore(
+ 
+       let applied = 0;
+       let stillUnmatched = 0;
++      let skipped = 0;
+       for (const row of stored) {
+         let result: CallbackIngestResult;
+         try {
+@@ -403,15 +479,26 @@ export function createPrismaProviderCallbackStore(
+               // Claim the row conditionally. Losing this to a concurrent
+               // reconciler means somebody else owns this replay, so we do
+               // nothing rather than applying the same event twice.
++              //
++              // The increment is unclamped and the predicate requires strictly
++              // less than the ceiling. `LEAST(count + 1, MAX)` looked safer and
++              // was not: at the ceiling it wrote MAX over MAX, so the
++              // compare-and-set `replay_count = <observed>` stayed satisfiable
++              // forever and stopped excluding a concurrent reconciler — the one
++              // thing this statement exists to do. A row that reaches the
++              // ceiling is now simply no longer claimable.
+               const claimed = await tx.$executeRaw(
+                 Prisma.sql`UPDATE "ot_delivery_provider_callback"
+-                           SET "replay_count" = LEAST("replay_count" + 1, 1000)
++                           SET "replay_count" = "replay_count" + 1
+                            WHERE "id" = ${row.id}
+                              AND "disposition" = 'UNMATCHED'
+                              AND "resolved_at" IS NULL
+-                             AND "replay_count" = ${row.replayCount}`,
++                             AND "replay_count" = ${row.replayCount}
++                             AND "replay_count" < ${MAX_CALLBACK_REPLAYS}`,
+               );
+-              if (claimed !== 1) return { outcome: "DUPLICATE" };
++              // Not ours to replay: either a concurrent reconciler claimed it,
++              // it was resolved while we read the batch, or it is spent.
++              if (claimed !== 1) return { outcome: "CONFLICTED" };
+               return apply(tx, row.id, {
+                 provider: row.provider,
+                 providerEventId: row.providerEventId,
+@@ -434,8 +521,11 @@ export function createPrismaProviderCallbackStore(
+         }
+         if (result.outcome === "APPLIED") applied += 1;
+         else if (result.outcome === "UNMATCHED") stillUnmatched += 1;
++        // REFUSED is a resolved row, CONFLICTED and DUPLICATE were not ours to
++        // act on. None of the three is unmatched work still waiting.
++        else skipped += 1;
+       }
+-      return { examined: stored.length, applied, stillUnmatched };
++      return { examined: stored.length, applied, stillUnmatched, skipped };
+     },
+   };
+ }
+diff --git a/lib/fulfillment-runtime/t2-delivery-orchestrator.ts b/lib/fulfillment-runtime/t2-delivery-orchestrator.ts
+index cfde4ca..c7f10f4 100644
+--- a/lib/fulfillment-runtime/t2-delivery-orchestrator.ts
++++ b/lib/fulfillment-runtime/t2-delivery-orchestrator.ts
+@@ -23,7 +23,8 @@
+  * The ordering it enforces when an adapter IS supplied:
+  *
+  *   claim lease → persist attempt (durable, BEFORE the send) →
+- *   re-assert authority → send → record outcome → release lease
++ *   re-assert authority → adapter (which re-asserts AGAIN, immediately before
++ *   the provider call) → record outcome → release lease
+  *
+  * The re-assert step is not decoration. Persisting first deliberately creates an
+  * asynchronous gap, and a refund, a withdrawn flag, property drift or a lost
+@@ -71,9 +72,29 @@ export interface T2DeliveryAdapter {
+     artifactVersion: number;
+     artifactSha256: string;
+     idempotencyKey: string;
++    /**
++     * The pre-send authority gate, bound to THIS lease and THIS durable
++     * attempt, for the adapter to call as the last thing before it hands
++     * anything to a provider.
++     *
++     * The orchestrator runs the same gate once itself, immediately after the
++     * persist. That is not the same check: an adapter that mints a credential,
++     * resolves a recipient and builds a message does real asynchronous work
++     * between the orchestrator's gate and the provider call, and a refund, a
++     * withdrawn flag, property drift or a lost lease landing inside THAT window
++     * would otherwise be invisible. Passing the gate in rather than re-deriving
++     * it means the adapter cannot check a weaker thing by accident: it holds no
++     * lease identity and cannot construct this call on its own.
++     *
++     * Never throws — an unprovable authority is returned as a refusal.
++     */
++    assertSendable: () => Promise<PreSendGate>;
+   }): Promise<DeliverySendOutcome>;
+ }
+ 
++/** The answer the pre-send gate gives an adapter. A refusal means DO NOT SEND. */
++export type PreSendGate = { ok: true } | { ok: false; blocker: string };
++
+ export type T2DeliveryOrchestrationResult =
+   | { outcome: "DISABLED" }
+   | { outcome: "BLOCKED"; blocker: "NO_DELIVERY_ADAPTER" }
+@@ -211,30 +232,40 @@ export async function runT2Delivery(
+   // everything it cannot: settlement, artifact identity, property binding, the
+   // lease, and this exact pending attempt. No assumption is made that the
+   // adapter checks any of it.
+-  let sendable: Awaited<ReturnType<T2DeliveryStore["assertSendable"]>>;
+-  if (!t2DeliveryEnabled(deps.env ?? process.env)) {
+-    sendable = { ok: false, blocker: "FLAG_DISABLED" };
+-  } else {
++  //
++  // The gate closes over the lease and the exact attempt identity, and is
++  // callable more than once: the orchestrator runs it here, and hands the same
++  // closure to the adapter to run again immediately before the provider call.
++  // Re-running it is cheap and read-only, and each run narrows a different
++  // window — this one covers the persist, the adapter's covers everything the
++  // adapter does before sending, including minting the credential.
++  const proven = persisted;
++  const assertSendable = async (): Promise<PreSendGate> => {
++    if (!t2DeliveryEnabled(deps.env ?? process.env))
++      return { ok: false, blocker: "FLAG_DISABLED" };
+     try {
+-      sendable = await store.assertSendable({
++      return await store.assertSendable({
+         orderId: input.orderId,
+         fulfillmentId: input.fulfillmentId,
+         owner,
+         token,
+-        attemptId: persisted.attemptId,
+-        attemptNumber: persisted.attemptNumber,
+-        idempotencyKey: persisted.idempotencyKey,
+-        provider: persisted.provider,
+-        artifactVersion: persisted.artifactVersion,
+-        artifactSha256: persisted.artifactSha256,
+-        propertyBindingFingerprint: persisted.propertyBindingFingerprint,
+-        statusRevision: persisted.statusRevision,
++        attemptId: proven.attemptId,
++        attemptNumber: proven.attemptNumber,
++        idempotencyKey: proven.idempotencyKey,
++        provider: proven.provider,
++        artifactVersion: proven.artifactVersion,
++        artifactSha256: proven.artifactSha256,
++        propertyBindingFingerprint: proven.propertyBindingFingerprint,
++        statusRevision: proven.statusRevision,
+       });
+     } catch {
+-      // Unable to prove the send is still authorized, so it is not made.
+-      sendable = { ok: false, blocker: "PRE_SEND_CHECK_UNKNOWN" };
++      // Unable to PROVE the send is still authorized, so it is not made. The
++      // thrown value may carry connection detail and is never read or logged.
++      return { ok: false, blocker: "PRE_SEND_CHECK_UNKNOWN" };
+     }
+-  }
++  };
++
++  const sendable = await assertSendable();
+   if (!sendable.ok) {
+     // Deliberately no retry and no recorded failure. The attempt is durable and
+     // the summary stays DELIVERY_PENDING, which the send authority refuses — the
+@@ -256,6 +287,7 @@ export async function runT2Delivery(
+       artifactVersion: persisted.artifactVersion,
+       artifactSha256: persisted.artifactSha256,
+       idempotencyKey: persisted.idempotencyKey,
++      assertSendable,
+     });
+   } catch {
+     // A thrown adapter may still have sent the mail. That is UNKNOWN, not
+diff --git a/lib/fulfillment-runtime/t2-delivery-recovery.ts b/lib/fulfillment-runtime/t2-delivery-recovery.ts
+index a8d5268..33aaad2 100644
+--- a/lib/fulfillment-runtime/t2-delivery-recovery.ts
++++ b/lib/fulfillment-runtime/t2-delivery-recovery.ts
+@@ -12,6 +12,11 @@
+  * evidence, invents nothing, and can only ever apply events that arrived
+  * authenticated and were stored sanitized.
+  *
++ * It is bounded to a fulfillment whose send is still UNRESOLVED — see
++ * [[RECONCILABLE_STATUSES]]. A DELIVERED or terminal summary already holds the
++ * evidence a replay would be looking for, so a pass from one cannot change
++ * anything and is refused rather than run as an expensive no-op.
++ *
+  * **RESOLVE_UNRESOLVED_SEND** ends an unresolved send by recording it FAILED. It
+  * requires the operator to assert, explicitly and on the record, that they have
+  * definite evidence the provider is no longer trying. That assertion is not
+@@ -57,6 +62,28 @@ export const DELIVERY_RECOVERY_ACTIONS: ReadonlySet<string> = new Set<string>([
+   "RESOLVE_UNRESOLVED_SEND",
+ ]);
+ 
++/**
++ * The statuses a reconciliation pass may be requested from.
++ *
++ * Every one of them is a state where the send is genuinely UNRESOLVED — no
++ * durable evidence yet says what happened to the message — so replaying stored
++ * provider evidence can still change the answer:
++ *
++ *   - DELIVERY_PENDING: a send was requested and nothing has reported back;
++ *   - PROVIDER_ACCEPTED: the provider took custody and has not said more;
++ *   - DELAYED: the provider is still retrying.
++ *
++ * DELIVERED and every terminal-lock status are deliberately absent. They already
++ * HAVE the evidence, `nextStatusForEvent` refuses to move them, and a pass from
++ * one could only spend replay budget and write REFUSED rows. Refusing here says
++ * so plainly instead of letting an operator watch a no-op succeed.
++ */
++export const RECONCILABLE_STATUSES: ReadonlySet<string> = new Set<string>([
++  "DELIVERY_PENDING",
++  "PROVIDER_ACCEPTED",
++  "DELAYED",
++]);
++
+ /**
+  * The bounded reasons an operator may attach to a resolved-as-failed send.
+  *
+@@ -97,6 +124,8 @@ export type DeliveryRecoveryResult =
+       examined: number;
+       applied: number;
+       stillUnmatched: number;
++      /** Read but not ours to act on: claimed elsewhere, resolved, or spent. */
++      skipped: number;
+     }
+   | {
+       ok: true;
+@@ -118,6 +147,7 @@ export type DeliveryRecoveryRefusal =
+   | "NO_FULFILLMENT_SUMMARY"
+   | "STALE_STATE"
+   | "NOT_UNRESOLVED"
++  | "NOT_RECONCILABLE"
+   | "ATTEMPT_NOT_FOUND"
+   | "NO_BOUND_MESSAGE_ID"
+   | "UNTRUSTED_CLOCK";
+@@ -268,6 +298,11 @@ export async function runT2DeliveryRecovery(
+     // potentially long replay proceeds.
+     const context = await client.$transaction((tx) => lockedContext(tx, input));
+     if (!context.ok) return { ok: false, code: context.code };
++    // Bounded to states whose send is still unresolved. `lockedContext` has
++    // already proved the caller's expected status and revision match the row, so
++    // this is a check on the ROW, not on what the operator typed.
++    if (!RECONCILABLE_STATUSES.has(context.summary.status))
++      return { ok: false, code: "NOT_RECONCILABLE" };
+     const attempt = context.attempt;
+     if (!attempt) return { ok: false, code: "ATTEMPT_NOT_FOUND" };
+     if (attempt.provider !== RESEND_PROVIDER || !attempt.providerMessageId)
+diff --git a/lib/fulfillment-runtime/t2-resend-adapter.ts b/lib/fulfillment-runtime/t2-resend-adapter.ts
+index aac56ea..dc6fc61 100644
+--- a/lib/fulfillment-runtime/t2-resend-adapter.ts
++++ b/lib/fulfillment-runtime/t2-resend-adapter.ts
+@@ -24,10 +24,18 @@
+  *
+  * ## Ordering and honesty about outcomes
+  *
+- * The delivery orchestrator has already persisted a durable attempt before this
+- * function is entered. Here the order is: re-verify authority against freshly
+- * read state → mint the capability (durably bound to THIS attempt, inside one
+- * transaction, conditional on the attempt having none) → send.
++ * The delivery orchestrator has already persisted a durable attempt AND proved
++ * it was still sendable before this function is entered. Here the order is:
++ * re-verify authority against freshly read state → mint the capability (durably
++ * bound to THIS attempt, inside one transaction, conditional on the attempt
++ * having none) → re-assert the orchestrator's gate one last time → send.
++ *
++ * That final re-assert is the point of the whole ordering. Minting a credential
++ * is real asynchronous work, and the orchestrator's own gate closed before it
++ * started. Without a gate AFTER issuance and immediately before the provider
++ * call, a refund or a withdrawn flag landing during issuance would still mail a
++ * live code. A denial there revokes the unsent code and reports REJECTED — the
++ * one thing that is certain is that no bytes reached a provider.
+  *
+  * A message id back means ACCEPTED — the provider took custody. It never means
+  * delivered. A recognized definite provider rejection means REJECTED, and the
+@@ -468,6 +476,27 @@ export function createT2ResendAdapter(
+         expiresAt: issued.issuance.expiresAt,
+       });
+ 
++      // THE LAST THING BEFORE THE PROVIDER CALL.
++      //
++      // Everything above — the context read, the address check, the issuance
++      // transaction — is asynchronous work done after the orchestrator already
++      // proved this send was authorized. A refund, a withdrawn flag, property
++      // drift, a superseding artifact or a lost lease landing in that window
++      // must stop the send, and only a fresh read under the lock can see it.
++      // The orchestrator supplies this gate bound to the lease and the exact
++      // durable attempt; nothing here can widen it or skip it and still send.
++      //
++      // A denial is DEFINITE about the one thing that matters: no bytes were
++      // handed to a provider, because this runs before the only call that
++      // could. It is therefore recorded like every other authority failure the
++      // adapter detects before sending — REJECTED, not UNKNOWN — and the code
++      // minted moments ago is revoked, because it reached no mailbox.
++      const stillSendable = await input.assertSendable();
++      if (!stillSendable.ok) {
++        await revokeQuietly(revoke, input.fulfillmentId);
++        return rejected("MANUAL_REVIEW");
++      }
++
+       let result: { id: string | null; errorName: string | null };
+       try {
+         result = await withTimeout(
+@@ -513,20 +542,32 @@ export function createT2ResendAdapter(
+       // Best effort by contract: a revocation that fails leaves the capability
+       // alive, but the fulfillment is about to become terminal FAILED, which is
+       // not a downloadable status, so access ends regardless.
+-      try {
+-        await revoke({
+-          fulfillmentId: input.fulfillmentId,
+-          reasonCode: "SEND_REJECTED",
+-        });
+-      } catch {
+-        // Never rethrown and never logged: the thrown value may carry provider
+-        // or connection detail.
+-      }
++      await revokeQuietly(revoke, input.fulfillmentId);
+       return rejected(definite);
+     },
+   };
+ }
+ 
++/**
++ * Best effort by contract. A revocation that fails leaves the capability alive,
++ * but a definitely-unsent attempt is about to become terminal FAILED, which is
++ * not a downloadable status, so access ends regardless. Never rethrown and
++ * never logged: the thrown value may carry provider or connection detail.
++ */
++async function revokeQuietly(
++  revoke: (input: {
++    fulfillmentId: string;
++    reasonCode: "SEND_REJECTED";
++  }) => Promise<unknown>,
++  fulfillmentId: string,
++): Promise<void> {
++  try {
++    await revoke({ fulfillmentId, reasonCode: "SEND_REJECTED" });
++  } catch {
++    // Deliberately swallowed; see above.
++  }
++}
++
+ function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+   let timer: ReturnType<typeof setTimeout>;
+   return Promise.race([
+diff --git a/lib/fulfillment-runtime/t2-resend-events.ts b/lib/fulfillment-runtime/t2-resend-events.ts
+index 55d3d4b..8e1d9c5 100644
+--- a/lib/fulfillment-runtime/t2-resend-events.ts
++++ b/lib/fulfillment-runtime/t2-resend-events.ts
+@@ -38,6 +38,7 @@ import {
+   prismaProviderCallbackStore,
+   type CallbackIngestResult,
+   type ProviderCallbackStore,
++  type ReconciliationSummary,
+ } from "@/lib/fulfillment-runtime/provider-callback-store";
+ 
+ /** Environment variable holding the T2 callback secret. Distinct from outreach. */
+@@ -200,7 +201,7 @@ export async function ingestT2ResendCallback(
+ export async function reconcileT2ResendCallbacks(
+   input: { providerMessageId: string },
+   deps: T2CallbackDeps = {},
+-): Promise<{ examined: number; applied: number; stillUnmatched: number }> {
++): Promise<ReconciliationSummary> {
+   const store = deps.store ?? prismaProviderCallbackStore;
+   return store.reconcile({
+     provider: RESEND_PROVIDER,
+diff --git a/lib/fulfillment/delivery-orchestration.ts b/lib/fulfillment/delivery-orchestration.ts
+index 9e97438..3157919 100644
+--- a/lib/fulfillment/delivery-orchestration.ts
++++ b/lib/fulfillment/delivery-orchestration.ts
+@@ -116,8 +116,11 @@ export function decideDeliveryDispatch(
+   // The transition to DELIVERY_PENDING must be an allowed edge under the shared
+   // transition authority, or this is not a send at all. [[canTransition]] is the
+   // right authority here rather than [[nextStatusForEvent]]: the latter folds
+-  // PROVIDER events, and a locally originated request from DELAYED — the safe
+-  // delivery retry — is a transition we make, not an event a provider reports.
++  // PROVIDER events, and a locally originated delivery request is a transition
++  // we make, not an event a provider reports. The transition table still admits
++  // the DELAYED → DELIVERY_PENDING edge because an operator path may one day
++  // need it; [[decideDeliverySend]] above has already refused that status, and
++  // it — not the table — is the send authority.
+   if (!canTransition(input.status as OTFulfillmentStatus, "DELIVERY_PENDING"))
+     return { ok: false, blocker: "NOT_SENDABLE" };
+ 
+diff --git a/lib/fulfillment/provider-callbacks.ts b/lib/fulfillment/provider-callbacks.ts
+index 50aa113..9051a79 100644
+--- a/lib/fulfillment/provider-callbacks.ts
++++ b/lib/fulfillment/provider-callbacks.ts
+@@ -43,6 +43,7 @@ import {
+   isValidProviderEventId,
+   isValidProviderMessageId,
+   isValidProviderName,
++  parseProviderInstant,
+   parseStrictInstant,
+   PG_INT_MAX,
+ } from "@/lib/fulfillment/validation";
+@@ -137,7 +138,18 @@ export type CallbackNonApplicationCode =
+   | "NOT_APPLICABLE"
+   | "TERMINAL_LOCKED"
+   | "UNTRUSTED_CLOCK"
+-  | "UNMATCHED_STORE_FULL";
++  | "UNMATCHED_STORE_FULL"
++  /**
++   * One provider message id resolved to more than one delivery attempt.
++   *
++   * `ot_delivery_attempt` carries a UNIQUE `(provider, provider_message_id)`, so
++   * this cannot happen while that index exists — which is exactly why it must be
++   * a refusal rather than an unstated assumption. If the index is ever dropped,
++   * relaxed, or replaced during a migration, the alternative is picking the
++   * first row an unordered query happened to return and folding a provider event
++   * onto an arbitrary one of two orders.
++   */
++  | "AMBIGUOUS_MESSAGE_BINDING";
+ 
+ export const CALLBACK_NON_APPLICATION_CODES: ReadonlySet<string> =
+   new Set<string>([
+@@ -154,6 +166,7 @@ export const CALLBACK_NON_APPLICATION_CODES: ReadonlySet<string> =
+     "TERMINAL_LOCKED",
+     "UNTRUSTED_CLOCK",
+     "UNMATCHED_STORE_FULL",
++    "AMBIGUOUS_MESSAGE_BINDING",
+   ]);
+ 
+ /**
+@@ -170,7 +183,13 @@ export type SanitizedProviderCallback = {
+   eventType: OTDeliveryEventType;
+   /** Allowlisted code, or null when the event carries no reason. */
+   reasonCode: string | null;
+-  /** Strict canonical RFC3339 UTC instant. */
++  /**
++   * Strict canonical RFC3339 UTC instant.
++   *
++   * NORMALIZED, never the provider's own spelling. A provider may legitimately
++   * write six fractional digits or a `+00:00` offset; what leaves this module is
++   * always `YYYY-MM-DDTHH:MM:SS.mmmZ`, so nothing downstream has to know that.
++   */
+   occurredAt: string;
+ };
+ 
+@@ -270,14 +289,24 @@ export function normalizeProviderCallback(
+   if (!isValidProviderMessageId(messageId))
+     return { ok: false, code: "INVALID_MESSAGE_ID" };
+ 
+-  const occurredAt = typeof body.created_at === "string" ? body.created_at : "";
+-  const occurredMs = parseStrictInstant(occurredAt);
+-  if (occurredMs === null) return { ok: false, code: "INVALID_TIMESTAMP" };
++  // `created_at` is the PROVIDER's spelling of the instant, not ours, so it is
++  // parsed with the wider RFC3339 grammar and normalized once — deliberately,
++  // by [[parseProviderInstant]], and never by handing the string to `Date`.
++  //
++  // This is the difference between refusing and admitting a real
++  // `email.delivered`: Resend documents six fractional digits and a `+00:00`
++  // offset on its timestamps, and the strict canonical validator — correct for
++  // instants this system itself renders — accepts neither. What crosses out of
++  // here is always the canonical form, so every downstream comparison, column
++  // and event row still sees exactly one timestamp shape.
++  const stated = parseProviderInstant(body.created_at);
++  if (stated === null) return { ok: false, code: "INVALID_TIMESTAMP" };
++  // `receivedAt` is ours, so it is held to the strict rule.
+   const receivedMs = parseStrictInstant(input.receivedAt);
+   if (receivedMs === null) return { ok: false, code: "INVALID_TIMESTAMP" };
+   if (
+-    occurredMs > receivedMs + MAX_CALLBACK_FUTURE_SKEW_MS ||
+-    occurredMs < receivedMs - MAX_CALLBACK_PAST_SKEW_MS
++    stated.epochMs > receivedMs + MAX_CALLBACK_FUTURE_SKEW_MS ||
++    stated.epochMs < receivedMs - MAX_CALLBACK_PAST_SKEW_MS
+   ) {
+     return { ok: false, code: "IMPLAUSIBLE_TIMESTAMP" };
+   }
+@@ -290,7 +319,7 @@ export function normalizeProviderCallback(
+       providerMessageId: messageId,
+       eventType,
+       reasonCode: reasonFor(eventType, data),
+-      occurredAt,
++      occurredAt: stated.canonical,
+     },
+   };
+ }
+@@ -453,6 +482,18 @@ export const MAX_UNMATCHED_CALLBACKS = 1000;
+ /** Ceiling on how many stored callbacks one reconciliation pass may replay. */
+ export const MAX_RECONCILIATION_BATCH = 50;
+ 
