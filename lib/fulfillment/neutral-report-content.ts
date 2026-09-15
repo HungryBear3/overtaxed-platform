@@ -22,7 +22,7 @@ import { canonicalNeutralSourceOrder } from "@/lib/fulfillment-runtime/neutral-e
 import { renderDeterministicTextPdf } from "@/lib/fulfillment/neutral-report-pdf"
 import { loadNeutralOfficialCalendarRuntime, verifyAndCopyNeutralDeadlineEvidence } from "@/lib/fulfillment-runtime/neutral-deadline-gateway"
 import { readNeutralOfficialBytesRuntime, verifyAndCopyNeutralEvidence } from "@/lib/fulfillment-runtime/neutral-raw-gateway"
-import { NEUTRAL_REPORT_COMMERCE_POLICY } from "@/lib/commerce/neutral-report-policy"
+import { NEUTRAL_REPORT_COMMERCE_POLICY, neutralOrderReservationKey } from "@/lib/commerce/neutral-report-policy"
 
 export const NEUTRAL_REPORT_PRODUCER_VERSION = "ot-neutral-records-report/1.0.0"
 export const NEUTRAL_REPORT_TEMPLATE_VERSION = "ot-neutral-records-report-pdf-csv/1.0.0"
@@ -309,16 +309,20 @@ export function neutralReportDigest(value: string | Buffer): string {
 }
 
 const MAX_BUNDLE_BYTES = 48_000_000
-type Receipt = Readonly<{ key: string; manifestSha256: string; pdfSha256: string; csvSha256: string; dataEvidenceSha256: string; deadlineEvidenceSha256: string }>
-type Write = Readonly<{ key: string; pdf: Buffer; csv: Buffer; manifestJson: string; dataPages: ReadonlyArray<Readonly<{ receipt: unknown; bytes: Buffer }>>; calendarBytes: Buffer; deadline: unknown }>
-type Outcome<T = never> = { outcome: "CONFIRMED"; value: T } | { outcome: "UNKNOWN" } | { outcome: "CONFLICT" }
-type Repository = { reserveOrder(key: string, propertyPin: string): Promise<Outcome<string>>; readOrderBinding(key: string): Promise<string | null>; reserve(key: string): Promise<Outcome<Receipt | null>>; stage(key: string, write: Write): Promise<Outcome>; readStaged(key: string): Promise<Write | null>; promote(key: string, receipt: Receipt): Promise<Outcome<Receipt>>; readConfirmed(key: string): Promise<{ write: Write; receipt: Receipt } | null>; quarantine(key: string): Promise<void> }
+export type NeutralReportReceipt = Readonly<{ key: string; manifestSha256: string; pdfSha256: string; csvSha256: string; dataEvidenceSha256: string; deadlineEvidenceSha256: string }>
+export type NeutralReportWrite = Readonly<{ key: string; pdf: Buffer; csv: Buffer; manifestJson: string; dataPages: ReadonlyArray<Readonly<{ receipt: unknown; bytes: Buffer }>>; calendarBytes: Buffer; deadline: unknown }>
+export type NeutralRepositoryOutcome<T = never> = { outcome: "CONFIRMED"; value: T } | { outcome: "UNKNOWN" } | { outcome: "CONFLICT" }
+export type NeutralReportRepository = { reserveOrder(orderId: string, key: string, propertyPin: string): Promise<NeutralRepositoryOutcome<string>>; readOrderBinding(key: string): Promise<string | null>; reserve(orderId: string, key: string): Promise<NeutralRepositoryOutcome<NeutralReportReceipt | null>>; stage(key: string, write: NeutralReportWrite): Promise<NeutralRepositoryOutcome>; readStaged(key: string): Promise<NeutralReportWrite | null>; promote(key: string, receipt: NeutralReportReceipt): Promise<NeutralRepositoryOutcome<NeutralReportReceipt>>; readConfirmed(key: string): Promise<{ write: NeutralReportWrite; receipt: NeutralReportReceipt } | null>; quarantine(key: string): Promise<void> }
+type Receipt = NeutralReportReceipt
+type Write = NeutralReportWrite
+type Outcome<T = never> = NeutralRepositoryOutcome<T>
+type Repository = NeutralReportRepository
 type TestRuntime = { active: boolean; repository: Repository } | undefined
 declare global { var __OT_NEUTRAL_REPORT_TEST_RUNTIME__: TestRuntime }
 
 function runtime(): { active: boolean; repository: Repository | null } {
   if (process.env.NODE_ENV === "test") return globalThis.__OT_NEUTRAL_REPORT_TEST_RUNTIME__ ?? { active: false, repository: null }
-  return { active: process.env.OT_NEUTRAL_REPORT_ACTIVE === "1", repository: null }
+  return { active: false, repository: null }
 }
 function bundleBytes(write: Write): number { return write.pdf.length + write.csv.length + Buffer.byteLength(write.manifestJson) + write.calendarBytes.length + write.dataPages.reduce((n, page) => n + page.bytes.length, 0) }
 function verifyWrite(write: Write, expected: Receipt): boolean {
@@ -343,16 +347,17 @@ async function reconcile(repo: Repository, key: string, receipt: Receipt, staged
 }
 
 /** Only trusted neutral-report constructor. Returns a durable immutable receipt. */
-export async function produceNeutralReport(input: { orderId: string; propertyPin: string }): Promise<{ ok: true; receipt: Receipt } | { ok: false; blocker: string }> {
-  const first = runtime()
+export async function produceNeutralReport(input: { orderId: string; propertyPin: string }, trustedRuntime?: { active: boolean; repository: NeutralReportRepository }): Promise<{ ok: true; receipt: Receipt } | { ok: false; blocker: string }> {
+  const resolveRuntime = () => trustedRuntime ?? runtime()
+  const first = resolveRuntime()
   if (!first.active) return { ok: false, blocker: "NEUTRAL_REPORT_INACTIVE" }
   if (!first.repository) return { ok: false, blocker: "NEUTRAL_REPOSITORY_UNAVAILABLE" }
   if (!input.orderId || input.orderId.length > 128 || !/^\d{14}$/.test(input.propertyPin)) return { ok: false, blocker: "NEUTRAL_INPUT_INVALID" }
   // Checkout integration must supply the server-authoritative order PIN. This
   // durable order-level reservation prevents one order from ever changing PIN.
-  const orderKey = `neutral-order-binding/${neutralReportDigest(canonicalJson({ orderId: input.orderId, productPolicyVersion: NEUTRAL_REPORT_COMMERCE_POLICY.version }))}`
+  const orderKey = neutralOrderReservationKey(input.orderId)
   let orderReservation: Outcome<string>
-  try { orderReservation = await first.repository.reserveOrder(orderKey, input.propertyPin) } catch { orderReservation = { outcome: "UNKNOWN" } }
+  try { orderReservation = await first.repository.reserveOrder(input.orderId, orderKey, input.propertyPin) } catch { orderReservation = { outcome: "UNKNOWN" } }
   if (orderReservation.outcome === "CONFLICT") return { ok: false, blocker: "NEUTRAL_REPLAY_CONFLICT" }
   if (orderReservation.outcome === "UNKNOWN") {
     try { const bound = await first.repository.readOrderBinding(orderKey); if (bound !== input.propertyPin) return { ok: false, blocker: bound ? "NEUTRAL_REPLAY_CONFLICT" : "NEUTRAL_RESERVATION_UNKNOWN" } }
@@ -360,7 +365,7 @@ export async function produceNeutralReport(input: { orderId: string; propertyPin
   } else if (orderReservation.value !== input.propertyPin) return { ok: false, blocker: "NEUTRAL_REPLAY_CONFLICT" }
   const key = `neutral-order/${neutralReportDigest(canonicalJson({ orderId: input.orderId, propertyPin: input.propertyPin, productPolicyVersion: NEUTRAL_REPORT_COMMERCE_POLICY.version }))}`
   let reservation: Outcome<Receipt | null>
-  try { reservation = await first.repository.reserve(key) } catch { return { ok: false, blocker: "NEUTRAL_RESERVATION_UNKNOWN" } }
+  try { reservation = await first.repository.reserve(input.orderId, key) } catch { return { ok: false, blocker: "NEUTRAL_RESERVATION_UNKNOWN" } }
   if (reservation.outcome !== "CONFIRMED") return { ok: false, blocker: reservation.outcome === "CONFLICT" ? "NEUTRAL_RESERVATION_CONFLICT" : "NEUTRAL_RESERVATION_UNKNOWN" }
   if (reservation.value) {
     try {
@@ -382,12 +387,12 @@ export async function produceNeutralReport(input: { orderId: string; propertyPin
   const csv = Buffer.from(formatted.csv), manifestJson = JSON.stringify(formatted.manifest), receipt = receiptFor(key, formatted.manifest, pdf, csv)
   const write: Write = Object.freeze({ key, pdf: Buffer.from(pdf), csv: Buffer.from(csv), manifestJson, dataPages: Object.freeze(pages.map(page => Object.freeze({ receipt: page.receipt, bytes: Buffer.from(page.bytes) }))), calendarBytes: Buffer.from(calendarBytes), deadline: calendar.evidence.deadline })
   if (!verifyWrite(write, receipt)) return { ok: false, blocker: "NEUTRAL_BUNDLE_INVALID" }
-  const beforeStage = runtime(); if (!beforeStage.active || beforeStage.repository !== first.repository) return { ok: false, blocker: "NEUTRAL_REPORT_INACTIVE" }
+  const beforeStage = resolveRuntime(); if (!beforeStage.active || beforeStage.repository !== first.repository) return { ok: false, blocker: "NEUTRAL_REPORT_INACTIVE" }
   let staged: Outcome; try { staged = await first.repository.stage(key, write) } catch { staged = { outcome: "UNKNOWN" } }
   if (staged.outcome === "CONFLICT") { await first.repository.quarantine(key).catch(() => {}); return { ok: false, blocker: "NEUTRAL_STAGE_CONFLICT" } }
   if (staged.outcome === "UNKNOWN" && !(await reconcile(first.repository, key, receipt, true))) return { ok: false, blocker: "NEUTRAL_STAGE_UNKNOWN" }
   if (!(await reconcile(first.repository, key, receipt, true))) return { ok: false, blocker: "NEUTRAL_STAGE_VERIFY_FAILED" }
-  const beforePromote = runtime(); if (!beforePromote.active || beforePromote.repository !== first.repository) { await first.repository.quarantine(key).catch(() => {}); return { ok: false, blocker: "NEUTRAL_REPORT_INACTIVE" } }
+  const beforePromote = resolveRuntime(); if (!beforePromote.active || beforePromote.repository !== first.repository) { await first.repository.quarantine(key).catch(() => {}); return { ok: false, blocker: "NEUTRAL_REPORT_INACTIVE" } }
   let promoted: Outcome<Receipt>; try { promoted = await first.repository.promote(key, receipt) } catch { promoted = { outcome: "UNKNOWN" } }
   if (promoted.outcome === "CONFLICT") { await first.repository.quarantine(key).catch(() => {}); return { ok: false, blocker: "NEUTRAL_PROMOTE_CONFLICT" } }
   if (promoted.outcome === "CONFIRMED" && canonicalJson(promoted.value) === canonicalJson(receipt)) return { ok: true, receipt: promoted.value }
