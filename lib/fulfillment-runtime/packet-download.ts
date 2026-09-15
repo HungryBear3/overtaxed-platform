@@ -12,12 +12,16 @@
  *      read. No URL is produced, signed, returned, or followed;
  *   5. the bytes are proven to be the exact artifact by digest and length;
  *   6. authority is RE-READ after that asynchronous gap and before a single byte
- *      is returned. A refund, revocation, cancellation or terminal delivery
- *      outcome that lands while storage was being read therefore still stops the
- *      download, rather than racing it.
+ *      is returned, and activation is re-checked once more after that. A refund,
+ *      revocation, cancellation or terminal delivery outcome that lands while
+ *      storage was being read therefore stops the download instead of racing it.
  *
- * Step 6 is what makes step 3's snapshot safe to act on: any window between "we
- * decided" and "we responded" is closed by deciding again.
+ * What step 6 does NOT do is eliminate the race. It narrows the window from "the
+ * whole storage round trip" to "the moment between the re-read committing and
+ * the bytes leaving this function", and nothing outside PostgreSQL can be made
+ * atomic with that. A revocation landing inside the remaining window still
+ * serves one packet, and once bytes are on the wire nothing here can recall
+ * them. The claim is that the window is bounded and small, not that it is gone.
  */
 import "server-only";
 
@@ -107,6 +111,12 @@ export async function readT2PacketForCapability(
   // Authority is re-read after the storage round trip and before the response.
   const still = await store.reassert({ capabilityHash, grant });
   if (!still.ok) return { ok: false, blocker: still.blocker };
+
+  // Final gate. `reassert` is itself an await, so a withdrawal can land during
+  // it; re-reading activation after every await is what makes "default-off"
+  // mean off, rather than off-unless-you-were-already-mid-request.
+  if (!t2PacketDownloadEnabled(env))
+    return { ok: false, blocker: "FLAG_DISABLED" };
 
   return {
     ok: true,

@@ -12,7 +12,10 @@
  * lock the authoritative `ot_order` row FOR UPDATE first, then the capability
  * row, and re-verify everything inside that lock against freshly read state. A
  * concurrent refund, dispute, cancellation or revocation that wins the lock is
- * therefore visible before any use is claimed.
+ * therefore visible before any use is claimed. Expiry is judged against the
+ * database's WALL clock read after those locks, never transaction-start time,
+ * so a capability that expired while this transaction queued for the lock is
+ * refused rather than served.
  *
  * The capability VALUE never reaches this module. Callers hash it first, and
  * only the digest is passed, queried, compared or held — so there is nothing
@@ -89,9 +92,18 @@ export interface PacketDownloadStore {
 }
 
 /**
- * Wall-clock time after authority locks as a strict RFC3339 UTC instant, rendered by the
- * database — never by a driver date mapping, which would silently apply the
- * server's local UTC offset and expire capabilities at the wrong moment.
+ * WALL-CLOCK time as a strict RFC3339 UTC instant, rendered by the database —
+ * never by a driver date mapping, which would silently apply the server's local
+ * UTC offset and expire capabilities at the wrong moment.
+ *
+ * `clock_timestamp()`, deliberately NOT `CURRENT_TIMESTAMP`/`now()`. Every read
+ * of this happens AFTER a `FOR UPDATE` lock that may have blocked for an
+ * unbounded time behind another writer, and `CURRENT_TIMESTAMP` is frozen at
+ * TRANSACTION START — it does not advance across that wait. A transaction that
+ * began while a capability was still live and then waited past its expiry would
+ * read the pre-wait instant, judge the capability unexpired and serve the
+ * packet. `clock_timestamp()` advances during the transaction, so expiry is
+ * measured at the moment the decision is actually made.
  */
 const TRUSTED_CLOCK_SQL = Prisma.sql`
   SELECT to_char(
@@ -211,7 +223,8 @@ async function loadContext(
       )
     : [];
 
-  // Read AFTER every row and BEFORE any write, so one consistent instant governs
+  // Read AFTER every row — including the FOR UPDATE locks above, which may have
+  // blocked — and BEFORE any write, so one consistent WALL-CLOCK instant governs
   // the whole decision and the update that may follow.
   const clock = await tx.$queryRaw<Array<{ now: unknown }>>(TRUSTED_CLOCK_SQL);
 

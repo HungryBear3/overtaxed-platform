@@ -182,6 +182,17 @@ function freshDatabase(): Database {
   }
 }
 
+/** The two statuses a fresh delivery lease may be taken from. */
+const SENDABLE: ReadonlySet<string> = new Set(["ARTIFACT_READY", "DELAYED"])
+
+/** True when the fulfillment's recorded lease has not expired at `floor`. */
+function leaseIsLive(floor: Date): boolean {
+  const expiresAt = db.fulfillment.leaseExpiresAt
+  if (db.fulfillment.leaseOwner === null || expiresAt === null || expiresAt === undefined)
+    return false
+  return new Date(expiresAt as string | Date).getTime() > floor.getTime()
+}
+
 function currentArtifact(): Row | undefined {
   return [...db.artifacts].sort((a, b) => Number(b.version) - Number(a.version))[0]
 }
@@ -265,10 +276,13 @@ function query(sql: string, values: readonly unknown[]): unknown {
 
 function execute(sql: string, values: readonly unknown[]): number {
   if (sql.includes('INSERT INTO "ot_delivery_attempt"')) {
-    const [, fulfillmentId, attemptNumber, artifactVersion, idempotencyKey, provider] = values
+    const [id, fulfillmentId, attemptNumber, artifactVersion, idempotencyKey, provider] = values
     db.attempts.push({
-      fulfillmentId, attemptNumber, artifactVersion, idempotencyKey, provider,
+      id, fulfillmentId, attemptNumber, artifactVersion, idempotencyKey, provider,
       providerMessageId: null, downloadCapabilityId: null,
+      // The pre-send gate refuses an attempt that already carries an outcome,
+      // so both lifecycle stamps are modelled rather than assumed absent.
+      providerAcceptedAt: null, failedAt: null,
     })
     return 1
   }
@@ -339,6 +353,8 @@ function execute(sql: string, values: readonly unknown[]): number {
     }
     if (sql.includes('"provider_message_id" = COALESCE')) {
       const messageId = values[0]
+      const accepted = values[1] === true
+      const occurredAt = values[2]
       const fulfillmentId = values[values.length - 2]
       const attemptNumber = values[values.length - 1]
       const attempt = db.attempts.find(
@@ -346,6 +362,8 @@ function execute(sql: string, values: readonly unknown[]): number {
       )
       if (!attempt) return 0
       attempt.providerMessageId = attempt.providerMessageId ?? messageId
+      if (accepted) attempt.providerAcceptedAt = attempt.providerAcceptedAt ?? occurredAt
+      else attempt.failedAt = attempt.failedAt ?? occurredAt
       return 1
     }
     return 1
@@ -359,14 +377,24 @@ function execute(sql: string, values: readonly unknown[]): number {
       return 1
     }
     if (sql.includes('SET "lease_owner"')) {
-      const [owner, token, expiresAt] = values
+      // SET … WHERE "id" = $4 AND "status" IN (…)
+      //   AND (lease absent OR expired at $5 OR already ours)
+      const [owner, token, expiresAt, , floor] = values
+      if (!SENDABLE.has(db.fulfillment.status as string)) return 0
+      if (leaseIsLive(floor as Date) &&
+          (db.fulfillment.leaseOwner !== owner || db.fulfillment.leaseToken !== token))
+        return 0
       Object.assign(db.fulfillment, { leaseOwner: owner, leaseToken: token, leaseExpiresAt: expiresAt })
       return 1
     }
     if (sql.includes("'DELIVERY_PENDING'")) {
-      const [nextRevision, attemptCount, , expectedStatus, expectedRevision] = values
+      // … AND "status_revision" = $5 AND "lease_owner" = $6
+      //     AND "lease_token" = $7 AND "lease_expires_at" > $8
+      const [nextRevision, attemptCount, , expectedStatus, expectedRevision, owner, token, floor] = values
       if (db.fulfillment.status !== expectedStatus || db.fulfillment.statusRevision !== expectedRevision)
         return 0
+      if (db.fulfillment.leaseOwner !== owner || db.fulfillment.leaseToken !== token) return 0
+      if (!leaseIsLive(floor as Date)) return 0
       Object.assign(db.fulfillment, { status: "DELIVERY_PENDING", statusRevision: nextRevision, attemptCount })
       return 1
     }
