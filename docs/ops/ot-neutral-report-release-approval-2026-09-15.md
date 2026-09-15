@@ -3,8 +3,10 @@
 ## Candidate
 
 - Branch: `codex/ot-neutral-report-20260915`
-- Base: `7a405615bbeec5c6ccb790d316bd9c199eeb3654`
-- Candidate before this packet: `8ffa14acfbc3eebb1aa3ddae0c8209b80253dc8f`
+- PR: `#47`
+- Actual PR base: `e80ebf9edc5b6f8a848710652badfe83ec4297ab`
+- Independent-review input head: `12b837069a1ac85e223416da43a049cefd1a3d66`
+- Remediated code/test head before this packet refresh: `2344fa0fb5d3fb1cd0bbfbc06849c99683b4843e`
 - Product: **Cook County Assessment Records & Matching Property Report**
 - Price: **$69 USD**
 - Strict automated qualification remains separate, unsigned, and inactive.
@@ -26,18 +28,25 @@
 
 ## Verification
 
-- Full non-visual Jest: 3,943 passed, 79 skipped.
+- Full Jest at remediated head: 4,074 passed, 80 skipped; 202 suites passed and 7 native suites skipped because no test database URLs were supplied.
 - Fulfillment suite after Phase 3: 1,910 passed; native suites excluded without test URLs.
 - Focused final delivery/security: 314 passed; terminal security closure 183 passed.
-- TypeScript: passed.
-- Production build: passed, 143 pages.
+- TypeScript: passed (`tsc --noEmit`).
+- Production build: passed, 144 static pages generated.
 - Fresh PostgreSQL 18: all 34 migrations applied from zero.
 - Four identities proved: migration, normal app, neutral repository, neutral delivery.
-- Migration preflight: passed.
+- Disposable-local migration preflight: passed before PR creation. Preview migration preflight has **not** run because the four separate Preview credentials and durable Preview database marker have not been provisioned.
 - Native Phase 2 and Phase 3 journeys: 2/2 passed with `--detectOpenHandles`.
 - Synthetic owner journey: paid binding → QA → ZIP promotion → capability → POST download; exact ZIP hash/members and one-use exhaustion passed.
 - Playwright production server: 12/12 passed across desktop Chrome and iPhone viewport; no horizontal overflow or application errors.
 - Representative three-page PDF rendered and visually inspected.
+
+### Independent-review remediation
+
+- Marketing pricing guard now renders the runtime pricing component and checks visible text for `$69` and the absence of `$97`; source comments cannot satisfy or fail the assertion.
+- Migration preflight now connects through all four required credentials: `DIRECT_URL`, `DATABASE_URL`, `OT_NEUTRAL_DATABASE_URL`, and `OT_NEUTRAL_DELIVERY_DATABASE_URL`.
+- All four connections must resolve to one database name and one durable database-comment marker with schema `ot.database-environment.v1`, purpose `ot-neutral-report`, environment `preview`, `isolated: true`, `production: false`, and a UUID instance id. Hostnames are intentionally ignored so direct and pooler endpoints can identify the same database safely.
+- Hostile tests prove fail-closed behavior for missing/malformed markers, Production and contradictory markers, non-isolated databases, wrong purpose, invalid instance ids, and mismatched database names or instance ids.
 
 ## Migration hashes
 
@@ -47,19 +56,23 @@
 
 ## Production remains inactive
 
-No branch push, pull request, Preview deployment, Production migration, role membership, environment change, feature activation, live checkout mutation, real order, Stripe call, email, Blob write, delivery, or refund was performed.
+PR #47 exists and Vercel created an automatic features-disabled Preview for the prior pushed head. No database was provisioned, marked, migrated, or granted; no environment was changed; and no Production migration/deployment, feature activation, live checkout mutation, real order, Stripe call, email, Blob write, delivery, or refund was performed.
 
-All neutral flags remain fail-closed. Required protected configuration includes distinct neutral repository and delivery database URLs; credentials must use the supported protected-secret flow and are not placed in chat or logs.
+All neutral flags remain fail-closed. Required protected configuration includes four distinct credential URLs that resolve to the same separately provisioned isolated Preview database. Before migrations, its database object must be explicitly marked with the durable JSON database comment described above. Credentials must use the supported protected-secret flow and are not placed in chat or logs.
+
+## Current gate
+
+Code review remediation, focused tests, the full Jest suite, type-check, and production build are green. The database phase is intentionally **blocked** until separate Preview-only credentials exist for the migration owner, normal app, neutral repository, and neutral delivery identities. Do not reuse Production credentials or a Production database. Once those protected Preview credentials exist, rerun the hardened preflight before any synthetic database smoke.
 
 ## Requested approval — next gate only
 
 Approve:
 
-1. Push this branch and open a pull request.
-2. Run CI and independent PR review.
-3. Create a Preview deployment with neutral features still disabled.
-4. Apply the three migrations to a Preview database using the privileged migration identity.
+1. Push the reviewed remediation to PR #47 and run CI/independent review on its exact head.
+2. Keep the automatic Preview features disabled.
+3. Separately provision and protect the four Preview-only database credentials and durable database marker.
+4. Only after credential provisioning, apply the three migrations to that isolated Preview database using its privileged migration identity.
 5. Grant the Preview app, neutral repository, and neutral delivery logins their exact restricted role memberships.
-6. Run Preview preflight, synthetic checkout/QA/download smokes, desktop/mobile browser checks, and deployment file tracing.
+6. Run hardened Preview preflight, synthetic checkout/QA/download smokes, desktop/mobile browser checks, and deployment file tracing.
 
 This approval does **not** authorize Production migration/deployment, feature activation, live charges, customer contact, email delivery, refunds, marketing, or real orders. Those remain a separate gate after Preview evidence.
