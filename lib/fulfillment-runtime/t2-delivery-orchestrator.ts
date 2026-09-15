@@ -130,6 +130,7 @@ export async function runT2Delivery(
     orderId: input.orderId,
     fulfillmentId: input.fulfillmentId,
     provider: adapter.provider,
+    owner, token,
   });
   if (!persisted.ok) {
     return {
