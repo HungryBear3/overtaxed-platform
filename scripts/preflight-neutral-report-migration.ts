@@ -4,24 +4,32 @@ async function main() {
   const migrationUrl = process.env.DIRECT_URL?.trim()
   const appUrl=process.env.DATABASE_URL?.trim()
   const runtimeUrl = process.env.OT_NEUTRAL_DATABASE_URL?.trim()
-  if (!migrationUrl || !runtimeUrl || !appUrl) throw new Error("DIRECT_URL, DATABASE_URL, and OT_NEUTRAL_DATABASE_URL are required")
-  if (migrationUrl === runtimeUrl || migrationUrl===appUrl || runtimeUrl===appUrl) throw new Error("Migration, app, and neutral runtime URLs must be distinct")
+  const deliveryUrl=process.env.OT_NEUTRAL_DELIVERY_DATABASE_URL?.trim()
+  if (!migrationUrl || !runtimeUrl || !appUrl||!deliveryUrl) throw new Error("DIRECT_URL, DATABASE_URL, OT_NEUTRAL_DATABASE_URL, and OT_NEUTRAL_DELIVERY_DATABASE_URL are required")
+  if(new Set([migrationUrl,runtimeUrl,appUrl,deliveryUrl]).size!==4)throw new Error("All four database URLs must be distinct")
   const migration = new Client({ connectionString: migrationUrl })
   const app = new Client({connectionString:appUrl})
   const runtime = new Client({ connectionString: runtimeUrl })
-  await migration.connect();await app.connect(); await runtime.connect()
+  const delivery=new Client({connectionString:deliveryUrl})
+  await migration.connect();await app.connect(); await runtime.connect();await delivery.connect()
   try {
     const [{ rows: migrationIdentity }, { rows: runtimeIdentity }] = await Promise.all([
       migration.query(`select current_user as role, has_schema_privilege(current_user,'public','CREATE') as can_migrate, r.rolsuper, r.rolcreaterole from pg_roles r where r.rolname=current_user`),
       runtime.query(`select current_user as role, has_schema_privilege(current_user,'public','CREATE') as can_migrate, r.rolsuper, r.rolbypassrls, pg_has_role(current_user,'ot_neutral_runtime','member') as runtime_member from pg_roles r where r.rolname=current_user`),
     ])
     const appIdentity=await app.query(`select current_user as role,current_database() as db,inet_server_addr()::text as host,r.rolsuper,r.rolbypassrls,pg_has_role(current_user,'ot_neutral_app_reader','member') as neutral_reader from pg_roles r where r.rolname=current_user`)
+    const deliveryIdentity=await delivery.query(`select current_user as role,current_database() as db,r.rolsuper,r.rolbypassrls,pg_has_role(current_user,'ot_neutral_delivery_runtime','member') delivery_member,has_schema_privilege(current_user,'public','CREATE') can_migrate from pg_roles r where r.rolname=current_user`)
     const migrationServer=await migration.query(`select current_database() as db,inet_server_addr()::text as host`),runtimeServer=await runtime.query(`select current_database() as db,inet_server_addr()::text as host`)
     if(appIdentity.rows[0]?.role===runtimeIdentity[0]?.role||appIdentity.rows[0]?.role===migrationIdentity[0]?.role||appIdentity.rows[0]?.rolsuper||appIdentity.rows[0]?.rolbypassrls||!appIdentity.rows[0]?.neutral_reader||appIdentity.rows[0]?.db!==runtimeServer.rows[0]?.db||migrationServer.rows[0]?.db!==runtimeServer.rows[0]?.db)throw new Error("Three database identities are not isolated on the same database or app neutral reader is absent")
+    const di=deliveryIdentity.rows[0];if(!di?.delivery_member||di.rolsuper||di.rolbypassrls||di.can_migrate||[migrationIdentity[0]?.role,runtimeIdentity[0]?.role,appIdentity.rows[0]?.role].includes(di.role)||di.db!==runtimeServer.rows[0]?.db)throw new Error("Neutral delivery identity is not isolated and restricted")
     if (!migrationIdentity[0]?.can_migrate || (!migrationIdentity[0]?.rolsuper && !migrationIdentity[0]?.rolcreaterole)) throw new Error("DIRECT_URL identity lacks schema/role migration authority")
     if (runtimeIdentity[0]?.can_migrate || runtimeIdentity[0]?.rolsuper || runtimeIdentity[0]?.rolbypassrls || !runtimeIdentity[0]?.runtime_member || runtimeIdentity[0]?.role===migrationIdentity[0]?.role) throw new Error("DATABASE_URL runtime identity is over-privileged or not isolated")
     const group=await migration.query(`select rolcanlogin,rolsuper,rolbypassrls from pg_roles where rolname='ot_neutral_runtime'`)
     if (group.rows.length!==1 || group.rows[0].rolcanlogin || group.rows[0].rolsuper || group.rows[0].rolbypassrls) throw new Error("Neutral runtime role invariants are invalid")
+    const deliveryGroup=await migration.query(`select rolcanlogin,rolsuper,rolbypassrls from pg_roles where rolname='ot_neutral_delivery_runtime'`)
+    if(deliveryGroup.rows.length!==1||deliveryGroup.rows[0].rolcanlogin||deliveryGroup.rows[0].rolsuper||deliveryGroup.rows[0].rolbypassrls)throw new Error("Neutral delivery role invariants are invalid")
+    const deliveryGrants=await delivery.query(`select has_column_privilege(current_user,'ot_packet_download_capability','capability_hash','SELECT') and has_column_privilege(current_user,'ot_packet_download_capability','capability_hash','INSERT') and has_column_privilege(current_user,'ot_packet_download_capability','use_count','UPDATE') allowed,has_table_privilege(current_user,'ot_packet_download_capability','DELETE,TRUNCATE,REFERENCES,TRIGGER') excessive,has_column_privilege(current_user,'ot_delivery_attempt','download_capability_id','UPDATE') attempt_update`)
+    if(!deliveryGrants.rows[0]?.allowed||deliveryGrants.rows[0]?.excessive||!deliveryGrants.rows[0]?.attempt_update)throw new Error("Neutral delivery grants are incomplete or excessive")
     const tables = await runtime.query(`select to_regclass('public.ot_neutral_report_reservation') as reservation, to_regclass('public.ot_neutral_qa_review') as qa_review, to_regclass('public.ot_neutral_customer_zip_attempt') as zip_attempt,to_regclass('public.ot_neutral_refund_work') as refund_work`)
     if (!tables.rows[0]?.reservation || !tables.rows[0]?.qa_review || !tables.rows[0]?.zip_attempt || !tables.rows[0]?.refund_work) throw new Error("Neutral report Phase 3 migrations are not installed")
     const grants = await runtime.query(`select has_table_privilege(current_user,'ot_neutral_report_reservation','SELECT,INSERT,UPDATE') as allowed, has_table_privilege(current_user,'ot_neutral_report_reservation','DELETE,TRUNCATE,REFERENCES,TRIGGER') as excessive`)
@@ -74,6 +82,6 @@ async function main() {
       }
     } finally { await runtime.query("rollback") }
     process.stdout.write("neutral-report migration preflight: PASS\n")
-  } finally { await Promise.allSettled([migration.end(),app.end(), runtime.end()]) }
+  } finally { await Promise.allSettled([migration.end(),app.end(), runtime.end(),delivery.end()]) }
 }
 main().catch(() => { process.stderr.write("neutral-report migration preflight: FAIL\n"); process.exitCode = 1 })
