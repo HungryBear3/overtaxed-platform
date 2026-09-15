@@ -37,6 +37,14 @@ const ENV = {
   NEXT_PUBLIC_APP_URL: "https://www.overtaxed-il.com",
 }
 
+/**
+ * The orchestrator's pre-send gate, as the adapter receives it.
+ *
+ * Defaulting to "still authorized" keeps every pre-existing assertion about
+ * ordinary sends unchanged; the tests that care supply a refusing gate instead.
+ */
+const ALLOW = async () => ({ ok: true }) as const
+
 const SEND = {
   orderId: ORDER_ID,
   fulfillmentId: FULFILLMENT_ID,
@@ -44,6 +52,7 @@ const SEND = {
   artifactVersion: 1,
   artifactSha256: SHA,
   idempotencyKey: KEY,
+  assertSendable: ALLOW,
 }
 
 function context(patch: Partial<T2SendContext> = {}): T2SendContext {
@@ -68,7 +77,14 @@ type Harness = {
   sent: Array<{ message: Record<string, string>; idempotencyKey: string }>
   issued: unknown[]
   revoked: unknown[]
-  send(patch?: Partial<T2SendContext>): Promise<DeliverySendOutcome>
+  /**
+   * `assertSendable` is the orchestrator's pre-send gate. It defaults to one
+   * that still authorizes, so only the tests that care about it mention it.
+   */
+  send(
+    patch?: Partial<T2SendContext>,
+    assertSendable?: () => Promise<{ ok: true } | { ok: false; blocker: string }>,
+  ): Promise<DeliverySendOutcome>
 }
 
 function harness(
@@ -126,9 +142,9 @@ function harness(
     sent,
     issued,
     revoked,
-    async send(patch = {}) {
+    async send(patch = {}, assertSendable = ALLOW) {
       current = context(patch)
-      return adapter.send(SEND)
+      return adapter.send({ ...SEND, assertSendable })
     },
   }
 }
@@ -381,5 +397,66 @@ describe("an ambiguous send is never re-minted under the same key", () => {
     expect(h.issued).toEqual([
       { fulfillmentId: FULFILLMENT_ID, attemptNumber: 1, provider: "resend" },
     ])
+  })
+})
+
+/**
+ * The window this closes: the orchestrator proves the send is authorized, then
+ * the adapter does real asynchronous work — a context read, an address check,
+ * and a capability-minting transaction — before any provider call. A refund, a
+ * withdrawn flag, property drift or a lost lease landing inside THAT window was
+ * previously invisible, and a live code would have been mailed anyway.
+ */
+describe("authority is re-asserted after issuance and before the provider call", () => {
+  const deny = async () => ({ ok: false, blocker: "INELIGIBLE_SETTLEMENT" }) as const
+
+  it("mints, then refuses to send when authority is gone", async () => {
+    const h = harness()
+    await expect(h.send({}, deny)).resolves.toEqual({
+      kind: "REJECTED",
+      provider: "resend",
+      reasonCode: "MANUAL_REVIEW",
+    })
+    // The credential was minted — that is what makes the gate necessary here
+    // rather than only in the orchestrator — and nothing reached the provider.
+    expect(h.issued).toHaveLength(1)
+    expect(h.sent).toEqual([])
+  })
+
+  it("revokes the code it just minted, because it reached no mailbox", async () => {
+    const h = harness()
+    await h.send({}, deny)
+    expect(h.revoked).toEqual([
+      { fulfillmentId: FULFILLMENT_ID, reasonCode: "SEND_REJECTED" },
+    ])
+  })
+
+  it("refuses on an unprovable gate exactly as on a denied one", async () => {
+    const h = harness()
+    const unprovable = async () =>
+      ({ ok: false, blocker: "PRE_SEND_CHECK_UNKNOWN" }) as const
+    await expect(h.send({}, unprovable)).resolves.toMatchObject({ kind: "REJECTED" })
+    expect(h.sent).toEqual([])
+  })
+
+  it("runs the gate AFTER issuance, not before it", async () => {
+    const order: string[] = []
+    const h = harness()
+    const gate = async () => {
+      order.push("gate")
+      return { ok: true } as const
+    }
+    await h.send({}, gate)
+    // Issuance is observable through the minted record; the gate records itself.
+    expect(h.issued).toHaveLength(1)
+    expect(order).toEqual(["gate"])
+    expect(h.sent).toHaveLength(1)
+  })
+
+  it("still sends when the gate holds, revoking nothing", async () => {
+    const h = harness()
+    await expect(h.send()).resolves.toMatchObject({ kind: "ACCEPTED" })
+    expect(h.sent).toHaveLength(1)
+    expect(h.revoked).toEqual([])
   })
 })

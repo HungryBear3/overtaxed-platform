@@ -14,7 +14,11 @@
  *     and a terminal state are all recorded and refused rather than applied.
  */
 import type { Prisma } from "@prisma/client"
-import { RESEND_PROVIDER, type SanitizedProviderCallback } from "@/lib/fulfillment/provider-callbacks"
+import {
+  MAX_CALLBACK_REPLAYS,
+  RESEND_PROVIDER,
+  type SanitizedProviderCallback,
+} from "@/lib/fulfillment/provider-callbacks"
 import {
   createPrismaProviderCallbackStore,
   type ProviderCallbackClient,
@@ -53,6 +57,8 @@ type World = {
   callbacks: CallbackRow[]
   capabilities: Array<{ revokedAt: Date | null; revokedReasonCode: string | null }>
   locks: string[]
+  /** True when the spool-cap COUNT ran while the serializing lock was held. */
+  countedUnmatchedUnderLock: boolean
   casMiss?: boolean
 }
 
@@ -82,6 +88,7 @@ function world(patch: Partial<World> = {}): World {
     callbacks: [],
     capabilities: [{ revokedAt: null, revokedReasonCode: null }],
     locks: [],
+    countedUnmatchedUnderLock: false,
     ...patch,
   }
 }
@@ -91,20 +98,30 @@ function fakeClient(state: World): ProviderCallbackClient {
     async $queryRaw<T>(query: Prisma.Sql): Promise<T> {
       const sql = query.sql
       if (sql.includes("clock_timestamp()")) return [{ now: state.now }] as T
+      if (sql.includes("pg_advisory_xact_lock")) {
+        // Recorded, so the ORDER of the cap decision is assertable: the count
+        // must never be taken outside this lock.
+        state.locks.push("spool-cap")
+        return [{ locked: true }] as T
+      }
+      if (sql.includes('COUNT(*) AS "live"')) {
+        state.countedUnmatchedUnderLock = state.locks.includes("spool-cap")
+        return [{
+          live: state.callbacks.filter(
+            (c) => c.disposition === "UNMATCHED" && c.resolvedAt === null,
+          ).length,
+        }] as T
+      }
       if (sql.includes('JOIN "ot_fulfillment" f ON f."id" = t."fulfillment_id"')) {
         const [provider, messageId] = query.values
-        const hit = state.attempts.find(
+        const hits = state.attempts.filter(
           (a) => a.provider === provider && a.providerMessageId === messageId,
         )
-        return (hit
-          ? [
-              {
-                fulfillmentId: hit.fulfillmentId,
-                attemptNumber: hit.attemptNumber,
-                orderId: (state.summary?.orderId as string) ?? ORDER_ID,
-              },
-            ]
-          : []) as T
+        return hits.map((hit) => ({
+          fulfillmentId: hit.fulfillmentId,
+          attemptNumber: hit.attemptNumber,
+          orderId: (state.summary?.orderId as string) ?? ORDER_ID,
+        })) as T
       }
       if (sql.includes('FROM "ot_order"')) {
         state.locks.push("order")
@@ -132,7 +149,9 @@ function fakeClient(state: World): ProviderCallbackClient {
         return [{ live }] as T
       }
       if (sql.includes('FROM "ot_delivery_provider_callback"')) {
-        const [provider, messageId, horizon] = query.values as [string, string, Date]
+        // … AND "received_at" >= $3 AND "replay_count" < $4
+        const [provider, messageId, horizon, ceiling] = query.values as
+          [string, string, Date, number]
         return state.callbacks
           .filter(
             (c) =>
@@ -140,9 +159,14 @@ function fakeClient(state: World): ProviderCallbackClient {
               c.providerMessageId === messageId &&
               c.disposition === "UNMATCHED" &&
               c.resolvedAt === null &&
-              c.receivedAt >= horizon,
+              c.receivedAt >= horizon &&
+              c.replayCount < ceiling,
           )
-          .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime()) as T
+          .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime())
+          // COPIES, as a real query returns. Handing out live references let the
+          // compare-and-set below read a value that had changed since the batch
+          // was read, which is precisely the race it exists to lose.
+          .map((row) => ({ ...row })) as T
       }
       throw new Error(`unexpected query: ${sql}`)
     },
@@ -168,14 +192,16 @@ function fakeClient(state: World): ProviderCallbackClient {
         return 1
       }
       if (sql.includes('UPDATE "ot_delivery_provider_callback"')) {
-        if (sql.includes('"replay_count" = LEAST')) {
-          const [id, expected] = query.values as [string, number]
+        if (sql.includes('SET "replay_count" = "replay_count" + 1')) {
+          // … AND "replay_count" = $2 AND "replay_count" < $3
+          const [id, expected, ceiling] = query.values as [string, number, number]
           const row = state.callbacks.find(
             (c) =>
               c.id === id &&
               c.disposition === "UNMATCHED" &&
               c.resolvedAt === null &&
-              c.replayCount === expected,
+              c.replayCount === expected &&
+              c.replayCount < ceiling,
           )
           if (!row) return 0
           row.replayCount += 1
@@ -364,7 +390,7 @@ describe("an event that cannot be correlated yet is kept, never dropped", () => 
     state.attempts = world().attempts
     await expect(
       store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
-    ).resolves.toEqual({ examined: 1, applied: 1, stillUnmatched: 0 })
+    ).resolves.toEqual({ examined: 1, applied: 1, stillUnmatched: 0, skipped: 0 })
     expect(state.summary).toMatchObject({ status: "DELIVERED" })
     expect(state.callbacks[0]).toMatchObject({ disposition: "APPLIED", replayCount: 1 })
   })
@@ -378,7 +404,7 @@ describe("an event that cannot be correlated yet is kept, never dropped", () => 
     const revision = state.summary!.statusRevision
     await expect(
       store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
-    ).resolves.toEqual({ examined: 0, applied: 0, stillUnmatched: 0 })
+    ).resolves.toEqual({ examined: 0, applied: 0, stillUnmatched: 0, skipped: 0 })
     expect(state.summary!.statusRevision).toBe(revision)
   })
 
@@ -390,7 +416,7 @@ describe("an event that cannot be correlated yet is kept, never dropped", () => 
     state.attempts = world().attempts
     await expect(
       store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
-    ).resolves.toEqual({ examined: 2, applied: 2, stillUnmatched: 0 })
+    ).resolves.toEqual({ examined: 2, applied: 2, stillUnmatched: 0, skipped: 0 })
     expect(state.events.map((e) => e.eventType)).toEqual(["ACCEPTED", "DELIVERED"])
     expect(state.summary).toMatchObject({ status: "DELIVERED" })
   })
@@ -401,7 +427,7 @@ describe("an event that cannot be correlated yet is kept, never dropped", () => 
     await store.ingest(event())
     await expect(
       store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
-    ).resolves.toEqual({ examined: 1, applied: 0, stillUnmatched: 1 })
+    ).resolves.toEqual({ examined: 1, applied: 0, stillUnmatched: 1, skipped: 0 })
     expect(state.callbacks[0].disposition).toBe("UNMATCHED")
   })
 
@@ -412,7 +438,7 @@ describe("an event that cannot be correlated yet is kept, never dropped", () => 
     state.attempts = world().attempts
     await expect(
       store.reconcile({ provider: "postmark", providerMessageId: MESSAGE_ID }),
-    ).resolves.toEqual({ examined: 0, applied: 0, stillUnmatched: 0 })
+    ).resolves.toEqual({ examined: 0, applied: 0, stillUnmatched: 0, skipped: 0 })
   })
 })
 
@@ -482,6 +508,145 @@ describe("the durable unmatched store is bounded", () => {
     expect(state.callbacks[1000]).toMatchObject({
       disposition: "REFUSED",
       dispositionCode: "UNMATCHED_STORE_FULL",
+    })
+  })
+
+  /**
+   * `SELECT COUNT(*) … > MAX` is not a cap on its own. Under READ COMMITTED a
+   * concurrent ingester's uncommitted row is invisible, so N of them can each
+   * count MAX, each conclude there is room, and each commit — MAX + N rows past
+   * a ceiling that exists precisely to bound attacker-driven growth.
+   *
+   * The fake cannot reproduce PostgreSQL's snapshot isolation, so what is pinned
+   * here is the property that makes the real thing safe: the count is never
+   * taken outside the serializing lock.
+   */
+  it("decides the cap under a serializing advisory lock, never outside one", async () => {
+    const state = world({ attempts: [] })
+    const store = createPrismaProviderCallbackStore(fakeClient(state))
+    await expect(store.ingest(event())).resolves.toEqual({ outcome: "UNMATCHED" })
+    expect(state.locks).toContain("spool-cap")
+    expect(state.countedUnmatchedUnderLock).toBe(true)
+  })
+
+  it("takes no cap lock at all on the matched path", async () => {
+    // A correlated event never touches the spool, so it must never queue behind
+    // the one lock every uncorrelated arrival contends for.
+    const state = world()
+    const store = createPrismaProviderCallbackStore(fakeClient(state))
+    await expect(store.ingest(event())).resolves.toMatchObject({ outcome: "APPLIED" })
+    expect(state.locks).not.toContain("spool-cap")
+  })
+})
+
+/**
+ * The claim that begins a replay is a compare-and-set on `replay_count`. Written
+ * as `LEAST(count + 1, 1000)` it wrote 1000 over 1000 at the ceiling, so the
+ * predicate `replay_count = <observed>` stayed satisfiable and TWO concurrent
+ * reconcilers could both claim the same row — the exact thing the statement
+ * exists to prevent. A spent row is now simply not claimable.
+ */
+describe("a spent replay budget stops being claimable, and stays evidence", () => {
+  function spooled(replayCount: number) {
+    const state = world({ attempts: [] })
+    state.callbacks = [{
+      id: "c_spent", provider: RESEND_PROVIDER, providerEventId: "evt_spent",
+      providerMessageId: MESSAGE_ID, eventType: "DELIVERED", reasonCode: null,
+      occurredAt: new Date(NOW), receivedAt: new Date(NOW), disposition: "UNMATCHED",
+      dispositionCode: null, fulfillmentId: null, attemptNumber: null,
+      resolvedAt: null, replayCount,
+    }]
+    state.attempts = world().attempts
+    return state
+  }
+
+  it("never offers a row that has reached the ceiling", async () => {
+    const state = spooled(MAX_CALLBACK_REPLAYS)
+    const store = createPrismaProviderCallbackStore(fakeClient(state))
+    await expect(
+      store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
+    ).resolves.toEqual({ examined: 0, applied: 0, stillUnmatched: 0, skipped: 0 })
+    // Not deleted, not refused: still exactly the evidence it always was.
+    expect(state.callbacks[0]).toMatchObject({
+      disposition: "UNMATCHED",
+      replayCount: MAX_CALLBACK_REPLAYS,
+    })
+  })
+
+  it("still replays a row one below the ceiling, exactly once more", async () => {
+    const state = spooled(MAX_CALLBACK_REPLAYS - 1)
+    const store = createPrismaProviderCallbackStore(fakeClient(state))
+    await expect(
+      store.reconcile({ provider: RESEND_PROVIDER, providerMessageId: MESSAGE_ID }),
+    ).resolves.toEqual({ examined: 1, applied: 1, stillUnmatched: 0, skipped: 0 })
+    expect(state.callbacks[0].replayCount).toBe(MAX_CALLBACK_REPLAYS)
+  })
+
+  it("reports a lost claim as skipped, so the batch still accounts for itself", async () => {
+    const state = spooled(0)
+    const client = fakeClient(state)
+    // A concurrent reconciler wins the row between the batch read (the second
+    // transaction of the pass) and this pass's claim (the third).
+    let transactions = 0
+    const racing = createPrismaProviderCallbackStore({
+      async $transaction<T>(work: (tx: ProviderCallbackTransaction) => Promise<T>) {
+        transactions += 1
+        if (transactions === 3) state.callbacks[0].replayCount = 1
+        return client.$transaction(work)
+      },
+    })
+    const result = await racing.reconcile({
+      provider: RESEND_PROVIDER,
+      providerMessageId: MESSAGE_ID,
+    })
+    // The row was read, and then was not ours to act on. It is accounted for
+    // rather than vanishing between `examined` and the two outcome counters.
+    expect(result.examined).toBe(1)
+    expect(result.skipped).toBe(1)
+    expect(result.applied + result.stillUnmatched + result.skipped).toBe(result.examined)
+    // The winner's claim stands; nothing was applied twice.
+    expect(state.callbacks[0]).toMatchObject({ disposition: "UNMATCHED", replayCount: 1 })
+  })
+})
+
+/**
+ * `ot_delivery_attempt` carries a UNIQUE (provider, provider_message_id), so two
+ * attempts can never share one message id while that index exists. Reading
+ * `located[0]` out of an unordered result assumed that silently: if the index
+ * were ever dropped or rebuilt during a migration, a provider event would be
+ * folded onto whichever of two paid orders the planner returned first.
+ */
+describe("one provider message id can never resolve to two attempts", () => {
+  it("refuses an ambiguous binding instead of folding onto an arbitrary order", async () => {
+    const state = world()
+    state.attempts = [
+      ...state.attempts,
+      { ...state.attempts[0], fulfillmentId: "ful_other", attemptNumber: 1 },
+    ]
+    const store = createPrismaProviderCallbackStore(fakeClient(state))
+    await expect(store.ingest(event())).resolves.toEqual({
+      outcome: "REFUSED",
+      code: "AMBIGUOUS_MESSAGE_BINDING",
+    })
+    // Nothing was folded: no event row, and the summary never moved.
+    expect(state.events).toHaveLength(0)
+    expect(state.summary).toMatchObject({ status: "DELIVERY_PENDING" })
+  })
+
+  it("records the refusal rather than dropping the evidence", async () => {
+    const state = world()
+    state.attempts = [
+      ...state.attempts,
+      { ...state.attempts[0], fulfillmentId: "ful_other", attemptNumber: 1 },
+    ]
+    const store = createPrismaProviderCallbackStore(fakeClient(state))
+    await store.ingest(event())
+    expect(state.callbacks[0]).toMatchObject({
+      disposition: "REFUSED",
+      dispositionCode: "AMBIGUOUS_MESSAGE_BINDING",
+      // Deliberately unbound: naming one of the two would be the same guess.
+      fulfillmentId: null,
+      attemptNumber: null,
     })
   })
 })
