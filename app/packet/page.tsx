@@ -1,4 +1,5 @@
 import type { Metadata } from "next"
+import { PrivateDocumentGate } from "@/components/analytics/private-document-boundary"
 import { PacketForm } from "./packet-form"
 
 /**
@@ -38,7 +39,7 @@ export default function PacketPage() {
       </p>
 
       <div className="mt-8 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm sm:p-6">
-        <PacketForm />
+        <PrivateDocumentGate><PacketForm /></PrivateDocumentGate>
       </div>
 
       <div className="mt-8 space-y-3 text-sm text-gray-600">
