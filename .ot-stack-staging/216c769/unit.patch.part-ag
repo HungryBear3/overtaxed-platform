@@ -1,0 +1,600 @@
++    ["a different idempotency key", { attemptIdempotencyKey: "otf:v1:something-else" }],
++    ["a newer artifact version", { currentArtifactVersion: 2 }],
++    ["a different artifact digest", { currentArtifactSha256: "b".repeat(64) }],
++  ])("refuses %s before minting or sending", async (_label, patch) => {
++    const h = harness()
++    await expect(h.send(patch)).resolves.toEqual({
++      kind: "REJECTED",
++      provider: "resend",
++      reasonCode: "MANUAL_REVIEW",
++    })
++    expect(h.issued).toEqual([])
++    expect(h.sent).toEqual([])
++  })
++
++  it.each(["", "   ", "not-an-address", "a@b", "two@addr.com, other@addr.com", "a@b.com\nBcc: x@y.com"])(
++    "refuses the malformed recipient %j before minting or sending",
++    async (recipient) => {
++      const h = harness()
++      await expect(h.send({ recipient })).resolves.toEqual({
++        kind: "REJECTED",
++        provider: "resend",
++        reasonCode: "INVALID_RECIPIENT",
++      })
++      expect(h.issued).toEqual([])
++      expect(h.sent).toEqual([])
++    },
++  )
++
++  it("refuses when the adapter flag is withdrawn between injection and send", async () => {
++    const adapter = createT2ResendAdapter({
++      env: ENV,
++      // Construction succeeds, then the environment the send re-reads is shut.
++      config: { apiKey: "x".repeat(16), from: ENV.OT_T2_DELIVERY_FROM, appOrigin: "https://www.overtaxed-il.com" },
++      provider: { async send() { throw new Error("must not be called") } },
++      reader: { async load() { return context() } },
++    })
++    expect(adapter).not.toBeNull()
++    const shut = createT2ResendAdapter({
++      env: { ...ENV, OT_T2_DELIVERY_ADAPTER_ENABLED: "false" },
++      config: { apiKey: "x".repeat(16), from: ENV.OT_T2_DELIVERY_FROM, appOrigin: "https://www.overtaxed-il.com" },
++      provider: { async send() { throw new Error("must not be called") } },
++      reader: { async load() { return context() } },
++    })
++    await expect(shut!.send(SEND)).resolves.toEqual({
++      kind: "REJECTED",
++      provider: "resend",
++      reasonCode: "MANUAL_REVIEW",
++    })
++  })
++})
++
++describe("an ambiguous send is never re-minted under the same key", () => {
++  it("reports UNKNOWN when the attempt already owns a capability", async () => {
++    const h = harness()
++    await expect(h.send({ attemptCapabilityId: "cap_already_issued" })).resolves.toEqual({
++      kind: "UNKNOWN",
++      provider: "resend",
++    })
++    expect(h.issued).toEqual([])
++    expect(h.sent).toEqual([])
++  })
++
++  it("reports UNKNOWN when the store refuses the binding to a concurrent issuer", async () => {
++    const h = harness({ issuanceBlocker: "CAPABILITY_BINDING_MISMATCH" })
++    await expect(h.send()).resolves.toEqual({ kind: "UNKNOWN", provider: "resend" })
++    expect(h.sent).toEqual([])
++  })
++
++  it("reports REJECTED for an issuance refusal that is definite", async () => {
++    const h = harness({ issuanceBlocker: "ORDER_NOT_ELIGIBLE" })
++    await expect(h.send()).resolves.toEqual({
++      kind: "REJECTED",
++      provider: "resend",
++      reasonCode: "MANUAL_REVIEW",
++    })
++    expect(h.sent).toEqual([])
++  })
++
++  it("mints against the exact attempt and provider", async () => {
++    const h = harness()
++    await h.send()
++    expect(h.issued).toEqual([
++      { fulfillmentId: FULFILLMENT_ID, attemptNumber: 1, provider: "resend" },
++    ])
++  })
++})
+diff --git a/__tests__/fulfillment/t2-resend-callback-signature.test.ts b/__tests__/fulfillment/t2-resend-callback-signature.test.ts
+new file mode 100644
+index 0000000..42f5471
+--- /dev/null
++++ b/__tests__/fulfillment/t2-resend-callback-signature.test.ts
+@@ -0,0 +1,280 @@
++/**
++ * @jest-environment node
++ *
++ * Signature verification for paid-packet provider callbacks, exercised against
++ * REAL Svix signatures rather than a stubbed verifier.
++ *
++ * This endpoint is deliberately stricter than the outreach one next to it. That
++ * verifier permits an absent secret outside production and carries a legacy raw
++ * HMAC fallback, which is a defensible posture for campaign telemetry and an
++ * unacceptable one for evidence about a paid order. Every assertion here is
++ * about a way in that must NOT exist.
++ */
++import { Webhook as SvixWebhook } from "svix"
++import {
++  getT2CallbackSecret,
++  ingestT2ResendCallback,
++  MAX_SIGNATURE_AGE_MS,
++} from "@/lib/fulfillment-runtime/t2-resend-events"
++import type { ProviderCallbackStore } from "@/lib/fulfillment-runtime/provider-callback-store"
++
++jest.mock("server-only", () => ({}))
++
++// A syntactically valid Svix secret. Test-only, never a real credential.
++const SECRET = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"
++// Anchored to the real clock on purpose. Svix applies its OWN tolerance against
++// wall-clock time inside `verify`, so a fixed past instant would make every
++// "correctly signed" case fail for the wrong reason and quietly stop proving
++// anything. The service's independent staleness check is driven by the injected
++// `now`, which is this same instant.
++const NOW = new Date()
++const OCCURRED_AT = new Date(NOW.getTime() - 30_000).toISOString()
++const MESSAGE_ID = "b7e2e2c0-0000-4000-8000-000000000001"
++
++const payload = JSON.stringify({
++  type: "email.delivered",
++  created_at: OCCURRED_AT,
++  data: { email_id: MESSAGE_ID, to: ["owner@example.com"] },
++})
++
++function signed(
++  options: { id?: string; at?: Date; body?: string; secret?: string } = {},
++) {
++  const id = options.id ?? "msg_2signed_envelope"
++  const at = options.at ?? NOW
++  const body = options.body ?? payload
++  const signature = new SvixWebhook(options.secret ?? SECRET).sign(id, at, body)
++  return {
++    rawBody: body,
++    headers: {
++      "svix-id": id,
++      "svix-timestamp": String(Math.floor(at.getTime() / 1000)),
++      "svix-signature": signature,
++    },
++  }
++}
++
++function store(): ProviderCallbackStore & {
++  ingested: unknown[]
++  reconciled: unknown[]
++} {
++  const ingested: unknown[] = []
++  const reconciled: unknown[] = []
++  return {
++    ingested,
++    reconciled,
++    async ingest(event) {
++      ingested.push(event)
++      return { outcome: "UNMATCHED" }
++    },
++    async reconcile(input) {
++      reconciled.push(input)
++      return { examined: 0, applied: 0, stillUnmatched: 0 }
++    },
++  }
++}
++
++const on = {
++  OT_T2_DELIVERY_CALLBACK_ENABLED: "true",
++  OT_T2_RESEND_WEBHOOK_SECRET: SECRET,
++}
++const deps = (env: Record<string, string | undefined>, s = store()) => ({
++  env,
++  store: s,
++  now: () => NOW,
++})
++
++describe("the endpoint fails closed without a secret, in every environment", () => {
++  it.each(["production", "development", "test", undefined])(
++    "refuses with NODE_ENV=%s",
++    async (nodeEnv) => {
++      const env = { ...on, NODE_ENV: nodeEnv, OT_T2_RESEND_WEBHOOK_SECRET: undefined }
++      const s = store()
++      await expect(
++        ingestT2ResendCallback(signed(), deps(env, s)),
++      ).resolves.toEqual({ ok: false, code: "SECRET_NOT_CONFIGURED" })
++      expect(s.ingested).toEqual([])
++    },
++  )
++
++  it.each(["", "   ", "short", "has space in it", "x".repeat(300)])(
++    "treats a malformed secret %j as absent",
++    async (secret) => {
++      expect(getT2CallbackSecret({ OT_T2_RESEND_WEBHOOK_SECRET: secret })).toBeNull()
++    },
++  )
++
++  it("accepts a well-formed secret", () => {
++    expect(getT2CallbackSecret({ OT_T2_RESEND_WEBHOOK_SECRET: SECRET })).toBe(SECRET)
++  })
++})
++
++describe("only a valid Svix signature is admitted", () => {
++  it("admits a correctly signed envelope", async () => {
++    const s = store()
++    await expect(ingestT2ResendCallback(signed(), deps(on, s))).resolves.toEqual({
++      ok: true,
++      result: { outcome: "UNMATCHED" },
++    })
++    expect(s.ingested).toHaveLength(1)
++  })
++
++  it("refuses a signature made with a different secret", async () => {
++    const s = store()
++    const forged = signed({ secret: "whsec_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" })
++    await expect(ingestT2ResendCallback(forged, deps(on, s))).resolves.toEqual({
++      ok: false,
++      code: "INVALID_SIGNATURE",
++    })
++    expect(s.ingested).toEqual([])
++  })
++
++  it("refuses a body altered after signing", async () => {
++    const envelope = signed()
++    const tampered = {
++      ...envelope,
++      rawBody: envelope.rawBody.replace("email.delivered", "email.bounced"),
++    }
++    await expect(ingestT2ResendCallback(tampered, deps(on))).resolves.toEqual({
++      ok: false,
++      code: "INVALID_SIGNATURE",
++    })
++  })
++
++  it("refuses an envelope id swapped after signing", async () => {
++    const envelope = signed()
++    const swapped = {
++      ...envelope,
++      headers: { ...envelope.headers, "svix-id": "msg_someone_elses_id" },
++    }
++    await expect(ingestT2ResendCallback(swapped, deps(on))).resolves.toEqual({
++      ok: false,
++      code: "INVALID_SIGNATURE",
++    })
++  })
++
++  it.each(["svix-id", "svix-timestamp", "svix-signature"])(
++    "refuses a missing %s",
++    async (header) => {
++      const envelope = signed()
++      const headers = { ...envelope.headers, [header]: null }
++      await expect(
++        ingestT2ResendCallback({ ...envelope, headers }, deps(on)),
++      ).resolves.toEqual({ ok: false, code: "INVALID_SIGNATURE" })
++    },
++  )
++
++  it("has no raw-HMAC fallback: a resend-signature header alone is refused", async () => {
++    const s = store()
++    await expect(
++      ingestT2ResendCallback(
++        { rawBody: payload, headers: { "resend-signature": "deadbeef" } },
++        deps(on, s),
++      ),
++    ).resolves.toEqual({ ok: false, code: "INVALID_SIGNATURE" })
++    expect(s.ingested).toEqual([])
++  })
++})
++
++describe("stale and future envelopes are refused independently of the library", () => {
++  it("refuses a replay older than the tolerance", async () => {
++    const old = new Date(NOW.getTime() - MAX_SIGNATURE_AGE_MS - 1000)
++    await expect(
++      ingestT2ResendCallback(signed({ at: old }), deps(on)),
++    ).resolves.toEqual({ ok: false, code: "INVALID_SIGNATURE" })
++  })
++
++  it("refuses an envelope timestamped in the future", async () => {
++    const ahead = new Date(NOW.getTime() + MAX_SIGNATURE_AGE_MS + 1000)
++    await expect(
++      ingestT2ResendCallback(signed({ at: ahead }), deps(on)),
++    ).resolves.toEqual({ ok: false, code: "INVALID_SIGNATURE" })
++  })
++
++  it.each(["", "abc", "-1", "1.5", "99999999999999999999"])(
++    "refuses a malformed timestamp %j",
++    async (timestamp) => {
++      const envelope = signed()
++      await expect(
++        ingestT2ResendCallback(
++          { ...envelope, headers: { ...envelope.headers, "svix-timestamp": timestamp } },
++          deps(on),
++        ),
++      ).resolves.toEqual({ ok: false, code: "INVALID_SIGNATURE" })
++    },
++  )
++})
++
++describe("nothing is admitted while the callback flag is not exactly true", () => {
++  it.each([undefined, "", "false", "TRUE", "True", "1", "yes", "true "])(
++    "flag %j admits nothing",
++    async (flag) => {
++      const s = store()
++      await expect(
++        ingestT2ResendCallback(signed(), deps({ ...on, OT_T2_DELIVERY_CALLBACK_ENABLED: flag }, s)),
++      ).resolves.toEqual({ ok: false, code: "FLAG_DISABLED" })
++      expect(s.ingested).toEqual([])
++    },
++  )
++})
++
++describe("the body is bounded and parsed only after the bytes are proven", () => {
++  it("refuses an oversized body before verification", async () => {
++    const huge = JSON.stringify({ type: "email.delivered", pad: "x".repeat(70_000) })
++    const s = store()
++    await expect(
++      ingestT2ResendCallback(signed({ body: huge }), deps(on, s)),
++    ).resolves.toEqual({ ok: false, code: "BODY_TOO_LARGE" })
++    expect(s.ingested).toEqual([])
++  })
++
++  it("refuses a correctly signed body that is not JSON", async () => {
++    const s = store()
++    const outcome = await ingestT2ResendCallback(
++      signed({ body: "not json at all" }),
++      deps(on, s),
++    )
++    // Refused, and nothing was admitted. The exact code is deliberately not
++    // pinned: the Svix verifier itself parses the payload, so it may refuse a
++    // non-JSON body before this module's own parse ever runs. Both layers fail
++    // closed, and which one gets there first is not a property worth freezing.
++    expect(outcome.ok).toBe(false)
++    expect(s.ingested).toEqual([])
++  })
++
++  it("refuses a correctly signed JSON body that is not an event object", async () => {
++    const s = store()
++    for (const body of ["[]", '"a string"', "42", "null"]) {
++      await expect(
++        ingestT2ResendCallback(signed({ body }), deps(on, s)),
++      ).resolves.toEqual({ ok: false, code: "INVALID_JSON" })
++    }
++    expect(s.ingested).toEqual([])
++  })
++
++  it("verifies the exact bytes, so a re-serialized body would not pass", async () => {
++    const envelope = signed()
++    // Semantically identical JSON, different bytes.
++    const reserialized = JSON.stringify(JSON.parse(envelope.rawBody), null, 2)
++    expect(reserialized).not.toBe(envelope.rawBody)
++    await expect(
++      ingestT2ResendCallback({ ...envelope, headers: envelope.headers, rawBody: reserialized }, deps(on)),
++    ).resolves.toEqual({ ok: false, code: "INVALID_SIGNATURE" })
++  })
++})
++
++describe("the admitted event carries the signed envelope's identity", () => {
++  it("uses the envelope id as the replay identity and keeps no recipient", async () => {
++    const s = store()
++    await ingestT2ResendCallback(signed({ id: "msg_envelope_identity" }), deps(on, s))
++    expect(s.ingested[0]).toEqual({
++      provider: "resend",
++      providerEventId: "msg_envelope_identity",
++      providerMessageId: MESSAGE_ID,
++      eventType: "DELIVERED",
++      reasonCode: null,
++      occurredAt: OCCURRED_AT,
++    })
++    expect(JSON.stringify(s.ingested)).not.toContain("owner@example.com")
++  })
++})
+diff --git a/app/api/admin/evidence/[orderId]/delivery-recovery/route.ts b/app/api/admin/evidence/[orderId]/delivery-recovery/route.ts
+new file mode 100644
+index 0000000..52ffd1e
+--- /dev/null
++++ b/app/api/admin/evidence/[orderId]/delivery-recovery/route.ts
+@@ -0,0 +1,123 @@
++// POST /api/admin/evidence/[orderId]/delivery-recovery
++//
++// The bounded operator control for a delivery that did not resolve itself.
++//
++// Deliberately modelled on the manual-review control next to it, and using the
++// same authentication and CSRF pattern rather than a new one: an ADMIN session,
++// a same-origin check, an explicit JSON content type, and a compare-and-set
++// against an exact expected status and revision.
++//
++// Two actions, both narrow. Neither can send, re-mint, or regenerate anything —
++// see lib/fulfillment-runtime/t2-delivery-recovery.ts for the full list of what
++// is deliberately unreachable from here.
++//
++// Default-off: with OT_T2_DELIVERY_RECOVERY_ENABLED absent — which is every
++// environment — this route is indistinguishable from one that does not exist.
++import { NextRequest, NextResponse } from "next/server"
++import { z } from "zod"
++import { getSession } from "@/lib/auth/session"
++import {
++  t2DeliveryRecoveryEnabled,
++  t2EvidenceConsoleEnabled,
++} from "@/lib/fulfillment/flag"
++import {
++  NO_IN_FLIGHT_EVIDENCE,
++  RESOLVE_REASON_CODES,
++  runT2DeliveryRecovery,
++} from "@/lib/fulfillment-runtime/t2-delivery-recovery"
++
++export const dynamic = "force-dynamic"
++export const runtime = "nodejs"
++
++/**
++ * Two disjoint bodies rather than one permissive shape.
++ *
++ * The evidence assertion and the reason code are REQUIRED on the resolving
++ * branch and forbidden on the reconciling one, so an operator cannot end a send
++ * by sending the reconcile action with extra fields, and cannot end one by
++ * omitting the assertion.
++ */
++const Body = z.discriminatedUnion("action", [
++  z
++    .object({
++      action: z.literal("RECONCILE_PROVIDER_CALLBACKS"),
++      expectedStatus: z.enum([
++        "DELIVERY_PENDING",
++        "PROVIDER_ACCEPTED",
++        "DELAYED",
++        "DELIVERED",
++      ]),
++      expectedStatusRevision: z.number().int().min(0).max(2_147_483_646),
++    })
++    .strict(),
++  z
++    .object({
++      action: z.literal("RESOLVE_UNRESOLVED_SEND"),
++      // Only from the unresolved state. Stated in the schema as well as in the
++      // store, so an impossible request is refused before it reaches a lock.
++      expectedStatus: z.literal("DELIVERY_PENDING"),
++      expectedStatusRevision: z.number().int().min(0).max(2_147_483_646),
++      evidence: z.literal(NO_IN_FLIGHT_EVIDENCE),
++      reasonCode: z.enum([...RESOLVE_REASON_CODES] as [string, ...string[]]),
++    })
++    .strict(),
++])
++
++const OrderId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/)
++
++const json = (body: object, status: number) => NextResponse.json(body, { status })
++
++export async function POST(
++  request: NextRequest,
++  context: { params: Promise<{ orderId: string }> },
++) {
++  const session = await getSession(request)
++  const user = session?.user as { id?: unknown; role?: unknown } | undefined
++  if (
++    user?.role !== "ADMIN" ||
++    typeof user.id !== "string" ||
++    user.id.length < 1 ||
++    user.id.length > 128
++  ) return json({ ok: false, code: "UNAUTHORIZED" }, 401)
++
++  if (!t2EvidenceConsoleEnabled() || !t2DeliveryRecoveryEnabled())
++    return json({ ok: false, code: "RECOVERY_DISABLED" }, 404)
++
++  try {
++    const origin = request.headers.get("origin")
++    const expectedOrigin = new URL(request.url).origin
++    if (!origin || origin !== expectedOrigin) throw new Error("invalid serialized origin")
++  } catch {
++    return json({ ok: false, code: "INVALID_ORIGIN" }, 403)
++  }
++  if (request.headers.get("content-type") !== "application/json")
++    return json({ ok: false, code: "INVALID_CONTENT_TYPE" }, 400)
++
++  const { orderId } = await context.params
++  if (!OrderId.safeParse(orderId).success)
++    return json({ ok: false, code: "INVALID_ORDER_ID" }, 400)
++
++  const parsed = Body.safeParse(await request.json().catch(() => undefined))
++  // The zod error is never serialized: it would quote the submitted body.
++  if (!parsed.success) return json({ ok: false, code: "INVALID_BODY" }, 400)
++
++  try {
++    const result = await runT2DeliveryRecovery({
++      orderId,
++      actorUserId: user.id,
++      ...parsed.data,
++    })
++    if (result.ok) return json(result, 200)
++    const status =
++      result.code === "ORDER_NOT_FOUND" || result.code === "NO_FULFILLMENT_SUMMARY"
++        ? 404
++        : result.code === "RECOVERY_DISABLED"
++          ? 404
++          : 409
++    return json(result, status)
++  } catch {
++    // The thrown value may carry provider, database, or connection detail.
++    console.error("[ot-t2-delivery-recovery] outcome=THREW")
++    return json({ ok: false, code: "INTERNAL_ERROR" }, 500)
++  }
++}
+diff --git a/app/api/ot/webhooks/resend/route.ts b/app/api/ot/webhooks/resend/route.ts
+new file mode 100644
+index 0000000..05b14c4
+--- /dev/null
++++ b/app/api/ot/webhooks/resend/route.ts
+@@ -0,0 +1,116 @@
++// POST /api/ot/webhooks/resend
++//
++// The authenticated provider-callback boundary for paid T2 packet delivery.
++//
++// Kept strictly separate from `/api/outreach/webhooks/resend`, which serves the
++// condo outreach campaign. That endpoint's verifier permits an absent secret
++// outside production and carries a legacy raw-HMAC fallback — a defensible
++// posture for campaign telemetry, and not one that may govern evidence about a
++// paid order. This endpoint has its own secret
++// (OT_T2_RESEND_WEBHOOK_SECRET), accepts Svix signatures only, and fails closed
++// without a secret in EVERY environment.
++//
++// Default-off: with OT_T2_DELIVERY_CALLBACK_ENABLED absent — which is every
++// environment — this route is indistinguishable from one that does not exist.
++import { NextRequest, NextResponse } from "next/server"
++import { t2DeliveryCallbackEnabled } from "@/lib/fulfillment/flag"
++import { MAX_CALLBACK_BODY_BYTES } from "@/lib/fulfillment/provider-callbacks"
++import { ingestT2ResendCallback } from "@/lib/fulfillment-runtime/t2-resend-events"
++
++export const dynamic = "force-dynamic"
++export const runtime = "nodejs"
++
++const PRIVATE_HEADERS = {
++  "Cache-Control": "no-store, no-cache, must-revalidate, private",
++  "X-Content-Type-Options": "nosniff",
++  "Referrer-Policy": "no-referrer",
++  "X-Robots-Tag": "noindex, nofollow, noarchive",
++} as const
++
++function json(body: object, status: number): NextResponse {
++  return NextResponse.json(body, { status, headers: PRIVATE_HEADERS })
++}
++
++/**
++ * Header names the verifier may read.
++ *
++ * An allowlist rather than the whole header bag, so nothing else a proxy
++ * attaches can reach the verification path.
++ */
++const SIGNATURE_HEADERS = [
++  "svix-id",
++  "svix-timestamp",
++  "svix-signature",
++  "webhook-id",
++  "webhook-timestamp",
++  "webhook-signature",
++] as const
++
++export async function POST(request: NextRequest) {
++  if (!t2DeliveryCallbackEnabled()) return json({ ok: false }, 404)
++
++  // Bound the body BEFORE reading it, when the sender declared a length. A
++  // missing or lying Content-Length is caught by the byte check after the read,
++  // which `ingestT2ResendCallback` performs on the raw text.
++  const declared = Number(request.headers.get("content-length") ?? "0")
++  if (Number.isFinite(declared) && declared > MAX_CALLBACK_BODY_BYTES)
++    return json({ ok: false }, 413)
++
++  let rawBody: string
++  try {
++    // Raw text, never `request.json()`. The signature covers these exact bytes,
++    // and a parse-then-reserialize round trip would verify something else.
++    rawBody = await request.text()
++  } catch {
++    return json({ ok: false }, 400)
++  }
++
++  const headers: Record<string, string | null> = {}
++  for (const name of SIGNATURE_HEADERS) headers[name] = request.headers.get(name)
++
++  let outcome: Awaited<ReturnType<typeof ingestT2ResendCallback>>
++  try {
++    outcome = await ingestT2ResendCallback({ rawBody, headers })
++  } catch {
++    // The thrown value may carry provider, database, or connection detail. A 500
++    // is also the right answer for the provider: it will retry, and the replay
++    // identity makes that retry safe.
++    console.error("[ot-t2-callback] outcome=THREW")
++    return json({ ok: false }, 500)
++  }
++
++  if (!outcome.ok) {
++    // Deliberately coarse on the wire. A caller probing with forged bodies must
++    // not learn whether it failed the signature, the timestamp, the shape, or
++    // the event-type allowlist. The precise code is logged, never returned.
++    console.warn(`[ot-t2-callback] outcome=REFUSED code=${outcome.code}`)
++    if (
++      outcome.code === "INVALID_SIGNATURE" ||
++      outcome.code === "INVALID_PROVIDER_EVENT_ID"
++    )
++      return json({ ok: false }, 401)
++    if (outcome.code === "SECRET_NOT_CONFIGURED") return json({ ok: false }, 503)
++    if (outcome.code === "BODY_TOO_LARGE") return json({ ok: false }, 413)
