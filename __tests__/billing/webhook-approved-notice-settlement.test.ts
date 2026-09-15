@@ -1,6 +1,9 @@
 /** @jest-environment node */
 
 type Row = Record<string, unknown>
+import type { T2FulfillmentKickoffResult } from '@/lib/fulfillment-runtime/kickoff'
+const afterMock = jest.fn((_callback: () => Promise<void>) => {})
+jest.mock('next/server', () => ({ ...jest.requireActual('next/server'), after: (cb: () => Promise<void>) => afterMock(cb) }))
 
 const dbState: {
   stripeEvents: Map<string, Row>
@@ -17,7 +20,7 @@ const sendOrderConfirmationMock = jest.fn(async (_args?: unknown) => true)
 const sendPaidOrderRecoveryAlertMock = jest.fn(async (_args?: unknown) => true)
 const sendPaymentRecoveryAcknowledgmentMock = jest.fn(async (_args?: unknown) => true)
 const sendBillingPaymentRecoveryAlertMock = jest.fn(async (_args?: unknown) => true)
-const kickOffT2FulfillmentEvidenceMock = jest.fn(async (_order?: unknown) => ({ outcome: "DISABLED" }))
+const kickOffT2FulfillmentEvidenceMock = jest.fn(async (_order?: unknown): Promise<T2FulfillmentKickoffResult> => ({ outcome: "DISABLED" }))
 const fetchMock = jest.fn()
 let forceOtOrderUpdateMiss = false
 let forceStripeEventDeleteFailure = false
@@ -165,6 +168,7 @@ beforeEach(() => {
   forceOtOrderUpdateMiss = false
   forceStripeEventDeleteFailure = false
   delete process.env.OT_T2_FULFILLMENT_EVIDENCE_ENABLED
+  delete process.env.OT_T2_ARTIFACT_ORCHESTRATION_ENABLED
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test"
   process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID = "G-TEST123"
   process.env.GA4_API_SECRET = "ga4_secret"
@@ -527,7 +531,9 @@ describe("billing webhook approved notice settlement", () => {
     jest.useRealTimers()
   })
 
-  it("requires exact durable acknowledgment evidence before settling T2", async () => {
+  it.each(['true', 'false'])("settles T2 and defers artifact work only when enabled: %s", async flag => {
+    process.env.OT_T2_ARTIFACT_ORCHESTRATION_ENABLED = flag
+    kickOffT2FulfillmentEvidenceMock.mockResolvedValueOnce({ outcome: 'PERSISTED', status: 'ARTIFACT_PENDING', fulfillmentId: 'ful_test' })
     seedOrder({
       tier: "T2",
       analysisAcknowledgedAt: new Date("2026-07-24T12:00:00.000Z"),
@@ -549,9 +555,12 @@ describe("billing webhook approved notice settlement", () => {
       expect.objectContaining({ id: "ord_notice", tier: "T2", status: "PAID" }),
     )
     expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
+    expect(afterMock).toHaveBeenCalledTimes(flag === 'true' ? 1 : 0)
   })
 
   it("reaches evidence persistence on a paid retry before the already-paid early return", async () => {
+    process.env.OT_T2_ARTIFACT_ORCHESTRATION_ENABLED = 'true'
+    kickOffT2FulfillmentEvidenceMock.mockResolvedValueOnce({ outcome: 'PERSISTED', status: 'ARTIFACT_PENDING', fulfillmentId: 'ful_test' })
     seedOrder({
       tier: "T2",
       status: "PAID",
@@ -573,6 +582,7 @@ describe("billing webhook approved notice settlement", () => {
     expect(kickOffT2FulfillmentEvidenceMock).toHaveBeenCalledTimes(1)
     expect(sendNewOrderAlertMock).not.toHaveBeenCalled()
     expect(sendOrderConfirmationMock).not.toHaveBeenCalled()
+    expect(afterMock).toHaveBeenCalledTimes(1)
   })
 
   it("retries evidence persistence without losing or duplicating paid-order emails", async () => {

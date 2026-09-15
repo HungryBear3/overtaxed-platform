@@ -16,6 +16,7 @@ import {
 } from "@/lib/checkout/ot-settlement"
 import { sanitizeAnonymousGaIdentifiers } from "@/lib/analytics/ga4"
 import { sendGaPurchaseEvent } from "@/lib/analytics/ga4-measurement"
+import { scheduleT2ArtifactOrchestration } from "@/lib/fulfillment-runtime/t2-artifact-scheduling"
 
 export async function POST(request: NextRequest) {
   console.log("[webhook] Received webhook request")
@@ -405,13 +406,14 @@ export async function POST(request: NextRequest) {
 
         if (persistedOrder.tier === "T2") {
           try {
-            await kickOffT2FulfillmentEvidence({
+            const kickoff = await kickOffT2FulfillmentEvidence({
               id: persistedOrder.id,
               tier: persistedOrder.tier,
               status: persistedOrder.status,
               propertyAddress: persistedOrder.propertyAddress,
               propertyPin: persistedOrder.propertyPin,
             })
+            scheduleT2ArtifactOrchestration(persistedOrder, kickoff)
           } catch (err) {
             const errorName = err instanceof Error ? err.name : "UnknownError"
             const errorCode =

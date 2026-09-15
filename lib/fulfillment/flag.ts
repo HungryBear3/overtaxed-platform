@@ -13,6 +13,8 @@ export const OT_T2_EVIDENCE_CONSOLE_FLAG = "OT_T2_EVIDENCE_CONSOLE_ENABLED"
 export const OT_T2_MANUAL_REVIEW_CONTROL_FLAG =
   "OT_T2_MANUAL_REVIEW_CONTROL_ENABLED"
 export const OT_T2_ARTIFACT_BINDING_FLAG = "OT_T2_ARTIFACT_BINDING_ENABLED"
+export const OT_T2_ARTIFACT_ORCHESTRATION_FLAG =
+  "OT_T2_ARTIFACT_ORCHESTRATION_ENABLED"
 
 export function t2FulfillmentEvidenceWritesEnabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
@@ -52,4 +54,19 @@ export function t2ArtifactBindingEnabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
   return env[OT_T2_ARTIFACT_BINDING_FLAG] === "true"
+}
+
+/**
+ * Independent default-off gate for the T2 artifact ORCHESTRATION seam — the
+ * runtime caller that schedules the binding workflow after a settled paid T2.
+ *
+ * Separate from the binding gate on purpose: binding is "may an artifact be
+ * bound", orchestration is "may a webhook cause one to be attempted at all".
+ * Both must be true before a paid order produces anything, and each is
+ * activated in its own reviewed step.
+ */
+export function t2ArtifactOrchestrationEnabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return env[OT_T2_ARTIFACT_ORCHESTRATION_FLAG] === "true"
 }
