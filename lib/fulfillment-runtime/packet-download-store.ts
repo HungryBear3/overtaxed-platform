@@ -69,13 +69,13 @@ export interface PacketDownloadStore {
 }
 
 /**
- * Transaction-start time as a strict RFC3339 UTC instant, rendered by the
+ * Wall-clock time after authority locks as a strict RFC3339 UTC instant, rendered by the
  * database — never by a driver date mapping, which would silently apply the
  * server's local UTC offset and expire capabilities at the wrong moment.
  */
 const TRUSTED_CLOCK_SQL = Prisma.sql`
   SELECT to_char(
-    CURRENT_TIMESTAMP AT TIME ZONE 'UTC',
+    clock_timestamp() AT TIME ZONE 'UTC',
     'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
   ) AS "now"
 `;
@@ -180,7 +180,7 @@ async function loadContext(
     ? await tx.$queryRaw<PacketDownloadArtifactRow[]>(
         Prisma.sql`SELECT ${ARTIFACT_COLUMNS} FROM "ot_fulfillment_artifact"
                    WHERE "fulfillment_id" = ${capability.fulfillmentId}
-                     AND "version" = ${capability.artifactVersion}`,
+                     ORDER BY "version" DESC LIMIT 1`,
       )
     : [];
 
@@ -211,13 +211,19 @@ export function createPrismaPacketDownloadStore(
           Prisma.sql`SELECT ${FULFILLMENT_COLUMNS} FROM "ot_fulfillment"
                      WHERE "id" = ${input.fulfillmentId}`,
         );
-        const fulfillment = fulfillments[0] ?? null;
+        let fulfillment = fulfillments[0] ?? null;
         if (!fulfillment) return { ok: false, blocker: "FULFILLMENT_NOT_FOUND" };
 
         const orders = await tx.$queryRaw<PacketDownloadOrderRow[]>(
           Prisma.sql`SELECT ${ORDER_COLUMNS} FROM "ot_order"
                      WHERE "id" = ${fulfillment.orderId} FOR UPDATE`,
         );
+
+        const refreshed = await tx.$queryRaw<PacketDownloadFulfillmentRow[]>(
+          Prisma.sql`SELECT ${FULFILLMENT_COLUMNS} FROM "ot_fulfillment"
+                     WHERE "id" = ${input.fulfillmentId} FOR UPDATE`,
+        );
+        fulfillment = refreshed[0] ?? null;
 
         // The CURRENT artifact is the highest bound version. Nothing here may
         // mint a capability for a version that has been superseded.
