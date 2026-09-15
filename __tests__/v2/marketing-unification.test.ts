@@ -24,9 +24,9 @@ function read(rel: string): string {
 
 // Pages required to use SiteChrome (no /townships/[slug] — that page is the
 // canonicalization redirect and intentionally has no chrome).
-const CHROME_PAGES: ReadonlyArray<{ path: string; active?: string }> = [
+const CHROME_PAGES: ReadonlyArray<{ path: string; implementation?: string; active?: string }> = [
   { path: "app/page.tsx", active: "home" },
-  { path: "app/pricing/page.tsx", active: "offer" },
+  { path: "app/pricing/page.tsx", implementation: "components/ot-design/PricingPageClient.tsx", active: "offer" },
   { path: "app/check/page.tsx" },
   { path: "app/about/page.tsx" },
   { path: "app/faq/page.tsx", active: "faq" },
@@ -44,7 +44,7 @@ const CHROME_PAGES: ReadonlyArray<{ path: string; active?: string }> = [
 describe("OT v2 marketing — chrome unification", () => {
   for (const p of CHROME_PAGES) {
     describe(p.path, () => {
-      const src = read(p.path);
+      const src = [read(p.path), p.implementation ? read(p.implementation) : ""].join("\n");
 
       it("imports SiteChrome", () => {
         expect(src).toMatch(/from\s+["']@\/components\/ot-design\/SiteChrome["']/);
@@ -52,7 +52,7 @@ describe("OT v2 marketing — chrome unification", () => {
 
       it("mounts SiteHeader and SiteFooter", () => {
         expect(src).toMatch(/<SiteHeader\b/);
-        expect(src).toMatch(/<SiteFooter\s*\/>/);
+        expect(src).toMatch(/<SiteFooter\b[^>]*\/>/);
       });
 
       it("does not import the legacy Header/Footer modules", () => {
@@ -104,7 +104,7 @@ describe("OT v2 marketing — pricing consistency", () => {
   });
 
   it("/pricing keeps $69 as the visible anchor", () => {
-    const src = read("app/pricing/page.tsx");
+    const src = read("components/ot-design/PricingPageClient.tsx");
     expect(src).toMatch(/\$69\b/);
     expect(src).toMatch(/\$97\b/);
   });
@@ -175,7 +175,7 @@ describe("OT v2 marketing — legal copy disclaimers", () => {
   // requirement more strictly than before. The assertion follows the string to
   // where it is defined rather than asserting a duplicate exists.
   it("/pricing renders the canonical not-a-law-firm disclaimer", () => {
-    const src = read("app/pricing/page.tsx");
+    const src = read("components/ot-design/PricingPageClient.tsx");
     expect(src).toMatch(/import\s*\{[^}]*\bCC_12\b[^}]*\}\s*from\s*"@\/lib\/copy\/canonical"/);
     expect(src).toContain("{CC_12}");
     expect(CC_12).toMatch(/not a law firm/i);
