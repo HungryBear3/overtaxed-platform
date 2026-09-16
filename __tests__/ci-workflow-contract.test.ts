@@ -111,6 +111,16 @@ describe("CI workflow", () => {
       expect(commandIndex(/\bnpm (run )?test\b/)).toBeGreaterThanOrEqual(0)
     })
 
+    it("installs PostgreSQL 16 and exposes its server executables to the native security suite", () => {
+      const install = commandIndex(/apt-get install[^\n]*\bpostgresql-16\b/)
+      const path = commandIndex(/\/usr\/lib\/postgresql\/16\/bin[^\n]*GITHUB_PATH/)
+      const test = commandIndex(/\bnpm (run )?test\b/)
+      expect(install).toBeGreaterThanOrEqual(0)
+      expect(path).toBeGreaterThanOrEqual(0)
+      expect(install).toBeLessThan(test)
+      expect(path).toBeLessThan(test)
+    })
+
     it("builds before type-checking, so the gitignored next-env.d.ts exists first", () => {
       // This pins a deliberate ordering rather than a required one: tsc was
       // verified to pass on a cold tree with neither .next nor next-env.d.ts,
@@ -141,9 +151,8 @@ describe("CI workflow", () => {
     it("binds no database connection variable", () => {
       // The build needs none: prisma.config.ts falls back to a placeholder URL
       // when DATABASE_URL is unset, and no page reads the database while
-      // prerendering. The test run needs none either — the four PostgreSQL
-      // suites skip themselves unless TEST_DATABASE_URL is set, and setting it
-      // would switch on suites that require a disposable live database.
+      // prerendering. Four integration suites skip unless TEST_DATABASE_URL is
+      // set; the native security suite creates its own local disposable cluster.
       // The second assertion covers TEST_DATABASE_URL by construction.
       expect(boundEnvNames().filter((name) => name.includes("DATABASE_URL"))).toEqual([])
       expect(effectiveSource()).not.toMatch(/DATABASE_URL/)

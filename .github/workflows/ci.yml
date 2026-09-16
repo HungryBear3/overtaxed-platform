@@ -43,6 +43,16 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      # The owner-role hardening suite creates its own isolated cluster with
+      # initdb/pg_ctl. Pin the supported PostgreSQL major explicitly: the
+      # ubuntu-latest image does not guarantee server executables on PATH, and
+      # this suite must run rather than silently skip when they are absent.
+      - name: Install PostgreSQL 16
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends postgresql-16
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+
       # `npm ci` is the install that refuses to run when package-lock.json and
       # package.json disagree. Its postinstall hook runs `prisma generate`,
       # which is what makes the suites importing @prisma/client runnable.
@@ -71,8 +81,8 @@ jobs:
       # `prisma generate` falls back to a placeholder URL when DATABASE_URL is
       # unset (prisma.config.ts) and no page reads the database while
       # prerendering, so the build runs without one. Each suite assigns the
-      # variables it needs, and the four PostgreSQL suites skip themselves
-      # unless TEST_DATABASE_URL is set — setting it here would silently switch
-      # on four suites that require a disposable live database.
+      # variables it needs. Four integration suites skip themselves unless
+      # TEST_DATABASE_URL is set; the owner-role hardening suite instead starts
+      # and removes its own disposable local PostgreSQL cluster.
       - name: Test
         run: npm test -- --ci --maxWorkers=2
