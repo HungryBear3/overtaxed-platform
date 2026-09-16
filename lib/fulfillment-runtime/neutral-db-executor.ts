@@ -4,7 +4,16 @@ export type NeutralDbExecutor = {
   $transaction<T>(work: (tx: NeutralDbExecutor) => Promise<T>): Promise<T>
 }
 
-/** Use a caller-owned transaction when supplied; production keeps its client transaction. */
+/**
+ * Use a caller-owned transaction when supplied; production keeps its client
+ * transaction.
+ *
+ * An injected executor MUST already belong to an open caller-owned transaction.
+ * This function deliberately does not open a savepoint around injected work:
+ * callers that need statement-failure isolation must wrap each helper call in
+ * `executor.$transaction(...)`, as the Preview acceptance runner does. This
+ * keeps transaction ownership and rollback policy with the injecting caller.
+ */
 export function inNeutralTransaction<T>(
   client: NeutralDbExecutor,
   executor: NeutralDbExecutor | undefined,

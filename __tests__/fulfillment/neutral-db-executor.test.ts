@@ -22,6 +22,15 @@ describe("neutral transaction executor", () => {
     expect(tx.$transaction).not.toHaveBeenCalled()
   })
 
+  it("leaves injected savepoint policy to the caller", async () => {
+    const client=executor(),tx=executor(),work=jest.fn(async () => "done")
+    ;(tx.$transaction as jest.Mock).mockImplementation(async fn=>fn(tx))
+    await expect(tx.$transaction(() => inNeutralTransaction(client,tx,work))).resolves.toBe("done")
+    expect(tx.$transaction).toHaveBeenCalledTimes(1)
+    expect(work).toHaveBeenCalledWith(tx)
+    expect(client.$transaction).not.toHaveBeenCalled()
+  })
+
   it("preserves the existing production client transaction by default", async () => {
     const client=executor(),tx=executor(),work=jest.fn(async db=>db)
     ;(client.$transaction as jest.Mock).mockImplementation(async fn=>fn(tx))

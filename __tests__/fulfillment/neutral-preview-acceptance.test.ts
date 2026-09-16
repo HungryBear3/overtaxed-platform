@@ -23,9 +23,9 @@ const ref = "iyaxdrehtxsfkaexgxls",
   marker = "ffb5b95f-878c-4efc-93f9-d5e49dab7763";
 const urls = {
   DIRECT_URL: `postgresql://postgres:p%40ss@db.${ref}.supabase.co:5432/postgres?sslmode=verify-full`,
-  DATABASE_URL: `postgresql://ot_preview_app.${ref}:a@aws-0-us-east-2.pooler.supabase.com:5432/postgres?sslmode=verify-full`,
-  OT_NEUTRAL_DATABASE_URL: `postgresql://ot_preview_neutral_runtime.${ref}:b@aws-0-us-east-2.pooler.supabase.com:5432/postgres?sslmode=verify-full`,
-  OT_NEUTRAL_DELIVERY_DATABASE_URL: `postgresql://ot_preview_neutral_delivery.${ref}:c@aws-1-us-east-2.pooler.supabase.com:5432/postgres?sslmode=verify-full`,
+  DATABASE_URL: `postgresql://ot_preview_app.${ref}:app-pass@aws-0-us-east-2.pooler.supabase.com:5432/postgres?sslmode=verify-full`,
+  OT_NEUTRAL_DATABASE_URL: `postgresql://ot_preview_neutral_runtime.${ref}:runtime-pass@aws-0-us-east-2.pooler.supabase.com:5432/postgres?sslmode=verify-full`,
+  OT_NEUTRAL_DELIVERY_DATABASE_URL: `postgresql://ot_preview_neutral_delivery.${ref}:delivery-pass@aws-1-us-east-2.pooler.supabase.com:5432/postgres?sslmode=verify-full`,
 };
 const env = {
   ...urls,
@@ -134,6 +134,25 @@ describe("Preview acceptance safety contract", () => {
   test("redaction never throws on malformed percent encoding", () => {
     expect(() => redactAcceptanceError(new Error("safe"), ["bad%ZZsecret"])).not.toThrow();
     expect(redactAcceptanceError(new Error("bad%ZZsecret"), ["bad%ZZsecret"])).toBe("[REDACTED]");
+  });
+  test("recursively renders aggregate errors and causes without leaking credentials", () => {
+    const caused = new Error(`rollback failed for ${env.DIRECT_URL}`, {
+      cause: new Error("socket closed for p@ss"),
+    });
+    const output = redactAcceptanceError(
+      new AggregateError([new Error("journey assertion failed"), caused], "acceptance failed"),
+      Object.values(urls),
+    );
+    expect(output).toContain("acceptance failed");
+    expect(output).toContain("nested: journey assertion failed");
+    expect(output).toContain("nested: rollback failed for [REDACTED_DATABASE_URL]");
+    expect(output).toContain("cause: socket closed for [REDACTED]");
+    expect(output).not.toMatch(/p@ss|p%40ss|postgresql:\/\//);
+  });
+  test("does not recurse forever through cyclic error causes", () => {
+    const error = new Error("cyclic failure");
+    Object.defineProperty(error, "cause", { value: error });
+    expect(redactAcceptanceError(error, [])).toBe("cyclic failure");
   });
 });
 

@@ -329,17 +329,41 @@ export function redactAcceptanceError(
   error: unknown,
   secrets: readonly string[],
 ): string {
-  let message = error instanceof Error ? error.message : String(error);
+  const seen = new Set<object>();
+  const messages: string[] = [];
+  const visit = (value: unknown, label?: string): void => {
+    if (value && typeof value === "object") {
+      if (seen.has(value)) return;
+      seen.add(value);
+    }
+    const message = value instanceof Error ? value.message : String(value);
+    messages.push(label ? `${label}: ${message}` : message);
+    if (value instanceof AggregateError)
+      for (const nested of value.errors) visit(nested, "nested");
+    if (value instanceof Error && value.cause !== undefined)
+      visit(value.cause, "cause");
+  };
+  visit(error);
+  let message = messages.join("\n").replace(
+    /postgres(?:ql)?:\/\/[^\s]+/gi,
+    "[REDACTED_DATABASE_URL]",
+  );
   const variants = new Set<string>();
   for (const secret of secrets.filter(Boolean)) {
     variants.add(secret);
     variants.add(encodeURIComponent(secret));
     try {
       const u = new URL(secret);
-      for (const v of [u.username, u.password]) {
-        variants.add(v);
-        variants.add(decodeURIComponent(v));
-        variants.add(encodeURIComponent(decodeURIComponent(v)));
+      for (const [kind, v] of [["username", u.username], ["password", u.password]] as const) {
+        const decoded = decodeURIComponent(v);
+        // Very short login names can occur in ordinary prose. Passwords are
+        // always secrets regardless of length; usernames below four characters
+        // rely on complete-URL redaction to avoid destroying the diagnostic.
+        if (kind === "password" || decoded.length >= 4) {
+          variants.add(v);
+          variants.add(decoded);
+          variants.add(encodeURIComponent(decoded));
+        }
       }
     } catch {
       try { variants.add(decodeURIComponent(secret)); } catch { variants.add(secret); }
@@ -349,10 +373,7 @@ export function redactAcceptanceError(
     .filter(Boolean)
     .sort((a, b) => b.length - a.length))
     message = message.split(value).join("[REDACTED]");
-  return message.replace(
-    /postgres(?:ql)?:\/\/[^\s]+/gi,
-    "[REDACTED_DATABASE_URL]",
-  );
+  return message;
 }
 
 // Keep the public acceptance entrypoint stable while the behavioral journey
