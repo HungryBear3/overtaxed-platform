@@ -111,14 +111,68 @@ describe("CI workflow", () => {
       expect(commandIndex(/\bnpm (run )?test\b/)).toBeGreaterThanOrEqual(0)
     })
 
-    it("installs PostgreSQL 16 and exposes its server executables to the native security suite", () => {
-      const install = commandIndex(/apt-get install[^\n]*\bpostgresql-16\b/)
-      const path = commandIndex(/\/usr\/lib\/postgresql\/16\/bin[^\n]*GITHUB_PATH/)
+    it("installs PostgreSQL 18 from the official signed PGDG repository and exposes it to the native suite", () => {
+      const install = commandIndex(/apt-get install[^\n]*\bpostgresql-18\b/)
       const test = commandIndex(/\bnpm (run )?test\b/)
       expect(install).toBeGreaterThanOrEqual(0)
-      expect(path).toBeGreaterThanOrEqual(0)
       expect(install).toBeLessThan(test)
-      expect(path).toBeLessThan(test)
+
+      const command = commands()[install]
+      const temporaryFile = command.indexOf('key_tmp="$(mktemp)"')
+      const cleanupTrap = command.indexOf(`trap 'rm -f -- "$key_tmp"' EXIT`)
+      const signingKey = command.indexOf("https://www.postgresql.org/media/keys/ACCC4CF8.asc")
+      const downloadToTemporaryFile = command.indexOf('--output "$key_tmp"')
+      const primaryFingerprintExtraction = command.indexOf(
+        `awk -F: '$1 == "pub" { want_fpr=1; next } want_fpr && $1 == "fpr" { print $10; want_fpr=0 }'`,
+      )
+      const exactSingleton = command.indexOf('test "${#primary_fingerprints[@]}" -eq 1')
+      const exactFingerprintCommand =
+        'test "${primary_fingerprints[0]}" = "B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"'
+      const hasOneExactFingerprintAssertion = (value: string) =>
+        value.split(exactFingerprintCommand).length - 1 === 1
+      const fingerprint = command.indexOf(exactFingerprintCommand)
+      const rootKeyInstall = command.indexOf(
+        'sudo install -o root -g root -m 0644 "$key_tmp" /usr/share/keyrings/postgresql-archive-keyring.asc',
+      )
+      const temporaryCleanup = command.lastIndexOf('rm -f -- "$key_tmp"')
+      const repository = command.indexOf("https://apt.postgresql.org/pub/repos/apt")
+      const packageInstall = command.indexOf("apt-get install --yes --no-install-recommends postgresql-18")
+      const versionProof = command.indexOf(
+        `grep --quiet --extended-regexp '^initdb \\(PostgreSQL\\) 18(\\.[0-9]+)+( \\([^[:cntrl:]]+\\))?$'`,
+      )
+      const path = command.indexOf('echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"')
+      expect(temporaryFile).toBeGreaterThanOrEqual(0)
+      expect(cleanupTrap).toBeGreaterThan(temporaryFile)
+      expect(signingKey).toBeGreaterThan(cleanupTrap)
+      expect(downloadToTemporaryFile).toBeGreaterThan(cleanupTrap)
+      expect(primaryFingerprintExtraction).toBeGreaterThan(signingKey)
+      expect(exactSingleton).toBeGreaterThan(primaryFingerprintExtraction)
+      expect(fingerprint).toBeGreaterThan(exactSingleton)
+      expect(hasOneExactFingerprintAssertion(command)).toBe(true)
+      expect(
+        hasOneExactFingerprintAssertion(
+          command.replace(exactFingerprintCommand, exactFingerprintCommand.replace(" = ", " != ")),
+        ),
+      ).toBe(false)
+      expect(hasOneExactFingerprintAssertion(`${command}\n${exactFingerprintCommand}`)).toBe(false)
+      expect(rootKeyInstall).toBeGreaterThan(fingerprint)
+      expect(temporaryCleanup).toBeGreaterThan(rootKeyInstall)
+      expect(repository).toBeGreaterThan(temporaryCleanup)
+      expect(packageInstall).toBeGreaterThan(repository)
+      expect(versionProof).toBeGreaterThan(packageInstall)
+      expect(path).toBeGreaterThan(versionProof)
+      expect(command).not.toMatch(/sudo tee \/usr\/share\/keyrings\/postgresql-archive-keyring/)
+    })
+
+    it("accepts only a complete PostgreSQL 18.x initdb version with an optional PGDG suffix", () => {
+      const version = /^initdb \(PostgreSQL\) 18(\.[0-9]+)+( \([^\x00-\x1f\x7f]+\))?$/
+      expect(version.test("initdb (PostgreSQL) 18.0")).toBe(true)
+      expect(version.test("initdb (PostgreSQL) 18.1 (Ubuntu 18.1-1.pgdg24.04+2)")).toBe(true)
+      expect(version.test("initdb (PostgreSQL) 16.9")).toBe(false)
+      expect(version.test("initdb (PostgreSQL) 180.1")).toBe(false)
+      expect(version.test("initdb (PostgreSQL) 18")).toBe(false)
+      expect(version.test("initdb (PostgreSQL) 18.1 unstructured suffix")).toBe(false)
+      expect(version.test("initdb (PostgreSQL) 18.1 (Ubuntu) trailing")).toBe(false)
     })
 
     it("builds before type-checking, so the gitignored next-env.d.ts exists first", () => {

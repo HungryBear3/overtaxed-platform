@@ -149,6 +149,20 @@ state is equivalent. An arbitrary third rendering still fails closed. The
 post-migration preflight re-proves the portable invariants rather than deriving
 or accepting another host-specific digest.
 
+CI downloads the PostgreSQL PGDG key to an unprivileged temporary file, extracts
+only primary public-key fingerprints, requires the exact singleton fingerprint
+`B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8`, and only then installs the key into
+the root-owned apt keyring and removes the temporary file. It installs
+PostgreSQL 18 from that signed official repository, requires the installed
+`initdb --version` output to match an anchored PostgreSQL-18-only expression.
+That expression requires a complete numeric `18.x` version token and permits
+only an optional parenthesized PGDG packaging suffix after it; another major or
+trailing unstructured text fails closed. CI then places that exact major's
+server executables on `PATH` before running the mandatory native security suite.
+This keeps CI aligned with the immutable reconciliation migration's pinned
+native PostgreSQL 18 rendering; the applied migration is not rewritten for a
+different CI host major.
+
 ### Migration-33 missing-ledger resolution gate
 
 Do not silently insert or update `_prisma_migrations`. The immutable original
