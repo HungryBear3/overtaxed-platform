@@ -5,6 +5,7 @@ import {
   provePreviewAcceptanceIdentity,
   readPreviewAcceptanceConfig,
   redactAcceptanceError,
+  runAcceptanceWithFreshVerifier,
   runTransactionalAcceptance,
 } from "../lib/fulfillment/neutral-preview-acceptance";
 
@@ -13,36 +14,14 @@ async function main() {
   const runId = createPreviewAcceptanceRunId();
   await provePreviewAcceptanceIdentity(urls, markerInstanceId);
   const owner = new Client({ connectionString: urls.direct });
-  await owner.connect();
-  // The journey's evidence names every row a production helper keyed with its
-  // own generated UUID, which the pattern sweep alone could not see.
-  let evidence;
-  let journeyError: unknown;
-  try {
-    evidence = await runTransactionalAcceptance(owner, runId);
-  } catch (error) {
-    journeyError = error;
-    evidence = error && typeof error === "object" && "acceptanceEvidence" in error
-      ? (error as { acceptanceEvidence?: typeof evidence }).acceptanceEvidence
-      : undefined;
-  } finally {
-    await owner.end();
-  }
   const verifier = new Client({ connectionString: urls.direct });
-  await verifier.connect();
-  let absenceError: unknown;
-  try {
-    await proveAcceptanceAbsence(verifier, runId, evidence);
-  } catch (error) {
-    absenceError = error;
-  } finally {
-    await verifier.end();
-  }
-  if (journeyError || absenceError)
-    throw new AggregateError(
-      [journeyError, absenceError].filter(Boolean),
-      "Preview acceptance journey or cleanup proof failed",
-    );
+  await runAcceptanceWithFreshVerifier(
+    owner,
+    verifier,
+    runId,
+    runTransactionalAcceptance,
+    proveAcceptanceAbsence,
+  );
   process.stdout.write(
     "neutral-report Preview synthetic acceptance: PASS (rollback and zero-row proof verified)\n",
   );

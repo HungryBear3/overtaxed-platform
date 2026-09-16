@@ -1,13 +1,18 @@
 /** @jest-environment node */
 import {
   ACCEPTANCE_SCOPES,
+  assertPreviewAuthority,
+  assertPreviewEffectiveAcls,
   assertPreviewMembershipGraph,
+  assertPreviewSetRoleGraph,
   applyAcceptanceFlags,
   assertPreviewAcceptanceRunId,
   createPreviewAcceptanceRunId,
+  expectedPreviewAclRows,
   proveAcceptanceAbsence,
   readPreviewAcceptanceConfig,
   redactAcceptanceError,
+  runAcceptanceWithFreshVerifier,
   runTransactionalAcceptance,
   type AcceptanceRuntime,
 } from "@/lib/fulfillment/neutral-preview-acceptance";
@@ -38,9 +43,103 @@ describe("Preview acceptance safety contract", () => {
     ["ot_neutral_app_reader","ot_preview_app"],
     ["ot_neutral_runtime","ot_preview_neutral_runtime"],
     ["ot_neutral_delivery_runtime","ot_preview_neutral_delivery"],
-  ].map(([role,member]) => ({role,member,grantor:"postgres",admin_option:false,inherit_option:true,set_option:true}));
-  test("accepts only the three exact functional membership edges", () => {
+  ].map(([role,member]) => ({role,member,grantor:"postgres",admin_option:false,inherit_option:true,set_option:true})).concat(
+    ["ot_preview_app", "ot_preview_neutral_runtime", "ot_preview_neutral_delivery"].map(role =>
+      ({role,member:"postgres",grantor:"supabase_admin",admin_option:true,inherit_option:false,set_option:false})),
+  );
+  test("accepts only the exact functional and Supabase-managed membership edges", () => {
     expect(() => assertPreviewMembershipGraph(memberships)).not.toThrow();
+    expect(() => assertPreviewMembershipGraph(memberships.slice(1))).toThrow(/incomplete/);
+    expect(() => assertPreviewMembershipGraph(memberships.slice(0, 3))).not.toThrow();
+    expect(() => assertPreviewMembershipGraph([...memberships.slice(0,3), {
+      role:"ot_neutral_runtime",member:"postgres",grantor:"supabase_admin",admin_option:true,inherit_option:false,set_option:false,
+    }])).not.toThrow();
+  });
+  const safeAuthority = (role: string) => ({
+    role,
+    rolcanlogin: role.startsWith("ot_preview_"),
+    rolinherit: role.startsWith("ot_preview_"),
+    rolsuper: false,
+    rolcreaterole: false,
+    rolcreatedb: false,
+    rolreplication: false,
+    rolbypassrls: false,
+    owns_database: false,
+    owned_schemas: 0,
+    owned_relations: 0,
+    owned_routines: 0,
+    owned_types: 0,
+    owned_other_objects: 0,
+    database_create: false,
+    database_temp: false,
+    direct_database_temp: false,
+    schema_create: false,
+  });
+  const authority = [
+    "ot_preview_app", "ot_preview_neutral_runtime", "ot_preview_neutral_delivery",
+    "ot_neutral_app_reader", "ot_neutral_runtime", "ot_neutral_delivery_runtime",
+  ].map(safeAuthority);
+  test("rejects ownership and ambient authority for logins and reachable roles", () => {
+    expect(() => assertPreviewAuthority(authority)).not.toThrow();
+    const mutations = [
+      ["ot_preview_app", "owns_database", true],
+      ["ot_neutral_app_reader", "owns_database", true],
+      ["ot_neutral_runtime", "owned_schemas", 1],
+      ["ot_neutral_runtime", "owned_relations", 1],
+      ["ot_neutral_delivery_runtime", "owned_routines", 1],
+      ["ot_neutral_delivery_runtime", "owned_types", 1],
+      ["ot_neutral_delivery_runtime", "owned_other_objects", 1],
+      ["ot_neutral_delivery_runtime", "database_create", true],
+      ["ot_neutral_app_reader", "schema_create", true],
+    ] as const;
+    for (const [role, key, value] of mutations)
+      expect(() => assertPreviewAuthority(authority.map(row =>
+        row.role === role ? { ...row, [key]: value } : row,
+      ))).toThrow(/authority or ownership/);
+  });
+  test("allows the PostgreSQL PUBLIC TEMP baseline but not database CREATE", () => {
+    expect(() => assertPreviewAuthority(authority.map(row => ({
+      ...row, database_temp: true,
+    })))).not.toThrow();
+    expect(() => assertPreviewAuthority(authority.map((row, index) => ({
+      ...row, direct_database_temp: index === 0,
+    })))).toThrow(/authority or ownership/);
+  });
+  test("requires the complete exact schema-qualified column ACL inventory", () => {
+    const exact=expectedPreviewAclRows();
+    expect(() => assertPreviewEffectiveAcls(exact)).not.toThrow();
+    expect(() => assertPreviewEffectiveAcls(exact.slice(1))).toThrow(/incomplete/);
+    const target=exact.find(row => !row.table_wide)!;
+    expect(() => assertPreviewEffectiveAcls(exact.map(row => row === target ? {...row,columns:[...row.columns,"extra"]}:row))).toThrow(/effective ACL/);
+    expect(() => assertPreviewEffectiveAcls(exact.map(row => row === target ? {...row,table_wide:true}:row))).toThrow(/effective ACL/);
+    expect(() => assertPreviewEffectiveAcls(exact.map(row => row === target ? {...row,schema:"shadow"}:row))).toThrow(/effective ACL/);
+  });
+  test("rejects unrelated, sequence, sensitive SECURITY DEFINER, and PUBLIC ACLs", () => {
+    const exact=expectedPreviewAclRows();
+    const bad = [
+      { role: "ot_neutral_runtime", schema:"public", kind: "relation", object: "unrelated", privilege: "SELECT",table_wide:true,columns:[], security_definer: false, public_derived: false },
+      { role: "ot_neutral_runtime", schema:"public", kind: "sequence", object: "some_seq", privilege: "USAGE",table_wide:true,columns:[], security_definer: false, public_derived: false },
+      { role: "ot_neutral_runtime", schema:"public", kind: "routine", object: "ot_sensitive()", privilege: "EXECUTE",table_wide:false,columns:[], security_definer: true, public_derived: true },
+      { role: "ot_neutral_runtime", schema:"public", kind: "routine", object: "escalate()", privilege: "EXECUTE",table_wide:false,columns:[], security_definer: true, public_derived: true },
+      { ...exact[0]!, public_derived: true },
+    ] as const;
+    for (const row of bad)
+      expect(() => assertPreviewEffectiveAcls([...exact,row])).toThrow(/effective ACL/);
+  });
+  test("accepts only the exact SET ROLE reachability graph", () => {
+    const exact = [
+      { source: "ot_preview_app", target: "ot_neutral_app_reader" },
+      { source: "ot_preview_neutral_runtime", target: "ot_neutral_runtime" },
+      { source: "ot_preview_neutral_delivery", target: "ot_neutral_delivery_runtime" },
+    ];
+    expect(() => assertPreviewSetRoleGraph(exact)).not.toThrow();
+    expect(() => assertPreviewSetRoleGraph([...exact, {
+      source: "ot_preview_app", target: "ot_commerce_capture_owner",
+    }])).toThrow(/unexpected SET ROLE/);
+    expect(() => assertPreviewSetRoleGraph([...exact, {
+      source: "ot_preview_neutral_runtime", target: "postgres",
+    }])).toThrow(/unexpected SET ROLE/);
+    expect(() => assertPreviewSetRoleGraph(exact.slice(1))).toThrow(/incomplete/);
   });
   test.each([
     {role:"supabase_admin",member:"ot_preview_app",grantor:"postgres",admin_option:false,inherit_option:true,set_option:true},
@@ -116,6 +215,9 @@ describe("Preview acceptance safety contract", () => {
   );
   test.each(["require", "verify-ca", "disable"])("rejects non-verify-full TLS mode %s", (mode) =>
     expect(() => readPreviewAcceptanceConfig({ ...env, DIRECT_URL: env.DIRECT_URL.replace("verify-full", mode) })).toThrow(/TLS/),
+  );
+  test("rejects an absent TLS mode", () =>
+    expect(() => readPreviewAcceptanceConfig({ ...env, DIRECT_URL: env.DIRECT_URL.split("?")[0] })).toThrow(/TLS/),
   );
   test.each([
     "aws-0-us-west-1.pooler.supabase.com",
@@ -712,5 +814,46 @@ describe("Preview acceptance absence proof", () => {
         probes: [{ table: "ot_order", column: "email", values: ["x"] }],
       }),
     ).rejects.toThrow(/never writes/);
+  });
+});
+
+describe("Preview acceptance fresh-verifier orchestration", () => {
+  const client = (connectFailure?: Error) => ({
+    connect: jest.fn(async () => { if (connectFailure) throw connectFailure; }),
+    end: jest.fn(async () => undefined),
+    query: jest.fn(),
+  });
+  test.each(["BEGIN", "journey", "ROLLBACK"])(
+    "attempts a fresh verifier after %s failure",
+    async (phase) => {
+      const runId = createPreviewAcceptanceRunId();
+      const owner = client();
+      const verifier = client();
+      const journey = jest.fn(async () => {
+        const nested = new Error(`${phase} failed`);
+        throw phase === "ROLLBACK"
+          ? new AggregateError([new Error("journey failed"), nested], "journey and rollback failed")
+          : nested;
+      });
+      const absence = jest.fn(async () => undefined);
+      await expect(runAcceptanceWithFreshVerifier(
+        owner as never, verifier as never, runId, journey, absence,
+      )).rejects.toThrow(/journey or cleanup proof failed/);
+      expect(verifier.connect).toHaveBeenCalledTimes(1);
+      expect(absence).toHaveBeenCalledTimes(1);
+    },
+  );
+  test("attempts a fresh verifier when the owner connection fails", async () => {
+    const runId = createPreviewAcceptanceRunId();
+    const owner = client(new Error("owner refused"));
+    const verifier = client();
+    const journey = jest.fn();
+    const absence = jest.fn(async () => undefined);
+    await expect(runAcceptanceWithFreshVerifier(
+      owner as never, verifier as never, runId, journey, absence,
+    )).rejects.toThrow(/journey or cleanup proof failed/);
+    expect(journey).not.toHaveBeenCalled();
+    expect(verifier.connect).toHaveBeenCalledTimes(1);
+    expect(absence).toHaveBeenCalledTimes(1);
   });
 });
