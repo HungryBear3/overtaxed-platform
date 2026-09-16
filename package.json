@@ -27,7 +27,8 @@
     "neutral-report:preview-bootstrap-identities": "tsx scripts/bootstrap-neutral-report-preview-identities.ts",
     "neutral-report:pre-migration-identity-preflight": "tsx scripts/preflight-neutral-report-before-migration.ts",
     "neutral-report:preview-migrate": "tsx scripts/migrate-neutral-report-preview.ts",
-    "neutral-report:migration-preflight": "tsx scripts/preflight-neutral-report-migration.ts"
+    "neutral-report:migration-preflight": "tsx scripts/preflight-neutral-report-migration.ts",
+    "neutral-report:preview-acceptance": "tsx --tsconfig tsconfig.acceptance.json scripts/run-neutral-preview-acceptance.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",
