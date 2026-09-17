@@ -22,19 +22,14 @@ import {
 } from "../lib/fulfillment/neutral-production-identity";
 import { assertNeutralFeatureFlagsOff } from "../lib/fulfillment/neutral-production-flags";
 import { redactProductionDiagnostic } from "../lib/fulfillment/neutral-production-verifier";
-import { withRecoveryDirectory } from "../lib/fulfillment/neutral-recovery-directory";
+import {
+  openPrivateRecoveryArtifact,
+  sealPrivateRecoveryArtifact,
+  withRecoveryDirectory,
+} from "../lib/fulfillment/neutral-recovery-directory";
 
 const secrets = () =>
   Object.values(process.env).filter((value): value is string => Boolean(value));
-
-function fsyncFile(file: string): void {
-  const descriptor = fs.openSync(file, "r");
-  try {
-    fs.fsyncSync(descriptor);
-  } finally {
-    fs.closeSync(descriptor);
-  }
-}
 
 function fsyncDirectory(directory: string): void {
   const descriptor = fs.openSync(directory, "r");
@@ -77,74 +72,82 @@ async function encryptCommand(input: {
 }): Promise<RecoveryArtifact> {
   const gpgHome = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gpg-"));
   fs.chmodSync(gpgHome, 0o700);
-  const producer = spawn(input.command, input.args, {
-    env: input.env,
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: false,
-  });
-  const gpg = spawn(
-    "gpg",
-    [
-      "--batch",
-      "--yes",
-      "--pinentry-mode",
-      "loopback",
-      "--passphrase-fd",
-      "3",
-      "--symmetric",
-      "--cipher-algo",
-      "AES256",
-      "--s2k-mode",
-      "3",
-      "--s2k-digest-algo",
-      "SHA512",
-      "--s2k-count",
-      "65011712",
-      "--compress-algo",
-      "none",
-      "--output",
-      input.output,
-    ],
-    {
-      env: {
-        PATH: process.env.PATH,
-        NODE_ENV: "production",
-        LANG: "C",
-        LC_ALL: "C",
-        GNUPGHOME: gpgHome,
-      },
-      stdio: ["pipe", "ignore", "pipe", "pipe"],
-      shell: false,
-    },
-  );
+  const outputDescriptor = openPrivateRecoveryArtifact(input.output);
+  let producer: ReturnType<typeof spawn> | undefined;
+  let gpg: ReturnType<typeof spawn> | undefined;
+  let complete = false;
   const plaintext = createHash("sha256");
-  let producerError = "";
-  let gpgError = "";
-  producer.stderr.setEncoding("utf8");
-  producer.stderr.on("data", (chunk) => (producerError += chunk));
-  gpg.stderr!.setEncoding("utf8");
-  gpg.stderr!.on("data", (chunk) => (gpgError += chunk));
-  producer.stdout.on("data", (chunk: Buffer) => plaintext.update(chunk));
-  producer.stdout.pipe(gpg.stdin!);
-  (gpg.stdio[3] as NodeJS.WritableStream).end(`${input.passphrase}\n`);
-  let producerCode: number;
-  let gpgCode: number;
   try {
+    producer = spawn(input.command, input.args, {
+      env: input.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+    });
+    gpg = spawn(
+      "gpg",
+      [
+        "--batch",
+        "--yes",
+        "--pinentry-mode",
+        "loopback",
+        "--passphrase-fd",
+        "3",
+        "--symmetric",
+        "--cipher-algo",
+        "AES256",
+        "--s2k-mode",
+        "3",
+        "--s2k-digest-algo",
+        "SHA512",
+        "--s2k-count",
+        "65011712",
+        "--compress-algo",
+        "none",
+      ],
+      {
+        env: {
+          PATH: process.env.PATH,
+          NODE_ENV: "production",
+          LANG: "C",
+          LC_ALL: "C",
+          GNUPGHOME: gpgHome,
+        },
+        // Stream ciphertext into our already-opened, explicitly chmod(0600)
+        // descriptor. This avoids GnuPG/platform umask differences entirely.
+        stdio: ["pipe", outputDescriptor, "pipe", "pipe"],
+        shell: false,
+      },
+    );
+    let producerError = "";
+    let gpgError = "";
+    producer.stderr!.setEncoding("utf8");
+    producer.stderr!.on("data", (chunk) => (producerError += chunk));
+    gpg.stderr!.setEncoding("utf8");
+    gpg.stderr!.on("data", (chunk) => (gpgError += chunk));
+    producer.stdout!.on("data", (chunk: Buffer) => plaintext.update(chunk));
+    producer.stdout!.pipe(gpg.stdin!);
+    (gpg.stdio[3] as NodeJS.WritableStream).end(`${input.passphrase}\n`);
+    let producerCode: number;
+    let gpgCode: number;
     [[producerCode], [gpgCode]] = await Promise.all([
       once(producer, "close") as Promise<[number]>,
       once(gpg, "close") as Promise<[number]>,
     ]);
+    if (producerCode !== 0 || gpgCode !== 0)
+      throw new Error(
+        `${input.command}/gpg failed: ${redactProductionDiagnostic(`${producerError}\n${gpgError}`, secrets())}`,
+      );
+    sealPrivateRecoveryArtifact(outputDescriptor, input.output);
+    complete = true;
   } finally {
+    if (!complete) {
+      producer?.kill();
+      gpg?.kill();
+    }
+    fs.closeSync(outputDescriptor);
     fs.rmSync(gpgHome, { recursive: true, force: true });
+    if (!complete) fs.rmSync(input.output, { force: true });
   }
-  if (producerCode !== 0 || gpgCode !== 0) {
-    fs.rmSync(input.output, { force: true });
-    throw new Error(
-      `${input.command}/gpg failed: ${redactProductionDiagnostic(`${producerError}\n${gpgError}`, secrets())}`,
-    );
-  }
-  fs.chmodSync(input.output, 0o600);
-  fsyncFile(input.output);
   const ciphertext = fs.readFileSync(input.output);
   return {
     file: path.basename(input.output),
@@ -334,11 +337,13 @@ async function main(): Promise<void> {
     };
     receipt.authenticator = authenticateReceipt(receipt, authenticationKey);
     const receiptPath = path.join(directory, "backup-receipt.json");
-    fs.writeFileSync(receiptPath, canonicalJson(receipt), {
-      mode: 0o600,
-      flag: "wx",
-    });
-    fsyncFile(receiptPath);
+    const receiptDescriptor = openPrivateRecoveryArtifact(receiptPath);
+    try {
+      fs.writeFileSync(receiptDescriptor, canonicalJson(receipt));
+      sealPrivateRecoveryArtifact(receiptDescriptor, receiptPath);
+    } finally {
+      fs.closeSync(receiptDescriptor);
+    }
     fsyncDirectory(directory);
     process.stdout.write(
       `neutral-report PRODUCTION recovery backup: PASS backup_id=${receipt.backupId} receipt_sha256=${sha256(fs.readFileSync(receiptPath))} encrypted_artifacts=3 plaintext_at_rest=false\n`,

@@ -254,8 +254,10 @@ The required operator-only variables are
 `OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY` (at least 32 bytes, independently
 generated and held in Keychain), plus
 `OT_NEUTRAL_PRODUCTION_RECOVERY_OUTPUT_DIR`. `DIRECT_URL` and the marker/identity
-variables remain the exact Phase 2 values. The output directory is mode 0700;
-encrypted artifacts and the non-secret receipt are mode 0600. Password hashes
+variables remain the exact Phase 2 values. The output directory is mode 0700.
+Encrypted artifacts and the non-secret receipt are created through held,
+exclusive mode-0600 descriptors while being written, then fsynced and sealed
+read-only at mode 0400 before the command can report success. Password hashes
 are deliberately excluded from `roles.sql.gpg`; existing credentials remain in
 the secret manager and are never copied into a backup artifact.
 

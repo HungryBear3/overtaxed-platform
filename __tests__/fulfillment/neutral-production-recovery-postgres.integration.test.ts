@@ -181,6 +181,7 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
         ],
         { input: bytes, stdio: ["pipe", "ignore", "ignore"] },
       );
+      fs.chmodSync(path.join(directory, encrypted), 0o400);
       const cipher = fs.readFileSync(path.join(directory, encrypted));
       artifacts.push({
         file: encrypted,
@@ -211,6 +212,7 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
       ],
       { input: catalogBytes, stdio: ["pipe", "ignore", "ignore"] },
     );
+    fs.chmodSync(path.join(directory, catalogFile), 0o400);
     const catalogCipher = fs.readFileSync(path.join(directory, catalogFile));
     artifacts.push({
       file: catalogFile,
