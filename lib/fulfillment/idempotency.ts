@@ -34,7 +34,15 @@ export type IdempotencyKeyResult =
 // Deliberately excludes the ":" join delimiter, "=" label separator, and "~"
 // length separator so that no free-text segment can forge a field boundary and
 // alias a different logical contract to the same key.
-const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
+//
+// "/" IS permitted, because the real generator advertises itself as
+// `t2-evidence-packet/1.2.0` (see [[T2_PRODUCER_VERSION]]) and excluding it made
+// every delivery dispatch for a genuinely produced packet fail closed with
+// INVALID_GENERATOR_VERSION — a packet could be generated and bound and then
+// never sent. It is safe to admit: it is not one of the three structural
+// characters, and every free-text segment is additionally length-prefixed by
+// [[present]], so no value can forge a field boundary regardless of its content.
+const SAFE_SEGMENT = /^[A-Za-z0-9._\/-]+$/;
 
 function segmentOk(value: string): boolean {
   return value.length > 0 && value.length <= 128 && SAFE_SEGMENT.test(value);
