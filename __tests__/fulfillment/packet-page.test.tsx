@@ -23,10 +23,11 @@ const PDF = new Uint8Array([0x25, 0x50, 0x44, 0x46])
  * provide the global, and the form only ever reads `ok`, `json()` and `blob()`.
  */
 function fakeResponse(
-  init: { ok: boolean; body?: unknown } = { ok: true },
+  init: { ok: boolean; body?: unknown; contentDisposition?: string } = { ok: true },
 ): Response {
   return {
     ok: init.ok,
+    headers: { get: (name: string) => name.toLowerCase() === "content-disposition" ? init.contentDisposition ?? null : null },
     async json() { return init.body ?? {} },
     async blob() { return new Blob([PDF], { type: "application/pdf" }) },
   } as unknown as Response
@@ -119,6 +120,16 @@ describe("the code is POSTed and never navigated", () => {
     expect(document.querySelector(`a[href="${created[0]}"]`)).toBeNull()
   })
 
+  it("uses the neutral ZIP filename only when the server advertises it", async () => {
+    fetchMock.mockResolvedValue(fakeResponse({
+      ok: true,
+      contentDisposition: 'attachment; filename="overtaxed-records-report.zip"',
+    }))
+    await submit(CODE)
+    await waitFor(() => expect(clicked).toHaveLength(1))
+    expect(clicked[0].download).toBe("overtaxed-records-report.zip")
+  })
+
   it("clears the input once the request resolves", async () => {
     const { input } = await submit(CODE)
     await waitFor(() => expect((input as HTMLInputElement).value).toBe(""))
@@ -132,6 +143,7 @@ describe("refusals are coarse and the input is still cleared", () => {
     ["REVOKED", /no longer active/i],
     ["EXHAUSTED", /maximum number of times/i],
     ["TEMPORARILY_UNAVAILABLE", /try again in a few minutes/i],
+    ["REISSUE_REQUIRED", /replacement code/i],
     ["NOT_AVAILABLE", /not valid/i],
     ["SOMETHING_NEW", /something went wrong/i],
   ])("shows a message for %s", async (code, pattern) => {
