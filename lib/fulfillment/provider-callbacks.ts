@@ -339,6 +339,7 @@ export type CallbackFulfillmentRow = {
   status: OTFulfillmentStatus | string;
   statusRevision: number;
   attemptCount: number;
+  neutralQaApproved?: boolean;
 };
 
 export type CallbackAttemptRow = {
@@ -356,6 +357,8 @@ export type CallbackApplicationInput = {
   /** Highest bound artifact version for this fulfillment, read under the lock. */
   currentArtifactVersion: number | null;
   trustedNow: string;
+  /** Separate default-off authority; required only for neutral reports. */
+  neutralDeliveryEnabled?: boolean;
 };
 
 export type CallbackApplicationPlan = {
@@ -404,7 +407,8 @@ export function decideCallbackApplication(
 
   if (fulfillment.orderId !== order.id)
     return { ok: false, code: "FULFILLMENT_ORDER_MISMATCH" };
-  if (fulfillment.kind !== "T2_APPEAL_EVIDENCE")
+  if (fulfillment.kind !== "T2_APPEAL_EVIDENCE" &&
+      !(fulfillment.kind === "NEUTRAL_RECORDS_REPORT" && input.neutralDeliveryEnabled === true && fulfillment.neutralQaApproved === true))
     return { ok: false, code: "FULFILLMENT_NOT_FOUND" };
   if (attempt.fulfillmentId !== fulfillment.id)
     return { ok: false, code: "ATTEMPT_FULFILLMENT_MISMATCH" };
