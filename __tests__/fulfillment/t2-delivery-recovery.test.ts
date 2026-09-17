@@ -30,6 +30,7 @@ const ACTOR = "usr_admin_1"
 const NOW = "2026-09-12T12:00:00.000Z"
 
 type World = {
+  paymentAuthority?: boolean
   now: string
   order: { id: string; tier: string; status: string } | null
   summary: Record<string, unknown> | null
@@ -71,7 +72,9 @@ function fakeClient(state: World): RecoveryClient {
       if (sql.includes("clock_timestamp()")) return [{ now: state.now }] as T
       if (sql.includes('FROM "ot_order"')) {
         state.locks.push("order")
-        return (state.order ? [state.order] : []) as T
+        expect(sql).toContain('b.session_id = "ot_order"."stripeSessionId"')
+        expect(sql).toContain('r.payment_intent = b.payment_intent')
+        return (state.order && state.paymentAuthority !== false ? [state.order] : []) as T
       }
       if (sql.includes('FROM "ot_fulfillment"')) {
         state.locks.push("fulfillment")
@@ -271,6 +274,7 @@ describe("resolving an unresolved send", () => {
   })
 
   it.each([
+    ["an unbound PAID order", { paymentAuthority: false }, "ORDER_NOT_FOUND"],
     ["an unknown order", { order: null }, "ORDER_NOT_FOUND"],
     ["a non-T2 order", { order: { id: ORDER_ID, tier: "T3", status: "PAID" } }, "ORDER_NOT_T2"],
     ["an unpaid order", { order: { id: ORDER_ID, tier: "T2", status: "REFUNDED" } }, "ORDER_NOT_PAID"],

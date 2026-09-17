@@ -265,6 +265,7 @@ type OrderFixture = {
 }
 
 type World = {
+  paymentAuthority?: boolean
   now: string
   order: OrderFixture | null
   summary: Record<string, unknown> | null
@@ -336,7 +337,10 @@ function fakeClient(state: World): T2DeliveryClient {
       const sql = query.sql
       state.sql.push(sql)
       if (sql.includes("clock_timestamp()")) return [{ now: state.now }] as T
-      if (sql.includes('FROM "ot_order"')) return (state.order ? [state.order] : []) as T
+      if (sql.includes('FROM "ot_order"')) { expect(sql).toContain('b.session_id = "ot_order"."stripeSessionId"')
+        expect(sql).toContain('r.payment_intent = b.payment_intent')
+        return (state.order && state.paymentAuthority !== false ? [state.order] : []) as T
+      }
       if (sql.includes('FROM "ot_fulfillment_artifact"'))
         return (state.artifact ? [state.artifact] : []) as T
       if (sql.includes('FROM "ot_fulfillment"'))
@@ -800,6 +804,12 @@ describe("a lease is proved against the database, never against a caller", () =>
     expect(state.summary?.leaseOwner).toBeNull()
   })
 
+  it("refuses dispatch for an otherwise eligible PAID order without trusted binding", async () => {
+    const state = world({ paymentAuthority: false })
+    await expect(claim(state)).resolves.toBe(false)
+    expect(state.summary?.leaseOwner).toBeNull()
+  })
+
   it("refuses a live lease held by someone else, measured by the DB clock", async () => {
     const state = leasedWorld()
     await expect(
@@ -1022,6 +1032,13 @@ describe("the pre-send gate re-reads authority after the durable attempt", () =>
       ok: false,
       blocker: "LEASE_NOT_HELD",
     })
+  })
+
+  it("denies pre-send when trusted payment authority is absent after persistence", async () => {
+    const state = leasedWorld()
+    const { store, assertion } = await pending(state)
+    state.paymentAuthority = false
+    await expect(store.assertSendable(assertion)).resolves.toEqual({ ok: false, blocker: "ORDER_NOT_FOUND" })
   })
 
   it("denies a send when the summary moved on under us", async () => {

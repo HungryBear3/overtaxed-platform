@@ -1,3 +1,4 @@
+import { trustedPaymentAuthority } from "./payment-authority";
 /**
  * Bounded operator recovery for T2 delivery.
  *
@@ -230,7 +231,7 @@ async function lockedContext(
 > {
   const orders = await tx.$queryRaw<OrderRow[]>(
     Prisma.sql`SELECT "id", "status", "tier" FROM "ot_order"
-               WHERE "id" = ${input.orderId} FOR UPDATE`,
+               WHERE "id" = ${input.orderId} AND ${trustedPaymentAuthority()} FOR UPDATE`,
   );
   const order = orders[0];
   if (!order) return { ok: false, code: "ORDER_NOT_FOUND" };
