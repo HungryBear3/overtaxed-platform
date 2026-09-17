@@ -1,0 +1,856 @@
+/** @jest-environment node */
+
+/**
+ * End-to-end behaviour of acquisition attribution on the checkout route, with
+ * the provider and the database fully mocked. No network, no Stripe, no DB.
+ *
+ * What these prove:
+ *   - unknown, PII-shaped and URL-shaped codes are refused by the SERVER, before
+ *     any provider client is used and before any order row is written;
+ *   - an approved pair from an injected synthetic registry becomes a durable row
+ *     and exact Stripe metadata;
+ *   - a retry carrying different approved codes cannot overwrite the original,
+ *     and the reused open session keeps its original metadata;
+ *   - an original ORGANIC first touch survives a later tagged retry;
+ *   - a persistence failure blocks the provider entirely.
+ *
+ * The mock harness (Stripe, Prisma order model, county data, deadline snapshot,
+ * signed policy) follows __tests__/checkout/session-contract-reuse.test.ts,
+ * extended with an in-memory `ot_order_attribution` behind $executeRaw/$queryRaw.
+ */
+
+import { NextRequest } from "next/server"
+
+import type { AttributionRegistry } from "@/lib/attribution/registry"
+
+type OrderRow = Record<string, any>
+type AttributionStoredRow = {
+  orderId: string
+  state: string
+  campaignCode: string | null
+  creativeCode: string | null
+  registryVersion: string
+  boundAt: Date
+}
+
+const state: {
+  orders: Map<string, OrderRow>
+  stripeSessions: Map<string, Record<string, any>>
+  attribution: Map<string, AttributionStoredRow>
+  attributionInsertFails: boolean
+  stripeCreateFails: boolean
+} = {
+  orders: new Map(),
+  stripeSessions: new Map(),
+  attribution: new Map(),
+  attributionInsertFails: false,
+  stripeCreateFails: false,
+}
+
+let createCount = 0
+let nowMs = Date.now()
+
+function matchesWhere(row: OrderRow, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([key, value]) => {
+    if (value === undefined) return true
+    if (key === "status") {
+      if (typeof value === "string") return row.status === value
+      if (value && typeof value === "object" && "in" in value) {
+        return Array.isArray((value as { in?: unknown[] }).in) && (value as { in: unknown[] }).in.includes(row.status)
+      }
+      return false
+    }
+    if (key === "attempt") return row.attempt === value
+    if (key === "updatedAt") {
+      if (!(value instanceof Date) || !(row.updatedAt instanceof Date)) return false
+      return row.updatedAt.getTime() === value.getTime()
+    }
+    if (key === "eligibilitySnapshot" && value && typeof value === "object" && "equals" in value) {
+      return JSON.stringify(row.eligibilitySnapshot ?? null) === JSON.stringify((value as { equals: unknown }).equals)
+    }
+    const rowValue = row[key]
+    if (value && typeof value === "object" && "not" in value) {
+      const excluded = (value as { not: unknown }).not
+      return excluded === null ? rowValue != null : rowValue !== excluded
+    }
+    if (value === null) return rowValue == null
+    if (rowValue instanceof Date && value instanceof Date) return rowValue.getTime() === value.getTime()
+    return rowValue === value
+  })
+}
+
+jest.mock("stripe", () => {
+  const create = jest.fn(async (params: Record<string, unknown>, options?: { idempotencyKey?: string }) => {
+    if (state.stripeCreateFails) throw new Error("stripe is unavailable in this test")
+    const id = `cs_attr_${++createCount}`
+    const url = `https://checkout.stripe.test/${id}`
+    state.stripeSessions.set(id, {
+      id,
+      url,
+      status: "open",
+      expires_at: Math.floor((nowMs + 60 * 60 * 1000) / 1000),
+      metadata: params.metadata,
+      idempotencyKey: options?.idempotencyKey ?? null,
+    })
+    return { id, url }
+  })
+  const retrievePrice = jest.fn(async (id: string) => ({
+    id,
+    active: true,
+    type: "one_time",
+    unit_amount: 6900,
+    currency: "usd",
+    product: "prod_t2",
+  }))
+  const retrieveSession = jest.fn(async (id: string) => state.stripeSessions.get(id) ?? null)
+  const Stripe = jest.fn().mockImplementation(() => ({
+    checkout: { sessions: { create, retrieve: retrieveSession } },
+    prices: { retrieve: retrievePrice },
+  }))
+  return {
+    __esModule: true,
+    default: Stripe,
+    __create: create,
+    __Stripe: Stripe,
+  }
+})
+
+jest.mock("@/lib/marketing/preview-gate", () => ({
+  hostFromRequest: jest.fn(() => "www.overtaxed-il.com"),
+  isPreviewStubEnabled: jest.fn(() => false),
+  marketingGateReason: jest.fn(() => "test"),
+  previewNoopResponseBody: jest.fn(() => ({ mode: "preview_noop" })),
+}))
+
+jest.mock("@/lib/rate-limit", () => ({
+  rateLimit: jest.fn(() => ({ allowed: true })),
+  getClientIdentifier: jest.fn(() => "client-test"),
+}))
+
+jest.mock("@/lib/cook-county", () => ({
+  searchPropertiesByAddress: jest.fn(async () => ({
+    success: true,
+    data: [{ pin: "09000000000000", property_address: "1 TEST ST", property_city: "ELK GROVE VILLAGE", township_name: "Elk Grove" }],
+  })),
+  getPropertyByPIN: jest.fn(async () => ({
+    success: true,
+    data: { pin: "09000000000000", address: "1 TEST ST", city: "ELK GROVE VILLAGE", zipCode: "60007", township: "Elk Grove" },
+  })),
+  normalizePIN: (value: string) => value.replace(/\D/g, ""),
+}))
+
+const mockSnapshot: {
+  schemaVersion: number
+  synthetic: boolean
+  sources: Record<string, unknown>
+  townships: Record<string, unknown>
+} = { schemaVersion: 1, synthetic: true, sources: {}, townships: {} }
+
+jest.mock("@/data/deadlines/cook-county.json", () => mockSnapshot)
+jest.mock("@/lib/deadlines/commerce-deadline-authority", () => ({
+  projectCommerceDeadline: jest.fn(async ({ township, at }: { township: unknown; at: Date }) => {
+    const { evaluateOfficialDeadlineState, projectDeadline } = jest.requireActual("@/lib/deadlines/official-source-state")
+    return projectDeadline(evaluateOfficialDeadlineState({ snapshot: mockSnapshot, township, stage: "assessor", evaluatedAt: at.toISOString() }), at.toISOString())
+  }),
+}))
+
+const mockPolicy: { version: string | null } = { version: "test-policy-2026-08-19" }
+
+jest.mock("@/lib/checkout/ot-contract", () => {
+  const actual = jest.requireActual("@/lib/checkout/ot-contract")
+  return {
+    ...actual,
+    signedPolicyVersion: () => mockPolicy.version,
+    resolveEligibilityPolicy: () =>
+      mockPolicy.version === null
+        ? { signed: false, version: null, reason: "eligibility_policy_unsigned" }
+        : {
+            signed: true,
+            version: mockPolicy.version,
+            ownerDecisions: ["OD-2", "OD-3"],
+            signedAt: "2026-08-19",
+            evidenceThreshold: { minRelativeAssessmentGap: 0.15, minComparables: 3 },
+          },
+  }
+})
+
+/**
+ * The synthetic approval set. This is TEST-LOCAL injection: it replaces the
+ * `shippedAttributionRegistry` seam only, and the shipped registry in
+ * lib/attribution/registry is untouched and still empty. An assertion at the
+ * bottom of this file proves that.
+ */
+const SYNTHETIC_REGISTRY: AttributionRegistry = {
+  version: "synthetic_test_registry_v1",
+  campaigns: [
+    { campaignCode: "synthetic_campaign_a", creativeCodes: ["synthetic_creative_1"] },
+    { campaignCode: "synthetic_campaign_b", creativeCodes: ["synthetic_creative_2"] },
+  ],
+}
+
+jest.mock("@/lib/attribution/registry", () => {
+  const actual = jest.requireActual("@/lib/attribution/registry")
+  return {
+    ...actual,
+    shippedAttributionRegistry: jest.fn(() => SYNTHETIC_REGISTRY),
+  }
+})
+
+jest.mock("@/lib/db", () => {
+  // In-memory `ot_order_attribution`, honouring exactly the semantics the real
+  // table provides: ON CONFLICT (order_id) DO NOTHING, and a primary key that
+  // makes the readback single-row. It does NOT enforce the CHECK constraints —
+  // the route must not depend on them having been applied.
+  const $executeRaw = jest.fn(async (query: TemplateStringsArray, ...values: unknown[]) => {
+    const sql = query.join("?")
+    if (!/INSERT INTO "ot_order_attribution"/.test(sql)) throw new Error(`unexpected statement: ${sql}`)
+    if (state.attributionInsertFails) throw new Error('relation "ot_order_attribution" does not exist')
+    const [orderId, attributionState, campaignCode, creativeCode, registryVersion] = values as [
+      string,
+      string,
+      string | null,
+      string | null,
+      string,
+    ]
+    if (state.attribution.has(orderId)) return 0
+    state.attribution.set(orderId, {
+      orderId,
+      state: attributionState,
+      campaignCode,
+      creativeCode,
+      registryVersion,
+      boundAt: new Date(nowMs),
+    })
+    return 1
+  })
+  const $queryRaw = jest.fn(async (query: TemplateStringsArray, ...values: unknown[]) => {
+    const sql = query.join("?")
+    if (!/FROM "ot_order_attribution"/.test(sql)) throw new Error(`unexpected statement: ${sql}`)
+    const row = state.attribution.get(String(values[0]))
+    return row ? [{ ...row }] : []
+  })
+
+  /**
+   * The unique index on `contractKey` is what makes the route's creation
+   * indicator race-safe, so the mock has to reproduce the violation rather
+   * than quietly returning the existing row.
+   */
+  async function createOrder(data: OrderRow): Promise<OrderRow> {
+    if (state.orders.has(data.contractKey)) {
+      throw Object.assign(new Error("Unique constraint failed on the fields: (`contractKey`)"), { code: "P2002" })
+    }
+    const row = {
+      id: `ord_${state.orders.size + 1}`,
+      attempt: 0,
+      status: "CHECKOUT_PENDING",
+      ...data,
+      updatedAt: new Date(nowMs),
+      createdAt: new Date(nowMs),
+    }
+    state.orders.set(data.contractKey, row)
+    return { ...row }
+  }
+
+  const oTOrder = {
+    findUnique: jest.fn(async ({ where }: { where: { id?: string; contractKey?: string; checkoutKey?: string } }) => {
+      if (where.id) return Array.from(state.orders.values()).find((row) => row.id === where.id) ?? null
+      if (where.contractKey) return state.orders.get(where.contractKey) ?? null
+      if (where.checkoutKey) {
+        return Array.from(state.orders.values()).find((row) => row.checkoutKey === where.checkoutKey) ?? null
+      }
+      return null
+    }),
+    create: jest.fn(async ({ data }: { data: OrderRow }) => createOrder(data)),
+    upsert: jest.fn(async ({ where, create }: { where: { contractKey: string }; create: OrderRow }) => {
+      const existing = state.orders.get(where.contractKey)
+      return existing ? { ...existing } : createOrder(create)
+    }),
+    updateMany: jest.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      const row = Array.from(state.orders.values()).find((candidate) => matchesWhere(candidate, where))
+      if (!row) return { count: 0 }
+      const { attempt, ...rest } = data
+      Object.assign(row, rest)
+      if (attempt && typeof attempt === "object" && "increment" in attempt) {
+        row.attempt = Number(row.attempt ?? 0) + Number((attempt as { increment: number }).increment)
+      }
+      row.updatedAt = new Date(nowMs)
+      state.orders.set(String(row.contractKey), row)
+      return { count: 1 }
+    }),
+  }
+
+  const prisma: Record<string, unknown> = { $executeRaw, $queryRaw, oTOrder }
+  /**
+   * Interactive transaction with real rollback: the order row and its first
+   * touch either both survive or neither does. Without rollback the atomicity
+   * the route relies on would be untested.
+   */
+  prisma.$transaction = jest.fn(async (work: (tx: unknown) => Promise<unknown>) => {
+    const orderSnapshot = new Map(Array.from(state.orders, ([key, row]) => [key, { ...row }]))
+    const attributionSnapshot = new Map(Array.from(state.attribution, ([key, row]) => [key, { ...row }]))
+    try {
+      return await work(prisma)
+    } catch (error) {
+      state.orders.clear()
+      orderSnapshot.forEach((row, key) => state.orders.set(key, row))
+      state.attribution.clear()
+      attributionSnapshot.forEach((row, key) => state.attribution.set(key, row))
+      throw error
+    }
+  })
+
+  return { prisma }
+})
+
+process.env.STRIPE_SECRET_KEY = "sk_test_attribution"
+process.env.STRIPE_PRICE_T2_DIY_PRO = "price_t2"
+process.env.STRIPE_PRICE_T3_DFY = "price_t3"
+process.env.OT_CHECKOUT_GATE_SECRET = "test-gate-secret-at-least-32-characters"
+// Binding is off by default (see ATTRIBUTION-SCOPE.md); this suite exercises the
+// enabled path, and asserts the disabled path separately by flipping it back.
+process.env.OT_ORDER_ATTRIBUTION_ENABLED = "1"
+
+const stripeModule = jest.requireMock("stripe") as { __create: jest.Mock; __Stripe: jest.Mock }
+const { POST } = require("@/app/api/checkout/session/route") as typeof import("@/app/api/checkout/session/route")
+
+function request(checkoutKey: string, extra: Record<string, unknown> = {}) {
+  return new NextRequest("https://www.overtaxed-il.com/api/checkout/session", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      tier: "T2",
+      email: "Buyer@example.com",
+      name: " Buyer Name ",
+      address: "1 Test St, Elk Grove Village IL 60007",
+      checkoutKey,
+      ...extra,
+    }),
+  })
+}
+
+function countyDay(days: number, from: Date = new Date()): string {
+  const at = new Date(from.getTime() + days * 24 * 60 * 60 * 1000)
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(at)
+}
+
+function armWindow(closesInDays = 20) {
+  const now = new Date()
+  const url = "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines"
+  const source = {
+    authority: "cook_county_assessor",
+    sourceUrl: url,
+    retrievedAt: new Date(now.getTime() - 5000).toISOString(),
+    sourceUpdatedAt: null,
+    contentSha256: "f".repeat(64),
+    httpStatus: 200,
+    finalUrl: url,
+    parseStatus: "ok",
+    parserVersion: "1.0.0",
+  }
+  mockSnapshot.synthetic = false
+  mockSnapshot.sources = { assessor: source, bor: source }
+  mockSnapshot.townships = {
+    "elk-grove": {
+      townshipName: "Elk Grove",
+      stages: {
+        assessor: { noticeDate: null, openDate: countyDay(-10, now), lastFileDate: countyDay(closesInDays, now) },
+      },
+    },
+  }
+}
+
+/** T2 requires the CC-10 acknowledgment; take the challenge and present it back. */
+async function postT2(checkoutKey: string, extra: Record<string, unknown> = {}) {
+  const challenge = await POST(request(checkoutKey, extra))
+  const body = await challenge.json()
+  if (body?.code !== "T2_ACKNOWLEDGMENT_REQUIRED") return challenge
+  return POST(
+    request(checkoutKey, { analysisAcknowledged: true, acknowledgmentToken: body.acknowledgmentToken, ...extra }),
+  )
+}
+
+function lastCreatedMetadata(): Record<string, string> {
+  const calls = stripeModule.__create.mock.calls
+  return calls[calls.length - 1][0].metadata as Record<string, string>
+}
+
+beforeEach(() => {
+  jest.clearAllMocks()
+  state.orders.clear()
+  state.stripeSessions.clear()
+  state.attribution.clear()
+  state.attributionInsertFails = false
+  state.stripeCreateFails = false
+  createCount = 0
+  nowMs = Date.now()
+  process.env.OT_ORDER_ATTRIBUTION_ENABLED = "1"
+  mockPolicy.version = "test-policy-2026-08-19"
+  armWindow()
+})
+
+describe("server refuses unapproved acquisition codes", () => {
+  it.each([
+    ["an unknown campaign code", { attributionCampaignCode: "not_approved_anywhere" }],
+    ["an email address", { attributionCampaignCode: "buyer@example.com" }],
+    ["a landing URL", { attributionCampaignCode: "https://www.overtaxed-il.com/check" }],
+    ["a property PIN", { attributionCampaignCode: "09000000000000" }],
+    ["a street address", { attributionCampaignCode: "1 Test St, Elk Grove Village IL 60007" }],
+    ["a raw utm label", { attributionCampaignCode: "property_manager|email" }],
+    ["a creative without its campaign", { attributionCreativeCode: "synthetic_creative_1" }],
+    [
+      "a creative approved under a different campaign",
+      { attributionCampaignCode: "synthetic_campaign_a", attributionCreativeCode: "synthetic_creative_2" },
+    ],
+  ])("rejects %s with 400 and never reaches the provider or the database", async (_label, extra) => {
+    const response = await POST(request("11111111-1111-4111-8111-111111111111", extra))
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({
+      error: "Check the checkout details and try again.",
+      code: "INVALID_ATTRIBUTION_CODE",
+    })
+    // Refused before a Stripe client is even constructed, and before any order
+    // or attribution row exists.
+    expect(stripeModule.__Stripe).not.toHaveBeenCalled()
+    expect(stripeModule.__create).not.toHaveBeenCalled()
+    expect(state.orders.size).toBe(0)
+    expect(state.attribution.size).toBe(0)
+  })
+
+  it("does not let a rejected code leave any trace of its value", async () => {
+    const response = await POST(
+      request("11111111-1111-4111-8111-111111111111", { attributionCampaignCode: "buyer@example.com" }),
+    )
+    expect(JSON.stringify(await response.json())).not.toContain("buyer@example.com")
+  })
+})
+
+describe("approved codes become a durable row and exact provider metadata", () => {
+  it("binds the approved pair to the canonical order and stamps it from the readback", async () => {
+    const response = await postT2("11111111-1111-4111-8111-111111111111", {
+      attributionCampaignCode: "synthetic_campaign_a",
+      attributionCreativeCode: "synthetic_creative_1",
+    })
+    expect(response.status).toBe(200)
+
+    const order = Array.from(state.orders.values())[0]
+    expect(state.attribution.get(order.id)).toMatchObject({
+      orderId: order.id,
+      campaignCode: "synthetic_campaign_a",
+      creativeCode: "synthetic_creative_1",
+      registryVersion: "synthetic_test_registry_v1",
+    })
+
+    const metadata = lastCreatedMetadata()
+    expect(metadata).toMatchObject({
+      orderId: order.id,
+      attributionStatus: "campaign",
+      attributionCampaign: "synthetic_campaign_a",
+      attributionCreative: "synthetic_creative_1",
+    })
+    // Exactly the code references — no raw label, referrer, URL or PII.
+    expect(Object.keys(metadata).filter((key) => key.startsWith("attribution"))).toEqual([
+      "attributionStatus",
+      "attributionCampaign",
+      "attributionCreative",
+    ])
+    const serialized = JSON.stringify(metadata)
+    expect(serialized).not.toContain("buyer@example.com")
+    expect(serialized).not.toContain("1 Test St")
+    expect(serialized).not.toContain("utm_")
+  })
+
+  it("does not alter the acknowledgment, window or price metadata already stamped", async () => {
+    await postT2("11111111-1111-4111-8111-111111111111", { attributionCampaignCode: "synthetic_campaign_b" })
+    const metadata = lastCreatedMetadata()
+    expect(metadata.tier).toBe("T2")
+    expect(metadata.windowStatus).toBe("open")
+    expect(typeof metadata.windowRetrievedAt).toBe("string")
+  })
+
+  it("adds no attribution key at all when the binding gate is off", async () => {
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    const response = await postT2("11111111-1111-4111-8111-111111111111", {
+      attributionCampaignCode: "synthetic_campaign_a",
+    })
+
+    expect(response.status).toBe(200)
+    expect(state.attribution.size).toBe(0)
+    expect(Object.keys(lastCreatedMetadata()).some((key) => key.startsWith("attribution"))).toBe(false)
+  })
+})
+
+describe("retries cannot overwrite or upgrade the original first touch", () => {
+  it("keeps the original campaign when a retry arrives with different approved codes", async () => {
+    const first = await postT2("11111111-1111-4111-8111-111111111111", {
+      attributionCampaignCode: "synthetic_campaign_a",
+      attributionCreativeCode: "synthetic_creative_1",
+    })
+    expect(first.status).toBe(200)
+    const originalUrl = (await first.json()).url
+    const order = Array.from(state.orders.values())[0]
+
+    // Same OT contract, new browser nonce, different tags.
+    const retry = await postT2("22222222-2222-4222-8222-222222222222", {
+      attributionCampaignCode: "synthetic_campaign_b",
+      attributionCreativeCode: "synthetic_creative_2",
+    })
+    expect(retry.status).toBe(200)
+
+    expect(state.attribution.get(order.id)).toMatchObject({
+      campaignCode: "synthetic_campaign_a",
+      creativeCode: "synthetic_creative_1",
+    })
+    // The reused open session is returned unchanged — it cannot receive a
+    // contradictory new attribution, because no session is created or mutated.
+    expect(await retry.json()).toEqual({ url: originalUrl })
+    expect(stripeModule.__create).toHaveBeenCalledTimes(1)
+    expect(state.stripeSessions.get(`cs_attr_1`)?.metadata).toMatchObject({
+      attributionCampaign: "synthetic_campaign_a",
+    })
+  })
+
+  /**
+   * The organic case is the one that needs an explicit row. If organic were the
+   * absence of a row, this retry would successfully bind `synthetic_campaign_a`.
+   */
+  it("preserves an ORIGINAL organic first touch against a later tagged retry", async () => {
+    const first = await postT2("11111111-1111-4111-8111-111111111111")
+    expect(first.status).toBe(200)
+    const order = Array.from(state.orders.values())[0]
+    expect(state.attribution.get(order.id)).toMatchObject({ campaignCode: null, creativeCode: null })
+    expect(lastCreatedMetadata().attributionStatus).toBe("organic")
+
+    const retry = await postT2("22222222-2222-4222-8222-222222222222", {
+      attributionCampaignCode: "synthetic_campaign_a",
+      attributionCreativeCode: "synthetic_creative_1",
+    })
+    expect(retry.status).toBe(200)
+
+    expect(state.attribution.get(order.id)).toMatchObject({ campaignCode: null, creativeCode: null })
+    expect(state.attribution.size).toBe(1)
+  })
+
+  it("stamps the original attribution, not the retry's, when a new session is genuinely created", async () => {
+    const first = await postT2("11111111-1111-4111-8111-111111111111", {
+      attributionCampaignCode: "synthetic_campaign_a",
+      attributionCreativeCode: "synthetic_creative_1",
+    })
+    expect(first.status).toBe(200)
+
+    // Force a real second provider creation: expire the bound session.
+    const order = Array.from(state.orders.values())[0]
+    state.stripeSessions.set(String(order.stripeSessionId), {
+      id: order.stripeSessionId,
+      url: "https://checkout.stripe.test/expired",
+      status: "expired",
+      expires_at: Math.floor((nowMs - 60_000) / 1000),
+    })
+
+    const retry = await postT2("33333333-3333-4333-8333-333333333333", {
+      attributionCampaignCode: "synthetic_campaign_b",
+      attributionCreativeCode: "synthetic_creative_2",
+    })
+    expect(retry.status).toBe(200)
+    expect(stripeModule.__create).toHaveBeenCalledTimes(2)
+
+    // The freshly created session carries the ORIGINAL attribution.
+    expect(lastCreatedMetadata()).toMatchObject({
+      attributionStatus: "campaign",
+      attributionCampaign: "synthetic_campaign_a",
+      attributionCreative: "synthetic_creative_1",
+    })
+  })
+})
+
+describe("persistence failure fails closed before the provider", () => {
+  it("returns 503 and creates no Stripe Checkout Session when the binding write fails", async () => {
+    state.attributionInsertFails = true
+
+    const response = await postT2("11111111-1111-4111-8111-111111111111", {
+      attributionCampaignCode: "synthetic_campaign_a",
+    })
+
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({
+      error: "Checkout is temporarily unavailable. Please try again.",
+      code: "ATTRIBUTION_BINDING_UNAVAILABLE",
+    })
+    expect(stripeModule.__create).not.toHaveBeenCalled()
+    expect(state.attribution.size).toBe(0)
+  })
+
+  /**
+   * Creation and binding share one transaction, so a binding failure takes the
+   * order row down with it. That matters beyond tidiness: a half-created order
+   * would be PRE-EXISTING on the next attempt, and the retry would then be
+   * forced to bind `legacy_unattributed` — a failed write would have
+   * permanently destroyed a real campaign attribution.
+   */
+  it("rolls the order creation back with the failed binding, so the retry is still a FRESH first touch", async () => {
+    state.attributionInsertFails = true
+    const blocked = await postT2("11111111-1111-4111-8111-111111111111", {
+      attributionCampaignCode: "synthetic_campaign_a",
+    })
+    expect(blocked.status).toBe(503)
+    expect(state.orders.size).toBe(0)
+    expect(state.attribution.size).toBe(0)
+
+    state.attributionInsertFails = false
+    const recovered = await postT2("22222222-2222-4222-8222-222222222222", {
+      attributionCampaignCode: "synthetic_campaign_a",
+    })
+    expect(recovered.status).toBe(200)
+    expect(stripeModule.__create).toHaveBeenCalledTimes(1)
+
+    const order = Array.from(state.orders.values())[0]
+    expect(state.attribution.get(order.id)).toMatchObject({
+      state: "campaign",
+      campaignCode: "synthetic_campaign_a",
+    })
+  })
+
+  it("logs a fixed classification and never the driver error or the submitted codes", async () => {
+    const logged: unknown[][] = []
+    const spy = jest.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      logged.push(args)
+    })
+    state.attributionInsertFails = true
+
+    await postT2("11111111-1111-4111-8111-111111111111", { attributionCampaignCode: "synthetic_campaign_a" })
+
+    spy.mockRestore()
+    const serialized = JSON.stringify(logged)
+    expect(serialized).toContain("reason=insert_failed")
+    // No driver text, no bound parameters, no submitted code, no buyer data.
+    expect(serialized).not.toContain("relation \"ot_order_attribution\" does not exist")
+    expect(serialized).not.toContain("synthetic_campaign_a")
+    expect(serialized).not.toContain("INSERT INTO")
+    expect(serialized).not.toContain("Buyer@example.com")
+    expect(serialized).not.toContain("1 Test St")
+    // A single Error object logged raw would serialize to `{}` and hide this,
+    // so assert the shape positively too.
+    expect(logged.every((args) => args.every((arg) => typeof arg === "string"))).toBe(true)
+  })
+
+  it("also fails closed for organic traffic — the gate is not campaign-only", async () => {
+    state.attributionInsertFails = true
+    const response = await postT2("11111111-1111-4111-8111-111111111111")
+    expect(response.status).toBe(503)
+    expect(stripeModule.__create).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * The failure this suite exists to prevent: an order whose real first touch was
+ * never observed being stamped with a LATER request's campaign.
+ *
+ * Every order here is created while the gate is OFF, which is the honest
+ * simulation of "already in the database when attribution was switched on" —
+ * a pre-feature order and a feature-off order are indistinguishable from the
+ * route's side, and both must land on `legacy_unattributed`.
+ */
+describe("pre-existing orders are never falsely attributed", () => {
+  it("binds legacy_unattributed to a LEGACY ORDER HOLDING AN OPEN SESSION, and leaves that session alone", async () => {
+    // Created before attribution existed: an order and an open Stripe session,
+    // and no attribution row anywhere.
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    const first = await postT2("11111111-1111-4111-8111-111111111111", {
+      attributionCampaignCode: "synthetic_campaign_a",
+    })
+    expect(first.status).toBe(200)
+    const originalUrl = (await first.json()).url
+    const order = Array.from(state.orders.values())[0]
+    expect(state.attribution.size).toBe(0)
+
+    // The gate is switched on, and a tagged retry arrives for the same order.
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "1"
+    const retry = await postT2("22222222-2222-4222-8222-222222222222", {
+      attributionCampaignCode: "synthetic_campaign_b",
+      attributionCreativeCode: "synthetic_creative_2",
+    })
+    expect(retry.status).toBe(200)
+
+    // The retry's campaign is NOT stamped onto the order.
+    expect(state.attribution.get(order.id)).toMatchObject({
+      state: "legacy_unattributed",
+      campaignCode: null,
+      creativeCode: null,
+    })
+    // The already-open session is reused untouched, and Stripe still knows
+    // nothing about any campaign — which is exactly what the row now says.
+    expect(await retry.json()).toEqual({ url: originalUrl })
+    expect(stripeModule.__create).toHaveBeenCalledTimes(1)
+    const sessionMetadata = state.stripeSessions.get("cs_attr_1")?.metadata as Record<string, string>
+    expect(Object.keys(sessionMetadata).some((key) => key.startsWith("attribution"))).toBe(false)
+  })
+
+  it("binds legacy_unattributed to a LEGACY PENDING ORDER that never got a session", async () => {
+    // A feature-off order whose provider call failed: the row exists, no
+    // session was ever created, and `stripeSessionId` is null — the state a
+    // null-session heuristic would misread as "brand new".
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    state.stripeCreateFails = true
+    const blocked = await postT2("11111111-1111-4111-8111-111111111111", {
+      attributionCampaignCode: "synthetic_campaign_a",
+    })
+    expect(blocked.status).toBe(502)
+    const order = Array.from(state.orders.values())[0]
+    expect(order.stripeSessionId ?? null).toBeNull()
+    expect(state.attribution.size).toBe(0)
+
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "1"
+    state.stripeCreateFails = false
+    const retry = await postT2("22222222-2222-4222-8222-222222222222", {
+      attributionCampaignCode: "synthetic_campaign_b",
+    })
+    expect(retry.status).toBe(200)
+
+    expect(state.attribution.get(order.id)).toMatchObject({
+      state: "legacy_unattributed",
+      campaignCode: null,
+    })
+    // A session IS created here, and it carries the honest marker rather than
+    // the retry's campaign or a fabricated organic.
+    const metadata = lastCreatedMetadata()
+    expect(metadata.attributionStatus).toBe("legacy_unattributed")
+    expect(Object.keys(metadata).filter((key) => key.startsWith("attribution"))).toEqual(["attributionStatus"])
+  })
+
+  it("does not let an EXPIRED-SESSION retry make a legacy order look fresh", async () => {
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    const first = await postT2("11111111-1111-4111-8111-111111111111")
+    expect(first.status).toBe(200)
+    const order = Array.from(state.orders.values())[0]
+
+    // Expiring the session resets `stripeSessionId` to null and bumps
+    // `attempt` — every property a "was this just created?" heuristic could
+    // look at now reads like a fresh order.
+    state.stripeSessions.set(String(order.stripeSessionId), {
+      id: order.stripeSessionId,
+      url: "https://checkout.stripe.test/expired",
+      status: "expired",
+      expires_at: Math.floor((nowMs - 60_000) / 1000),
+    })
+
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "1"
+    const retry = await postT2("22222222-2222-4222-8222-222222222222", {
+      attributionCampaignCode: "synthetic_campaign_a",
+      attributionCreativeCode: "synthetic_creative_1",
+    })
+    expect(retry.status).toBe(200)
+    expect(stripeModule.__create).toHaveBeenCalledTimes(2)
+
+    expect(state.attribution.get(order.id)).toMatchObject({ state: "legacy_unattributed", campaignCode: null })
+    expect(lastCreatedMetadata().attributionStatus).toBe("legacy_unattributed")
+  })
+
+  it("never promotes the legacy marker, however many tagged retries arrive", async () => {
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    await postT2("11111111-1111-4111-8111-111111111111")
+    const order = Array.from(state.orders.values())[0]
+
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "1"
+    await postT2("22222222-2222-4222-8222-222222222222", { attributionCampaignCode: "synthetic_campaign_a" })
+    await postT2("33333333-3333-4333-8333-333333333333", { attributionCampaignCode: "synthetic_campaign_b" })
+
+    expect(state.attribution.get(order.id)).toMatchObject({ state: "legacy_unattributed", campaignCode: null })
+    expect(state.attribution.size).toBe(1)
+  })
+
+  /**
+   * The legacy marker must not be mistaken for a measurement. `organic` is a
+   * positive claim about an untagged first touch we actually saw; legacy says
+   * we never saw one, and the two must stay tellable apart end to end.
+   */
+  it("keeps legacy distinct from organic even though both store no codes", async () => {
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    await postT2("11111111-1111-4111-8111-111111111111")
+    const legacyOrder = Array.from(state.orders.values())[0]
+
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "1"
+    await postT2("22222222-2222-4222-8222-222222222222")
+
+    // A genuinely new, genuinely untagged order, created with the gate on.
+    const freshOrganic = await postT2("44444444-4444-4444-8444-444444444444", {
+      email: "other@example.com",
+      name: "Other Buyer",
+    })
+    expect(freshOrganic.status).toBe(200)
+    const organicOrder = Array.from(state.orders.values()).find((row) => row.id !== legacyOrder.id)!
+
+    expect(state.attribution.get(legacyOrder.id)?.campaignCode).toBeNull()
+    expect(state.attribution.get(organicOrder.id)?.campaignCode).toBeNull()
+    expect(state.attribution.get(legacyOrder.id)?.state).toBe("legacy_unattributed")
+    expect(state.attribution.get(organicOrder.id)?.state).toBe("organic")
+    expect(lastCreatedMetadata().attributionStatus).toBe("organic")
+  })
+})
+
+/**
+ * "Off" has to mean off at the wire, not just "no metadata key". If the route
+ * read the table while the gate was off, turning the gate off would not be a
+ * safe response to the migration not having been applied.
+ */
+describe("the gate off issues no statement against the attribution table", () => {
+  it("neither reads nor writes `ot_order_attribution` across a whole successful checkout", async () => {
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    const dbModule = jest.requireMock("@/lib/db") as { prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock } }
+
+    const response = await postT2("11111111-1111-4111-8111-111111111111", {
+      attributionCampaignCode: "synthetic_campaign_a",
+    })
+
+    expect(response.status).toBe(200)
+    expect(dbModule.prisma.$executeRaw).not.toHaveBeenCalled()
+    expect(dbModule.prisma.$queryRaw).not.toHaveBeenCalled()
+    expect(state.attribution.size).toBe(0)
+  })
+
+  it("still refuses an unapproved code while off — the gate is persistence, not the privacy boundary", async () => {
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    const dbModule = jest.requireMock("@/lib/db") as { prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock } }
+
+    const response = await POST(
+      request("11111111-1111-4111-8111-111111111111", { attributionCampaignCode: "not_approved_anywhere" }),
+    )
+
+    expect(response.status).toBe(400)
+    expect(dbModule.prisma.$executeRaw).not.toHaveBeenCalled()
+    expect(dbModule.prisma.$queryRaw).not.toHaveBeenCalled()
+  })
+
+  it("does not re-bind, re-read or downgrade an existing row when the gate is turned back off", async () => {
+    const first = await postT2("11111111-1111-4111-8111-111111111111", {
+      attributionCampaignCode: "synthetic_campaign_a",
+    })
+    expect(first.status).toBe(200)
+    const order = Array.from(state.orders.values())[0]
+    const bound = { ...state.attribution.get(order.id)! }
+
+    process.env.OT_ORDER_ATTRIBUTION_ENABLED = "0"
+    const dbModule = jest.requireMock("@/lib/db") as { prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock } }
+    dbModule.prisma.$executeRaw.mockClear()
+    dbModule.prisma.$queryRaw.mockClear()
+
+    const retry = await postT2("22222222-2222-4222-8222-222222222222", {
+      attributionCampaignCode: "synthetic_campaign_b",
+    })
+    expect(retry.status).toBe(200)
+    expect(dbModule.prisma.$executeRaw).not.toHaveBeenCalled()
+    expect(dbModule.prisma.$queryRaw).not.toHaveBeenCalled()
+    expect(state.attribution.get(order.id)).toEqual(bound)
+  })
+})
+
+describe("the shipped registry is untouched by this suite", () => {
+  it("still approves nothing", () => {
+    const actual = jest.requireActual("@/lib/attribution/registry") as typeof import("@/lib/attribution/registry")
+    expect(actual.shippedAttributionRegistry().campaigns).toEqual([])
+  })
+})
