@@ -28,6 +28,7 @@
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { neutralDeliveryEnabled } from "@/lib/fulfillment/flag";
 import {
   decideCallbackApplication,
   MAX_CALLBACK_REPLAYS,
@@ -120,8 +121,10 @@ const TRUSTED_CLOCK_SQL = Prisma.sql`
  * The key is an arbitrary fixed constant pair, namespaced by the first element
  * so another advisory-lock user in this database cannot collide with it.
  */
+// Prisma cannot deserialize PostgreSQL void. Cast only the returned value;
+// the transaction-scoped lock itself is still acquired and held until commit.
 const SPOOL_CAP_LOCK_SQL = Prisma.sql`
-  SELECT pg_advisory_xact_lock(19260912, 1) AS "locked"
+  SELECT pg_advisory_xact_lock(19260912, 1)::text AS "locked"
 `;
 
 export type ProviderCallbackTransaction = {
@@ -243,13 +246,41 @@ export function createPrismaProviderCallbackStore(
     const clock = await tx.$queryRaw<Array<{ now: unknown }>>(TRUSTED_CLOCK_SQL);
     const trustedNow = toInstant(clock[0]?.now);
 
+    let callbackFulfillment = summaries[0] ?? null;
+    if (callbackFulfillment?.kind === "NEUTRAL_RECORDS_REPORT") {
+      if (!neutralDeliveryEnabled()) {
+        callbackFulfillment = {...callbackFulfillment, neutralQaApproved: false};
+      } else {
+      const qa = await tx.$queryRaw<Array<{ approved: boolean }>>(Prisma.sql`
+        SELECT EXISTS (
+          SELECT 1 FROM "ot_neutral_qa_review" q
+          JOIN "ot_neutral_report_reservation" r ON r."id"=q."reservation_id"
+          JOIN LATERAL (SELECT * FROM "ot_fulfillment_artifact" z WHERE z."fulfillment_id"=q."fulfillment_id" ORDER BY z."version" DESC LIMIT 1) z ON TRUE
+          WHERE q."fulfillment_id"=${callbackFulfillment.id} AND q."order_id"=${callbackFulfillment.orderId}
+            AND q."status"='APPROVED' AND r."status"='PROMOTED' AND r."superseded_by_sha256" IS NULL
+            AND q."customer_artifact_sha256"=z."artifact_sha256"
+            AND q."artifact_sha256"=r."bundle_sha256"
+            AND q."property_binding_fingerprint"=z."property_binding_fingerprint"
+            AND q."policy_version"=z."template_version"
+            AND EXISTS (
+              SELECT 1 FROM "ot_order" o
+              JOIN "ot_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId"
+              WHERE o."id"=q."order_id" AND o."status"='PAID' AND o."tier"='T2'
+                AND NOT EXISTS (SELECT 1 FROM "ot_settlement_reversal" x WHERE x."payment_intent"=b."payment_intent")
+            )
+        ) AS "approved"
+      `);
+      callbackFulfillment = {...callbackFulfillment,neutralQaApproved:qa[0]?.approved===true};
+      }
+    }
     const decision = decideCallbackApplication({
       event,
       order: orders[0] ?? null,
-      fulfillment: summaries[0] ?? null,
+      fulfillment: callbackFulfillment,
       attempt: attempts[0] ?? null,
       currentArtifactVersion: artifacts[0]?.version ?? null,
       trustedNow,
+      neutralDeliveryEnabled: neutralDeliveryEnabled(),
     });
     if (!decision.ok) {
       await markRefused(tx, callbackId, decision.code, trustedNow, {
