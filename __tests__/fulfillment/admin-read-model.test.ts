@@ -522,14 +522,23 @@ describe("display-only action eligibility", () => {
     }
   })
 
-  it("retry would be eligible from DELAYED and ineligible from a terminal bounce", () => {
+  // A provider delay means the provider still HOLDS the message, so the console
+  // must not offer a retry that would mail a second, differently-keyed code. The
+  // reason shown says which of the two it is, rather than a generic refusal.
+  it("retry is ineligible from DELAYED, and says the provider is still trying", () => {
     const delayed = view({ fulfillment: fulfillment({ status: "DELAYED", attemptCount: 1, attempts: [attempt(1)], artifacts: [artifact(1)], events: [event(1, "ACCEPTED"), event(2, "DELAYED")] }) })
     const retryDelayed = delayed.actions.find((a) => a.action === "RETRY_DELIVERY")!
-    expect(retryDelayed.wouldBeEligible).toBe(true)
+    expect(retryDelayed.wouldBeEligible).toBe(false)
+    expect(retryDelayed.reason).toContain("PROVIDER_DELAY_IN_FLIGHT")
 
     const bounced = view({ fulfillment: fulfillment({ status: "BOUNCED", attemptCount: 1, attempts: [attempt(1)], artifacts: [artifact(1)], events: [event(1, "BOUNCED")] }) })
     const retryBounced = bounced.actions.find((a) => a.action === "RETRY_DELIVERY")!
     expect(retryBounced.wouldBeEligible).toBe(false)
+  })
+
+  it("retry stays eligible from ARTIFACT_READY, the one state that has sent nothing", () => {
+    const ready = view({ fulfillment: fulfillment({ status: "ARTIFACT_READY", attemptCount: 0, artifacts: [artifact(1)] }) })
+    expect(ready.actions.find((a) => a.action === "RETRY_DELIVERY")?.wouldBeEligible).toBe(true)
   })
 
   it("uses derived truth and the real attempt count for action eligibility", () => {
