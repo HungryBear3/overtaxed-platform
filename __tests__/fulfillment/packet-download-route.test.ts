@@ -3,13 +3,15 @@
 const authorizeMock = jest.fn()
 const reassertMock = jest.fn()
 const readBytesMock = jest.fn()
+const revokeMock=jest.fn()
 
 jest.mock("@/lib/fulfillment-runtime/packet-download-store", () => ({
+  authoritativeCapabilityKind:jest.fn(async()=>"T2_APPEAL_EVIDENCE"),
   prismaPacketDownloadStore: {
     authorize: (...args: unknown[]) => authorizeMock(...args),
     reassert: (...args: unknown[]) => reassertMock(...args),
     issue: jest.fn(),
-    revoke: jest.fn(),
+    revoke: (...args:unknown[])=>revokeMock(...args),
   },
 }))
 jest.mock("@/lib/fulfillment-runtime/t2-artifact-storage", () => ({
@@ -64,6 +66,7 @@ beforeEach(() => {
   authorizeMock.mockResolvedValue({ ok: true, grant })
   reassertMock.mockResolvedValue({ ok: true, grant })
   readBytesMock.mockResolvedValue(bytes)
+  revokeMock.mockResolvedValue({ok:true,revoked:1})
 })
 afterAll(() => {
   if (PRIOR === undefined) delete process.env.OT_T2_PACKET_DOWNLOAD_ENABLED
@@ -174,7 +177,7 @@ describe("the read path orders authorize -> storage -> re-read authority", () =>
     readBytesMock.mockRejectedValue(new Error("private provider detail"))
     await expect(
       readT2PacketForCapability({ capabilityValue: VALUE }),
-    ).resolves.toEqual({ ok: false, blocker: "STORAGE_READ_FAILED" })
+    ).resolves.toEqual({ ok: false, blocker: "CAPABILITY_SPENT_REISSUE_REQUIRED" })
     expect(reassertMock).not.toHaveBeenCalled()
   })
 
@@ -185,7 +188,7 @@ describe("the read path orders authorize -> storage -> re-read authority", () =>
     readBytesMock.mockResolvedValue(stored)
     await expect(
       readT2PacketForCapability({ capabilityValue: VALUE }),
-    ).resolves.toEqual({ ok: false, blocker: "STORED_BYTES_MISMATCH" })
+    ).resolves.toEqual({ ok: false, blocker: "CAPABILITY_SPENT_REISSUE_REQUIRED" })
     expect(reassertMock).not.toHaveBeenCalled()
   })
 
@@ -276,6 +279,12 @@ describe("the route boundary", () => {
     const response = await POST(request())
     expect(response.status).toBe(status)
     await expect(response.json()).resolves.toEqual({ ok: false, code })
+  })
+
+  it("makes a spent storage failure explicitly non-retryable",async()=>{
+    authorizeMock.mockResolvedValue({ok:false,blocker:"CAPABILITY_SPENT_REISSUE_REQUIRED"})
+    const response=await POST(request());expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toEqual({ok:false,code:"REISSUE_REQUIRED",message:"This download attempt could not be completed. Contact support for a replacement code."})
   })
 
   it.each([
@@ -508,9 +517,7 @@ describe("the read path against a real injected store", () => {
       issue: async () => {
         throw new Error("issuance is not exercised on the read path")
       },
-      revoke: async () => {
-        throw new Error("revocation is not exercised on the read path")
-      },
+      revoke: async () => {if(!w.capability)return {ok:true,revoked:0};w.capability.revokedAt=w.now;return {ok:true,revoked:1}},
       async authorize({ capabilityHash }) {
         if (!t2PacketDownloadEnabled(env)) return { ok: false, blocker: "FLAG_DISABLED" }
         const decision = decidePacketDownload({
@@ -628,7 +635,7 @@ describe("the read path against a real injected store", () => {
     const w = world()
     await expect(run(w, live(), async () => stored)).resolves.toEqual({
       ok: false,
-      blocker: "STORED_BYTES_MISMATCH",
+      blocker: "CAPABILITY_SPENT_REISSUE_REQUIRED",
     })
     // The use was still spent: a claimed use is not refunded by a bad object.
     expect(w.capability?.useCount).toBe(1)
