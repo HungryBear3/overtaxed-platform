@@ -60,6 +60,12 @@ const mockSnapshot: {
 } = { schemaVersion: 1, synthetic: true, sources: {}, townships: {} }
 
 jest.mock("@/data/deadlines/cook-county.json", () => mockSnapshot)
+jest.mock("@/lib/deadlines/commerce-deadline-authority", () => ({
+  projectCommerceDeadline: jest.fn(async ({ township, at }: { township: unknown; at: Date }) => {
+    const { evaluateOfficialDeadlineState, projectDeadline } = jest.requireActual("@/lib/deadlines/official-source-state")
+    return projectDeadline(evaluateOfficialDeadlineState({ snapshot: mockSnapshot, township, stage: "assessor", evaluatedAt: at.toISOString() }), at.toISOString())
+  }),
+}))
 
 /**
  * The signed eligibility policy in force.

@@ -12,13 +12,30 @@
  * transitions only to PAID_RECOVERY_REQUIRED so an operator can verify the
  * durable order, price/product, filing window, acknowledgment, and notice
  * evidence through the normal recovery path.
+ *
+ * Apply also refuses any order on SETTLEMENT_HOLD, and confirms the transition
+ * by re-reading the row rather than trusting the affected-row count. Success is
+ * only ever reported from what the database actually persisted.
  */
 import Stripe from "stripe"
 import { prisma } from "../lib/db"
 import { otOrderFromPaidSession } from "../lib/billing/ot-order-from-session"
 
 const RECOVERY_REASON = "MANUAL_RECOVERY_REQUIRES_CONTRACT_REVIEW"
-const TERMINAL_OR_SETTLED = new Set(["PAID", "PAID_RECOVERY_REQUIRED", "CANCELLED", "REFUNDED"])
+/**
+ * SETTLEMENT_HOLD belongs here: a held order has reversal evidence against it,
+ * so staging recovery on top of it is exactly the mutation the hold exists to
+ * prevent. It cannot be left to the CAS either — `ot_preserve_settlement_hold`
+ * is a BEFORE UPDATE trigger that rewrites `NEW.status` instead of failing the
+ * statement, so the update still reports one affected row.
+ */
+const TERMINAL_OR_SETTLED = new Set([
+  "PAID",
+  "PAID_RECOVERY_REQUIRED",
+  "CANCELLED",
+  "REFUNDED",
+  "SETTLEMENT_HOLD",
+])
 
 async function main() {
   const args = new Set(process.argv.slice(2))
@@ -88,7 +105,37 @@ async function main() {
       },
     })
     if (updated.count !== 1) throw new Error("OTOrder changed before recovery persistence; rerun dry-run review")
-    console.log(JSON.stringify({ written: true, id: existing.id, status: "PAID_RECOVERY_REQUIRED" }, null, 2))
+
+    // A matched row is not a persisted transition. The hold trigger can rewrite
+    // NEW.status while every other column in `data` still lands, which leaves a
+    // held order carrying this run's recovery fields and an affected count of 1.
+    // Only the row that came back out of the database may be reported.
+    const persisted = await prisma.oTOrder.findUnique({ where: { id: existing.id } })
+    if (
+      !persisted ||
+      persisted.status !== "PAID_RECOVERY_REQUIRED" ||
+      persisted.recoveryStripeSessionId !== sessionId ||
+      persisted.recoveryReason !== RECOVERY_REASON
+    ) {
+      // Deliberately no restoration: the pre-update column values are not
+      // reconstructible here, and rewriting a held row is the same unsafe
+      // mutation this script just refused. Hand the row to an operator instead.
+      throw new Error(
+        `Recovery did not persist for OTOrder ${existing.id}: status=${persisted?.status ?? "ROW_MISSING"} ` +
+          `recoveryStripeSessionId=${persisted?.recoveryStripeSessionId ?? "null"} ` +
+          `recoveryReason=${persisted?.recoveryReason ?? "null"}. ` +
+          "The guarded update's non-status columns may have been written and are NOT rolled back. " +
+          "Inspect the row and its settlement evidence before any further action.",
+      )
+    }
+
+    console.log(JSON.stringify({
+      written: true,
+      id: persisted.id,
+      status: persisted.status,
+      recoveryStripeSessionId: persisted.recoveryStripeSessionId,
+      recoveryReason: persisted.recoveryReason,
+    }, null, 2))
     return
   }
 
@@ -105,7 +152,9 @@ async function main() {
   console.log(JSON.stringify({ written: true, id: written.id, status: written.status }, null, 2))
 }
 
-main()
+// Running on import is the script's behaviour under `tsx`. The settled promise
+// is exported only so tests can await a full run instead of racing it.
+export const completed = main()
   .catch((error) => {
     console.error(error instanceof Error ? error.message : error)
     process.exitCode = 1

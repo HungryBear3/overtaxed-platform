@@ -4,7 +4,8 @@
  * Two strictly separated decisions:
  *   - `decideDeliverySend`: may we (re)send using the CURRENT artifact? It never
  *     regenerates (`regenerate: false` always) and fails closed on an unresolved
- *     in-flight send to avoid duplicate delivery.
+ *     in-flight send to avoid duplicate delivery. A provider DELAY is one of
+ *     those in-flight states, not a retry cue — see [[UNRESOLVED_STATUSES]].
  *   - `decideRegeneration`: should we produce a NEW artifact version? It never
  *     creates or sends a delivery attempt (`createsDeliveryAttempt: false`).
  *
@@ -25,16 +26,38 @@ export type DeliverySendDecision =
   | { send: true; attemptNumber: number; regenerate: false }
   | { send: false; reason: string };
 
-/** States from which a fresh delivery attempt is safe (an initial or a retry). */
+/**
+ * States from which a fresh delivery attempt is safe.
+ *
+ * Exactly one. A packet that has never been handed to a provider is the only
+ * thing this system will send, and every other status either has a message in
+ * flight, has a resolved outcome, or has no packet at all.
+ */
 const SENDABLE_STATUSES: ReadonlySet<OTFulfillmentStatus> = new Set([
   "ARTIFACT_READY",
-  "DELAYED",
 ]);
 
-/** States representing an unresolved in-flight send — never auto-retry (dup caution). */
+/**
+ * States representing an unresolved in-flight send — never auto-retry (dup caution).
+ *
+ * DELAYED belongs here, and its absence was a duplicate-delivery defect.
+ * DELAYED is only ever reached by an `email.delivery_delayed` provider
+ * callback, which means the provider ACCEPTED the message and is still
+ * retrying it to the recipient's mail server. It is a report of slowness, not
+ * of failure: the original message may well arrive minutes later. Treating it
+ * as a safe retry state authorized a SECOND attempt — and a second attempt
+ * mints a second capability under a second idempotency key, so the provider's
+ * own deduplication cannot suppress it. The customer receives two different
+ * codes for one order, the first of which is superseded and dead.
+ *
+ * A delay resolves the same way every other ambiguity here resolves: by a
+ * later provider event, or by an operator who has definite evidence. Never by
+ * this function guessing that enough time has passed.
+ */
 const UNRESOLVED_STATUSES: ReadonlySet<OTFulfillmentStatus> = new Set([
   "DELIVERY_PENDING",
   "PROVIDER_ACCEPTED",
+  "DELAYED",
 ]);
 
 export function decideDeliverySend(
@@ -45,6 +68,10 @@ export function decideDeliverySend(
     return { send: false, reason: "ALREADY_DELIVERED" };
   if (TERMINAL_LOCK_STATUSES.has(status))
     return { send: false, reason: `TERMINAL_${status}` };
+  // A distinct reason for DELAYED so an operator console can say "the provider
+  // is still trying" rather than the less specific "a send is unresolved".
+  if (status === "DELAYED")
+    return { send: false, reason: "PROVIDER_DELAY_IN_FLIGHT" };
   if (UNRESOLVED_STATUSES.has(status))
     return { send: false, reason: "UNRESOLVED_SEND" };
   if (!SENDABLE_STATUSES.has(status))
