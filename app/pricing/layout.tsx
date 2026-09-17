@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { NEUTRAL_REPORT_LIMITS, NEUTRAL_REPORT_NAME, NEUTRAL_REPORT_PRICE, neutralReportCopyEnabled } from "@/lib/copy/neutral-report";
 
 /**
  * `/pricing` is a `"use client"` page, so it cannot export `metadata` itself.
@@ -23,7 +24,7 @@ import type { Metadata } from "next";
 const PRICING_DESCRIPTION =
   "The $69 DIY Appeal Packet is the only paid offer. It is a preparation service: we prepare it, and you review it, sign it, and file it with the county yourself. OverTaxed IL is not a law firm and does not guarantee a reduction.";
 
-export const metadata: Metadata = {
+const legacyMetadata: Metadata = {
   title: "Cook County Property Tax Appeal Pricing",
   description: PRICING_DESCRIPTION,
   alternates: { canonical: "https://www.overtaxed-il.com/pricing" },
@@ -42,6 +43,18 @@ export const metadata: Metadata = {
   },
   robots: { index: true, follow: true },
 };
+
+export function generateMetadata(): Metadata {
+  if (!neutralReportCopyEnabled()) return legacyMetadata
+  const description = `${NEUTRAL_REPORT_NAME} for ${NEUTRAL_REPORT_PRICE}. ${NEUTRAL_REPORT_LIMITS}`
+  return {
+    ...legacyMetadata,
+    title: `${NEUTRAL_REPORT_NAME} Pricing`,
+    description,
+    openGraph: { ...legacyMetadata.openGraph, title: `${NEUTRAL_REPORT_NAME} Pricing`, description },
+    twitter: { ...legacyMetadata.twitter, title: `${NEUTRAL_REPORT_NAME} Pricing`, description },
+  }
+}
 
 export default function PricingLayout({
   children,
