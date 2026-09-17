@@ -41,12 +41,15 @@ const Body = z.discriminatedUnion("action", [
   z
     .object({
       action: z.literal("RECONCILE_PROVIDER_CALLBACKS"),
-      expectedStatus: z.enum([
-        "DELIVERY_PENDING",
-        "PROVIDER_ACCEPTED",
-        "DELAYED",
-        "DELIVERED",
-      ]),
+      // Only from a state whose send is still unresolved. DELIVERED was here
+      // and is deliberately gone: it already holds the evidence a replay looks
+      // for, so a pass from it could only spend replay budget and write REFUSED
+      // rows while appearing to succeed.
+      //
+      // Written as literals so the parsed value keeps its narrow type. The
+      // authority is RECONCILABLE_STATUSES in the store, and a test asserts
+      // this list equals it, so the two cannot drift apart unobserved.
+      expectedStatus: z.enum(["DELIVERY_PENDING", "PROVIDER_ACCEPTED", "DELAYED"]),
       expectedStatusRevision: z.number().int().min(0).max(2_147_483_646),
     })
     .strict(),

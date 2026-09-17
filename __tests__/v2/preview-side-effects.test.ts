@@ -265,7 +265,10 @@ describe("source-level guards", () => {
   });
 
   it("/pricing routes Buy Now to the one offered plan and never POSTs directly to checkout", () => {
-    const src = readSrc("app/pricing/page.tsx");
+    const src = [
+      readSrc("app/pricing/page.tsx"),
+      readSrc("components/ot-design/PricingPageClient.tsx"),
+    ].join("\n");
     expect(src).toMatch(/preview-gate-client/);
     expect(src).toMatch(/Preview checkout disabled/);
     expect(src).toContain('"/checkout?plan=diy"');
