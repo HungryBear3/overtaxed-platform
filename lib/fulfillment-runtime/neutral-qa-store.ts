@@ -5,8 +5,9 @@ import { Prisma } from "@prisma/client"
 import { neutralPrisma } from "@/lib/fulfillment-runtime/neutral-db"
 import { NEUTRAL_REPORT_COMMERCE_POLICY } from "@/lib/commerce/neutral-report-policy"
 import { decideNeutralQa, type NeutralQaDecision } from "@/lib/fulfillment/neutral-qa"
+import { inNeutralTransaction, type NeutralDbExecutor } from "@/lib/fulfillment-runtime/neutral-db-executor"
 
-type Db = { $queryRaw<T>(q: unknown): Promise<T>; $executeRaw(q: unknown): Promise<number>; $transaction<T>(fn:(tx:Db)=>Promise<T>):Promise<T> }
+type Db = NeutralDbExecutor
 const db = new Proxy({} as Db,{get(_t,key){const value=(neutralPrisma() as any)[key];return typeof value==="function"?value.bind(neutralPrisma()):value}})
 const digest = (value:string) => createHash("sha256").update(value).digest("hex")
 const REVIEWER = /^[a-z0-9][a-z0-9:_-]{2,63}$/
@@ -61,10 +62,10 @@ async function enqueueRefund(tx:Db,row:Context,reasonCode:string){
 }
 
 /** Creates/returns the durable pending ledger entry. It authorizes no delivery. */
-export async function openNeutralQaReview(input:{orderId:string;reviewerKey:string}) {
+export async function openNeutralQaReview(input:{orderId:string;reviewerKey:string}, options:{db?:Db}={}) {
   if (process.env.OT_NEUTRAL_QA_ENABLED!=="true") return {ok:false as const,blocker:"FLAG_DISABLED"}
   if (!REVIEWER.test(input.reviewerKey)) return {ok:false as const,blocker:"INVALID_REVIEWER"}
-  return db.$transaction(async tx=>{
+  return inNeutralTransaction(db,options.db,async tx=>{
     // The weekly pilot limit applies when work is accepted, not only when it is
     // approved. Serialize every open for this reviewer/week so two different
     // orders cannot both become the twenty-sixth review.
@@ -90,10 +91,10 @@ export async function openNeutralQaReview(input:{orderId:string;reviewerKey:stri
 }
 
 /** Records approval or a durable refund-required disposition. Never calls Stripe. */
-export async function decideNeutralQaReview(input:{orderId:string;reviewerKey:string;decision:NeutralQaDecision;minutesSpent:number;reasonCode:string}) {
+export async function decideNeutralQaReview(input:{orderId:string;reviewerKey:string;decision:NeutralQaDecision;minutesSpent:number;reasonCode:string}, options:{db?:Db}={}) {
   if (process.env.OT_NEUTRAL_QA_ENABLED!=="true") return {ok:false as const,blocker:"FLAG_DISABLED"}
   if (!REVIEWER.test(input.reviewerKey)) return {ok:false as const,blocker:"INVALID_REVIEWER"}
-  return db.$transaction(async tx=>{
+  return inNeutralTransaction(db,options.db,async tx=>{
     await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`neutral-qa:${input.orderId}`}))::text AS "locked"`)
     await lockReservation(tx,input.orderId)
     await lockReview(tx,input.orderId)
