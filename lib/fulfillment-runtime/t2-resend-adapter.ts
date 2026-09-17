@@ -1,3 +1,5 @@
+import { trustedPaymentAuthority } from "./payment-authority";
+import { neutralDeliveryEnabled } from "@/lib/fulfillment/flag";
 /**
  * The real T2 delivery adapter: a plain-code packet handoff over Resend.
  *
@@ -24,10 +26,18 @@
  *
  * ## Ordering and honesty about outcomes
  *
- * The delivery orchestrator has already persisted a durable attempt before this
- * function is entered. Here the order is: re-verify authority against freshly
- * read state → mint the capability (durably bound to THIS attempt, inside one
- * transaction, conditional on the attempt having none) → send.
+ * The delivery orchestrator has already persisted a durable attempt AND proved
+ * it was still sendable before this function is entered. Here the order is:
+ * re-verify authority against freshly read state → mint the capability (durably
+ * bound to THIS attempt, inside one transaction, conditional on the attempt
+ * having none) → re-assert the orchestrator's gate one last time → send.
+ *
+ * That final re-assert is the point of the whole ordering. Minting a credential
+ * is real asynchronous work, and the orchestrator's own gate closed before it
+ * started. Without a gate AFTER issuance and immediately before the provider
+ * call, a refund or a withdrawn flag landing during issuance would still mail a
+ * live code. A denial there revokes the unsent code and reports REJECTED — the
+ * one thing that is certain is that no bytes reached a provider.
  *
  * A message id back means ACCEPTED — the provider took custody. It never means
  * delivered. A recognized definite provider rejection means REJECTED, and the
@@ -57,7 +67,8 @@ import {
   issueT2PacketCapability,
   type T2PacketIssuanceDeps,
 } from "@/lib/fulfillment-runtime/t2-packet-issuance";
-import { prismaPacketDownloadStore } from "@/lib/fulfillment-runtime/packet-download-store";
+import { prismaPacketDownloadStore,neutralPacketDownloadStore } from "@/lib/fulfillment-runtime/packet-download-store";
+import {neutralDeliveryPrisma} from "@/lib/fulfillment-runtime/neutral-delivery-db";
 
 /** Hard ceiling on one provider call. Past it the outcome is UNKNOWN, not failure. */
 export const T2_SEND_TIMEOUT_MS = 15_000;
@@ -135,6 +146,7 @@ export type T2SendContext = {
   orderTier: string;
   fulfillmentOrderId: string;
   fulfillmentKind: string;
+  neutralQaApproved?: boolean;
   fulfillmentStatus: string;
   attemptCount: number;
   currentArtifactVersion: number;
@@ -158,6 +170,7 @@ type ContextRow = {
   orderTier: string;
   fulfillmentOrderId: string;
   fulfillmentKind: string;
+  neutralQaApproved?: boolean;
   fulfillmentStatus: string;
   attemptCount: number;
   currentArtifactVersion: number;
@@ -171,6 +184,7 @@ type RawClient = { $queryRaw<T>(query: Prisma.Sql): Promise<T> };
 
 export function createPrismaT2SendContextReader(
   client: RawClient,
+  options:{neutralOnly?:boolean;legacyOnly?:boolean}={},
 ): T2SendContextReader {
   return {
     async load(input) {
@@ -185,6 +199,16 @@ export function createPrismaT2SendContextReader(
                  o."tier" AS "orderTier",
                  f."order_id" AS "fulfillmentOrderId",
                  f."kind"::text AS "fulfillmentKind",
+                 CASE WHEN f."kind"::text='NEUTRAL_RECORDS_REPORT' THEN EXISTS (
+                   SELECT 1 FROM "ot_neutral_qa_review" q
+                   JOIN "ot_neutral_report_reservation" r ON r."id"=q."reservation_id"
+                   WHERE q."fulfillment_id"=f."id" AND q."order_id"=o."id" AND q."status"='APPROVED'
+                     AND r."status"='PROMOTED' AND r."superseded_by_sha256" IS NULL
+                     AND q."customer_artifact_sha256"=a."artifact_sha256"
+                     AND q."artifact_sha256"=r."bundle_sha256"
+                     AND q."property_binding_fingerprint"=a."property_binding_fingerprint"
+                     AND q."policy_version"=a."template_version"
+                 ) ELSE FALSE END AS "neutralQaApproved",
                  f."status"::text AS "fulfillmentStatus",
                  f."attempt_count" AS "attemptCount",
                  a."version" AS "currentArtifactVersion",
@@ -193,7 +217,7 @@ export function createPrismaT2SendContextReader(
                  t."idempotency_key" AS "attemptIdempotencyKey",
                  t."download_capability_id" AS "attemptCapabilityId"
           FROM "ot_fulfillment" f
-          JOIN "ot_order" o ON o."id" = f."order_id"
+          JOIN ${options.neutralOnly?Prisma.raw('"ot_neutral_delivery_order"'):Prisma.raw('"ot_order"')} o ON o."id" = f."order_id"
           JOIN LATERAL (
             SELECT "version", "artifact_sha256"
             FROM "ot_fulfillment_artifact"
@@ -206,6 +230,8 @@ export function createPrismaT2SendContextReader(
            AND t."attempt_number" = ${input.attemptNumber}
           WHERE f."id" = ${input.fulfillmentId}
             AND f."order_id" = ${input.orderId}
+            ${options.neutralOnly?Prisma.sql`AND f."kind"::text='NEUTRAL_RECORDS_REPORT'`:options.legacyOnly?Prisma.sql`AND f."kind"::text<>'NEUTRAL_RECORDS_REPORT'`:Prisma.empty}
+            AND ${options.neutralOnly?Prisma.sql`o."paymentAuthoritative"=true`:trustedPaymentAuthority("o")}
         `,
       );
       return rows[0] ?? null;
@@ -213,9 +239,11 @@ export function createPrismaT2SendContextReader(
   };
 }
 
-export const prismaT2SendContextReader = createPrismaT2SendContextReader(
-  prisma as unknown as RawClient,
-);
+const legacyPrismaT2SendContextReader=createPrismaT2SendContextReader(prisma as unknown as RawClient,{legacyOnly:true})
+export const prismaT2SendContextReader:T2SendContextReader={async load(input){
+  if(process.env.OT_NEUTRAL_DELIVERY_DATABASE_URL){const found=await createPrismaT2SendContextReader(neutralDeliveryPrisma() as unknown as RawClient,{neutralOnly:true}).load(input);if(found)return found}
+  return legacyPrismaT2SendContextReader.load(input)
+}}
 
 /* ── Provider seam ───────────────────────────────────────────────────────── */
 
@@ -407,15 +435,15 @@ export function createT2ResendAdapter(
       // No row means order, fulfillment, artifact or attempt did not line up.
       // Nothing was sent, and the state is not one we may guess about.
       if (!context) return rejected("MANUAL_REVIEW");
+      const revokeCurrent=deps.revoke??(context.fulfillmentKind==="NEUTRAL_RECORDS_REPORT"?(input:{fulfillmentId:string;reasonCode:"SEND_REJECTED"})=>neutralPacketDownloadStore().revoke(input):revoke)
 
       // Every authority fact re-verified against what was just read, not against
       // what the caller passed. Settlement first.
       if (context.orderStatus !== "PAID" || context.orderTier !== "T2")
         return rejected("MANUAL_REVIEW");
-      if (
-        context.fulfillmentOrderId !== input.orderId ||
-        context.fulfillmentKind !== "T2_APPEAL_EVIDENCE"
-      )
+      const kindAllowed = context.fulfillmentKind === "T2_APPEAL_EVIDENCE" ||
+        (context.fulfillmentKind === "NEUTRAL_RECORDS_REPORT" && neutralDeliveryEnabled(deps.env ?? process.env) && context.neutralQaApproved === true);
+      if (context.fulfillmentOrderId !== input.orderId || !kindAllowed)
         return rejected("MANUAL_REVIEW");
       // The attempt this send belongs to must be the current, in-flight one.
       if (
@@ -468,6 +496,27 @@ export function createT2ResendAdapter(
         expiresAt: issued.issuance.expiresAt,
       });
 
+      // THE LAST THING BEFORE THE PROVIDER CALL.
+      //
+      // Everything above — the context read, the address check, the issuance
+      // transaction — is asynchronous work done after the orchestrator already
+      // proved this send was authorized. A refund, a withdrawn flag, property
+      // drift, a superseding artifact or a lost lease landing in that window
+      // must stop the send, and only a fresh read under the lock can see it.
+      // The orchestrator supplies this gate bound to the lease and the exact
+      // durable attempt; nothing here can widen it or skip it and still send.
+      //
+      // A denial is DEFINITE about the one thing that matters: no bytes were
+      // handed to a provider, because this runs before the only call that
+      // could. It is therefore recorded like every other authority failure the
+      // adapter detects before sending — REJECTED, not UNKNOWN — and the code
+      // minted moments ago is revoked, because it reached no mailbox.
+      const stillSendable = await input.assertSendable();
+      if (!stillSendable.ok) {
+        await revokeQuietly(revokeCurrent, input.fulfillmentId);
+        return rejected("MANUAL_REVIEW");
+      }
+
       let result: { id: string | null; errorName: string | null };
       try {
         result = await withTimeout(
@@ -513,18 +562,30 @@ export function createT2ResendAdapter(
       // Best effort by contract: a revocation that fails leaves the capability
       // alive, but the fulfillment is about to become terminal FAILED, which is
       // not a downloadable status, so access ends regardless.
-      try {
-        await revoke({
-          fulfillmentId: input.fulfillmentId,
-          reasonCode: "SEND_REJECTED",
-        });
-      } catch {
-        // Never rethrown and never logged: the thrown value may carry provider
-        // or connection detail.
-      }
+      await revokeQuietly(revokeCurrent, input.fulfillmentId);
       return rejected(definite);
     },
   };
+}
+
+/**
+ * Best effort by contract. A revocation that fails leaves the capability alive,
+ * but a definitely-unsent attempt is about to become terminal FAILED, which is
+ * not a downloadable status, so access ends regardless. Never rethrown and
+ * never logged: the thrown value may carry provider or connection detail.
+ */
+async function revokeQuietly(
+  revoke: (input: {
+    fulfillmentId: string;
+    reasonCode: "SEND_REJECTED";
+  }) => Promise<unknown>,
+  fulfillmentId: string,
+): Promise<void> {
+  try {
+    await revoke({ fulfillmentId, reasonCode: "SEND_REJECTED" });
+  } catch {
+    // Deliberately swallowed; see above.
+  }
 }
 
 function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {

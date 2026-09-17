@@ -32,6 +32,7 @@ import {
   SLICE2_ARTIFACT_VERSION,
 } from "@/lib/fulfillment/artifact-binding";
 import { contentAddressedT2ArtifactLocator } from "@/lib/fulfillment/artifact-digest";
+import { neutralCustomerZipLocator } from "@/lib/fulfillment/neutral-customer-zip";
 import {
   isBoundedOpaqueString,
   isPgIntInRange,
@@ -140,6 +141,7 @@ export type CapabilityRevocationReason =
    * quietly keeps doing.
    */
   | "UNDELIVERABLE"
+  | "STORAGE_FAILURE"
   | "ADMIN_REVOKED";
 
 export const CAPABILITY_REVOCATION_REASONS: ReadonlySet<string> =
@@ -150,6 +152,7 @@ export const CAPABILITY_REVOCATION_REASONS: ReadonlySet<string> =
     "SUPERSEDED",
     "SEND_REJECTED",
     "UNDELIVERABLE",
+    "STORAGE_FAILURE",
     "ADMIN_REVOKED",
   ]);
 
@@ -211,6 +214,8 @@ export type PacketDownloadFulfillmentRow = {
   orderId: string;
   kind: string;
   status: OTFulfillmentStatus | string;
+  /** Required only for NEUTRAL_RECORDS_REPORT; read from the durable QA join. */
+  neutralQaApproved?: boolean;
 };
 
 export type PacketDownloadOrderRow = {
@@ -219,6 +224,13 @@ export type PacketDownloadOrderRow = {
   status: string;
   propertyPin: string | null;
   propertyAddress: string | null;
+  /**
+   * Optional because `ot_order` has no such columns: on that table a refund or a
+   * dispute shows up as a non-`PAID` `status`, which is what actually ends
+   * access. These two exist so a caller with a settlement source that DOES
+   * distinguish them can refuse on them explicitly; absent means "not stated",
+   * never "not refunded".
+   */
   refunded?: boolean;
   disputed?: boolean;
 };
@@ -272,6 +284,15 @@ function instant(value: Date | string | null | undefined): number | null {
 
 function presentString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function expectedDownloadLocator(
+  fulfillment: PacketDownloadFulfillmentRow,
+  artifactSha256: string,
+): string {
+  return fulfillment.kind === "NEUTRAL_RECORDS_REPORT"
+    ? neutralCustomerZipLocator(artifactSha256)
+    : contentAddressedT2ArtifactLocator(artifactSha256);
 }
 
 /**
@@ -334,8 +355,10 @@ export function decidePacketDownload(
   if (!fulfillment) return refuse("FULFILLMENT_NOT_FOUND");
   if (fulfillment.id !== capability.fulfillmentId)
     return refuse("CAPABILITY_BINDING_MISMATCH");
-  if (fulfillment.kind !== "T2_APPEAL_EVIDENCE")
+  if (fulfillment.kind !== "T2_APPEAL_EVIDENCE" &&
+      !(fulfillment.kind === "NEUTRAL_RECORDS_REPORT" && fulfillment.neutralQaApproved === true))
     return refuse("CAPABILITY_BINDING_MISMATCH");
+  if(fulfillment.kind==="NEUTRAL_RECORDS_REPORT"&&capability.maxUses!==1)return refuse("INVALID_CAPABILITY");
 
   const order = input.order;
   if (!order) return refuse("ORDER_NOT_FOUND");
@@ -372,13 +395,15 @@ export function decidePacketDownload(
     return refuse("INVALID_STORAGE_LOCATOR");
   if (
     artifact.storageLocator !==
-    contentAddressedT2ArtifactLocator(artifact.artifactSha256)
+    expectedDownloadLocator(fulfillment, artifact.artifactSha256)
   ) {
     return refuse("INVALID_STORAGE_LOCATOR");
   }
 
-  // 9. Authoritative settlement, read fresh. A refund, dispute, cancellation or
-  //    any non-PAID status ends access with no revocation step required.
+  // 9. Authoritative settlement, read fresh. Any non-PAID status — which is how
+  //    a refund, dispute or cancellation presents on `ot_order` — ends access
+  //    with no revocation step required. The two explicit flags are belt and
+  //    braces for a caller whose settlement source states them separately.
   if (String(order.tier ?? "").trim() !== "T2")
     return refuse("ORDER_NOT_ELIGIBLE");
   if (order.refunded === true || order.disputed === true)
@@ -492,8 +517,10 @@ export function decideCapabilityIssuance(
 
   const fulfillment = input.fulfillment;
   if (!fulfillment) return { ok: false, blocker: "FULFILLMENT_NOT_FOUND" };
-  if (fulfillment.kind !== "T2_APPEAL_EVIDENCE")
+  if (fulfillment.kind !== "T2_APPEAL_EVIDENCE" &&
+      !(fulfillment.kind === "NEUTRAL_RECORDS_REPORT" && fulfillment.neutralQaApproved === true))
     return { ok: false, blocker: "CAPABILITY_BINDING_MISMATCH" };
+  if(fulfillment.kind==="NEUTRAL_RECORDS_REPORT"&&input.maxUses!==1)return {ok:false,blocker:"INVALID_CAPABILITY"};
   const order = input.order;
   if (!order) return { ok: false, blocker: "ORDER_NOT_FOUND" };
   if (fulfillment.orderId !== order.id)
@@ -517,7 +544,7 @@ export function decideCapabilityIssuance(
     return { ok: false, blocker: "INVALID_STORAGE_LOCATOR" };
   if (
     artifact.storageLocator !==
-    contentAddressedT2ArtifactLocator(artifact.artifactSha256)
+    expectedDownloadLocator(fulfillment, artifact.artifactSha256)
   ) {
     return { ok: false, blocker: "INVALID_STORAGE_LOCATOR" };
   }
