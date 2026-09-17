@@ -10,5 +10,6 @@ test("one hourly informational job preserves every unrelated schedule", () => {
     {path:"/api/cron/assessment-checks",schedule:"0 7 * * 1"},
     {path:"/api/cron/performance-invoices",schedule:"0 8 * * 1"},
     {path:"/api/cron/invoice-collections",schedule:"0 9 * * *"},
+    {path:"/api/cron/neutral-checkout-reconciliation",schedule:"*/30 * * * *"},
   ]);
 });
