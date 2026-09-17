@@ -23,7 +23,8 @@
  * The ordering it enforces when an adapter IS supplied:
  *
  *   claim lease → persist attempt (durable, BEFORE the send) →
- *   re-assert authority → send → record outcome → release lease
+ *   re-assert authority → adapter (which re-asserts AGAIN, immediately before
+ *   the provider call) → record outcome → release lease
  *
  * The re-assert step is not decoration. Persisting first deliberately creates an
  * asynchronous gap, and a refund, a withdrawn flag, property drift or a lost
@@ -71,8 +72,28 @@ export interface T2DeliveryAdapter {
     artifactVersion: number;
     artifactSha256: string;
     idempotencyKey: string;
+    /**
+     * The pre-send authority gate, bound to THIS lease and THIS durable
+     * attempt, for the adapter to call as the last thing before it hands
+     * anything to a provider.
+     *
+     * The orchestrator runs the same gate once itself, immediately after the
+     * persist. That is not the same check: an adapter that mints a credential,
+     * resolves a recipient and builds a message does real asynchronous work
+     * between the orchestrator's gate and the provider call, and a refund, a
+     * withdrawn flag, property drift or a lost lease landing inside THAT window
+     * would otherwise be invisible. Passing the gate in rather than re-deriving
+     * it means the adapter cannot check a weaker thing by accident: it holds no
+     * lease identity and cannot construct this call on its own.
+     *
+     * Never throws — an unprovable authority is returned as a refusal.
+     */
+    assertSendable: () => Promise<PreSendGate>;
   }): Promise<DeliverySendOutcome>;
 }
+
+/** The answer the pre-send gate gives an adapter. A refusal means DO NOT SEND. */
+export type PreSendGate = { ok: true } | { ok: false; blocker: string };
 
 export type T2DeliveryOrchestrationResult =
   | { outcome: "DISABLED" }
@@ -211,30 +232,40 @@ export async function runT2Delivery(
   // everything it cannot: settlement, artifact identity, property binding, the
   // lease, and this exact pending attempt. No assumption is made that the
   // adapter checks any of it.
-  let sendable: Awaited<ReturnType<T2DeliveryStore["assertSendable"]>>;
-  if (!t2DeliveryEnabled(deps.env ?? process.env)) {
-    sendable = { ok: false, blocker: "FLAG_DISABLED" };
-  } else {
+  //
+  // The gate closes over the lease and the exact attempt identity, and is
+  // callable more than once: the orchestrator runs it here, and hands the same
+  // closure to the adapter to run again immediately before the provider call.
+  // Re-running it is cheap and read-only, and each run narrows a different
+  // window — this one covers the persist, the adapter's covers everything the
+  // adapter does before sending, including minting the credential.
+  const proven = persisted;
+  const assertSendable = async (): Promise<PreSendGate> => {
+    if (!t2DeliveryEnabled(deps.env ?? process.env))
+      return { ok: false, blocker: "FLAG_DISABLED" };
     try {
-      sendable = await store.assertSendable({
+      return await store.assertSendable({
         orderId: input.orderId,
         fulfillmentId: input.fulfillmentId,
         owner,
         token,
-        attemptId: persisted.attemptId,
-        attemptNumber: persisted.attemptNumber,
-        idempotencyKey: persisted.idempotencyKey,
-        provider: persisted.provider,
-        artifactVersion: persisted.artifactVersion,
-        artifactSha256: persisted.artifactSha256,
-        propertyBindingFingerprint: persisted.propertyBindingFingerprint,
-        statusRevision: persisted.statusRevision,
+        attemptId: proven.attemptId,
+        attemptNumber: proven.attemptNumber,
+        idempotencyKey: proven.idempotencyKey,
+        provider: proven.provider,
+        artifactVersion: proven.artifactVersion,
+        artifactSha256: proven.artifactSha256,
+        propertyBindingFingerprint: proven.propertyBindingFingerprint,
+        statusRevision: proven.statusRevision,
       });
     } catch {
-      // Unable to prove the send is still authorized, so it is not made.
-      sendable = { ok: false, blocker: "PRE_SEND_CHECK_UNKNOWN" };
+      // Unable to PROVE the send is still authorized, so it is not made. The
+      // thrown value may carry connection detail and is never read or logged.
+      return { ok: false, blocker: "PRE_SEND_CHECK_UNKNOWN" };
     }
-  }
+  };
+
+  const sendable = await assertSendable();
   if (!sendable.ok) {
     // Deliberately no retry and no recorded failure. The attempt is durable and
     // the summary stays DELIVERY_PENDING, which the send authority refuses — the
@@ -256,6 +287,7 @@ export async function runT2Delivery(
       artifactVersion: persisted.artifactVersion,
       artifactSha256: persisted.artifactSha256,
       idempotencyKey: persisted.idempotencyKey,
+      assertSendable,
     });
   } catch {
     // A thrown adapter may still have sent the mail. That is UNKNOWN, not

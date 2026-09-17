@@ -35,8 +35,11 @@ import {
 } from "@/lib/fulfillment/packet-download";
 import {
   prismaPacketDownloadStore,
+  neutralPacketDownloadStore,
+  authoritativeFulfillmentKind,
   type PacketDownloadStore,
 } from "@/lib/fulfillment-runtime/packet-download-store";
+import {isNeutralDeliveryFulfillment} from "@/lib/fulfillment-runtime/neutral-delivery-db";
 
 /**
  * Seven days, and five uses.
@@ -108,7 +111,12 @@ export async function issueT2PacketCapability(
   if (capabilityHash === null)
     return { ok: false, blocker: "INVALID_CAPABILITY" };
 
-  const store = deps.store ?? prismaPacketDownloadStore;
+  let store=deps.store
+  if(!store){
+    let kind:string|null=null;try{kind=process.env.OT_NEUTRAL_DELIVERY_DATABASE_URL&&await isNeutralDeliveryFulfillment(input.fulfillmentId)?"NEUTRAL_RECORDS_REPORT":await authoritativeFulfillmentKind(input.fulfillmentId)}catch{kind=null}
+    if(kind==="NEUTRAL_RECORDS_REPORT"&&!process.env.OT_NEUTRAL_DELIVERY_DATABASE_URL)return {ok:false,blocker:"FULFILLMENT_NOT_FOUND"}
+    store=kind==="NEUTRAL_RECORDS_REPORT"?neutralPacketDownloadStore():prismaPacketDownloadStore
+  }
   const issued = await store.issue({
     capabilityHash,
     fulfillmentId: input.fulfillmentId,

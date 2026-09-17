@@ -1,3 +1,4 @@
+import { trustedPaymentAuthority } from "./payment-authority";
 /**
  * Bounded operator recovery for T2 delivery.
  *
@@ -11,6 +12,11 @@
  * lost its process, or where an event arrived after it. It writes no new
  * evidence, invents nothing, and can only ever apply events that arrived
  * authenticated and were stored sanitized.
+ *
+ * It is bounded to a fulfillment whose send is still UNRESOLVED — see
+ * [[RECONCILABLE_STATUSES]]. A DELIVERED or terminal summary already holds the
+ * evidence a replay would be looking for, so a pass from one cannot change
+ * anything and is refused rather than run as an expensive no-op.
  *
  * **RESOLVE_UNRESOLVED_SEND** ends an unresolved send by recording it FAILED. It
  * requires the operator to assert, explicitly and on the record, that they have
@@ -58,6 +64,28 @@ export const DELIVERY_RECOVERY_ACTIONS: ReadonlySet<string> = new Set<string>([
 ]);
 
 /**
+ * The statuses a reconciliation pass may be requested from.
+ *
+ * Every one of them is a state where the send is genuinely UNRESOLVED — no
+ * durable evidence yet says what happened to the message — so replaying stored
+ * provider evidence can still change the answer:
+ *
+ *   - DELIVERY_PENDING: a send was requested and nothing has reported back;
+ *   - PROVIDER_ACCEPTED: the provider took custody and has not said more;
+ *   - DELAYED: the provider is still retrying.
+ *
+ * DELIVERED and every terminal-lock status are deliberately absent. They already
+ * HAVE the evidence, `nextStatusForEvent` refuses to move them, and a pass from
+ * one could only spend replay budget and write REFUSED rows. Refusing here says
+ * so plainly instead of letting an operator watch a no-op succeed.
+ */
+export const RECONCILABLE_STATUSES: ReadonlySet<string> = new Set<string>([
+  "DELIVERY_PENDING",
+  "PROVIDER_ACCEPTED",
+  "DELAYED",
+]);
+
+/**
  * The bounded reasons an operator may attach to a resolved-as-failed send.
  *
  * A closed subset of the shared allowlist: only codes that can honestly describe
@@ -97,6 +125,8 @@ export type DeliveryRecoveryResult =
       examined: number;
       applied: number;
       stillUnmatched: number;
+      /** Read but not ours to act on: claimed elsewhere, resolved, or spent. */
+      skipped: number;
     }
   | {
       ok: true;
@@ -118,6 +148,7 @@ export type DeliveryRecoveryRefusal =
   | "NO_FULFILLMENT_SUMMARY"
   | "STALE_STATE"
   | "NOT_UNRESOLVED"
+  | "NOT_RECONCILABLE"
   | "ATTEMPT_NOT_FOUND"
   | "NO_BOUND_MESSAGE_ID"
   | "UNTRUSTED_CLOCK";
@@ -200,7 +231,7 @@ async function lockedContext(
 > {
   const orders = await tx.$queryRaw<OrderRow[]>(
     Prisma.sql`SELECT "id", "status", "tier" FROM "ot_order"
-               WHERE "id" = ${input.orderId} FOR UPDATE`,
+               WHERE "id" = ${input.orderId} AND ${trustedPaymentAuthority()} FOR UPDATE`,
   );
   const order = orders[0];
   if (!order) return { ok: false, code: "ORDER_NOT_FOUND" };
@@ -268,6 +299,11 @@ export async function runT2DeliveryRecovery(
     // potentially long replay proceeds.
     const context = await client.$transaction((tx) => lockedContext(tx, input));
     if (!context.ok) return { ok: false, code: context.code };
+    // Bounded to states whose send is still unresolved. `lockedContext` has
+    // already proved the caller's expected status and revision match the row, so
+    // this is a check on the ROW, not on what the operator typed.
+    if (!RECONCILABLE_STATUSES.has(context.summary.status))
+      return { ok: false, code: "NOT_RECONCILABLE" };
     const attempt = context.attempt;
     if (!attempt) return { ok: false, code: "ATTEMPT_NOT_FOUND" };
     if (attempt.provider !== RESEND_PROVIDER || !attempt.providerMessageId)
