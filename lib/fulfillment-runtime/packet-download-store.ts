@@ -554,8 +554,8 @@ export const prismaPacketDownloadStore = createPrismaPacketDownloadStore(
   prisma as unknown as PacketDownloadClient,
 );
 
-export function neutralPacketDownloadStore():PacketDownloadStore{
-  return createPrismaPacketDownloadStore(neutralDeliveryPrisma() as unknown as PacketDownloadClient,{neutralRestricted:true})
+export function neutralPacketDownloadStore(executor?:PacketDownloadClient):PacketDownloadStore{
+  return createPrismaPacketDownloadStore(executor??neutralDeliveryPrisma() as unknown as PacketDownloadClient,{neutralRestricted:true})
 }
 export async function authoritativeFulfillmentKind(id:string):Promise<string|null>{
   const rows=await prisma.$queryRaw<Array<{kind:string}>>(Prisma.sql`SELECT "kind" FROM "ot_fulfillment_kind_authority" WHERE "id"=${id}`);return rows[0]?.kind??null
