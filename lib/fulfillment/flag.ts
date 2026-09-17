@@ -20,11 +20,19 @@ export const OT_T2_DELIVERY_FLAG = "OT_T2_DELIVERY_ENABLED"
 export const OT_T2_DELIVERY_ADAPTER_FLAG = "OT_T2_DELIVERY_ADAPTER_ENABLED"
 export const OT_T2_DELIVERY_CALLBACK_FLAG = "OT_T2_DELIVERY_CALLBACK_ENABLED"
 export const OT_T2_DELIVERY_RECOVERY_FLAG = "OT_T2_DELIVERY_RECOVERY_ENABLED"
+export const OT_NEUTRAL_DELIVERY_FLAG = "OT_NEUTRAL_DELIVERY_ENABLED"
 
 export function t2FulfillmentEvidenceWritesEnabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
   return env[OT_T2_FULFILLMENT_EVIDENCE_FLAG] === "true"
+}
+
+/** Separate, strict default-off authority for QA-approved neutral delivery. */
+export function neutralDeliveryEnabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return env[OT_NEUTRAL_DELIVERY_FLAG] === "true"
 }
 
 /**
