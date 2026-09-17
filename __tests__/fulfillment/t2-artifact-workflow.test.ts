@@ -3,7 +3,7 @@
 const generateMock = jest.fn()
 const uploadMock = jest.fn()
 const readBackMock = jest.fn()
-const reconcileMock = jest.fn()
+const recordMock = jest.fn()
 const bindMock = jest.fn()
 
 jest.mock("@/lib/fulfillment-runtime/t2-artifact-producer", () => ({
@@ -12,7 +12,9 @@ jest.mock("@/lib/fulfillment-runtime/t2-artifact-producer", () => ({
 jest.mock("@/lib/fulfillment-runtime/t2-artifact-storage", () => ({
   uploadT2Artifact: (...args: unknown[]) => uploadMock(...args),
   readT2ArtifactBytes: (...args: unknown[]) => readBackMock(...args),
-  reconcileUnboundT2Artifact: (...args: unknown[]) => reconcileMock(...args),
+}))
+jest.mock("@/lib/fulfillment-runtime/t2-artifact-orphan", () => ({
+  recordUnboundT2Artifact: (...args: unknown[]) => recordMock(...args),
 }))
 jest.mock("@/lib/fulfillment-runtime/bind-artifact", () => ({
   bindT2Artifact: (...args: unknown[]) => bindMock(...args),
@@ -34,6 +36,21 @@ const provenance = {
   generatedAt: "2026-08-10T12:00:00.000Z",
 }
 
+/** The exact durable orphan observation the workflow must record. */
+function observation(
+  reasonCode: string,
+  overrides: { storageLocator?: string; uploadOutcome?: string } = {},
+) {
+  return {
+    fulfillmentId: "ful_1",
+    sourceOrderId: "ord_1",
+    storageLocator: overrides.storageLocator ?? locator,
+    artifactSha256: sha,
+    uploadOutcome: overrides.uploadOutcome ?? "CONFIRMED",
+    reasonCode,
+  }
+}
+
 function generated() {
   generateMock.mockResolvedValue({ ok: true, bytes, provenance })
   uploadMock.mockResolvedValue({ locator, created: true })
@@ -50,9 +67,15 @@ describe("server-only T2 artifact workflow", () => {
   const prior = process.env.OT_T2_ARTIFACT_BINDING_ENABLED
 
   beforeEach(() => {
-    for (const mock of [generateMock, uploadMock, readBackMock, reconcileMock, bindMock]) {
+    for (const mock of [generateMock, uploadMock, readBackMock, recordMock, bindMock]) {
       mock.mockReset()
     }
+    recordMock.mockResolvedValue({
+      ok: true,
+      created: true,
+      observationCount: 1,
+      uploadOutcome: "CONFIRMED",
+    })
     delete process.env.OT_T2_ARTIFACT_BINDING_ENABLED
   })
 
@@ -74,7 +97,7 @@ describe("server-only T2 artifact workflow", () => {
       expect(uploadMock).not.toHaveBeenCalled()
       expect(readBackMock).not.toHaveBeenCalled()
       expect(bindMock).not.toHaveBeenCalled()
-      expect(reconcileMock).not.toHaveBeenCalled()
+      expect(recordMock).not.toHaveBeenCalled()
     },
   )
 
@@ -128,10 +151,10 @@ describe("server-only T2 artifact workflow", () => {
     expect(uploadMock).not.toHaveBeenCalled()
     expect(readBackMock).not.toHaveBeenCalled()
     expect(bindMock).not.toHaveBeenCalled()
-    expect(reconcileMock).not.toHaveBeenCalled()
+    expect(recordMock).not.toHaveBeenCalled()
   })
 
-  it("reconciles a newly uploaded orphan when activation is withdrawn during upload", async () => {
+  it("quarantines a newly uploaded orphan when activation is withdrawn during upload", async () => {
     process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true"
     generated()
     uploadMock.mockImplementation(async () => {
@@ -145,10 +168,10 @@ describe("server-only T2 artifact workflow", () => {
     })
     expect(readBackMock).not.toHaveBeenCalled()
     expect(bindMock).not.toHaveBeenCalled()
-    expect(reconcileMock).toHaveBeenCalledWith({ locator, sha256: sha })
+    expect(recordMock).toHaveBeenCalledWith(observation("ACTIVATION_WITHDRAWN"))
   })
 
-  it("reconciles a newly uploaded orphan when activation is withdrawn during read-back", async () => {
+  it("quarantines a newly uploaded orphan when activation is withdrawn during read-back", async () => {
     process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true"
     generated()
     readBackMock.mockImplementation(async () => {
@@ -161,7 +184,7 @@ describe("server-only T2 artifact workflow", () => {
       blocker: "FLAG_DISABLED",
     })
     expect(bindMock).not.toHaveBeenCalled()
-    expect(reconcileMock).toHaveBeenCalledWith({ locator, sha256: sha })
+    expect(recordMock).toHaveBeenCalledWith(observation("ACTIVATION_WITHDRAWN"))
   })
 
   it("orders generate -> content-addressed upload -> read-back -> bind and performs no delivery/email", async () => {
@@ -183,7 +206,7 @@ describe("server-only T2 artifact workflow", () => {
     expect(source).not.toMatch(/sendPacketReadyEmail|sendOrderConfirmation|lib\/email/)
   })
 
-  it("rejects a storage locator that is not the exact content address and reconciles only a newly created upload", async () => {
+  it("rejects a storage locator that is not the exact content address and quarantines only a newly created upload", async () => {
     process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true"
     generated()
     uploadMock.mockResolvedValue({ locator: "t2-artifacts/caller/value.pdf", created: true })
@@ -193,10 +216,12 @@ describe("server-only T2 artifact workflow", () => {
     })
     expect(readBackMock).not.toHaveBeenCalled()
     expect(bindMock).not.toHaveBeenCalled()
-    expect(reconcileMock).toHaveBeenCalledWith({ locator: "t2-artifacts/caller/value.pdf", sha256: sha })
+    expect(recordMock).toHaveBeenCalledWith(
+      observation("STORAGE_LOCATOR_MISMATCH", { storageLocator: "t2-artifacts/caller/value.pdf" }),
+    )
   })
 
-  it("bounds an ambiguous upload failure without deleting an unknown object", async () => {
+  it("durably records the expected digest when the upload outcome is unknown, without deleting", async () => {
     process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true"
     generated()
     uploadMock.mockRejectedValue(new Error("private upload provider detail"))
@@ -207,10 +232,28 @@ describe("server-only T2 artifact workflow", () => {
     })
     expect(readBackMock).not.toHaveBeenCalled()
     expect(bindMock).not.toHaveBeenCalled()
-    expect(reconcileMock).not.toHaveBeenCalled()
+    // The object may or may not have been committed, so the upload outcome is
+    // recorded as UNKNOWN against the content address it would occupy.
+    expect(recordMock).toHaveBeenCalledTimes(1)
+    expect(recordMock).toHaveBeenCalledWith(
+      observation("UPLOAD_OUTCOME_UNKNOWN", { uploadOutcome: "UNKNOWN" }),
+    )
   })
 
-  it("reconciles a newly created orphan when read-back rejects and returns a bounded refusal", async () => {
+  it("still returns reconciliation-required when the unknown-upload quarantine write itself fails", async () => {
+    process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true"
+    generated()
+    uploadMock.mockRejectedValue(new Error("private upload provider detail"))
+    recordMock.mockRejectedValue(new Error("private database detail"))
+
+    await expect(runT2ArtifactBindingWorkflow({ orderId: "ord_1", fulfillmentId: "ful_1" })).resolves.toEqual({
+      outcome: "RECONCILIATION_REQUIRED",
+      blocker: "UNBOUND_ARTIFACT_RECONCILIATION_REQUIRED",
+    })
+    expect(bindMock).not.toHaveBeenCalled()
+  })
+
+  it("quarantines a newly created orphan when read-back rejects and returns a bounded refusal", async () => {
     process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true"
     generated()
     readBackMock.mockRejectedValue(new Error("private storage provider detail"))
@@ -219,8 +262,8 @@ describe("server-only T2 artifact workflow", () => {
       outcome: "REFUSED",
       blocker: "STORAGE_READ_FAILED",
     })
-    expect(reconcileMock).toHaveBeenCalledTimes(1)
-    expect(reconcileMock).toHaveBeenCalledWith({ locator, sha256: sha })
+    expect(recordMock).toHaveBeenCalledTimes(1)
+    expect(recordMock).toHaveBeenCalledWith(observation("STORAGE_READ_FAILED"))
     expect(bindMock).not.toHaveBeenCalled()
   })
 
@@ -228,17 +271,17 @@ describe("server-only T2 artifact workflow", () => {
     process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true"
     generated()
     readBackMock.mockRejectedValue(new Error("private storage provider detail"))
-    reconcileMock.mockRejectedValue(new Error("private cleanup provider detail"))
+    recordMock.mockRejectedValue(new Error("private quarantine provider detail"))
 
     await expect(runT2ArtifactBindingWorkflow({ orderId: "ord_1", fulfillmentId: "ful_1" })).resolves.toEqual({
       outcome: "RECONCILIATION_REQUIRED",
       blocker: "UNBOUND_ARTIFACT_RECONCILIATION_REQUIRED",
     })
-    expect(reconcileMock).toHaveBeenCalledTimes(1)
+    expect(recordMock).toHaveBeenCalledTimes(1)
     expect(bindMock).not.toHaveBeenCalled()
   })
 
-  it("does not reconcile a pre-existing object when read-back rejects", async () => {
+  it("does not quarantine a pre-existing object when read-back rejects", async () => {
     process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true"
     generated()
     uploadMock.mockResolvedValue({ locator, created: false })
@@ -248,11 +291,11 @@ describe("server-only T2 artifact workflow", () => {
       outcome: "REFUSED",
       blocker: "STORAGE_READ_FAILED",
     })
-    expect(reconcileMock).not.toHaveBeenCalled()
+    expect(recordMock).not.toHaveBeenCalled()
     expect(bindMock).not.toHaveBeenCalled()
   })
 
-  it("preserves storage on an ambiguous bind/commit exception and returns bounded reconciliation-required", async () => {
+  it("preserves storage and records the ambiguity when the bind outcome is unknown", async () => {
     process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true"
     generated()
     bindMock.mockRejectedValue(new Error("private database/provider detail"))
@@ -261,10 +304,25 @@ describe("server-only T2 artifact workflow", () => {
       outcome: "RECONCILIATION_REQUIRED",
       blocker: "UNBOUND_ARTIFACT_RECONCILIATION_REQUIRED",
     })
-    expect(reconcileMock).not.toHaveBeenCalled()
+    expect(recordMock).toHaveBeenCalledTimes(1)
+    expect(recordMock).toHaveBeenCalledWith(observation("BIND_OUTCOME_UNKNOWN"))
   })
 
-  it("rejects persisted-byte SHA/size mismatch and reconciles the new orphan before bind", async () => {
+  it("records an unknown bind outcome even for a pre-existing content object", async () => {
+    process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true"
+    generated()
+    uploadMock.mockResolvedValue({ locator, created: false })
+    bindMock.mockRejectedValue(new Error("private database/provider detail"))
+
+    await expect(runT2ArtifactBindingWorkflow({ orderId: "ord_1", fulfillmentId: "ful_1" })).resolves.toEqual({
+      outcome: "RECONCILIATION_REQUIRED",
+      blocker: "UNBOUND_ARTIFACT_RECONCILIATION_REQUIRED",
+    })
+    // What is unknown is the BINDING, not whether the bytes are present.
+    expect(recordMock).toHaveBeenCalledWith(observation("BIND_OUTCOME_UNKNOWN"))
+  })
+
+  it("rejects persisted-byte SHA/size mismatch and quarantines the new orphan before bind", async () => {
     process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true"
     generated()
     readBackMock.mockResolvedValue(Buffer.from("different stored bytes"))
@@ -273,14 +331,14 @@ describe("server-only T2 artifact workflow", () => {
       blocker: "STORED_BYTES_MISMATCH",
     })
     expect(bindMock).not.toHaveBeenCalled()
-    expect(reconcileMock).toHaveBeenCalledWith({ locator, sha256: sha })
+    expect(recordMock).toHaveBeenCalledWith(observation("STORED_BYTES_MISMATCH"))
   })
 
-  it("surfaces cleanup failure as bounded reconciliation-required state", async () => {
+  it("surfaces quarantine failure as bounded reconciliation-required state", async () => {
     process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true"
     generated()
     readBackMock.mockResolvedValue(Buffer.from("different stored bytes"))
-    reconcileMock.mockRejectedValue(new Error("private provider detail"))
+    recordMock.mockRejectedValue(new Error("private provider detail"))
 
     await expect(runT2ArtifactBindingWorkflow({ orderId: "ord_1", fulfillmentId: "ful_1" })).resolves.toEqual({
       outcome: "RECONCILIATION_REQUIRED",
@@ -290,31 +348,31 @@ describe("server-only T2 artifact workflow", () => {
   })
 
   it.each(["INELIGIBLE_SETTLEMENT", "INELIGIBLE_FULFILLMENT_STATUS"])(
-    "reconciles only the newly uploaded unbound orphan when bind refuses %s mid-flight",
+    "quarantines only the newly uploaded unbound orphan when bind refuses %s mid-flight",
     async (blocker) => {
       process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true"
       generated()
       bindMock.mockResolvedValue({ outcome: "REFUSED", blocker })
       await expect(runT2ArtifactBindingWorkflow({ orderId: "ord_1", fulfillmentId: "ful_1" })).resolves.toEqual({ outcome: "REFUSED", blocker })
-      expect(reconcileMock).toHaveBeenCalledWith({ locator, sha256: sha })
+      expect(recordMock).toHaveBeenCalledWith(observation("BIND_REFUSED"))
     },
   )
 
-  it("never deletes or reconciles a pre-existing content object", async () => {
+  it("never deletes or quarantines a pre-existing content object on a bind refusal", async () => {
     process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true"
     generated()
     uploadMock.mockResolvedValue({ locator, created: false })
     bindMock.mockResolvedValue({ outcome: "REFUSED", blocker: "INELIGIBLE_SETTLEMENT" })
     await runT2ArtifactBindingWorkflow({ orderId: "ord_1", fulfillmentId: "ful_1" })
-    expect(reconcileMock).not.toHaveBeenCalled()
+    expect(recordMock).not.toHaveBeenCalled()
   })
 
-  it("does not reconcile legitimate bound evidence on replay", async () => {
+  it("does not quarantine legitimate bound evidence on replay", async () => {
     process.env.OT_T2_ARTIFACT_BINDING_ENABLED = "true"
     generated()
     uploadMock.mockResolvedValue({ locator, created: false })
     bindMock.mockResolvedValue({ outcome: "BOUND", created: false, artifactId: "art_existing", artifactSha256: sha })
     await expect(runT2ArtifactBindingWorkflow({ orderId: "ord_1", fulfillmentId: "ful_1" })).resolves.toMatchObject({ outcome: "BOUND", created: false })
-    expect(reconcileMock).not.toHaveBeenCalled()
+    expect(recordMock).not.toHaveBeenCalled()
   })
 })
