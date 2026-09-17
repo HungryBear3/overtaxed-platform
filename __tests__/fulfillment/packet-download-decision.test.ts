@@ -17,6 +17,7 @@ import {
   type PacketDownloadInput,
 } from "@/lib/fulfillment/packet-download"
 import { FULFILLMENT_STATUSES, TERMINAL_LOCK_STATUSES } from "@/lib/fulfillment/types"
+import { neutralCustomerZipLocator } from "@/lib/fulfillment/neutral-customer-zip"
 
 const ORDER_ID = "ord_paid_t2"
 const FULFILLMENT_ID = "ful_t2"
@@ -138,6 +139,22 @@ describe("an authorized download", () => {
         nextUseCount: 1,
       },
     })
+  })
+
+  it("authorizes a QA-approved neutral report only at its exact ZIP content address", () => {
+    const neutralLocator=neutralCustomerZipLocator(sha)
+    expect(decidePacketDownload(input({
+      fulfillment:{...input().fulfillment!,kind:"NEUTRAL_RECORDS_REPORT",neutralQaApproved:true},
+      capability:{...input().capability!,maxUses:1},
+      artifact:{...input().artifact!,storageLocator:neutralLocator},
+    }))).toMatchObject({ok:true,grant:{storageLocator:neutralLocator}})
+  })
+
+  it("never permits a neutral artifact through the legacy PDF locator namespace", () => {
+    expect(decidePacketDownload(input({
+      fulfillment:{...input().fulfillment!,kind:"NEUTRAL_RECORDS_REPORT",neutralQaApproved:true},
+      capability:{...input().capability!,maxUses:1},
+    }))).toEqual({ok:false,blocker:"INVALID_STORAGE_LOCATOR"})
   })
 
   it("carries no PIN, address, email or locator-derived URL", () => {
