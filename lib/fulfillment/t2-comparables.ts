@@ -40,10 +40,10 @@ import { createHash } from "node:crypto";
  * produced it.
  */
 export const NON_DIRECTIONAL_RULE_ID =
-  "R1-same-neighborhood-class-subtype-sqft25-yrblt15-median-v1";
+  "R2-same-neighborhood-class-subtype-sqft15-yrblt10-median-all-v1";
 
-export const SQFT_TOLERANCE = 0.25;
-export const YEAR_BUILT_TOLERANCE = 15;
+export const SQFT_TOLERANCE = 0.15;
+export const YEAR_BUILT_TOLERANCE = 10;
 
 /**
  * Cook County Assessor Rule 15: "At least 3 comparable properties must be
