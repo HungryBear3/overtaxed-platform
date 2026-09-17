@@ -8,9 +8,13 @@ import { Client } from "pg";
 import {
   OT_PRODUCTION_RECOVERY_SCHEMA,
   OT_PRODUCTION_RECOVERY_CATALOG_SQL,
+  OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
+  OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR,
   OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
+  OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY,
   canonicalJson,
   authenticateReceipt,
+  countNormalizedManagedMemberships,
   newBackupId,
   sha256,
   type ProductionRecoveryReceipt,
@@ -241,113 +245,123 @@ async function main(): Promise<void> {
     const client = new Client({ connectionString: connection.urls.owner });
     let connected = false;
     try {
-    await client.connect();
-    connected = true;
-    const beforeResult = await client.query(
-      OT_PRODUCTION_RECOVERY_CATALOG_SQL,
-      [OT_PRODUCTION_RECOVERY_RELEVANT_ROLES],
-    );
-    if (beforeResult.rows.length !== 1)
-      throw new Error("Recovery catalog snapshot did not return one row");
-    const before = beforeResult.rows[0]!.snapshot as Record<string, unknown>;
-    const markerResult = await client.query(
-      "select coalesce(shobj_description(oid,'pg_database'),'') marker from pg_database where datname=current_database()",
-    );
-    const comment = JSON.parse(
-      String(markerResult.rows[0]?.marker ?? ""),
-    ) as Record<string, unknown>;
-    if (
-      comment.projectRef !== expected.projectRef ||
-      comment.instanceId !== expected.markerInstanceId
-    )
-      throw new Error(
-        "Recovery source database marker does not match the approved Production database",
+      await client.connect();
+      connected = true;
+      const beforeResult = await client.query(
+        OT_PRODUCTION_RECOVERY_CATALOG_SQL,
+        [
+          OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
+          OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
+        ],
       );
-    const versionResult = await client.query(
-      "select current_setting('server_version_num')::int value",
-    );
-    const major = Math.floor(Number(versionResult.rows[0]!.value) / 10_000);
-    if (major !== 17 && major !== 18)
-      throw new Error(`Recovery source PostgreSQL ${major} is unsupported`);
+      if (beforeResult.rows.length !== 1)
+        throw new Error("Recovery catalog snapshot did not return one row");
+      const before = beforeResult.rows[0]!.snapshot as Record<string, unknown>;
+      const markerResult = await client.query(
+        "select coalesce(shobj_description(oid,'pg_database'),'') marker from pg_database where datname=current_database()",
+      );
+      const comment = JSON.parse(
+        String(markerResult.rows[0]?.marker ?? ""),
+      ) as Record<string, unknown>;
+      if (
+        comment.projectRef !== expected.projectRef ||
+        comment.instanceId !== expected.markerInstanceId
+      )
+        throw new Error(
+          "Recovery source database marker does not match the approved Production database",
+        );
+      const versionResult = await client.query(
+        "select current_setting('server_version_num')::int value",
+      );
+      const major = Math.floor(Number(versionResult.rows[0]!.value) / 10_000);
+      if (major !== 17 && major !== 18)
+        throw new Error(`Recovery source PostgreSQL ${major} is unsupported`);
 
-    const pgEnv = pgEnvironment(connection.urls.owner);
-    const artifacts: RecoveryArtifact[] = [];
-    artifacts.push(
-      await encryptCommand({
-        command: "pg_dump",
-        args: ["--format=custom", "--no-password"],
-        env: pgEnv,
-        output: path.join(directory, "database.dump.gpg"),
-        passphrase,
-        format: "postgres-custom",
-      }),
-    );
-    artifacts.push(
-      await encryptCommand({
-        command: "pg_dumpall",
-        args: ["--roles-only", "--no-role-passwords", "--no-password"],
-        env: pgEnv,
-        output: path.join(directory, "roles.sql.gpg"),
-        passphrase,
-        format: "postgres-roles-sql",
-      }),
-    );
-    const catalogBytes = Buffer.from(canonicalJson(before));
-    artifacts.push(
-      await encryptBuffer({
-        bytes: catalogBytes,
-        output: path.join(directory, "catalog.json.gpg"),
-        passphrase,
-        format: "catalog-json",
-      }),
-    );
-
-    const after = (
-      await client.query(OT_PRODUCTION_RECOVERY_CATALOG_SQL, [
-        OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
-      ])
-    ).rows[0]!.snapshot;
-    if (sha256(canonicalJson(after)) !== sha256(catalogBytes))
-      throw new Error(
-        "Recovery catalog changed while backup artifacts were captured",
+      const pgEnv = pgEnvironment(connection.urls.owner);
+      const artifacts: RecoveryArtifact[] = [];
+      artifacts.push(
+        await encryptCommand({
+          command: "pg_dump",
+          args: ["--format=custom", "--no-password"],
+          env: pgEnv,
+          output: path.join(directory, "database.dump.gpg"),
+          passphrase,
+          format: "postgres-custom",
+        }),
+      );
+      artifacts.push(
+        await encryptCommand({
+          command: "pg_dumpall",
+          args: ["--roles-only", "--no-role-passwords", "--no-password"],
+          env: pgEnv,
+          output: path.join(directory, "roles.sql.gpg"),
+          passphrase,
+          format: "postgres-roles-sql",
+        }),
+      );
+      const catalogBytes = Buffer.from(canonicalJson(before));
+      artifacts.push(
+        await encryptBuffer({
+          bytes: catalogBytes,
+          output: path.join(directory, "catalog.json.gpg"),
+          passphrase,
+          format: "catalog-json",
+        }),
       );
 
-    const backupCompletedAt = new Date().toISOString();
-    if (
-      Date.parse(backupCompletedAt) - Date.parse(backupStartedAt) >
-      60 * 60_000
-    )
-      throw new Error("Recovery capture exceeded the hard 60-minute window");
-    const receipt: ProductionRecoveryReceipt = {
-      schema: OT_PRODUCTION_RECOVERY_SCHEMA,
-      backupId: newBackupId(),
-      createdAt: backupCompletedAt,
-      backupStartedAt,
-      backupCompletedAt,
-      projectRef: expected.projectRef,
-      markerInstanceId: expected.markerInstanceId,
-      sourceServerMajor: major,
-      encryption: {
-        implementation: "gpg-symmetric-aes256",
-        plaintextAtRest: false,
-      },
-      artifacts,
-      catalogDigest: sha256(catalogBytes),
-      authenticator: "",
-    };
-    receipt.authenticator = authenticateReceipt(receipt, authenticationKey);
-    const receiptPath = path.join(directory, "backup-receipt.json");
-    const receiptDescriptor = openPrivateRecoveryArtifact(receiptPath);
-    try {
-      fs.writeFileSync(receiptDescriptor, canonicalJson(receipt));
-      sealPrivateRecoveryArtifact(receiptDescriptor, receiptPath);
-    } finally {
-      fs.closeSync(receiptDescriptor);
-    }
-    fsyncDirectory(directory);
-    process.stdout.write(
-      `neutral-report PRODUCTION recovery backup: PASS backup_id=${receipt.backupId} receipt_sha256=${sha256(fs.readFileSync(receiptPath))} encrypted_artifacts=3 plaintext_at_rest=false\n`,
-    );
+      const after = (
+        await client.query(OT_PRODUCTION_RECOVERY_CATALOG_SQL, [
+          OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
+          OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
+        ])
+      ).rows[0]!.snapshot;
+      if (sha256(canonicalJson(after)) !== sha256(catalogBytes))
+        throw new Error(
+          "Recovery catalog changed while backup artifacts were captured",
+        );
+
+      const backupCompletedAt = new Date().toISOString();
+      if (
+        Date.parse(backupCompletedAt) - Date.parse(backupStartedAt) >
+        60 * 60_000
+      )
+        throw new Error("Recovery capture exceeded the hard 60-minute window");
+      const receipt: ProductionRecoveryReceipt = {
+        schema: OT_PRODUCTION_RECOVERY_SCHEMA,
+        backupId: newBackupId(),
+        createdAt: backupCompletedAt,
+        backupStartedAt,
+        backupCompletedAt,
+        projectRef: expected.projectRef,
+        markerInstanceId: expected.markerInstanceId,
+        sourceServerMajor: major,
+        encryption: {
+          implementation: "gpg-symmetric-aes256",
+          plaintextAtRest: false,
+        },
+        artifacts,
+        catalogDigest: sha256(catalogBytes),
+        roleMembershipPortability: {
+          policy: OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY,
+          sourceGrantors: [...OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS],
+          normalizedGrantor: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR,
+          managedMembershipCount: countNormalizedManagedMemberships(before),
+        },
+        authenticator: "",
+      };
+      receipt.authenticator = authenticateReceipt(receipt, authenticationKey);
+      const receiptPath = path.join(directory, "backup-receipt.json");
+      const receiptDescriptor = openPrivateRecoveryArtifact(receiptPath);
+      try {
+        fs.writeFileSync(receiptDescriptor, canonicalJson(receipt));
+        sealPrivateRecoveryArtifact(receiptDescriptor, receiptPath);
+      } finally {
+        fs.closeSync(receiptDescriptor);
+      }
+      fsyncDirectory(directory);
+      process.stdout.write(
+        `neutral-report PRODUCTION recovery backup: PASS backup_id=${receipt.backupId} receipt_sha256=${sha256(fs.readFileSync(receiptPath))} encrypted_artifacts=3 plaintext_at_rest=false\n`,
+      );
     } finally {
       if (connected) await client.end();
     }

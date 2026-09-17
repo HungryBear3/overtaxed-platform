@@ -7,10 +7,14 @@ import path from "node:path";
 import { Client } from "pg";
 import {
   OT_PRODUCTION_RECOVERY_CATALOG_SQL,
+  OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
+  OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR,
   OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
+  OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY,
   OT_PRODUCTION_RECOVERY_SCHEMA,
   canonicalJson,
   authenticateReceipt,
+  countNormalizedManagedMemberships,
   sha256,
   type ProductionRecoveryReceipt,
   type RecoveryArtifact,
@@ -85,7 +89,7 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
   test("decrypts, restores and proves artifacts plus role/ACL catalog", async () => {
     const sourceBin = process.env.OT_TEST_SOURCE_PG_BIN;
     const targetBin = process.env.OT_TEST_TARGET_PG_BIN;
-    const source = cluster("source_admin", sourceBin);
+    const source = cluster("supabase_admin", sourceBin);
     const target = cluster("restore_admin", targetBin);
     const targetDatabase = "ot_neutral_recovery_rehearsal_test";
     execFileSync(
@@ -106,6 +110,7 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
       create role anon nologin;
       create role authenticated nologin;
       create role service_role nologin;
+      create role portable_admin login;
       create role ot_prod_app login inherit;
       create role ot_prod_neutral_runtime login inherit;
       create role ot_prod_neutral_delivery login inherit;
@@ -122,10 +127,21 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
       grant select on public.recovery_fixture to ot_prod_app;
       grant select on public.recovery_backpressure to ot_prod_app;
       reset role;
+      grant anon to authenticated with inherit true, set false;
+      grant anon to portable_admin with admin option, inherit true, set true;
     `);
+    const portableSource = new Client({
+      connectionString: `postgresql://portable_admin@127.0.0.1:${source.port}/postgres`,
+    });
+    await portableSource.connect();
+    await portableSource.query(
+      "grant anon to service_role with inherit false, set true",
+    );
+    await portableSource.end();
     const catalog = (
       await sourceClient.query(OT_PRODUCTION_RECOVERY_CATALOG_SQL, [
         OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
+        OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
       ])
     ).rows[0]!.snapshot;
     await sourceClient.end();
@@ -137,7 +153,7 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
       PGDATABASE: "postgres",
       PGHOST: "127.0.0.1",
       PGPORT: String(source.port),
-      PGUSER: "source_admin",
+      PGUSER: "supabase_admin",
       PGPASSWORD: undefined,
     };
     const plaintext = [
@@ -161,6 +177,15 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
         env: pgEnv,
         maxBuffer: 32 * 1024 * 1024,
       });
+      if (format === "postgres-roles-sql") {
+        const rolesSql = bytes.toString("utf8");
+        expect(rolesSql).toMatch(
+          /GRANT anon TO authenticated .*GRANTED BY supabase_admin;/,
+        );
+        expect(rolesSql).toMatch(
+          /GRANT anon TO service_role .*GRANTED BY portable_admin;/,
+        );
+      }
       const encrypted = `${name}.gpg`;
       execFileSync(
         "gpg",
@@ -246,6 +271,12 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
       },
       artifacts,
       catalogDigest: sha256(catalogBytes),
+      roleMembershipPortability: {
+        policy: OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY,
+        sourceGrantors: [OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS[0]],
+        normalizedGrantor: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR,
+        managedMembershipCount: countNormalizedManagedMemberships(catalog),
+      },
       authenticator: "",
     };
     receipt.authenticator = authenticateReceipt(receipt, authenticationKey);
@@ -301,6 +332,15 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
         path.join(directory, `restore-rehearsal-pg${targetMajor}.json`),
       ),
     ).toBe(true);
+    const restoreReceipt = JSON.parse(
+      fs.readFileSync(
+        path.join(directory, `restore-rehearsal-pg${targetMajor}.json`),
+        "utf8",
+      ),
+    );
+    expect(
+      restoreReceipt.roleMembershipPortability.pristineTargetCount,
+    ).toBeGreaterThan(0);
     const restored = new Client({ connectionString: targetUrl });
     await restored.connect();
     expect(
@@ -310,6 +350,44 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
         )
       ).rows[0]!.value,
     ).toBe("unchanged");
+    expect(
+      (
+        await restored.query(`
+          select grantor.rolname grantor_role, m.admin_option, m.inherit_option, m.set_option
+          from pg_auth_members m
+          join pg_roles granted on granted.oid=m.roleid
+          join pg_roles member on member.oid=m.member
+          join pg_roles grantor on grantor.oid=m.grantor
+          where granted.rolname='anon' and member.rolname='authenticated'
+        `)
+      ).rows,
+    ).toEqual([
+      {
+        grantor_role: "restore_admin",
+        admin_option: false,
+        inherit_option: true,
+        set_option: false,
+      },
+    ]);
+    expect(
+      (
+        await restored.query(`
+          select grantor.rolname grantor_role, m.admin_option, m.inherit_option, m.set_option
+          from pg_auth_members m
+          join pg_roles granted on granted.oid=m.roleid
+          join pg_roles member on member.oid=m.member
+          join pg_roles grantor on grantor.oid=m.grantor
+          where granted.rolname='anon' and member.rolname='service_role'
+        `)
+      ).rows,
+    ).toEqual([
+      {
+        grantor_role: "portable_admin",
+        admin_option: false,
+        inherit_option: false,
+        set_option: true,
+      },
+    ]);
     await restored.end();
 
     // A replacement listener can appear after the preliminary Node inspection.

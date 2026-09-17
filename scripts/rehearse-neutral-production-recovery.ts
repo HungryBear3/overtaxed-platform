@@ -10,11 +10,14 @@ import {
   OT_PRODUCTION_RESTORE_SCHEMA,
   OT_PRODUCTION_RECOVERY_CATALOG_SQL,
   OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
+  adaptManagedRoleMembershipGrantors,
+  assertManagedRoleMembershipPortabilityCounts,
   assertReceiptAuthenticator,
   assertFreshRehearsalSentinelTimestamp,
   authenticateReceipt,
   canonicalJson,
   assertRecoveryReceipt,
+  countNormalizedManagedMemberships,
   sha256,
   type ProductionRecoveryReceipt,
   type RehearsalClusterSentinel,
@@ -32,12 +35,13 @@ function sqlLiteral(value: string): string {
 }
 
 async function decryptRestoreSingleSession(input: {
-  rolesEncrypted: string;
+  rolesSql: Buffer;
+  rolesPlaintextSha256: string;
   databaseEncrypted: string;
   passphrase: string;
   env: NodeJS.ProcessEnv;
   sentinel: RehearsalClusterSentinel;
-}): Promise<{ roles: string; database: string }> {
+}): Promise<{ roles: string; adaptedRoles: string; database: string }> {
   const gpgHome = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gpg-"));
   fs.chmodSync(gpgHome, 0o700);
   const children = new Set<ChildProcess>();
@@ -152,7 +156,13 @@ $ot_recovery_guard$;
     return digest.digest("hex");
   };
   try {
-    const roles = await decryptInto(input.rolesEncrypted, psql.stdin, false);
+    const adaptedRoles = sha256(input.rolesSql);
+    if (!psql.stdin.write(input.rolesSql))
+      await Promise.race([
+        once(psql.stdin, "drain"),
+        prematurePsqlExit,
+        psqlInputFailed,
+      ]);
     const restore = track(
       spawn("pg_restore", ["--exit-on-error", "--file=-"], {
         env: input.env,
@@ -187,7 +197,11 @@ $ot_recovery_guard$;
     const [psqlCode] = await psqlClosed;
     if (psqlCode !== 0)
       throw new Error(`single-session restore failed: ${errors}`);
-    return { roles, database };
+    return {
+      roles: input.rolesPlaintextSha256,
+      adaptedRoles,
+      database,
+    };
   } finally {
     await abortPipeline();
     fs.rmSync(gpgHome, { recursive: true, force: true });
@@ -281,6 +295,7 @@ async function main(): Promise<void> {
   >();
   let target: Client | undefined;
   let targetEnded = false;
+  let pristineTargetManagedMembershipCount = -1;
   try {
     for (const artifact of receipt.artifacts) {
       const bytes = readProtectedFile(path.join(directory, artifact.file));
@@ -346,6 +361,15 @@ async function main(): Promise<void> {
     );
     if (Number(emptiness.rows[0]!.objects) !== 0)
       throw new Error("Restore rehearsal target is not empty");
+    const pristineTargetCatalog = (
+      await target.query(OT_PRODUCTION_RECOVERY_CATALOG_SQL, [
+        OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
+        [sentinel.temporarySuperuser],
+      ])
+    ).rows[0]!.snapshot;
+    pristineTargetManagedMembershipCount = countNormalizedManagedMemberships(
+      pristineTargetCatalog,
+    );
     await target.end();
     targetEnded = true;
 
@@ -368,9 +392,45 @@ async function main(): Promise<void> {
     }
 
     const roles = byFormat["postgres-roles-sql"]!;
+    const catalog = byFormat["catalog-json"]!;
+    const rolesPlaintext = await decryptBuffer(
+      privateArtifacts.get(roles.file)!.file,
+      passphrase,
+    );
+    if (sha256(rolesPlaintext) !== roles.plaintextSha256)
+      throw new Error(
+        `Decrypted recovery artifact checksum mismatch: ${roles.file}`,
+      );
+    const sourceCatalog = await decryptBuffer(
+      privateArtifacts.get(catalog.file)!.file,
+      passphrase,
+    );
+    if (
+      sha256(sourceCatalog) !== catalog.plaintextSha256 ||
+      sha256(sourceCatalog) !== receipt.catalogDigest
+    )
+      throw new Error(
+        `Decrypted recovery artifact checksum mismatch: ${catalog.file}`,
+      );
+    const sourceCatalogSnapshot = JSON.parse(
+      sourceCatalog.toString("utf8"),
+    ) as unknown;
+    const normalizedSourceCount = countNormalizedManagedMemberships(
+      sourceCatalogSnapshot,
+    );
+    const adaptedRoles = adaptManagedRoleMembershipGrantors(rolesPlaintext);
+    assertManagedRoleMembershipPortabilityCounts({
+      authenticatedSourceCount:
+        receipt.roleMembershipPortability.managedMembershipCount,
+      sourceCatalogCount: normalizedSourceCount,
+      pristineTargetCount: pristineTargetManagedMembershipCount,
+      adaptedStatementCount: adaptedRoles.managedMembershipCount,
+    });
+
     const database = byFormat["postgres-custom"]!;
     const restoredArtifactHashes = await decryptRestoreSingleSession({
-      rolesEncrypted: privateArtifacts.get(roles.file)!.file,
+      rolesSql: adaptedRoles.bytes,
+      rolesPlaintextSha256: sha256(rolesPlaintext),
       databaseEncrypted: privateArtifacts.get(database.file)!.file,
       passphrase,
       env: pgEnv,
@@ -380,11 +440,6 @@ async function main(): Promise<void> {
       [roles.file]: restoredArtifactHashes.roles,
       [database.file]: restoredArtifactHashes.database,
     };
-    const catalog = byFormat["catalog-json"]!;
-    const sourceCatalog = await decryptBuffer(
-      privateArtifacts.get(catalog.file)!.file,
-      passphrase,
-    );
     observed[catalog.file] = sha256(sourceCatalog);
     for (const artifact of receipt.artifacts)
       if (observed[artifact.file] !== artifact.plaintextSha256)
@@ -398,6 +453,7 @@ async function main(): Promise<void> {
       const restored = (
         await verifier.query(OT_PRODUCTION_RECOVERY_CATALOG_SQL, [
           OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
+          [sentinel.temporarySuperuser],
         ])
       ).rows[0]!.snapshot;
       const restoredDigest = sha256(canonicalJson(restored));
@@ -417,6 +473,14 @@ async function main(): Promise<void> {
         artifactPlaintextSha256: observed,
         sourceCatalogDigest: receipt.catalogDigest,
         restoredCatalogDigest: restoredDigest,
+        roleMembershipPortability: {
+          policy: receipt.roleMembershipPortability.policy,
+          authenticatedSourceCount:
+            receipt.roleMembershipPortability.managedMembershipCount,
+          pristineTargetCount: pristineTargetManagedMembershipCount,
+          adaptedStatementCount: adaptedRoles.managedMembershipCount,
+          adaptedRolesSha256: restoredArtifactHashes.adaptedRoles,
+        },
         verified: true,
         clusterSystemIdentifier: sentinel.systemIdentifier,
         clusterSentinelNonce: sentinel.nonce,
