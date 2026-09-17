@@ -11,6 +11,7 @@ import {
   isCanonicalFreeCheckOutcome,
   type FreeCheckOutcome,
 } from "@/lib/free-check-outcome-contract";
+import { NEUTRAL_REPORT_LIMITS, NEUTRAL_REPORT_NAME, NEUTRAL_REPORT_PRICE, NEUTRAL_REPORT_QA, NEUTRAL_REPORT_REFUND, NEUTRAL_REPORT_SUMMARY, NEUTRAL_REPORT_TURNAROUND } from "@/lib/copy/neutral-report";
 
 /*
  * The local `SAMPLE_RESULT` is gone.
@@ -177,18 +178,18 @@ function formatPinDisplay(raw: string) {
   return f;
 }
 
-function HeroNarrative() {
+function HeroNarrative({ neutralReport = false }: { neutralReport?: boolean }) {
   return (
     <div className="ot-hero-narrative">
       <StatusChip />
       <h1 className="ot-h1">
-        Is Cook County <em>over-assessing</em> your home?
+        {neutralReport ? <>See the <em>official records</em> behind your Cook County assessment.</> : <>Is Cook County <em>over-assessing</em> your home?</>}
       </h1>
       {/* "nearby" is gone from all three of these. Nothing in the free check
           computes a distance: comparables are selected from the subject's CCAO
           neighbourhood and building class and ordered by sale date, widening to
           the township when that cohort is thin. */}
-      <p className="ot-hero-subhead">See where your assessed value lands against comparable Cook County homes.</p>
+      <p className="ot-hero-subhead">{neutralReport ? "Review your assessment facts beside properties selected by clear, published matching filters." : "See where your assessed value lands against comparable Cook County homes."}</p>
       <p className="ot-hero-valueprop">
         Plain math on Cook County&apos;s own public records — no signup, no
         credit card. We show what the public record does and does not support.
@@ -201,7 +202,7 @@ function HeroNarrative() {
         <li>
           <span className="ot-tick">✓</span>
           <span>
-            Your assessed value vs. <strong>comparable properties</strong> on Cook County&apos;s public record
+            Your assessed value vs. <strong>{neutralReport ? "matching" : "comparable"} properties</strong> on Cook County&apos;s public record
           </span>
         </li>
         <li>
@@ -332,11 +333,13 @@ function HeroCheckCard({
   error,
   onResult,
   onError,
+  neutralReport = false,
 }: {
   result: Result | null;
   error: string;
   onResult: (r: Result | null) => void;
   onError: (message: string) => void;
+  neutralReport?: boolean;
 }) {
   const [pin, setPin] = useState("");
   const [mode, setMode] = useState<"address" | "pin">("address");
@@ -440,6 +443,7 @@ function HeroCheckCard({
     return (
       <HeroCheckResult
         result={result}
+        neutralReport={neutralReport}
         onReset={() => {
           setPin("");
           onError("");
@@ -584,9 +588,11 @@ function HeroCheckCard({
 function HeroCheckResult({
   result,
   onReset,
+  neutralReport = false,
 }: {
   result: Result;
   onReset: () => void;
+  neutralReport?: boolean;
 }) {
   // Every figure is conditional on actually having it. `showFigures` is the
   // route's call, not this component's — the surface renders the decision, it
@@ -704,9 +710,9 @@ function HeroCheckResult({
               presented as a choice is still an offer. BL-F3 requires CC-10
               wherever $69 appears, so it renders directly beneath the price. */}
           <div className="ot-result-tier-actions" aria-label="Filing options">
-            <a href="/checkout?plan=diy" className="ot-cta ot-cta-block ot-result-tier-cta">DIY Appeal Packet $69</a>
+            <a href="/checkout?plan=diy" className="ot-cta ot-cta-block ot-result-tier-cta">{neutralReport ? `${NEUTRAL_REPORT_NAME} ${NEUTRAL_REPORT_PRICE}` : "DIY Appeal Packet $69"}</a>
           </div>
-          <div className="ot-result-altline">{CC_10}</div>
+          <div className="ot-result-altline">{neutralReport ? NEUTRAL_REPORT_LIMITS : CC_10}</div>
         </>
       ) : (
         <div className="ot-result-altline" role="status">
@@ -906,17 +912,17 @@ function HeatmapHistogram() {
   );
 }
 
-function HeatmapHero() {
+function HeatmapHero({ neutralReport = false }: { neutralReport?: boolean }) {
   return (
     <section className="ot-heatmap" aria-labelledby="ot-heatmap-h">
       <div className="ot-heatmap-inner">
         <div className="ot-heatmap-text">
           <div className="ot-heatmap-eyebrow">Cook County · 2024–2026 cycle</div>
           <h2 id="ot-heatmap-h" className="ot-h2 ot-heatmap-h">
-            Cook County residential assessments are tested against a 10% level — and uniformity with comparable homes.
+            {neutralReport ? "See how Cook County's published assessment records line up." : "Cook County residential assessments are tested against a 10% level — and uniformity with comparable homes."}
           </h2>
           <p className="ot-heatmap-lede">
-            For class 2 residential property, assessed value is generally targeted at 10% of market value. Appeals also depend on uniformity: whether comparable homes are assessed lower than yours.
+            {neutralReport ? "We organize the subject property's published facts and matching properties selected by stated filters. We show the source records and arithmetic without deciding what they mean for an appeal." : "For class 2 residential property, assessed value is generally targeted at 10% of market value. Appeals also depend on uniformity: whether comparable homes are assessed lower than yours."}
           </p>
         </div>
         <div className="ot-heatmap-vis ot-heatmap-vis-hist">
@@ -1015,17 +1021,17 @@ function SampleReportPreview() {
   );
 }
 
-function SampleReportSection() {
+function SampleReportSection({ neutralReport = false }: { neutralReport?: boolean }) {
   return (
     <section id="sample-report" className="ot-sample-section" aria-labelledby="ot-sample-h">
       <div className="ot-sample-section-inner">
         <div className="ot-sample-section-text">
           <div className="ot-sample-section-eyebrow">What you&apos;ll get</div>
           <h2 id="ot-sample-h" className="ot-h2">
-            A one-page report — your assessed value, your comps, and where every number came from.
+            {neutralReport ? "Your official assessment records, matching properties, and where every number came from." : "A one-page report — your assessed value, your comps, and where every number came from."}
           </h2>
           <p className="ot-sample-section-lede">
-            Your assessed value, up to three comparable properties from the Cook County
+            Your assessed value, up to three {neutralReport ? "matching" : "comparable"} properties from the Cook County
             record, and — where the county publishes a market value — your assessment
             level against its 10% residential target. Every number is sourced from public
             CCAO records you can verify yourself.
@@ -1035,7 +1041,7 @@ function SampleReportSection() {
               distance claim over a cohort-and-recency selection, and a promise of
               three where the route sends however many survive validation. */}
           <ul className="ot-sample-section-list">
-            <li><strong>Up to 3 comparable properties</strong>, selected from your CCAO neighborhood code</li>
+            <li><strong>Up to 3 {neutralReport ? "matching" : "comparable"} properties</strong>, selected using published filters</li>
             <li><strong>Your assessed value beside their average</strong>, and the difference between them</li>
             <li><strong>Assessment level</strong> vs. Cook County&apos;s 10% residential target, where a market value is on file</li>
             <li><strong>Township appeal window</strong>, with the close date where the county has published one</li>
@@ -1049,21 +1055,21 @@ function SampleReportSection() {
   );
 }
 
-function SpecificityBar() {
+function SpecificityBar({ neutralReport = false }: { neutralReport?: boolean }) {
   return (
     <section className="ot-specbar">
       <div className="ot-specbar-inner">
         <div className="ot-spec">
           <div className="ot-spec-key">Data</div>
           <div className="ot-spec-val">
-            Cook County Assessor + Board of Review public records
+            Cook County Assessor public records
           </div>
         </div>
         <div className="ot-spec-divider" />
         <div className="ot-spec">
           <div className="ot-spec-key">Method</div>
           <div className="ot-spec-val">
-            We compare residential assessment level and comp uniformity, not black-box averages
+            {neutralReport ? "Published matching filters, visible arithmetic, and source receipts" : "We compare residential assessment level and comp uniformity, not black-box averages"}
           </div>
         </div>
         <div className="ot-spec-divider" />
@@ -1078,8 +1084,13 @@ function SpecificityBar() {
   );
 }
 
-function MethodologyCard() {
-  const steps = [
+function MethodologyCard({ neutralReport = false }: { neutralReport?: boolean }) {
+  const steps = neutralReport ? [
+    { num: "01", h: "Retrieve official records", p: "We retrieve the subject property's current Cook County assessment facts and record when and where each source was read." },
+    { num: "02", h: "Apply published matching filters", p: "We select properties using stated location, class, size, age, and recency filters. We call them matching properties, not appraisal or legal comparables." },
+    { num: "03", h: "Show the arithmetic", p: "The report displays the retrieved values and calculations so you can trace them. Ambiguous or missing county fields stay labeled as such." },
+    { num: "04", h: "Check completeness", p: "A time-capped human review checks source consistency and report completeness. It does not decide eligibility, predict savings or outcomes, or recommend whether to appeal." },
+  ] : [
     { num: "01", h: "Pull your record", p: "Your PIN returns your assessed value, market value, square footage, year built, and property class — straight from CCAO records." },
     { num: "02", h: "Select comparable properties", p: "We search your CCAO neighborhood code for properties of similar size, age, and class, taking the most recent qualifying records first and widening to the township when that cohort is thin. Selection is by cohort and recency — we do not rank comparables by distance." },
     { num: "03", h: "Check level and uniformity", p: "For class 2 residential property, Cook County targets an assessed value near 10% of market value. Where the county publishes a market value for your property and for a comparable, we show both assessment levels; where it does not, we show the assessed values and say the level is unavailable." },
@@ -1096,9 +1107,7 @@ function MethodologyCard() {
         <div className="ot-method-eyebrow">How the free check works</div>
         <h2 className="ot-h2">Plain math on public records — not a black box.</h2>
         <p className="ot-method-lede">
-          Cook County publishes every assessment, every comparable, and every
-          appeal outcome. We use that data — the same data the Board of Review
-          uses — to tell you whether your number is out of line.
+          {neutralReport ? "We disclose the official records, matching method, arithmetic, and source trail. The report presents facts rather than an eligibility or merits conclusion." : "Cook County publishes every assessment, every comparable, and every appeal outcome. We use that data — the same data the Board of Review uses — to tell you whether your number is out of line."}
         </p>
         <ol className="ot-method-steps">
           {steps.map((s) => (
@@ -1113,10 +1122,10 @@ function MethodologyCard() {
         </ol>
         <div className="ot-method-foot">
           <div className="ot-method-disclosure">
-            We don&apos;t publish countywide savings averages or success-rate
+            {neutralReport ? NEUTRAL_REPORT_LIMITS : <>We don&apos;t publish countywide savings averages or success-rate
             claims until we have verified, named Cook County outcomes. Our first
             customer wins are being filed in the 2026 cycle — we&apos;ll show
-            them here, by name and township, when the Board of Review rules.
+            them here, by name and township, when the Board of Review rules.</>}
           </div>
         </div>
       </div>
@@ -1134,7 +1143,7 @@ function MethodologyCard() {
  * savings averages or success-rate claims until we have verified, named
  * Cook County outcomes" — this section now matches that promise.
  */
-function Testimonials() {
+function Testimonials({ neutralReport = false }: { neutralReport?: boolean }) {
   return (
     <section className="ot-testimonials ot-ledger">
       <div className="ot-ledger-grain" aria-hidden="true" />
@@ -1142,17 +1151,17 @@ function Testimonials() {
         <div className="ot-testimonials-eyebrow">Outcomes</div>
         <div className="ot-testimonials-compact">
           <div>
-            <h2 className="ot-h2">Verified Cook County outcomes will publish after 2026 Board decisions.</h2>
+            <h2 className="ot-h2">{neutralReport ? "Review the report's sources and method before you buy." : "Verified Cook County outcomes will publish after 2026 Board decisions."}</h2>
             <p className="ot-testimonials-note">
-              We don&apos;t publish testimonials or savings averages we haven&apos;t
+              {neutralReport ? "The paid product contains only a neutral records compilation: official assessment facts, matching properties selected by published filters, visible arithmetic, and source details." : <>We don&apos;t publish testimonials or savings averages we haven&apos;t
               verified. Until the first 2026 decisions come back, review the
               actual deliverable instead: a Cook County-ready appeal packet with
-              comps, assessment-level analysis, filing instructions, and deadline tracking.
+              comps, assessment-level analysis, filing instructions, and deadline tracking.</>}
             </p>
           </div>
           <div className="ot-testimonials-actions">
             <a href="/appeal-packet" className="ot-cta ot-cta-sm">
-              See what the packet includes <span className="ot-cta-arrow">→</span>
+              {neutralReport ? "See the report method" : "See what the packet includes"} <span className="ot-cta-arrow">→</span>
             </a>
             <a href="/#sample-report" className="ot-link-muted">
               View sample report
@@ -1197,20 +1206,32 @@ const PRICING_PLANS = [
   },
 ];
 
-function PricingCompare() {
+function PricingCompare({ neutralReport = false }: { neutralReport?: boolean }) {
+  const plans = neutralReport ? [{
+    id: "diy", name: NEUTRAL_REPORT_NAME, price: NEUTRAL_REPORT_PRICE, priceNote: "one-time",
+    summary: NEUTRAL_REPORT_SUMMARY, tag: null, href: "/checkout", cta: "Get my records report",
+    features: [
+      { label: "Official assessment records", ok: true, detail: "Source facts and retrieval details" },
+      { label: "Matching properties", ok: true, detail: "Selected by the report's published filters" },
+      { label: "Visible calculations", ok: true, detail: "Neutral arithmetic, without an eligibility conclusion" },
+      { label: "Human quality check", ok: true, detail: NEUTRAL_REPORT_QA },
+      { label: "Expected turnaround", ok: true, detail: NEUTRAL_REPORT_TURNAROUND },
+      { label: "Complete-report refund", ok: true, detail: NEUTRAL_REPORT_REFUND },
+    ],
+  }] : PRICING_PLANS;
   return (
     <section id="pricing" className="ot-pcompare">
       <div className="ot-pcompare-inner">
         <div className="ot-pcompare-head">
-          <div className="ot-eyebrow">One way to file</div>
+          <div className="ot-eyebrow">{neutralReport ? "One neutral records report" : "One way to file"}</div>
           {/* "Same outcome" claimed the county decides identically whichever
               tier you buy — an outcome claim about a decision that is not
               ours. With one plan there is nothing left to compare anyway. */}
-          <h2 className="ot-h2">The DIY Appeal Packet.</h2>
-          <p className="ot-pcompare-sub">{CC_10}</p>
+          <h2 className="ot-h2">{neutralReport ? NEUTRAL_REPORT_NAME : "The DIY Appeal Packet."}</h2>
+          <p className="ot-pcompare-sub">{neutralReport ? NEUTRAL_REPORT_LIMITS : CC_10}</p>
         </div>
         <div className="ot-pcompare-grid">
-          {PRICING_PLANS.map((plan) => (
+          {plans.map((plan) => (
             <div key={plan.id} className={`ot-pcompare-card ot-pcompare-card--${plan.id}`}>
               {plan.tag && <div className="ot-pcompare-tag">{plan.tag}</div>}
               <div className="ot-pcompare-name">{plan.name}</div>
@@ -1242,7 +1263,7 @@ function PricingCompare() {
   );
 }
 
-const FAQ_ITEMS = [
+const LEGACY_FAQ_ITEMS = [
   {
     id: "deadline",
     // The cycle-year schedule ("2026 triennial covers the South and West
@@ -1405,9 +1426,16 @@ function HoaSection() {
   );
 }
 
-function FaqSection() {
+function FaqSection({ neutralReport = false }: { neutralReport?: boolean }) {
+  const items = neutralReport ? [
+    { id: "report", q: "What does the $69 report include?", a: `${NEUTRAL_REPORT_SUMMARY} ${NEUTRAL_REPORT_QA}`, expanded: true },
+    { id: "matching", q: "Are matching properties legal or appraisal comparables?", a: `No. “Matching properties” means records selected by the filters disclosed in the report. ${NEUTRAL_REPORT_LIMITS}`, expanded: true },
+    { id: "refund", q: "When do I receive a refund?", a: NEUTRAL_REPORT_REFUND, expanded: true },
+    { id: "timing", q: "When will I receive the report?", a: NEUTRAL_REPORT_TURNAROUND, expanded: true },
+    { id: "data", q: "Where does the data come from?", a: "Official Cook County public records. The report identifies the source and retrieval details and labels missing or ambiguous fields rather than inferring an answer.", expanded: true },
+  ] : LEGACY_FAQ_ITEMS;
   const [open, setOpen] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(FAQ_ITEMS.map((it) => [it.id, !!it.expanded])),
+    () => Object.fromEntries(items.map((it) => [it.id, !!it.expanded])),
   );
   return (
     <section id="faq" className="ot-faq">
@@ -1415,7 +1443,7 @@ function FaqSection() {
         <div className="ot-faq-eyebrow">Common questions</div>
         <h2 className="ot-h2">Frequently asked questions.</h2>
         <ul className="ot-faq-list">
-          {FAQ_ITEMS.map((it) => (
+          {items.map((it) => (
             <li key={it.id} className={`ot-faq-item${open[it.id] ? " is-open" : ""}`}>
               <button
                 type="button"
@@ -1566,7 +1594,7 @@ function HeroPreviewCard() {
   );
 }
 
-export default function HomePage() {
+export default function HomePage({ neutralReport = false }: { neutralReport?: boolean }) {
   const [result, setResult] = useState<Result | null>(null);
   const [checkError, setCheckError] = useState("");
 
@@ -1593,23 +1621,23 @@ export default function HomePage() {
       <section id="hero-check" className="ot-hero ot-hero-split">
         <div className="ot-hero-inner ot-hero-inner-split">
           <div className="ot-hero-l">
-            <HeroNarrative />
+            <HeroNarrative neutralReport={neutralReport} />
           </div>
           <div className="ot-hero-r ot-hero-r-stack">
             <HeroPreviewCard />
-            <HeroCheckCard result={result} error={checkError} onResult={setResult} onError={setCheckError} />
+            <HeroCheckCard result={result} error={checkError} onResult={setResult} onError={setCheckError} neutralReport={neutralReport} />
           </div>
         </div>
       </section>
 
-      <HeatmapHero />
-      <SampleReportSection />
-      <SpecificityBar />
-      <MethodologyCard />
-      <Testimonials />
-      <PricingCompare />
-      <HoaSection />
-      <FaqSection />
+      <HeatmapHero neutralReport={neutralReport} />
+      <SampleReportSection neutralReport={neutralReport} />
+      <SpecificityBar neutralReport={neutralReport} />
+      <MethodologyCard neutralReport={neutralReport} />
+      <Testimonials neutralReport={neutralReport} />
+      <PricingCompare neutralReport={neutralReport} />
+      {!neutralReport && <HoaSection />}
+      <FaqSection neutralReport={neutralReport} />
     </>
   );
 }
