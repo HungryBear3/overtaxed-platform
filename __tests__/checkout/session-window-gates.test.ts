@@ -60,6 +60,12 @@ const mockSnapshot: {
 } = { schemaVersion: 1, synthetic: true, sources: {}, townships: {} }
 
 jest.mock("@/data/deadlines/cook-county.json", () => mockSnapshot)
+jest.mock("@/lib/deadlines/commerce-deadline-authority", () => ({
+  projectCommerceDeadline: jest.fn(async ({ township, at }: { township: unknown; at: Date }) => {
+    const { evaluateOfficialDeadlineState, projectDeadline } = jest.requireActual("@/lib/deadlines/official-source-state")
+    return projectDeadline(evaluateOfficialDeadlineState({ snapshot: mockSnapshot, township, stage: "assessor", evaluatedAt: at.toISOString() }), at.toISOString())
+  }),
+}))
 
 /**
  * The signed eligibility policy in force.
@@ -111,6 +117,8 @@ process.env.STRIPE_PRICE_T3_DFY = "price_t3"
 process.env.OT_CHECKOUT_GATE_SECRET = "test-gate-secret-at-least-32-characters"
 
 const { POST } = require("@/app/api/checkout/session/route") as typeof import("@/app/api/checkout/session/route")
+const { businessDaysBetween, chicagoCalendarDay } =
+  require("@/lib/checkout/business-days") as typeof import("@/lib/checkout/business-days")
 
 const base = {
   email: "buyer@example.com",
@@ -142,7 +150,13 @@ const FIXTURE_CALENDAR_URL = "https://www.cookcountyassessoril.gov/assessment-ca
  */
 function armWindow(
   townships: Array<{ key: string; name: string }>,
-  opts: { openInDays?: number; closesInDays?: number; retrievedAt?: string } = {},
+  opts: {
+    openInDays?: number
+    closesInDays?: number
+    retrievedAt?: string
+    /** Pin an exact YYYY-MM-DD close day, for business-day boundary cases. */
+    closeDay?: string
+  } = {},
 ) {
   const now = new Date()
   const source = {
@@ -167,7 +181,7 @@ function armWindow(
           assessor: {
             noticeDate: null,
             openDate: countyDay(opts.openInDays ?? -10, now),
-            lastFileDate: countyDay(opts.closesInDays ?? 20, now),
+            lastFileDate: opts.closeDay ?? countyDay(opts.closesInDays ?? 20, now),
           },
         },
       },
@@ -753,5 +767,116 @@ describe("GA4 attribution survives the held-product boundary", () => {
     expect(await res.json()).toMatchObject({ code: "PRODUCT_HELD", product: "T3_DFY" })
     expect(stripeCreate).not.toHaveBeenCalled()
     expect(db.__upsert).not.toHaveBeenCalled()
+  })
+})
+
+describe("the approved three-business-day product cutoff", () => {
+  // The Gate A owner ruling of 2026-08-31 (D-3 / T-1) is: deliver within one
+  // business day, and do not sell a packet when the Assessor window closes
+  // within three Chicago business days. Before this the repository had no
+  // business-day arithmetic at all.
+  //
+  // Close days are constructed by stepping Chicago calendar days until the
+  // required number of business days remains, so these cases mean the same
+  // thing whatever weekday the suite runs on. The arithmetic itself is proven
+  // independently in `__tests__/checkout/business-days.test.ts`.
+
+  /** The first Chicago day with exactly `target` business days remaining. */
+  function closeDayWithBusinessDays(target: number): string {
+    const today = chicagoCalendarDay(Date.now())
+    for (let step = 0; step <= 40; step += 1) {
+      const day = new Date(Date.parse(`${today}T00:00:00Z`) + step * 86_400_000)
+        .toISOString()
+        .slice(0, 10)
+      if (businessDaysBetween(today, day) === target) return day
+    }
+    throw new Error(`no close day found for ${target} business days`)
+  }
+
+  it("refuses a window closing inside three business days, before any provider call", async () => {
+    armWindow([{ key: "jefferson", name: "Jefferson" }], {
+      closeDay: closeDayWithBusinessDays(2),
+    })
+    mockPolicy.version = "test-policy-2026-08-19"
+
+    const res = await POST(request({ ...base, tier: "T2" }) as never)
+
+    expect(res.status).toBe(409)
+    expect(await res.json()).toMatchObject({
+      code: "CHECKOUT_WINDOW_CLOSING_TOO_SOON",
+      minimumBusinessDays: 3,
+    })
+    expect(db.__upsert).not.toHaveBeenCalled()
+    expect(stripeCreate).not.toHaveBeenCalled()
+    expect(stripeRetrievePrice).not.toHaveBeenCalled()
+  })
+
+  it("refuses a window closing today", async () => {
+    armWindow([{ key: "jefferson", name: "Jefferson" }], {
+      closeDay: chicagoCalendarDay(Date.now()),
+    })
+    mockPolicy.version = "test-policy-2026-08-19"
+
+    const res = await POST(request({ ...base, tier: "T2" }) as never)
+
+    expect(res.status).toBe(409)
+    expect((await res.json()).code).toBe("CHECKOUT_WINDOW_CLOSING_TOO_SOON")
+    expect(stripeCreate).not.toHaveBeenCalled()
+  })
+
+  it("allows a window with exactly three business days left", async () => {
+    armWindow([{ key: "jefferson", name: "Jefferson" }], {
+      closeDay: closeDayWithBusinessDays(3),
+    })
+    mockPolicy.version = "test-policy-2026-08-19"
+
+    const res = await postT2()
+
+    expect(res.status).toBe(200)
+    expect(stripeCreate).toHaveBeenCalled()
+  })
+
+  it("cannot be satisfied by Stripe's thirty-minute session minimum", async () => {
+    // Stripe's clamp only refuses when under 30 minutes remain before the
+    // session would expire. Two business days is days of clock time, so that
+    // clamp is perfectly happy here — and the product cutoff still refuses.
+    // These are different rules and the provider one is not a substitute.
+    const closeDay = closeDayWithBusinessDays(2)
+    armWindow([{ key: "jefferson", name: "Jefferson" }], { closeDay })
+    mockPolicy.version = "test-policy-2026-08-19"
+
+    const secondsUntilChicagoClose =
+      (Date.parse(`${closeDay}T23:59:59.000Z`) - Date.now()) / 1000
+    expect(secondsUntilChicagoClose).toBeGreaterThan(30 * 60)
+
+    const res = await POST(request({ ...base, tier: "T2" }) as never)
+
+    expect(res.status).toBe(409)
+    expect((await res.json()).code).toBe("CHECKOUT_WINDOW_CLOSING_TOO_SOON")
+    expect(stripeCreate).not.toHaveBeenCalled()
+  })
+
+  it("never widens eligibility: an unsigned policy still refuses first", async () => {
+    armWindow([{ key: "jefferson", name: "Jefferson" }], {
+      closeDay: closeDayWithBusinessDays(20),
+    })
+    mockPolicy.version = null
+
+    const res = await POST(request({ ...base, tier: "T2" }) as never)
+
+    expect(res.status).toBe(409)
+    expect((await res.json()).code).toBe("CHECKOUT_ELIGIBILITY_CLOSED")
+    expect(stripeCreate).not.toHaveBeenCalled()
+  })
+
+  it("still refuses a closed window with the closed-window message", async () => {
+    armWindow([{ key: "jefferson", name: "Jefferson" }], { openInDays: -40, closesInDays: -1 })
+    mockPolicy.version = "test-policy-2026-08-19"
+
+    const res = await POST(request({ ...base, tier: "T2" }) as never)
+
+    expect(res.status).toBe(409)
+    expect((await res.json()).code).toBe("CHECKOUT_ELIGIBILITY_CLOSED")
+    expect(stripeCreate).not.toHaveBeenCalled()
   })
 })
