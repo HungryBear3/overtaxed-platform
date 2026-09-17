@@ -16,9 +16,10 @@ function setup() {
     callbacks.push(callback);
   });
   const run = jest.fn(
-    async (_input: { orderId: string; fulfillmentId: string }) => {},
+    async (_input: { orderId: string; fulfillmentId: string }): Promise<unknown> =>
+      undefined,
   );
-  return { callbacks, after, run, env: { ...on } };
+  return { callbacks, after, run, env: { ...on } as Record<string, string | undefined> };
 }
 test.each([undefined, "", " ", "false", "TRUE", "True", "1", "yes", "true "])(
   "flag %s schedules nothing",
@@ -101,4 +102,93 @@ test("registration failure propagates to the webhook retry path", () => {
     "registration failed",
   );
   expect(deps.run).not.toHaveBeenCalled();
+});
+
+/**
+ * The delivery handoff.
+ *
+ * Delivery is reached from exactly one place: an artifact workflow that reported
+ * BOUND with its producing lease already released. Every other outcome must
+ * leave the sender untouched — not blocked at a later gate, but never invoked.
+ */
+describe("delivery runs only after a bound artifact and a released lease", () => {
+  function delivery() {
+    const deps = setup();
+    const deliver = jest.fn(async () => ({ outcome: "ATTEMPTED" }));
+    return { ...deps, deliver };
+  }
+
+  it("delivers once the workflow bound an artifact and gave the lease back", async () => {
+    const deps = delivery();
+    deps.run.mockResolvedValue({
+      outcome: "RAN",
+      workflowOutcome: "BOUND",
+      released: true,
+    } as never);
+    scheduleT2ArtifactOrchestration(paid, pending, deps);
+    await deps.callbacks[0]();
+    expect(deps.deliver).toHaveBeenCalledWith({
+      orderId: "ord_test",
+      fulfillmentId: "ful_test",
+    });
+  });
+
+  it.each([
+    ["a workflow that produced nothing", { outcome: "RAN", workflowOutcome: "REFUSED", released: true }],
+    ["a workflow that could not reconcile", { outcome: "RAN", workflowOutcome: "RECONCILIATION_REQUIRED", released: true }],
+    ["a workflow that was disabled", { outcome: "RAN", workflowOutcome: "DISABLED", released: true }],
+    ["a bound artifact whose lease was NOT released", { outcome: "RAN", workflowOutcome: "BOUND", released: false }],
+    ["an orchestrator that never claimed", { outcome: "NOT_CLAIMED" }],
+    ["an orchestrator that threw", { outcome: "THREW", released: true }],
+    ["an orchestrator that returned nothing", undefined],
+  ])("never delivers after %s", async (_label, result) => {
+    const deps = delivery();
+    deps.run.mockResolvedValue(result as never);
+    scheduleT2ArtifactOrchestration(paid, pending, deps);
+    await deps.callbacks[0]();
+    expect(deps.deliver).not.toHaveBeenCalled();
+  });
+
+  it("never delivers when the artifact orchestrator throws", async () => {
+    const deps = delivery();
+    deps.run.mockRejectedValue(new Error("synthetic-private-detail"));
+    const log = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      scheduleT2ArtifactOrchestration(paid, pending, deps);
+      await deps.callbacks[0]();
+      expect(deps.deliver).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("contains a thrown delivery and logs only a fixed code", async () => {
+    const deps = delivery();
+    deps.run.mockResolvedValue({ outcome: "RAN", workflowOutcome: "BOUND", released: true } as never);
+    deps.deliver.mockRejectedValue(new Error("synthetic-provider-detail") as never);
+    const log = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      scheduleT2ArtifactOrchestration(paid, pending, deps);
+      await expect(deps.callbacks[0]()).resolves.toBeUndefined();
+      expect(log.mock.calls).toEqual([["[ot-t2-delivery] outcome=THREW"]]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("builds no real delivery caller while the delivery flag is shut", async () => {
+    // No injected deliverer: the module must resolve one itself, and it must
+    // refuse to. A thrown dynamic import would surface as the THREW log.
+    const deps = setup();
+    deps.run.mockResolvedValue({ outcome: "RAN", workflowOutcome: "BOUND", released: true } as never);
+    const log = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      deps.env.OT_T2_DELIVERY_ENABLED = "false";
+      scheduleT2ArtifactOrchestration(paid, pending, deps);
+      await expect(deps.callbacks[0]()).resolves.toBeUndefined();
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
+  });
 });
