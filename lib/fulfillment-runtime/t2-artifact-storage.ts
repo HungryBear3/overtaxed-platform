@@ -94,14 +94,15 @@ export async function readT2ArtifactBytes(input: { locator: string }): Promise<B
 }
 
 /**
- * HOLD: orphan reconciliation is not implemented. Inline workflow reconciliation MUST NOT delete the content
- * object: another fulfillment may bind the same content address concurrently.
- * A future implementation may idempotently record/quarantine an orphan
- * candidate. Any later garbage collector must coordinate atomically with the
- * immutable binding registry, re-check all references at deletion time, and
- * preserve the object on ambiguity. Activation remains HOLD until that behavior
- * has a real storage implementation and race test.
+ * Deletion is not implemented here, and must not be.
+ *
+ * An unbound object is recorded, never removed: the content address may already
+ * be bound by a different fulfillment, so an inline delete could destroy
+ * immutable evidence that belongs to someone else. Quarantine recording lives in
+ * lib/fulfillment-runtime/t2-artifact-orphan.ts, which has no provider reach,
+ * exactly so this module cannot grow a cleanup branch.
+ *
+ * Any future garbage collector must coordinate atomically with the immutable
+ * binding registry, re-check every reference at deletion time, and preserve the
+ * object on ambiguity.
  */
-export async function reconcileUnboundT2Artifact(_input: { locator: string; sha256: string }): Promise<void> {
-  throw new T2ArtifactStorageUnavailableError()
-}
