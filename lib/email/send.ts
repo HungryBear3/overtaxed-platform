@@ -248,6 +248,7 @@ export async function sendOrderConfirmation(args: {
   amountPaid: number
 }): Promise<boolean> {
   const { tier, customerEmail, customerName, address, amountPaid } = args
+  const neutralReport = tier === "T2" && process.env.OT_NEUTRAL_REPORT_CHECKOUT_ENABLED === "true"
   if (heldTier(tier)) {
     // Confirming a held tier is the worst of the two failures: it tells a
     // customer their purchase is in hand and sets them waiting on a fulfilment
@@ -257,7 +258,7 @@ export async function sendOrderConfirmation(args: {
   }
   const tierLabels: Record<string, string> = {
     T1: "DIY Starter",
-    T2: "DIY Appeal Packet",
+    T2: neutralReport ? "Cook County Assessment Records & Matching Property Report" : "DIY Appeal Packet",
   }
   const label = tierLabels[tier] ?? tier
   const subject = `Your OverTaxed IL order — ${label}`
@@ -265,7 +266,14 @@ export async function sendOrderConfirmation(args: {
   // file". OverTaxed IL does not file, sign, or represent anyone, so there was
   // no honest version of that sentence to keep; the tier that produced it is
   // refused above and the remaining copy describes preparation only.
-  const nextStep = "We'll email you within 24 hours with your completed appeal packet."
+  // The approved delivery promise (Gate A owner ruling 2026-08-31, D-3 / T-1) is
+  // one business day, not 24 hours. The two are not the same commitment: a
+  // Friday-evening purchase is ~15 hours from a 24-hour promise expiring and
+  // three days from the end of the next business day, and the wording the buyer
+  // sees has to be the one the business can actually keep.
+  const nextStep = neutralReport
+    ? "We expect to email your completed report within one business day after automated compilation and a human completeness check. This report does not decide whether you should appeal or predict savings or an outcome."
+    : "We'll email you within one business day with your completed appeal packet."
   const text = [
     `Hi ${customerName || "there"},`,
     ``,

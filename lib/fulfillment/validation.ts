@@ -134,6 +134,148 @@ export function isValidInstant(value: unknown): boolean {
   return parseStrictInstant(value) !== null;
 }
 
+/* ── Provider-stated instants ────────────────────────────────────────────── */
+
+/**
+ * A full RFC3339 `date-time`, as a PROVIDER may legitimately write one.
+ *
+ * [[parseStrictInstant]] deliberately accepts only our own canonical rendering:
+ * `Z`, and at most three fractional digits. That is right for instants this
+ * system produces — every one of them comes from `to_char(... 'MS')` or from
+ * `Date.prototype.toISOString`, and a value outside that shape means something
+ * is wrong with US.
+ *
+ * It is the wrong rule for a value a third party wrote. RFC3339 places no cap on
+ * `time-secfrac` and does not require the `Z` spelling of a zero offset, and
+ * Resend's own API documents timestamps in both `2026-09-12T12:00:00.000Z` and
+ * `2026-09-12T12:00:00.674981+00:00` forms. Under the strict validator the
+ * second of those is INVALID_TIMESTAMP: a well-formed, authenticated, signed
+ * `email.delivered` event would be refused at the door and the packet would
+ * never be recorded as delivered.
+ *
+ * So provider instants get their own parser — a wider grammar, normalized once,
+ * explicitly. What is deliberately NOT done here is falling back to `new Date()`
+ * or `Date.parse()`: those accept `"2026"`, `"Dec 12 2026"`, `"2026-13-45"` on
+ * some engines, and silently interpret a naive local time in the server's own
+ * zone. A provider timestamp is attacker-adjacent input even after signature
+ * verification, and coercing it is how an evidence row gets an instant nobody
+ * asserted.
+ */
+const RFC3339_PROVIDER =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(?:([Zz])|([+-])(\d{2}):(\d{2}))$/;
+
+/**
+ * `YYYY-MM-DDTHH:MM:SS` + `.mmm` + up to 6 more fractional digits + `±HH:MM`.
+ * A value outside this is not a date-time we are willing to spend time parsing.
+ */
+const MIN_PROVIDER_INSTANT = 20;
+const MAX_PROVIDER_INSTANT = 35;
+
+export type ProviderInstant = {
+  /** Epoch milliseconds, with sub-millisecond precision TRUNCATED. */
+  epochMs: number;
+  /**
+   * The same instant in this system's canonical form, which
+   * [[parseStrictInstant]] accepts. This — never the provider's own spelling —
+   * is what may be persisted or compared.
+   */
+  canonical: string;
+};
+
+function pad(value: number, width: number): string {
+  return String(value).padStart(width, "0");
+}
+
+/**
+ * Parse a provider-stated RFC3339 instant, or null.
+ *
+ * Normalization is stated rather than inferred:
+ *
+ *   - **offsets are resolved by arithmetic**, not by a date library. `+HH:MM` is
+ *     subtracted and `-HH:MM` added to reach UTC. `-00:00` — which RFC3339 gives
+ *     the distinct meaning "offset unknown" — is accepted as the zero offset it
+ *     numerically is, because the instant is unambiguous either way and it is
+ *     the instant, not the reporter's locale, that this system records;
+ *   - **sub-millisecond precision is TRUNCATED, never rounded.** Truncation can
+ *     only move an instant up to one millisecond into the PAST, which cannot
+ *     manufacture an event that happened after it arrived; rounding could;
+ *   - **leap seconds are refused.** `:60` is valid RFC3339 and has no
+ *     representation in a JavaScript epoch, so it fails closed rather than
+ *     silently becoming `:59` or the next minute;
+ *   - **the calendar is round-tripped**, so `2026-02-30T00:00:00Z` is rejected
+ *     rather than rolling forward into March the way `Date` would.
+ */
+export function parseProviderInstant(value: unknown): ProviderInstant | null {
+  if (typeof value !== "string") return null;
+  if (
+    value.length < MIN_PROVIDER_INSTANT ||
+    value.length > MAX_PROVIDER_INSTANT
+  ) {
+    return null;
+  }
+  const m = RFC3339_PROVIDER.exec(value);
+  if (!m) return null;
+
+  const year = +m[1]!;
+  const month = +m[2]!;
+  const day = +m[3]!;
+  const hour = +m[4]!;
+  const minute = +m[5]!;
+  const second = +m[6]!;
+  // Exactly the first three digits. `.6` is 600ms, not 6ms, so the fraction is
+  // right-padded before it is cut — a provider writing tenths must not have its
+  // timestamp shifted by 594 milliseconds.
+  const milli = m[7] ? +m[7].padEnd(3, "0").slice(0, 3) : 0;
+
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59
+  ) {
+    return null;
+  }
+
+  let offsetMinutes = 0;
+  if (m[8] === undefined) {
+    const offsetHour = +m[10]!;
+    const offsetMinute = +m[11]!;
+    if (offsetHour > 23 || offsetMinute > 59) return null;
+    offsetMinutes = (offsetHour * 60 + offsetMinute) * (m[9] === "-" ? -1 : 1);
+  }
+
+  // The wall-clock fields are validated as if they were UTC, so an impossible
+  // calendar date fails before the offset is applied and cannot be rescued by it.
+  const wall = Date.UTC(year, month - 1, day, hour, minute, second, milli);
+  const asUtc = new Date(wall);
+  if (
+    asUtc.getUTCFullYear() !== year ||
+    asUtc.getUTCMonth() !== month - 1 ||
+    asUtc.getUTCDate() !== day ||
+    asUtc.getUTCHours() !== hour ||
+    asUtc.getUTCMinutes() !== minute ||
+    asUtc.getUTCSeconds() !== second
+  ) {
+    return null;
+  }
+
+  const epochMs = wall - offsetMinutes * 60_000;
+  if (!Number.isFinite(epochMs)) return null;
+  const utc = new Date(epochMs);
+  const canonical =
+    `${pad(utc.getUTCFullYear(), 4)}-${pad(utc.getUTCMonth() + 1, 2)}-` +
+    `${pad(utc.getUTCDate(), 2)}T${pad(utc.getUTCHours(), 2)}:` +
+    `${pad(utc.getUTCMinutes(), 2)}:${pad(utc.getUTCSeconds(), 2)}.` +
+    `${pad(utc.getUTCMilliseconds(), 3)}Z`;
+  // Belt and braces: whatever comes out of here must satisfy the strict parser
+  // every other layer measures instants with, or it may not leave this function.
+  if (parseStrictInstant(canonical) !== epochMs) return null;
+  return { epochMs, canonical };
+}
+
 /**
  * A private, opaque, relative storage locator (path/key) — never a public/signed/
  * bearer URL. Branded so the Phase-1 storage seam can enforce its own contract.
