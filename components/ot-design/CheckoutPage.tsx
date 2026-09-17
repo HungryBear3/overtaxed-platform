@@ -3,7 +3,9 @@ import Link from "next/link"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { getAnonymousGaIdentifiersForRequest } from "@/lib/analytics/ga4"
+import { getApprovedAttributionCodesForRequest } from "@/lib/attribution/client-codes"
 import { isClientPreviewStubMode } from "@/lib/marketing/preview-gate-client"
+import { NEUTRAL_REPORT_LIMITS, NEUTRAL_REPORT_NAME, NEUTRAL_REPORT_PRICE, NEUTRAL_REPORT_QA, NEUTRAL_REPORT_REFUND, NEUTRAL_REPORT_SUMMARY, NEUTRAL_REPORT_TURNAROUND } from "@/lib/copy/neutral-report"
 
 /**
  * Only the packet is offered, so `diy` is the only plan and `T2` the only tier.
@@ -59,7 +61,7 @@ function checkoutKey(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(16).padStart(8, "0")}-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padEnd(12, "0")}`
 }
 
-export default function CheckoutPage({ initialPlan = "diy" }: { initialPlan?: PlanId }) {
+export default function CheckoutPage({ initialPlan = "diy", neutralReport = false }: { initialPlan?: PlanId; neutralReport?: boolean }) {
   const router = useRouter()
   const previewMode = isClientPreviewStubMode()
   const [planId, setPlanId] = useState<PlanId>(initialPlan)
@@ -77,7 +79,13 @@ export default function CheckoutPage({ initialPlan = "diy" }: { initialPlan?: Pl
   const [noticeDate, setNoticeDate] = useState("")
   const [noticeAddress, setNoticeAddress] = useState("")
 
-  const plan = PLANS.find((item) => item.id === planId)!
+  const plan = neutralReport ? {
+    id: "diy" as const,
+    name: NEUTRAL_REPORT_NAME,
+    price: NEUTRAL_REPORT_PRICE,
+    priceNote: "one-time",
+    bullets: [NEUTRAL_REPORT_SUMMARY, NEUTRAL_REPORT_QA, NEUTRAL_REPORT_TURNAROUND, NEUTRAL_REPORT_REFUND],
+  } : PLANS.find((item) => item.id === planId)!
 
   function resetGate() {
     setGate(null)
@@ -101,6 +109,10 @@ export default function CheckoutPage({ initialPlan = "diy" }: { initialPlan?: Pl
     setError(null)
     try {
       const gaIdentifiers = getAnonymousGaIdentifiersForRequest()
+      // Code references from the server-approved registry only — never a raw
+      // UTM value, a referrer, or a free-text label. Empty registry means this
+      // is `{}`, and the server re-validates whatever it does carry.
+      const attributionCodes = getApprovedAttributionCodesForRequest()
       const res = await fetch("/api/checkout/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -117,6 +129,7 @@ export default function CheckoutPage({ initialPlan = "diy" }: { initialPlan?: Pl
           ...(showNoticeForm && noticeDate && noticeAddress
             ? { reassessmentNoticeDate: noticeDate, reassessmentNoticeAddress: noticeAddress }
             : {}),
+          ...attributionCodes,
           ...gaIdentifiers,
         }),
       })
@@ -153,11 +166,11 @@ export default function CheckoutPage({ initialPlan = "diy" }: { initialPlan?: Pl
             <div className="ot-eyebrow">Order summary</div>
             <h1 className="ot-h1" style={{ fontSize: 32, lineHeight: 1.2 }}>Choose the help that fits your situation.</h1>
             <p className="ot-checkout-sub">
-              Eligibility depends on your confirmed Cook County property and current official filing window. We check both before accepting payment.
+              {neutralReport ? NEUTRAL_REPORT_LIMITS : "Eligibility depends on your confirmed Cook County property and current official filing window. We check both before accepting payment."}
             </p>
 
             <div className="ot-checkout-plans">
-              {PLANS.map((item) => (
+              {(neutralReport ? [plan] : PLANS).map((item) => (
                 <label key={item.id} className={`ot-checkout-plan${planId === item.id ? " is-selected" : ""}`}>
                   <input
                     type="radio"
@@ -292,7 +305,7 @@ export default function CheckoutPage({ initialPlan = "diy" }: { initialPlan?: Pl
                     className="ot-cta ot-cta-block ot-cta-tall"
                     disabled={loading || previewMode || (isAcknowledgmentGate && !analysisAcknowledged) || (isAmbiguous && !selectedPin) || (showNoticeForm && (!noticeDate || !noticeAddress))}
                   >
-                    {loading ? "Checking eligibility…" : isAmbiguous ? "Use this property" : isAcknowledgmentGate || showNoticeForm ? "Confirm and continue" : "Continue to payment →"}
+                    {loading ? (neutralReport ? "Checking report availability…" : "Checking eligibility…") : isAmbiguous ? "Use this property" : isAcknowledgmentGate || showNoticeForm ? "Confirm and continue" : "Continue to payment →"}
                   </button>
                 )}
 
