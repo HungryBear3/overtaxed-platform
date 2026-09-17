@@ -7,6 +7,10 @@
  */
 import { buildFulfillmentIdempotencyKey } from "@/lib/fulfillment/idempotency";
 import type { FulfillmentIdempotencyContract } from "@/lib/fulfillment/idempotency";
+import {
+  T2_PRODUCER_VERSION,
+  T2_TEMPLATE_VERSION,
+} from "@/lib/fulfillment/t2-artifact-content";
 
 const base: FulfillmentIdempotencyContract = {
   orderId: "ord_abc",
@@ -189,3 +193,35 @@ describe("buildFulfillmentIdempotencyKey", () => {
     ).toBe(true);
   });
 });
+
+describe("the key grammar admits the version strings the real producer emits", () => {
+  it("accepts the production generator and template versions", () => {
+    // Regression: `t2-evidence-packet/1.2.0` was rejected, so every delivery
+    // dispatch for a genuinely produced packet failed closed with
+    // INVALID_GENERATOR_VERSION. A packet could be generated and bound, and then
+    // never sent.
+    const result = buildFulfillmentIdempotencyKey({
+      ...base,
+      generatorVersion: T2_PRODUCER_VERSION,
+      templateVersion: T2_TEMPLATE_VERSION,
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.key).toContain(T2_PRODUCER_VERSION)
+  })
+
+  it("still refuses the three structural characters in a version", () => {
+    for (const generatorVersion of ["gen:1", "gen=1", "gen~1"]) {
+      expect(
+        buildFulfillmentIdempotencyKey({ ...base, generatorVersion }),
+      ).toEqual({ ok: false, reason: "INVALID_GENERATOR_VERSION" })
+    }
+  })
+
+  it("keeps slashed versions unambiguous through the length prefix", () => {
+    // Two different versions that would collide under naive concatenation.
+    const a = buildFulfillmentIdempotencyKey({ ...base, generatorVersion: "a/b", templateVersion: "c" })
+    const b = buildFulfillmentIdempotencyKey({ ...base, generatorVersion: "a", templateVersion: "b/c" })
+    expect(a.ok && b.ok).toBe(true)
+    expect(a.ok && b.ok && a.key).not.toBe(b.ok && b.key)
+  })
+})

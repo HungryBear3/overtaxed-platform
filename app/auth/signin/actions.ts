@@ -1,7 +1,7 @@
 "use server"
 
 import { AuthError } from "next-auth"
-import { signIn } from "@/app/api/auth/[...nextauth]/route"
+import { signIn } from "@/lib/auth/next-auth"
 
 export async function signInWithCredentials(
   email: string,

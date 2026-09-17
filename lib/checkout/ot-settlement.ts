@@ -1,4 +1,4 @@
-import { projectTownshipDeadline } from "@/lib/appeals/township-deadlines"
+import { projectCommerceDeadline } from "@/lib/deadlines/commerce-deadline-authority"
 import {
   RESOLUTION_SOURCE,
   normalizePin,
@@ -83,16 +83,15 @@ export function validateApprovedNoticeSettlement(order: OtSettlementOrder, sessi
  * `` `${TOWNSHIP_DEADLINES_2026_SOURCE_UPDATED}T12:00:00.000Z` `` made every
  * settlement look freshly verified for as long as nobody edited that constant.
  */
-function currentAuthoritativeOtWindow(
+async function currentAuthoritativeOtWindow(
   order: Pick<OtSettlementOrder, "township" | "propertyPin">,
   now: Date,
-): CheckoutWindowSnapshot {
+): Promise<CheckoutWindowSnapshot> {
   const townshipName = String(order.township ?? "").trim()
   const pin = normalizePin(String(order.propertyPin ?? "")) ?? ""
   const at = now.toISOString()
 
-  const projection = projectTownshipDeadline({
-    township: townshipName && pin
+  const resolution = townshipName && pin
       ? {
           inputKind: "pin",
           normalizedPin: pin,
@@ -101,11 +100,13 @@ function currentAuthoritativeOtWindow(
           townshipName,
           resolutionSource: RESOLUTION_SOURCE,
           resolvedAt: at,
-        }
-      : null,
-    stage: "assessor",
-    at,
-  })
+        } as const
+      : null
+  const projection = resolution
+    ? await projectCommerceDeadline({ township: resolution, at: now })
+    : { available: false, reason: "township_unresolved", notice: "Official date unavailable or not freshly verified.", statusLabel: "Pending official date", officialSourceUrl: null,
+        showDates: false, showStatus: false, showCountdown: false, allowDeadlineCta: false,
+        allowReminderSignup: false, allowDeadlineEmail: false, allowCheckout: false, allowStructuredData: false } as const
 
   return checkoutSnapshotFromProjection({
     pin,
@@ -115,7 +116,7 @@ function currentAuthoritativeOtWindow(
   })
 }
 
-export function validateCurrentT3Settlement(order: OtSettlementOrder, now: Date = new Date()) {
+export async function validateCurrentT3Settlement(order: OtSettlementOrder, now: Date = new Date()) {
   const snapshot = (order.eligibilitySnapshot ?? null) as Record<string, unknown> | null
 
   // The persisted evidence proves what we recorded when the buyer paid. It is
@@ -137,7 +138,7 @@ export function validateCurrentT3Settlement(order: OtSettlementOrder, now: Date 
     return "OT filing window had already closed at settlement"
   }
 
-  const current = currentAuthoritativeOtWindow(order, now)
+  const current = await currentAuthoritativeOtWindow(order, now)
   // `allowCheckout`, not `status === "open"`. A window can be open while the
   // eligibility policy is unsigned, and settling in that state would charge for
   // something no owner decision authorizes selling.

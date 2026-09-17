@@ -78,6 +78,7 @@ describe("cron authorization fails closed across the fleet", () => {
       "free-check-followups",
       "informational-deadlines",
       "invoice-collections",
+      "neutral-checkout-reconciliation",
       "performance-invoices",
       "township-alerts",
       "township-open-notifications",

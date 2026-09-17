@@ -323,8 +323,8 @@ describe("a withdrawn claim is caught if it comes back", () => {
     for (const [label, from, to] of [
       [
         "HomePage specificity bar",
-        "Cook County Assessor + Board of Review public records",
-        "Cook County Assessor + Board of Review public records, checked regularly",
+        "Cook County Assessor public records",
+        "Cook County Assessor public records, checked regularly",
       ],
       ["SiteChrome status chip", "Township schedules, as published by the county", "Township schedules checked regularly"],
     ] as Array<[string, string, string]>) {
