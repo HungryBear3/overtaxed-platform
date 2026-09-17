@@ -55,6 +55,16 @@ export type AttributionResolution =
 export const ATTRIBUTION_CODE_PATTERN = /^[a-z0-9][a-z0-9_]{1,39}$/
 
 /**
+ * The only shape a registry version may take.
+ *
+ * Same reasoning as the code pattern, one charset wider (`-`) because versions
+ * are dated. It is re-asserted as a SQL CHECK on `registry_version`, and the
+ * readback re-checks it: a stored version that is not a version means the row
+ * was not written by this code, and nothing on that row is then trusted.
+ */
+export const ATTRIBUTION_REGISTRY_VERSION_PATTERN = /^[a-z0-9][a-z0-9_-]{1,79}$/
+
+/**
  * The registry that ships. Empty, and frozen so a later import cannot push an
  * entry into it at runtime.
  */
@@ -74,6 +84,10 @@ export function shippedAttributionRegistry(): AttributionRegistry {
 
 export function isWellFormedAttributionCode(value: unknown): value is string {
   return typeof value === "string" && ATTRIBUTION_CODE_PATTERN.test(value)
+}
+
+export function isWellFormedRegistryVersion(value: unknown): value is string {
+  return typeof value === "string" && ATTRIBUTION_REGISTRY_VERSION_PATTERN.test(value)
 }
 
 /**
