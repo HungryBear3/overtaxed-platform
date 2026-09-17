@@ -5,7 +5,6 @@ import {
   T2_PRODUCER_VERSION,
   T2_TEMPLATE_VERSION,
   buildT2ArtifactContent,
-  encodeT2Artifact,
   type DeadlineAuthoritySnapshot,
   type SignedPolicySnapshot,
   type SourceRecord,
@@ -13,41 +12,62 @@ import {
   type T2ArtifactRefusal,
 } from "@/lib/fulfillment/t2-artifact-content"
 import type { ComparableMatchAttributes } from "@/lib/fulfillment/t2-comparables"
+import type { CountyDataRefusal, CountyGatewayBlocker } from "./t2-county-gateway"
 import { evaluateCheckoutBusinessDayCutoff } from "@/lib/checkout/business-days"
 import { resolveEligibilityPolicy } from "@/lib/checkout/ot-contract"
+import { renderT2ArtifactPdf } from "@/lib/fulfillment/t2-artifact-pdf"
 
 /**
  * The OT T2 artifact producer.
  *
  * This file used to be a HOLD stub that returned
  * `T2_ARTIFACT_PRODUCER_UNAVAILABLE` unconditionally, so no paid T2 order could
- * ever be fulfilled. It now produces a real, deterministic evidence packet —
- * and still refuses, loudly and by name, every case it must not serve.
+ * ever be fulfilled. It now produces a real evidence packet — and still
+ * refuses, loudly and by name, every case it must not serve.
  *
- * Two properties matter more than the happy path.
+ * Three properties matter more than the happy path.
  *
  * **It cannot open itself.** Production data comes from [[defaultGateway]],
  * whose policy resolver is the live `resolveEligibilityPolicy`. OD-2 and OD-3
- * are unsigned, that registry is empty, and so the very first check in
- * [[buildT2ArtifactContent]] refuses with `ELIGIBILITY_POLICY_UNSIGNED`. Nothing
- * in this module can sign a policy, and no environment variable reaches past
- * the registry. Successful generation is reachable only by injecting a
- * `policyResolver` — which is exactly what the tests do, and what production
- * has no way to do.
+ * are unsigned, that registry is empty, and so the very first check refuses
+ * with `ELIGIBILITY_POLICY_UNSIGNED`. Nothing in this module can sign a policy,
+ * and no environment variable reaches past the registry. Successful generation
+ * is reachable only by injecting a `policyResolver` — which is exactly what the
+ * tests do, and what production has no way to do.
  *
- * **It is pure at the edges.** All composition happens in
- * `lib/fulfillment/t2-artifact-content.ts`, which has no clock, no database and
- * no network. This module's only job is to fetch, to apply the Chicago
- * business-day cutoff, and to hand a fully-resolved input across. That is why
- * the same order produces byte-identical bytes on every run.
+ * **Runtime orchestration is independently gated.** Paid settlement can reach
+ * the binding workflow through the default-off scheduling and lease modules.
+ * That code connection does not supply county data, sign eligibility, activate
+ * private storage or deliver to a customer.
+ *
+ * **Its bytes are deterministic given the stable generation instant.** The
+ * packet embeds no wall-clock reading. `generatedAt` is the immutable
+ * `createdAt` of the fulfillment row — the instant kickoff created it in
+ * `ARTIFACT_PENDING` — and the business-day figure written into the manifest is
+ * measured from that same instant. The runtime clock is sampled exactly once
+ * per attempt and used only for attempt-time GATE decisions (deadline freshness
+ * and the three-business-day cutoff), which refuse but never render. So two
+ * attempts on different days, against the same order, fulfillment, sources and
+ * policy, produce byte-identical packets and identical hashes; a retry after an
+ * ambiguous bind therefore replays as an idempotent no-op rather than a
+ * conflict. All composition happens in `lib/fulfillment/t2-artifact-content.ts`,
+ * which has no clock, no database and no network.
  */
 
 export type T2ArtifactProducerBlocker =
   | T2ArtifactRefusal
   | "T2_ARTIFACT_PRODUCER_UNAVAILABLE"
   | "ORDER_NOT_FOUND"
+  | "FULFILLMENT_NOT_FOUND"
+  | "FULFILLMENT_ORDER_MISMATCH"
+  | "GENERATION_INSTANT_UNAVAILABLE"
   | "SUBJECT_RECORD_UNAVAILABLE"
   | "COMPARABLE_SOURCE_UNAVAILABLE"
+  // Named refusals from the official county reader. They say WHICH official
+  // record was missing or ambiguous, which `COMPARABLE_SOURCE_UNAVAILABLE`
+  // cannot: operations should not have to guess whether the county published
+  // nothing, published something contradictory, or was simply unreachable.
+  | CountyGatewayBlocker
 
 export type GeneratedT2Artifact =
   | { ok: true; bytes: Buffer; provenance: ArtifactProvenanceInput }
@@ -60,6 +80,19 @@ export type T2ProducerOrder = {
   township: string
 }
 
+/**
+ * The fulfillment summary the packet is being produced for. `createdAt` is the
+ * stable generation instant: kickoff creates the row with create-only upsert
+ * semantics directly in its initial status, and the column is never rewritten.
+ */
+export type T2ProducerFulfillment = {
+  id: string
+  orderId: string
+  kind: string
+  status: string
+  createdAt: Date
+}
+
 export type T2ProducerCountyData = {
   subject: SubjectRecord
   comparableCandidates: ComparableMatchAttributes[]
@@ -67,6 +100,11 @@ export type T2ProducerCountyData = {
   comparableAddresses: Map<string, string>
   sources: SourceRecord[]
 }
+
+export type T2ProducerDeadlineBase = Omit<
+  DeadlineAuthoritySnapshot,
+  "businessDaysRemainingAtGeneration" | "businessDayCutoffAllowed"
+>
 
 /**
  * Everything the producer needs from the outside world.
@@ -77,12 +115,24 @@ export type T2ProducerCountyData = {
  */
 export interface T2ArtifactGateway {
   loadOrder(orderId: string): Promise<T2ProducerOrder | null>
-  loadCountyData(order: T2ProducerOrder): Promise<T2ProducerCountyData | null>
+  loadFulfillment(fulfillmentId: string): Promise<T2ProducerFulfillment | null>
+  /**
+   * County evidence, a NAMED refusal, or `null`.
+   *
+   * The refusal arm is what lets the official reader in
+   * `lib/fulfillment-runtime/t2-county-gateway.ts` report which official record
+   * was unavailable rather than collapsing every cause into one code. The union
+   * is widening only: an implementation that returns data or `null` — including
+   * every gateway the existing tests inject — still satisfies it.
+   */
+  loadCountyData(order: T2ProducerOrder): Promise<T2ProducerCountyData | CountyDataRefusal | null>
   resolvePolicy(): SignedPolicySnapshot | null
-  resolveDeadline(order: T2ProducerOrder): Promise<Omit<
-    DeadlineAuthoritySnapshot,
-    "businessDaysRemaining" | "businessDayCutoffAllowed"
-  > | null>
+  /**
+   * Resolve the deadline authority as of `at` — the single clock sample for
+   * this attempt. Implementations must not read an ambient clock of their own.
+   */
+  resolveDeadline(order: T2ProducerOrder, at: Date): Promise<T2ProducerDeadlineBase | null>
+  /** Sampled exactly once per attempt by the producer. */
   now(): Date
 }
 
@@ -91,6 +141,14 @@ type OrderRow = {
   propertyPin: string | null
   propertyAddress: string | null
   township: string | null
+}
+
+type FulfillmentRow = {
+  id: string
+  order_id: string
+  kind: string
+  status: string
+  created_at: Date | string | null
 }
 
 type OrderReaderClient = { $queryRaw<T>(query: unknown): Promise<T> }
@@ -129,19 +187,48 @@ function defaultGateway(): T2ArtifactGateway {
       }
     },
 
-    async loadCountyData() {
-      // Deliberately unimplemented in this slice.
+    async loadFulfillment(fulfillmentId) {
+      // `ot_fulfillment` uses snake_case physical columns (see the Prisma
+      // `@map` attributes); read them exactly as the database names them.
+      const [{ prisma }, { Prisma }] = await Promise.all([
+        import("@/lib/db"),
+        import("@prisma/client"),
+      ])
+      const client = prisma as unknown as OrderReaderClient
+      const rows = await client.$queryRaw<FulfillmentRow[]>(
+        Prisma.sql`SELECT "id", "order_id", "kind"::text AS "kind", "status"::text AS "status", "created_at"
+                   FROM "ot_fulfillment" WHERE "id" = ${fulfillmentId} LIMIT 1`,
+      )
+      const row = rows[0]
+      if (!row?.id || !row.order_id) return null
+      const createdAt =
+        row.created_at instanceof Date ? row.created_at : new Date(String(row.created_at ?? ""))
+      return {
+        id: row.id,
+        orderId: row.order_id,
+        kind: String(row.kind ?? ""),
+        status: String(row.status ?? ""),
+        createdAt,
+      }
+    },
+
+    async loadCountyData(order) {
+      // The strict official reader. It hands the WHOLE assessor neighbourhood to
+      // selection, never filters or orders by an assessed value, and refuses by
+      // name on any missing or ambiguous official record rather than pruning it.
       //
-      // A production county gateway must read building area, residence type and
-      // assessed value for the subject AND for every parcel in its Assessor
-      // neighbourhood, with a retrieval timestamp per dataset. The existing
-      // `getComparableEquity` helper cannot be reused: it ranks candidates by
-      // lowest assessed dollars per square foot, which is the cherry-pick this
-      // producer exists to avoid, and it caps its cohort read at 150 unordered
-      // parcels. Wiring a correct non-directional county reader is a separate,
-      // separately reviewable slice; until it exists this returns null and the
-      // producer refuses rather than guessing.
-      return null
+      // Addresses come from the current-year Assessor Parcel Addresses dataset
+      // joined on exact PIN and tax year; the order's own address is never
+      // substituted, because the packet renders that block as what the county
+      // publishes.
+      //
+      // The import is dynamic for the same reason as the others here: a test
+      // that injects a gateway never loads this module.
+      const { loadOfficialCountyData } = await import("./t2-county-gateway")
+      return loadOfficialCountyData({
+        propertyPin: order.propertyPin,
+        township: order.township,
+      })
     },
 
     resolvePolicy() {
@@ -157,14 +244,15 @@ function defaultGateway(): T2ArtifactGateway {
       }
     },
 
-    async resolveDeadline(order) {
-      const { projectTownshipDeadline } = await import("@/lib/appeals/township-deadlines")
+    async resolveDeadline(order, at) {
+      const { projectCommerceDeadline } = await import("@/lib/deadlines/commerce-deadline-authority")
       const { RESOLUTION_SOURCE, townshipKeyFromName } = await import(
         "@/lib/deadlines/township-resolution"
       )
-      const at = new Date().toISOString()
+      // The single attempt clock, handed in — never a second ambient reading.
+      const atIso = at.toISOString()
       const pin = order.propertyPin.replace(/\D/g, "")
-      const projection = projectTownshipDeadline({
+      const projection = await projectCommerceDeadline({
         township: {
           inputKind: "pin",
           normalizedPin: pin,
@@ -172,9 +260,8 @@ function defaultGateway(): T2ArtifactGateway {
           townshipKey: townshipKeyFromName(order.township),
           townshipName: order.township,
           resolutionSource: RESOLUTION_SOURCE,
-          resolvedAt: at,
+          resolvedAt: atIso,
         },
-        stage: "assessor",
         at,
       })
       if (!projection.available) {
@@ -204,7 +291,7 @@ function defaultGateway(): T2ArtifactGateway {
   }
 }
 
-/** RFC3339 UTC to millisecond-free second precision, so bytes are stable. */
+/** RFC3339 UTC at second precision, so the embedded instant is compact and stable. */
 function toRfc3339Utc(date: Date): string {
   return `${date.toISOString().slice(0, 19)}Z`
 }
@@ -222,27 +309,54 @@ export async function generateT2Artifact(
   const order = await gateway.loadOrder(input.orderId)
   if (!order) return { ok: false, blocker: "ORDER_NOT_FOUND" }
 
-  const deadlineBase = await gateway.resolveDeadline(order)
+  // The fulfillment supplies the stable generation instant and must be the
+  // T2 evidence summary of this exact order. The binder re-verifies the same
+  // pairing inside its transaction; this is the producer's own copy of it.
+  const fulfillment = await gateway.loadFulfillment(input.fulfillmentId)
+  if (!fulfillment) return { ok: false, blocker: "FULFILLMENT_NOT_FOUND" }
+  if (fulfillment.orderId !== order.id || fulfillment.kind !== "T2_APPEAL_EVIDENCE") {
+    return { ok: false, blocker: "FULFILLMENT_ORDER_MISMATCH" }
+  }
+  const generationInstant = fulfillment.createdAt
+  if (!(generationInstant instanceof Date) || !Number.isFinite(generationInstant.getTime())) {
+    return { ok: false, blocker: "GENERATION_INSTANT_UNAVAILABLE" }
+  }
+  const generatedAt = toRfc3339Utc(generationInstant)
+
+  // One clock sample per attempt. It feeds the attempt-time gates below and
+  // nothing that is rendered.
+  const attemptAt = gateway.now()
+
+  const deadlineBase = await gateway.resolveDeadline(order, attemptAt)
   if (!deadlineBase) return { ok: false, blocker: "UNTRUSTED_DEADLINE_AUTHORITY" }
 
-  // The approved three-business-day product cutoff, in America/Chicago. A
-  // packet is not produced for a window the buyer cannot realistically file
-  // into, even though payment already settled.
-  const cutoff = evaluateCheckoutBusinessDayCutoff({
+  // The approved three-business-day product cutoff, in America/Chicago, judged
+  // at attempt time: a packet is not produced for a window the buyer cannot
+  // realistically file into, even though payment already settled.
+  const attemptCutoff = evaluateCheckoutBusinessDayCutoff({
     closeDate: deadlineBase.closeDate,
-    now: gateway.now(),
+    now: attemptAt,
+  })
+  // The figure that is embedded in the bytes is measured from the stable
+  // generation instant, so it cannot drift between attempts.
+  const generationCutoff = evaluateCheckoutBusinessDayCutoff({
+    closeDate: deadlineBase.closeDate,
+    now: generationInstant,
   })
   const deadline: DeadlineAuthoritySnapshot = {
     ...deadlineBase,
-    businessDaysRemaining: cutoff.businessDaysRemaining,
-    businessDayCutoffAllowed: cutoff.allowed,
+    businessDaysRemainingAtGeneration: generationCutoff.businessDaysRemaining,
+    businessDayCutoffAllowed: attemptCutoff.allowed,
   }
 
   const county = await gateway.loadCountyData(order)
   if (!county) return { ok: false, blocker: "COMPARABLE_SOURCE_UNAVAILABLE" }
+  // A named county refusal is reported as itself. Reducing it to the generic
+  // code here would discard the only signal that distinguishes an unreachable
+  // source from a contradictory official record.
+  if ("blocker" in county) return { ok: false, blocker: county.blocker }
   if (!county.subject) return { ok: false, blocker: "SUBJECT_RECORD_UNAVAILABLE" }
 
-  const generatedAt = toRfc3339Utc(gateway.now())
   const content = buildT2ArtifactContent({
     orderId: order.id,
     orderPropertyPin: order.propertyPin,
@@ -260,7 +374,7 @@ export async function generateT2Artifact(
 
   return {
     ok: true,
-    bytes: encodeT2Artifact(content.text),
+    bytes: await renderT2ArtifactPdf(content.text, generatedAt),
     provenance: {
       sourceOrderId: order.id,
       propertyPin: order.propertyPin,

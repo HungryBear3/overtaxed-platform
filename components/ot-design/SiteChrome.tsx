@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { buildTickerItems, TICKER_STANDING_ITEM, TOWNSHIPS } from "@/lib/townships";
 import { CC_18 } from "@/lib/copy/canonical";
+import { NEUTRAL_REPORT_LIMITS, NEUTRAL_REPORT_NAME } from "@/lib/copy/neutral-report";
 import { analytics } from "@/lib/analytics/events";
 import { isPreviewFreeCheckResponse } from "@/lib/analytics/free-check-funnel";
 
@@ -99,7 +100,7 @@ export function SiteHeader({
   );
 }
 
-export function SiteFooter() {
+export function SiteFooter({ neutralReport = false }: { neutralReport?: boolean }) {
   return (
     <footer className="ot-footer ot-footer-grid">
       <div className="ot-footer-inner">
@@ -109,7 +110,7 @@ export function SiteFooter() {
               <span className="ot-logo-mark">●</span> OverTaxed IL
             </div>
             <div className="ot-footer-tagline">
-              Cook County property tax appeals, built for homeowners.
+              {neutralReport ? "Cook County assessment records, organized for homeowners." : "Cook County property tax appeals, built for homeowners."}
             </div>
             <div className="ot-footer-contact">
               <a href={`mailto:${OT_PUBLIC_CONTACT.email}`}>{OT_PUBLIC_CONTACT.email}</a>
@@ -165,14 +166,14 @@ export function SiteFooter() {
                 named the one stage OverTaxed IL cannot serve, in shared chrome,
                 which would have required CC-11 on all 52 paths to say something
                 the Assessor-stage packet never depended on. */}
-            <p className="ot-footer-disclaimer">{CC_18}</p>
+            <p className="ot-footer-disclaimer">{neutralReport ? `${NEUTRAL_REPORT_NAME}. ${NEUTRAL_REPORT_LIMITS}` : CC_18}</p>
           </div>
         </div>
 
         <div className="ot-footer-bottom">
           <div className="ot-footer-copy">© 2026 OverTaxed IL · Chicago, IL</div>
           <div className="ot-footer-meta">
-            <Link href="/privacy">Privacy</Link> · <Link href="/terms">Terms</Link> · Public-record estimates, not legal advice
+            <Link href="/privacy">Privacy</Link> · <Link href="/terms">Terms</Link> · {neutralReport ? "Official-record compilation, not advice" : "Public-record estimates, not legal advice"}
           </div>
         </div>
       </div>
