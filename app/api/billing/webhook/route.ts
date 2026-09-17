@@ -16,6 +16,9 @@ import {
 } from "@/lib/checkout/ot-settlement"
 import { sanitizeAnonymousGaIdentifiers } from "@/lib/analytics/ga4"
 import { sendGaPurchaseEvent } from "@/lib/analytics/ga4-measurement"
+import { scheduleT2ArtifactOrchestration } from "@/lib/fulfillment-runtime/t2-artifact-scheduling"
+
+import { bindPayment, providerId, recordReversal, reversalTypes } from "@/lib/checkout/ot-reversal"
 
 export async function POST(request: NextRequest) {
   console.log("[webhook] Received webhook request")
@@ -50,6 +53,25 @@ export async function POST(request: NextRequest) {
 
   const data = event.data.object as unknown as Record<string, unknown>
   const metadata = (data.metadata ?? {}) as Record<string, string | undefined>
+
+  // Reversals have their own transactional inbox: no insert-first claim can
+  // acknowledge another worker's uncommitted business mutation.
+  if (reversalTypes.has(event.type)) {
+    try {
+      let paymentIntent = providerId(data.payment_intent)
+      if (!paymentIntent) {
+        const chargeId = event.type === "charge.refunded" ? providerId(data.id) : providerId(data.charge)
+        if (!chargeId) throw new Error("Reversal has no resolvable charge")
+        const charge = await stripe.charges.retrieve(chargeId)
+        paymentIntent = providerId(charge.payment_intent)
+      }
+      if (!paymentIntent) throw new Error("Reversal has no PaymentIntent")
+      await prisma.$transaction(tx => recordReversal(tx, event.id, event.type, paymentIntent!))
+      return NextResponse.json({ received: true })
+    } catch {
+      return NextResponse.json({ error: "Settlement reversal requires retry" }, { status: 500 })
+    }
+  }
 
   // Idempotency: claim the event row before doing business work. Two changes
   // vs. the prior "check first, write later" pattern:
@@ -228,7 +250,7 @@ export async function POST(request: NextRequest) {
           }
 
           if (existing) {
-            const terminal = ["CANCELLED", "REFUNDED"].includes(existing.status)
+            const terminal = ["CANCELLED", "REFUNDED", "SETTLEMENT_HOLD"].includes(existing.status)
             const recovered = await prisma.oTOrder.updateMany({
               where: {
                 id: existing.id,
@@ -315,13 +337,22 @@ export async function POST(request: NextRequest) {
               if (!recoveryReason && tier === "T3") {
                 recoveryReason = current.noticeEvidence
                   ? validateApprovedNoticeSettlement(current, sessionId)
-                  : validateCurrentT3Settlement(current)
+                  : await validateCurrentT3Settlement(current)
               }
 
+              if (!recoveryReason) {
+                const paymentIntent = providerId(data.payment_intent)
+                if (!paymentIntent) throw new Error("OT settlement missing PaymentIntent")
+                await prisma.$transaction(tx => bindPayment(tx, current.id, sessionId, paymentIntent))
+                // Binding may consume an earlier reversal; never use stale PAID.
+                const settlementState = await prisma.oTOrder.findUnique({ where: { id: current.id } })
+                if (!settlementState) throw new Error("OT settlement order missing")
+                current.status = settlementState.status
+              }
               alreadyPaid = current.status === "PAID" && !recoveryReason
               if (alreadyPaid || (current.status === "PAID_RECOVERY_REQUIRED" && !recoveryReason)) {
                 persistedOrder = current
-              } else if (["CANCELLED", "REFUNDED"].includes(current.status) || recoveryReason) {
+              } else if (["CANCELLED", "REFUNDED", "SETTLEMENT_HOLD"].includes(current.status) || recoveryReason) {
                 persistedOrder = await recover(
                   recoveryReason ?? `Settled Checkout Session arrived for terminal OTOrder status ${current.status}`,
                   current,
@@ -405,13 +436,14 @@ export async function POST(request: NextRequest) {
 
         if (persistedOrder.tier === "T2") {
           try {
-            await kickOffT2FulfillmentEvidence({
+            const kickoff = await kickOffT2FulfillmentEvidence({
               id: persistedOrder.id,
               tier: persistedOrder.tier,
               status: persistedOrder.status,
               propertyAddress: persistedOrder.propertyAddress,
               propertyPin: persistedOrder.propertyPin,
             })
+            scheduleT2ArtifactOrchestration(persistedOrder, kickoff)
           } catch (err) {
             const errorName = err instanceof Error ? err.name : "UnknownError"
             const errorCode =

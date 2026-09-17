@@ -1,8 +1,9 @@
 name: CI
 
 on:
+  # Read-only and credential-free: dependent stacked PRs need an attached
+  # exact-head check just like PRs targeting main.
   pull_request:
-    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
@@ -15,7 +16,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  NEXT_TELEMETRY_DISABLED: '1'
+  NEXT_TELEMETRY_DISABLED: "1"
 
 jobs:
   verify:
@@ -38,9 +39,38 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
           cache-dependency-path: package-lock.json
+
+      # The owner-role hardening suite creates its own isolated cluster with
+      # initdb/pg_ctl. Pin the supported PostgreSQL major explicitly: the
+      # ubuntu-latest image does not guarantee server executables on PATH, and
+      # this suite must run rather than silently skip when they are absent.
+      - name: Install PostgreSQL 18
+        run: |
+          . /etc/os-release
+          key_tmp="$(mktemp)"
+          trap 'rm -f -- "$key_tmp"' EXIT
+          curl --fail --show-error --silent \
+            --output "$key_tmp" \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          mapfile -t primary_fingerprints < <(
+            gpg --batch --show-keys --with-colons "$key_tmp" \
+              | awk -F: '$1 == "pub" { want_fpr=1; next } want_fpr && $1 == "fpr" { print $10; want_fpr=0 }'
+          )
+          test "${#primary_fingerprints[@]}" -eq 1
+          test "${primary_fingerprints[0]}" = "B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"
+          sudo install -o root -g root -m 0644 "$key_tmp" /usr/share/keyrings/postgresql-archive-keyring.asc
+          rm -f -- "$key_tmp"
+          trap - EXIT
+          echo "deb [signed-by=/usr/share/keyrings/postgresql-archive-keyring.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends postgresql-18
+          /usr/lib/postgresql/18/bin/initdb --version \
+            | grep --quiet --extended-regexp '^initdb \(PostgreSQL\) 18(\.[0-9]+)+( \([^[:cntrl:]]+\))?$'
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
 
       # `npm ci` is the install that refuses to run when package-lock.json and
       # package.json disagree. Its postinstall hook runs `prisma generate`,
@@ -70,8 +100,8 @@ jobs:
       # `prisma generate` falls back to a placeholder URL when DATABASE_URL is
       # unset (prisma.config.ts) and no page reads the database while
       # prerendering, so the build runs without one. Each suite assigns the
-      # variables it needs, and the four PostgreSQL suites skip themselves
-      # unless TEST_DATABASE_URL is set — setting it here would silently switch
-      # on four suites that require a disposable live database.
+      # variables it needs. Four integration suites skip themselves unless
+      # TEST_DATABASE_URL is set; the owner-role hardening suite instead starts
+      # and removes its own disposable local PostgreSQL cluster.
       - name: Test
         run: npm test -- --ci --maxWorkers=2
