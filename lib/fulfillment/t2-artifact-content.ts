@@ -75,8 +75,9 @@ import {
  * text; that policy now also covers C1 controls and the Unicode line and
  * paragraph separators.
  */
-export const T2_PRODUCER_VERSION = "t2-evidence-packet/1.1.1";
-export const T2_TEMPLATE_VERSION = "t2-evidence-packet-text/1.1.1";
+// 1.2.0 serializes the unchanged evidence content as a real paginated PDF.
+export const T2_PRODUCER_VERSION = "t2-evidence-packet/1.2.0";
+export const T2_TEMPLATE_VERSION = "t2-evidence-packet-pdf/1.2.0";
 
 /** Bounded, stable, non-PII refusal vocabulary. Every ambiguity fails closed. */
 export type T2ArtifactRefusal =
