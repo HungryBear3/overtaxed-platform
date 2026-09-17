@@ -5,6 +5,11 @@ import type { T2FulfillmentKickoffResult } from '@/lib/fulfillment-runtime/kicko
 const afterMock = jest.fn((_callback: () => Promise<void>) => {})
 jest.mock('next/server', () => ({ ...jest.requireActual('next/server'), after: (cb: () => Promise<void>) => afterMock(cb) }))
 
+jest.mock("@/lib/checkout/ot-reversal", () => ({
+  ...jest.requireActual("@/lib/checkout/ot-reversal"),
+  bindPayment: jest.fn(async () => {}),
+}))
+
 const dbState: {
   stripeEvents: Map<string, Row>
   otOrders: Map<string, Row>
@@ -29,6 +34,10 @@ let forceStripeEventDeleteFailure = false
 
 jest.mock("@/lib/db", () => ({
   prisma: {
+    $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn({
+      $executeRaw: jest.fn(async () => 1),
+      $queryRaw: jest.fn(async (sql: TemplateStringsArray, ...values: unknown[]) => sql.join('').includes('SELECT session_id') ? [{session_id: 'cs_test', payment_intent: 'pi_test'}] : []),
+    })),
     stripeEvent: {
       create: jest.fn(async ({ data }: { data: Row }) => {
         if (dbState.stripeEvents.has(String(data.id))) {
@@ -215,6 +224,7 @@ function request(
         object: {
           id: "cs_notice_paid",
           mode: "payment",
+          payment_intent: "pi_test",
           payment_status: overrides.paymentStatus ?? "paid",
           currency: "usd",
           amount_total: overrides.amountTotal ?? 9700,
@@ -347,7 +357,8 @@ describe("billing webhook approved notice settlement", () => {
           object: {
             id: "cs_notice_paid",
             mode: "payment",
-            payment_status: "paid",
+            payment_intent: "pi_test",
+          payment_status: "paid",
             currency: "usd",
             amount_total: 9700,
             metadata: {

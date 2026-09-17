@@ -4,13 +4,14 @@ import type { TownshipSnapshotRow } from "./official-source-state";
 import { decodeInformationalSnapshot, INFORMATIONAL_PARSER_VERSION, INFORMATIONAL_SOURCE_URL, INFORMATIONAL_YEAR } from "./informational-snapshot";
 
 export const MAX_ASSESSOR_HTML_BYTES = 500_000;
+const sourceBodies = new WeakMap<object, Buffer>();
 type Inputs = {
   fetchSource: typeof fetch;
   parseHtml: (html: string, year: number) => Record<string, TownshipSnapshotRow>;
   now: () => Date;
 };
 /** Runtime route supplies fixed trusted adapters, never request-shaped dependencies. */
-export async function collectInformationalSnapshot({ fetchSource, parseHtml, now }: Inputs) {
+export async function collectOfficialDeadlineCapture({ fetchSource, parseHtml, now }: Inputs) {
   if (process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED !== "true") return null;
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
@@ -38,8 +39,9 @@ export async function collectInformationalSnapshot({ fetchSource, parseHtml, now
       contentSha256: createHash("sha256").update(bytes).digest("hex"),
       parseStatus: "ok", parserVersion: INFORMATIONAL_PARSER_VERSION,
     } }, townships };
-    return process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED === "true"
+    const decoded = process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED === "true"
       ? decodeInformationalSnapshot(JSON.stringify(snapshot), now()) : null;
+    return decoded ? { snapshot: decoded, sourceBody: bytes } : null;
   } catch { return null; }
   finally {
     if (reader) {
@@ -47,4 +49,17 @@ export async function collectInformationalSnapshot({ fetchSource, parseHtml, now
       try { reader.releaseLock(); } catch { /* Cleanup cannot turn refusal into a raw error. */ }
     }
   }
+}
+
+/** Backward-compatible informational projection; commerce also retains source bytes. */
+export async function collectInformationalSnapshot(inputs: Inputs) {
+  const capture = await collectOfficialDeadlineCapture(inputs);
+  if (!capture) return null;
+  sourceBodies.set(capture.snapshot, capture.sourceBody);
+  return capture.snapshot;
+}
+
+/** Source bytes paired in-process with the validated snapshot returned above. */
+export function sourceBodyForSnapshot(snapshot: object): Buffer | null {
+  return sourceBodies.get(snapshot) ?? null;
 }

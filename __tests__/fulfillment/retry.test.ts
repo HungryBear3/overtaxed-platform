@@ -20,13 +20,27 @@ describe("decideDeliverySend — a retry never regenerates (row 7)", () => {
     expect(d).toEqual({ send: true, attemptNumber: 1, regenerate: false });
   });
 
-  it("permits a retry after a transient DELAYED, reusing the artifact (regenerate:false)", () => {
+  /**
+   * DELAYED used to be a retry state. It is not one, and treating it as one is a
+   * duplicate-delivery defect: `email.delivery_delayed` says the provider still
+   * HOLDS the message and is retrying it to the recipient's mail server, so a
+   * second attempt mails a second, differently-keyed code for one order.
+   */
+  it("refuses to resend from DELAYED: the provider is still trying", () => {
     const d = decideDeliverySend({
       status: "DELAYED",
       attemptCount: 1,
       maxAttempts: 3,
     });
-    expect(d).toEqual({ send: true, attemptNumber: 2, regenerate: false });
+    expect(d).toEqual({ send: false, reason: "PROVIDER_DELAY_IN_FLIGHT" });
+  });
+
+  it("refuses from DELAYED no matter how few attempts have been made", () => {
+    for (const attemptCount of [0, 1, 2]) {
+      expect(
+        decideDeliverySend({ status: "DELAYED", attemptCount, maxAttempts: 3 }),
+      ).toEqual({ send: false, reason: "PROVIDER_DELAY_IN_FLIGHT" });
+    }
   });
 
   it("fails closed on an unresolved in-flight send (duplicate-send caution)", () => {
@@ -81,7 +95,7 @@ describe("decideDeliverySend — a retry never regenerates (row 7)", () => {
   it("stops at the attempt ceiling", () => {
     expect(
       decideDeliverySend({
-        status: "DELAYED",
+        status: "ARTIFACT_READY",
         attemptCount: 3,
         maxAttempts: 3,
       }),
@@ -94,7 +108,7 @@ describe("decideDeliverySend — a retry never regenerates (row 7)", () => {
   it("stops at the attempt ceiling", () => {
     expect(
       decideDeliverySend({
-        status: "DELAYED",
+        status: "ARTIFACT_READY",
         attemptCount: 3,
         maxAttempts: 3,
       }),
