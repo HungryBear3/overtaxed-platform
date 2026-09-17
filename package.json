@@ -33,7 +33,11 @@
     "neutral-report:production-check-checksums": "tsx scripts/record-neutral-production-baseline-checksums.ts --check",
     "neutral-report:production-identity-preflight": "tsx scripts/preflight-neutral-report-production-identities.ts",
     "neutral-report:production-baseline-rehearsal": "tsx scripts/rehearse-neutral-production-baseline.ts",
+    "neutral-report:production-recovery-backup": "tsx scripts/create-neutral-production-recovery.ts",
+    "neutral-report:production-recovery-rehearsal-setup": "tsx scripts/setup-neutral-production-recovery-rehearsal.ts",
+    "neutral-report:production-recovery-rehearsal": "tsx scripts/rehearse-neutral-production-recovery.ts",
     "neutral-report:production-baseline-apply": "tsx scripts/apply-neutral-production-baseline.ts",
+    "neutral-report:production-ledger-resume": "tsx scripts/resume-neutral-production-ledger.ts",
     "neutral-report:production-verify": "tsx scripts/verify-neutral-production-postconditions.ts",
     "neutral-report:production-verify-pre-ledger": "OT_NEUTRAL_PRODUCTION_EXPECT_LEDGER=absent tsx scripts/verify-neutral-production-postconditions.ts"
   },

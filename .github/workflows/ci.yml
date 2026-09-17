@@ -105,3 +105,45 @@ jobs:
       # and removes its own disposable local PostgreSQL cluster.
       - name: Test
         run: npm test -- --ci --maxWorkers=2
+
+  recovery-restore-matrix:
+    name: encrypted recovery restore · PostgreSQL ${{ matrix.postgres }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [17, 18]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install PostgreSQL 17 source and ${{ matrix.postgres }} target
+        run: |
+          . /etc/os-release
+          key_tmp="$(mktemp)"
+          trap 'rm -f -- "$key_tmp"' EXIT
+          curl --fail --show-error --silent --output "$key_tmp" https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          mapfile -t primary_fingerprints < <(gpg --batch --show-keys --with-colons "$key_tmp" | awk -F: '$1 == "pub" { want_fpr=1; next } want_fpr && $1 == "fpr" { print $10; want_fpr=0 }')
+          test "${#primary_fingerprints[@]}" -eq 1
+          test "${primary_fingerprints[0]}" = "B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"
+          sudo install -o root -g root -m 0644 "$key_tmp" /usr/share/keyrings/postgresql-archive-keyring.asc
+          echo "deb [signed-by=/usr/share/keyrings/postgresql-archive-keyring.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends postgresql-17 "postgresql-${{ matrix.postgres }}"
+          /usr/lib/postgresql/17/bin/initdb --version | grep --quiet '^initdb (PostgreSQL) 17'
+          /usr/lib/postgresql/${{ matrix.postgres }}/bin/initdb --version | grep --quiet '^initdb (PostgreSQL) ${{ matrix.postgres }}'
+      - name: Install
+        run: npm ci
+      - name: Restore encrypted recovery fixture
+        env:
+          OT_TEST_SOURCE_PG_BIN: /usr/lib/postgresql/17/bin
+          OT_TEST_TARGET_PG_BIN: /usr/lib/postgresql/${{ matrix.postgres }}/bin
+        run: npm test -- --ci --runInBand __tests__/fulfillment/neutral-production-recovery-postgres.integration.test.ts

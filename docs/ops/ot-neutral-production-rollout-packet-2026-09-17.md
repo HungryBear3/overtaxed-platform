@@ -24,7 +24,7 @@ Stated first, because it is the part that must not drift.
   `prisma migrate resolve`, in Phase 6, after the schema has been verified twice.
 - It does **not** switch the application's database credential. The app keeps
   connecting exactly as it does today; moving it to `ot_prod_app` is a separate,
-  later change with its own packet. It *does* grant `ot_prod_app` the
+  later change with its own packet. It _does_ grant `ot_prod_app` the
   `ot_neutral_app_reader` membership that later change will rely on — see
   prerequisite 3 — which changes nothing while nothing connects as that login.
 - It does **not** create a database login, and it contains no `CREATE ROLE … LOGIN`.
@@ -38,16 +38,16 @@ Stated first, because it is the part that must not drift.
 Fourteen migrations are pending against Production. Three of them cannot run
 there at all:
 
-| Migration | Why Production refuses it |
-| --- | --- |
-| `20260913170000_add_ot_commerce_deadline_capture` | Requires `rolsuper` on the migration connection **and** a completely empty membership graph on `ot_commerce_capture_owner`. Production `postgres` has `rolsuper = false`, and a non-superuser `CREATEROLE` connection on PostgreSQL 16+ always leaves an ADMIN edge on any role it creates. The two preconditions cannot both hold. |
-| `20260916120000_reconcile_ot_neutral_qa_delivery_forward` | Preview-only. Requires a role named `ot_preview_app` with an exact membership graph, and accepts only two catalog digests captured from Preview fixtures. |
-| `20260916220000_harden_ot_supabase_public_acl` | Aborts before its first statement unless `public.rls_auto_enable()` exists. It does not exist in Production. |
+| Migration                                                 | Why Production refuses it                                                                                                                                                                                                                                                                                                           |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `20260913170000_add_ot_commerce_deadline_capture`         | Requires `rolsuper` on the migration connection **and** a completely empty membership graph on `ot_commerce_capture_owner`. Production `postgres` has `rolsuper = false`, and a non-superuser `CREATEROLE` connection on PostgreSQL 16+ always leaves an ADMIN edge on any role it creates. The two preconditions cannot both hold. |
+| `20260916120000_reconcile_ot_neutral_qa_delivery_forward` | Preview-only. Requires a role named `ot_preview_app` with an exact membership graph, and accepts only two catalog digests captured from Preview fixtures.                                                                                                                                                                           |
+| `20260916220000_harden_ot_supabase_public_acl`            | Aborts before its first statement unless `public.rls_auto_enable()` exists. It does not exist in Production.                                                                                                                                                                                                                        |
 
 `prisma migrate deploy` applies pending migrations in order and stops at the
 first failure, so migration 7 would halt the run with six applied and eight not.
 A new migration directory cannot fix this either: Prisma orders directories
-lexicographically, so anything added today would run *after* the three that
+lexicographically, so anything added today would run _after_ the three that
 cannot run.
 
 The replacement is a Production-only baseline that materializes the exact final
@@ -58,12 +58,29 @@ the SQL is `prisma/production-baseline/`.
 
 ## Prerequisites — all of them, before Phase 1
 
-1. **Point-in-time recovery must be enabled and confirmed.** Record the PITR
-   retention window and a restore target timestamp taken immediately before
-   Phase 5. This is the only rollback that covers a committed schema change, and
-   it is the reason Phase 5 is the single irreversible step in the packet.
-   **Do not begin Phase 5 without a confirmed PITR timestamp written into the
-   receipt.**
+1. **A fresh encrypted logical recovery set must be created and restore-proved.**
+   Production does not currently have PITR or scheduled provider backups. This
+   packet therefore requires the bounded no-PITR recovery path below: one full
+   custom-format logical dump, a password-free roles/membership dump, and an
+   exact catalog security snapshot covering relevant roles/memberships, public
+   object owners and ACLs, column ACLs, RLS flags and policies, functions,
+   triggers, constraints, types and extensions. All three streams are
+   encrypted directly with GnuPG AES-256; no plaintext backup file is ever
+   written. Every receipt is HMAC-authenticated with a separate Keychain-held
+   key, bound to the durable Production marker, and valid for a hard maximum of
+   60 minutes; there is no age override.
+
+   Before Phase 5, the exact encrypted set must restore successfully into empty,
+   disposable PostgreSQL 17 **and** PostgreSQL 18 clusters. Both restore receipts
+   must match the backup receipt hash, every decrypted artifact hash and the
+   restored catalog digest. The apply entrypoint verifies the HMACs and actually
+   decrypts and hashes every artifact with the supplied recovery passphrase both
+   before opening a Production socket and immediately before commit. Missing,
+   stale, forged, undecryptable, changed or single-major
+   evidence fails closed. This is not PITR: recovery requires a logical restore
+   and therefore has a materially longer RTO. It is accepted here only while all
+   features remain off and the baseline changes no application rows.
+
 2. **A durable Production database marker.** A `COMMENT ON DATABASE` carrying
    `{"schema":"ot.database-environment.v1","purpose":"ot-neutral-report","environment":"production","production":true,"projectRef":"kdvjiijzgflumgkndxsl","instanceId":"<uuid>"}`.
    Record the `instanceId`; every later phase is bound to it.
@@ -77,10 +94,10 @@ the SQL is `prisma/production-baseline/`.
    Hand them over holding nothing. The baseline **grants the memberships
    itself** — exactly three edges, `INHERIT TRUE, SET FALSE`:
 
-   | Login | Functional role |
-   | --- | --- |
-   | `ot_prod_app` | `ot_neutral_app_reader` |
-   | `ot_prod_neutral_runtime` | `ot_neutral_runtime` |
+   | Login                      | Functional role               |
+   | -------------------------- | ----------------------------- |
+   | `ot_prod_app`              | `ot_neutral_app_reader`       |
+   | `ot_prod_neutral_runtime`  | `ot_neutral_runtime`          |
    | `ot_prod_neutral_delivery` | `ot_neutral_delivery_runtime` |
 
    The split is deliberate. Creating a login means choosing a password, and a
@@ -91,7 +108,8 @@ the SQL is `prisma/production-baseline/`.
    the apply's own binding proof could only confirm something nobody in the
    transaction had written, which is a hope rather than a check. The baseline
    refuses outright if any of the three logins is absent, is not pristine, or
-   already reaches *any* other role; it never repairs one in place.
+   already reaches _any_ other role; it never repairs one in place.
+
 4. **`REVOKE CREATE ON SCHEMA public FROM PUBLIC;`** as a separate, reviewed
    operator statement. Production currently grants it, which would give all three
    restricted logins the ability to create objects in `public` no matter what the
@@ -169,13 +187,14 @@ by `rehearsal only`. Anything else — especially `REFUSE` — stops the rollout
 Expected refusals and what they mean:
 
 - `the neutral schema is partially present` — a previous attempt left partial
-  state. **Do not retry.** This is a PITR decision, not a re-run.
+  state. **Do not retry.** Preserve evidence and invoke the separately approved
+  logical-restore decision path.
 - `PUBLIC still holds CREATE on schema public` — prerequisite 4 was skipped.
 - `server version … is not supported` — the baseline supports PostgreSQL 17 and
   18 only.
 - `pre-existing roles carry unsafe attributes: …` — one of the five functional
   roles already exists and can log in, inherits, or carries ambient authority.
-  Roles are cluster-global; a *pristine* pre-created role is fine and is adopted,
+  Roles are cluster-global; a _pristine_ pre-created role is fine and is adopted,
   this one is somebody else's. Do not "fix" it without finding out whose it is.
 - `… cannot be adopted: the migration role holds neither ADMIN nor SET on it` —
   one of the two owner roles was created by a different role. The ownership
@@ -192,11 +211,11 @@ Expected refusals and what they mean:
   `public`. Inheritance is not optional: the bindings are granted
   `INHERIT TRUE, SET FALSE`, so a `NOINHERIT` login reaches nothing.
 - `restricted Production logins already reach roles this rollout did not design:
-  …` — the named login is already a member of something. "Exactly three edges"
+…` — the named login is already a member of something. "Exactly three edges"
   is only provable by refusing while a fourth exists, so find out who granted it
   before removing it.
 - `the Supabase statistics views the baseline closes to PUBLIC are absent:
-  extensions.pg_stat_statements[, extensions.pg_stat_statements_info]` — the
+extensions.pg_stat_statements[, extensions.pg_stat_statements_info]` — the
   baseline revokes the PUBLIC `SELECT` on both views, because
   `pg_stat_statements` exposes every statement text the database has executed to
   anyone who can connect, including the three restricted logins. If either view
@@ -221,17 +240,122 @@ the SET/INHERIT borrow depends on.
 
 **Rollback state:** nothing has been changed. The transaction was rolled back.
 
-### Phase 4 — PITR checkpoint
+### Phase 4 — encrypted recovery checkpoint and restore matrix
 
-Record the restore target timestamp. Confirm the retention window covers it.
-Write both into the receipt.
+Load the long random recovery passphrase from Keychain into the operator process
+without printing it, choose an encrypted local destination, and create the set:
 
-**Stop gate:** a named human confirms the timestamp is recorded.
+```
+npm run neutral-report:production-recovery-backup
+```
+
+The required operator-only variables are
+`OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE` (at least 24 characters) and
+`OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY` (at least 32 bytes, independently
+generated and held in Keychain), plus
+`OT_NEUTRAL_PRODUCTION_RECOVERY_OUTPUT_DIR`. `DIRECT_URL` and the marker/identity
+variables remain the exact Phase 2 values. The output directory is mode 0700.
+Encrypted artifacts and the non-secret receipt are created through held,
+exclusive mode-0600 descriptors while being written, then fsynced and sealed
+read-only at mode 0400 before the command can report success. Password hashes
+are deliberately excluded from `roles.sql.gpg`; existing credentials remain in
+the secret manager and are never copied into a backup artifact.
+
+For each newly initialized PostgreSQL 17 and 18 target, create only a temporary
+superuser, `postgres`, and a database named
+`ot_neutral_recovery_rehearsal_*`. Set the target URL, expected superuser and a
+new sentinel output path, then run:
+
+```
+npm run neutral-report:production-recovery-rehearsal-setup
+```
+
+The setup helper resolves every target address and accepts loopback only. It
+refuses any extra non-system role, any extra non-template database, any existing
+user object, or a non-superuser connection. It records a fresh random nonce,
+`pg_control_system()` system identifier, data-directory digest, server major,
+database name and temporary superuser in both the database comment and an
+HMAC-authenticated mode-0600 sentinel. Set
+`OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL`,
+`OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL`, and
+`OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT` to the just-created
+`backup-receipt.json`, and run:
+
+```
+npm run neutral-report:production-recovery-rehearsal
+```
+
+Exact disposable-cluster lifecycle (macOS/Homebrew; paste only after the Phase
+4 backup command has exported the receipt, passphrase, and authentication key):
+
+```bash
+set -euo pipefail
+: "${OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT:?set absolute backup-receipt.json path}"
+: "${OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE:?load from Keychain}"
+: "${OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY:?load independently from Keychain}"
+command -v trash >/dev/null
+
+rehearse_major() (
+  set -euo pipefail
+  major="$1"
+  port="$2"
+  pg_bin="/opt/homebrew/opt/postgresql@${major}/bin"
+  root="$(mktemp -d "${TMPDIR:-/tmp}/ot-neutral-pg${major}.XXXXXX")"
+  data="$root/data"
+  socket="$root/socket"
+  sentinel="$root/sentinel-pg${major}.json"
+  database="ot_neutral_recovery_rehearsal_pg${major}"
+  superuser="ot_recovery_admin_pg${major}"
+  cleanup() {
+    "$pg_bin/pg_ctl" -D "$data" -m fast -w stop >/dev/null 2>&1 || true
+    trash -- "$root"
+  }
+  trap cleanup EXIT INT TERM
+  mkdir -m 0700 "$socket"
+  "$pg_bin/initdb" -D "$data" -A trust -U "$superuser"
+  "$pg_bin/pg_ctl" -D "$data" -o "-F -k $socket -h 127.0.0.1 -p $port" -w start
+  "$pg_bin/createdb" -h 127.0.0.1 -p "$port" -U "$superuser" "$database"
+  target="postgresql://${superuser}@127.0.0.1:${port}/${database}"
+  OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL="$target" \
+  OT_NEUTRAL_RECOVERY_REHEARSAL_SUPERUSER="$superuser" \
+  OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL="$sentinel" \
+    npm run neutral-report:production-recovery-rehearsal-setup
+  OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL="$target" \
+  OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL="$sentinel" \
+    npm run neutral-report:production-recovery-rehearsal
+  test -s "$(dirname "$OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT")/restore-rehearsal-pg${major}.json"
+)
+
+rehearse_major 17 45417
+rehearse_major 18 45418
+```
+
+Each subshell owns exactly one `mktemp` root, stops only the cluster whose data
+directory it created, and moves that root to Trash on success, refusal, or
+interrupt. Never substitute an existing data directory, shared port, remote
+host, or non-prefixed database name.
+
+The rehearsal re-proves that exact live cluster identity and refuses a stale or
+forged sentinel, a remote or differently named target, or any newly appeared
+role/database/object before it restores globals. Its definitive signed-sentinel
+guard, roles SQL, emitted custom-dump SQL, and commit all run through one psql
+session and one transaction, so a swapped loopback listener cannot pass a Node
+check and receive mutations on a later connection. It restores roles and
+memberships first; restores the database in that transaction; then
+proves decrypted hashes and the exact relevant role/public-schema/default-ACL
+catalog digest. It writes `restore-rehearsal-pg17.json` or
+`restore-rehearsal-pg18.json` beside the backup receipt.
+
+**Stop gate:** both commands print `PASS ... catalog=verified
+artifacts=verified`; both receipts exist beside the backup receipt. Set
+`OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT` to that receipt for Phase 5. Do not
+proceed if either supported major cannot restore the exact set.
 
 ### Phase 5 — apply (the one irreversible step)
 
 ```
 OT_NEUTRAL_PRODUCTION_APPLY_CONFIRMATION="apply-production-baseline:<marker instance id>" \
+OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT="<absolute path>/backup-receipt.json" \
   npm run neutral-report:production-baseline-apply
 ```
 
@@ -257,8 +381,18 @@ re-verifies on a **separate** connection. The ledger is not touched.
 OT_NEUTRAL_PRODUCTION_EXPECT_LEDGER=absent npm run neutral-report:production-verify
 ```
 
-**Rollback state:** the schema is committed. The only rollback is PITR to the
-Phase 4 timestamp. The application is unaffected: every relation the baseline
+**Rollback state:** the schema is committed. Do **not** restore the Phase 4
+logical dump as a routine rollback: customer writes may have occurred after its
+snapshot, and restoring it would silently lose those writes. The
+zero-partial-apply transactional safety strategy is structural: every schema
+statement and every postcondition execute
+in the single Phase 5 transaction, so any failure before commit rolls the entire
+baseline back; after a verified commit the additive schema remains inert with
+all flags off and only the ledger may need resumption. Removal, if ever desired,
+requires a separately reviewed forward cleanup, not a data restore. The
+encrypted set is bounded baseline rollback evidence only; it is not general
+disaster recovery and does not claim zero-RPO recovery of application data. The
+application is unaffected: every relation the baseline
 created is empty, every feature flag is still off, and the application still
 connects as the owner, which bypasses the RLS this migration enabled.
 
@@ -267,10 +401,15 @@ connects as the owner, which bypasses the RLS this migration enabled.
 ```
 OT_NEUTRAL_PRODUCTION_APPLY_CONFIRMATION="apply-production-baseline:<marker instance id>" \
 OT_NEUTRAL_PRODUCTION_RESOLVE_CONFIRMATION="resolve-production-ledger:<marker instance id>" \
-  npm run neutral-report:production-baseline-apply
+OT_NEUTRAL_PRODUCTION_LEDGER_RESUME_CONFIRMATION="resume-production-ledger:<marker instance id>" \
+  npm run neutral-report:production-ledger-resume
 ```
 
-On a database the baseline has already been applied to, the preflight classifies
+This separate entrypoint requires the catalog to classify `COMPLETE`/`REPLAY`;
+it can never execute the baseline body. It deliberately does not require a fresh
+backup receipt, so a stale Phase 5 receipt cannot block safe ledger recovery.
+Conversely, the Phase 5 entrypoint requires `ABSENT`/`APPLY` and deletes any
+resolve token inherited from the shell. On a database the baseline has already been applied to, the preflight classifies
 `COMPLETE`, the body is skipped, the postconditions are re-proved, and only then
 are the fourteen `prisma migrate resolve --applied <name>` commands run in
 manifest order. Each is spawned with an argument array and `shell: false`, using
@@ -292,7 +431,9 @@ leaves the ledger genuinely half-written — say seven of fourteen recorded. **T
 is recoverable and does not need PITR, a hand-edit of `_prisma_migrations`, or a
 `--rolled-back`.**
 
-Re-run the **same Phase 6 command, unchanged**. The runner re-reads the ledger
+Run exactly the Phase 6 `npm run neutral-report:production-ledger-resume`
+command with both marker-bound confirmations; never run the Phase 5 apply
+command. The runner re-reads the ledger
 before it touches anything, splits the covered migrations into "already recorded
 cleanly" and "still pending", skips the former (re-issuing `resolve --applied`
 for a migration Prisma already records is an error) and resumes at the first of
@@ -333,7 +474,7 @@ npm run neutral-report:production-verify
 This command needs `OT_NEUTRAL_PRODUCTION_PROJECT_REF` and
 `OT_NEUTRAL_PRODUCTION_MARKER_INSTANCE_ID` from prerequisite 5, and it reads them
 before it opens a socket. Everything else it proves — roles, policies, grants,
-bindings, ledger rows — is a statement about catalog *contents*, and every one of
+bindings, ledger rows — is a statement about catalog _contents_, and every one of
 those is equally true of a restored copy, of a Supabase branch of the same
 project, and of a Staging database somebody once applied the baseline to. Without
 the marker check its `PASS` could be filed as this rollout's receipt while
@@ -351,7 +492,8 @@ environment. **Activation is not part of this packet and has no phase here.**
 1. Phase 1 checksum output and the committed `resolve-manifest.json`.
 2. Phase 2 preflight `PASS` line.
 3. Phase 3 rehearsal output with `committed=false`.
-4. Phase 4 PITR timestamp and retention window, with the confirming name.
+4. Phase 4 backup receipt, its SHA-256, and both PostgreSQL 17/18 restore
+   receipts. Do not file the passphrase or any URL.
 5. Phase 5 apply output with `committed=true`, and the pre-ledger verification.
 6. Phase 6 resolve output and the full verification with
    `ledger=resolved marker=verified`.
@@ -359,17 +501,24 @@ environment. **Activation is not part of this packet and has no phase here.**
 
 ## Rollback states, summarised
 
-| After | State | Rollback |
-| --- | --- | --- |
-| Phase 1–3 | Nothing changed | Stop |
-| Phase 4 | Nothing changed | Stop |
-| Phase 5 | Schema committed, ledger untouched, all features off | PITR to the Phase 4 timestamp |
-| Phase 6 interrupted | Schema committed, ledger partially written | **Re-run the same Phase 6 command.** It resumes and skips what is recorded. |
-| Phase 6 | Schema committed, ledger resolved | `prisma migrate resolve --rolled-back` per entry for the ledger; PITR for the schema |
-| Partial **schema** state observed at any point | Unknown | **Do not re-run.** PITR. |
+| After                                          | State                                                                   | Rollback                                                                                                            |
+| ---------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Phase 1–3                                      | Nothing changed                                                         | Stop                                                                                                                |
+| Phase 4                                        | Nothing changed; encrypted logical recovery set restore-proved on 17/18 | Stop                                                                                                                |
+| Phase 5                                        | Schema committed, ledger untouched, all features off                    | Keep inert; resume ledger. Never restore over newer customer writes.                                                |
+| Phase 6 interrupted                            | Schema committed, ledger partially written                              | Run exactly the Phase 6 `npm run neutral-report:production-ledger-resume` command with both marker-bound resume/resolve confirmations; never run the Phase 5 apply command. |
+| Phase 6                                        | Schema committed, ledger resolved                                       | Keep inert; any future removal is a separately reviewed forward cleanup.                                            |
+| Partial **schema** state observed at any point | Unknown                                                                 | **Do not re-run or restore data.** Preserve evidence and investigate; normal transactional apply cannot produce it. |
 
 ## Known residuals
 
+- **The logical restore proof is deliberately scoped to state this baseline can
+  affect.** The database-level marker is captured and HMAC-bound separately and
+  is re-read from Production by the apply verifier. Database-level ACL/config
+  are not changed by `02_baseline.sql`; they are therefore not claimed as a
+  byte-for-byte cross-cluster restore invariant. Public object ownership/ACL,
+  column ACL, RLS/policy, function, trigger, constraint, type, extension and
+  relevant role state are included in the exact catalog digest.
 - **`ot_fulfillment`, `ot_fulfillment_artifact` and `ot_delivery_attempt` gain
   RLS.** They have no policy for the owner role, which is what the application
   connects as today, and an owner bypasses non-FORCE RLS. There is no behaviour
@@ -383,8 +532,8 @@ environment. **Activation is not part of this packet and has no phase here.**
   `NOLOGIN NOINHERIT`, so nothing that can log in reaches them.
 - **`createrole_self_grant` is reported, not depended on.** If the cluster is set
   to `set,inherit`, `CREATE ROLE` hands the creating role `SET` and `INHERIT` on
-  every role it creates. The baseline normalizes the roles *it* creates back to
-  `INHERIT FALSE, SET FALSE` immediately, and restores any *pre-existing* edge to
+  every role it creates. The baseline normalizes the roles _it_ creates back to
+  `INHERIT FALSE, SET FALSE` immediately, and restores any _pre-existing_ edge to
   exactly the flags it found rather than forcing both to false. The rehearsal
   receipt prints the setting and the edge shapes so the postcondition that
   forbids a surviving `SET`/`INHERIT` can be read against them.

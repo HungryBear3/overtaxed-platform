@@ -250,7 +250,9 @@ export function classifyBaselinePreflight(
   // 'statistics-view topology is invalid' forty statements in. It is never
   // repaired: CREATE EXTENSION is a platform operation with its own review.
   const statistics = [
-    ...(row.pg_stat_statements_present ? [] : ["extensions.pg_stat_statements"]),
+    ...(row.pg_stat_statements_present
+      ? []
+      : ["extensions.pg_stat_statements"]),
     ...(row.pg_stat_statements_info_present
       ? []
       : ["extensions.pg_stat_statements_info"]),
@@ -436,11 +438,15 @@ export type BaselineRunnerDeps = {
    * skipped any of them could pass where the apply then fails.
    */
   verifyInTransaction: (session: OwnerSession) => Promise<void>;
+  /** Re-authenticate external recovery evidence immediately before COMMIT. */
+  verifyBeforeCommit?: () => Promise<void>;
   /** The same proofs, on a SEPARATE connection, after COMMIT. */
   verifyDurable: (options: { expectLedgerResolved: boolean }) => Promise<void>;
   /** Absolute path to the Prisma CLI inside this checkout. Never `npx`. */
   prismaBinary: string;
   spawn: CommandRunner;
+  /** Commit and ledger-resume are separate operator paths. */
+  requiredAction?: Exclude<BaselineAction, "REFUSE">;
 };
 
 export type BaselineOutcome = {
@@ -512,7 +518,8 @@ export async function runNeutralProductionBaseline(
     try {
       const result = await owner.query(deps.artifacts.preflight);
       const row = result.rows[0] as BaselinePreflightRow | undefined;
-      if (!row) throw new Error("Production baseline preflight returned no row");
+      if (!row)
+        throw new Error("Production baseline preflight returned no row");
 
       // The durable marker, parsed by the same parser every other Production
       // path uses. A token names an instance id; only this proves the database
@@ -533,6 +540,10 @@ export async function runNeutralProductionBaseline(
         throw new Error(
           `Production baseline refused: ${classification.reasons.join("; ")}`,
         );
+      if (deps.requiredAction && classification.action !== deps.requiredAction)
+        throw new Error(
+          `Production baseline ${deps.requiredAction.toLowerCase()} path refused catalog action ${classification.action}`,
+        );
       // A ledger that already names covered migrations is only a resume if the
       // schema they describe is actually there.
       if (
@@ -550,6 +561,15 @@ export async function runNeutralProductionBaseline(
       // rehearsal path this is the whole point: it really ran against the real
       // catalog, and none of it survives.
       await deps.verifyInTransaction(owner);
+
+      if (apply && classification.action === "APPLY")
+        if (deps.verifyBeforeCommit) {
+          await deps.verifyBeforeCommit();
+          // The external evidence check may perform slow crypto. Re-prove the
+          // entire catalog/binding/postcondition set after it, immediately
+          // before COMMIT, so concurrent catalog drift cannot hide in that gap.
+          await deps.verifyInTransaction(owner);
+        }
 
       if (apply) await owner.query("COMMIT");
       else await owner.query("ROLLBACK");
@@ -591,8 +611,8 @@ export async function runNeutralProductionBaseline(
         [
           `prisma migrate resolve failed for ${command.args[command.args.length - 1]}`,
           "Recovery: the baseline is committed and the ledger is partially written.",
-          "Re-run the SAME apply command; the runner re-reads the ledger, skips every",
-          "migration already recorded, and resumes at the first one that is not.",
+          "Run exactly `npm run neutral-report:production-ledger-resume` with the",
+          "marker-bound resolve and ledger-resume confirmations; never re-run the apply command.",
           result.output ? `Child output: ${result.output}` : "",
         ]
           .filter(Boolean)

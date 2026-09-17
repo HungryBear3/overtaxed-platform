@@ -56,7 +56,12 @@ const DESIGNED_BINDINGS: Record<string, string> = {
 /** One catalog edge, rendered exactly as 01_preflight.sql renders it. */
 const edge = (
   login: string,
-  overrides: { grantor?: string; inherit?: boolean; set?: boolean; admin?: boolean } = {},
+  overrides: {
+    grantor?: string;
+    inherit?: boolean;
+    set?: boolean;
+    admin?: boolean;
+  } = {},
 ): string =>
   `${login}->${DESIGNED_BINDINGS[login]}:grantor=${overrides.grantor ?? "postgres"},` +
   `inherit=${overrides.inherit ?? true},set=${overrides.set ?? false},admin=${overrides.admin ?? false}`;
@@ -113,7 +118,9 @@ const completeRow = (
     missing_roles: [],
     // A COMPLETE database is one the baseline already bound: exactly one edge
     // per login, carrying exactly the designed options.
-    login_binding_edges: Object.keys(DESIGNED_BINDINGS).map((login) => edge(login)),
+    login_binding_edges: Object.keys(DESIGNED_BINDINGS).map((login) =>
+      edge(login),
+    ),
     missing_login_bindings: [],
     ...overrides,
   });
@@ -157,15 +164,18 @@ type Recorder = {
   durable: boolean[];
 };
 
-function makeDeps(options: {
-  mode?: BaselineMode;
-  env?: Record<string, string | undefined>;
-  row?: BaselinePreflightRow;
-  ledger?: () => LedgerRow[];
-  spawnStatus?: number;
-  spawnOutput?: string;
-  digestOverride?: Record<string, string>;
-} = {}): Recorder {
+function makeDeps(
+  options: {
+    mode?: BaselineMode;
+    env?: Record<string, string | undefined>;
+    row?: BaselinePreflightRow;
+    ledger?: () => LedgerRow[];
+    spawnStatus?: number;
+    spawnOutput?: string;
+    digestOverride?: Record<string, string>;
+    requiredAction?: "APPLY" | "REPLAY";
+  } = {},
+): Recorder {
   const statements: string[] = [];
   const spawned: string[][] = [];
   const inTransaction: string[] = [];
@@ -184,9 +194,11 @@ function makeDeps(options: {
     durable,
     deps: {
       mode: options.mode ?? "apply",
-      env: options.env ?? baseEnv({
-        [OT_PRODUCTION_APPLY_TOKEN_VAR]: expectedApplyToken(INSTANCE),
-      }),
+      env:
+        options.env ??
+        baseEnv({
+          [OT_PRODUCTION_APPLY_TOKEN_VAR]: expectedApplyToken(INSTANCE),
+        }),
       artifacts: {
         preflight: "--preflight",
         baseline: "--baseline",
@@ -198,7 +210,12 @@ function makeDeps(options: {
         async query(sql: string) {
           statements.push(sql);
           if (sql === "--preflight")
-            return { rows: [options.row ?? preflightRow()] as unknown as Record<string, unknown>[] };
+            return {
+              rows: [options.row ?? preflightRow()] as unknown as Record<
+                string,
+                unknown
+              >[],
+            };
           return { rows: [] };
         },
       },
@@ -221,6 +238,7 @@ function makeDeps(options: {
           output: options.spawnOutput ?? "",
         };
       },
+      requiredAction: options.requiredAction,
     },
   };
   return recorder;
@@ -258,29 +276,36 @@ describe("baseline preflight classification", () => {
       ).action,
     ).toBe("REFUSE");
     expect(
-      classifyBaselinePreflight(preflightRow({ server_version_num: 160004 })).reasons.join(" "),
+      classifyBaselinePreflight(
+        preflightRow({ server_version_num: 160004 }),
+      ).reasons.join(" "),
     ).toMatch(/not supported/);
     expect(
-      classifyBaselinePreflight(preflightRow({ server_version_num: 190000 })).action,
+      classifyBaselinePreflight(preflightRow({ server_version_num: 190000 }))
+        .action,
     ).toBe("REFUSE");
     expect(
-      classifyBaselinePreflight(preflightRow({ owner_can_create_role: false })).action,
+      classifyBaselinePreflight(preflightRow({ owner_can_create_role: false }))
+        .action,
     ).toBe("REFUSE");
   });
 
   test("accepts PostgreSQL 17 and 18 and refuses 16", () => {
     for (const version of [170000, 170006, 180000, 189999])
       expect(
-        classifyBaselinePreflight(preflightRow({ server_version_num: version })).action,
+        classifyBaselinePreflight(preflightRow({ server_version_num: version }))
+          .action,
       ).toBe("APPLY");
     expect(
-      classifyBaselinePreflight(preflightRow({ server_version_num: 169999 })).action,
+      classifyBaselinePreflight(preflightRow({ server_version_num: 169999 }))
+        .action,
     ).toBe("REFUSE");
   });
 
   test("does not require the owner to be a superuser", () => {
     expect(
-      classifyBaselinePreflight(preflightRow({ owner_is_superuser: false })).action,
+      classifyBaselinePreflight(preflightRow({ owner_is_superuser: false }))
+        .action,
     ).toBe("APPLY");
   });
 
@@ -294,7 +319,9 @@ describe("baseline preflight classification", () => {
 
   test("does not require rls_auto_enable to exist", () => {
     expect(
-      classifyBaselinePreflight(preflightRow({ rls_auto_enable_present: false })).action,
+      classifyBaselinePreflight(
+        preflightRow({ rls_auto_enable_present: false }),
+      ).action,
     ).toBe("APPLY");
   });
 
@@ -320,7 +347,9 @@ describe("baseline preflight classification", () => {
     const result = classifyBaselinePreflight(
       preflightRow({
         present_roles: ["ot_neutral_runtime"],
-        missing_roles: FUNCTIONAL_ROLES.filter((r) => r !== "ot_neutral_runtime"),
+        missing_roles: FUNCTIONAL_ROLES.filter(
+          (r) => r !== "ot_neutral_runtime",
+        ),
         unsafe_preexisting_roles: ["ot_neutral_runtime"],
       }),
     );
@@ -346,11 +375,7 @@ describe("baseline preflight classification", () => {
   });
 
   test("a COMPLETE schema with every role present is a REPLAY", () => {
-    expect(
-      classifyBaselinePreflight(
-        completeRow(),
-      ).action,
-    ).toBe("REPLAY");
+    expect(classifyBaselinePreflight(completeRow()).action).toBe("REPLAY");
   });
 
   /**
@@ -406,8 +431,12 @@ describe("baseline preflight classification", () => {
    */
   test("a SET path from a login to its functional role is refused on every state", () => {
     for (const row of [
-      preflightRow({ login_binding_set_paths: ["ot_prod_app->ot_neutral_app_reader"] }),
-      completeRow({ login_binding_set_paths: ["ot_prod_app->ot_neutral_app_reader"] }),
+      preflightRow({
+        login_binding_set_paths: ["ot_prod_app->ot_neutral_app_reader"],
+      }),
+      completeRow({
+        login_binding_set_paths: ["ot_prod_app->ot_neutral_app_reader"],
+      }),
     ]) {
       const result = classifyBaselinePreflight(row);
       expect(result.action).toBe("REFUSE");
@@ -459,7 +488,10 @@ describe("baseline preflight classification", () => {
   test("a COMPLETE database missing a binding is refused", () => {
     const result = classifyBaselinePreflight(
       completeRow({
-        login_binding_edges: [edge("ot_prod_neutral_runtime"), edge("ot_prod_neutral_delivery")],
+        login_binding_edges: [
+          edge("ot_prod_neutral_runtime"),
+          edge("ot_prod_neutral_delivery"),
+        ],
         missing_login_bindings: ["ot_prod_app->ot_neutral_app_reader"],
       }),
     );
@@ -490,7 +522,9 @@ describe("baseline preflight classification", () => {
       preflightRow({ pg_stat_statements_info_present: false }),
     );
     expect(info.action).toBe("REFUSE");
-    expect(info.reasons.join(" ")).toMatch(/extensions\.pg_stat_statements_info/);
+    expect(info.reasons.join(" ")).toMatch(
+      /extensions\.pg_stat_statements_info/,
+    );
 
     const both = classifyBaselinePreflight(
       preflightRow({
@@ -757,7 +791,9 @@ describe("guarded runner", () => {
     expect(outcome.action).toBe("REPLAY");
     expect(outcome.resolved).toBe(true);
     expect(outcome.alreadyResolved).toEqual(covered.slice(0, 7));
-    expect(recorder.spawned.map((argv) => argv.at(-1))).toEqual(covered.slice(7));
+    expect(recorder.spawned.map((argv) => argv.at(-1))).toEqual(
+      covered.slice(7),
+    );
     expect(recorder.durable).toEqual([false, true]);
   });
 
@@ -848,12 +884,73 @@ describe("guarded runner", () => {
     ]);
   });
 
+  test("commit and ledger-resume paths cannot substitute for each other", async () => {
+    const commitOnComplete = makeDeps({
+      row: completeRow(),
+      requiredAction: "APPLY",
+    });
+    await expect(
+      runNeutralProductionBaseline(commitOnComplete.deps),
+    ).rejects.toThrow(/apply path refused catalog action REPLAY/);
+    expect(commitOnComplete.statements).not.toContain("--baseline");
+
+    const resumeOnAbsent = makeDeps({ requiredAction: "REPLAY" });
+    await expect(
+      runNeutralProductionBaseline(resumeOnAbsent.deps),
+    ).rejects.toThrow(/replay path refused catalog action APPLY/);
+    expect(resumeOnAbsent.statements).not.toContain("--baseline");
+  });
+
+  test("re-authenticates recovery evidence after postconditions and immediately before commit", async () => {
+    const recorder = makeDeps({ requiredAction: "APPLY" });
+    recorder.deps.verifyBeforeCommit = async () => {
+      recorder.statements.push("--recovery-recheck");
+    };
+    await runNeutralProductionBaseline(recorder.deps);
+    expect(recorder.statements.slice(-4)).toEqual([
+      "--postconditions",
+      "--recovery-recheck",
+      "--postconditions",
+      "COMMIT",
+    ]);
+  });
+
+  test("catches catalog mutation injected during slow recovery verification and rolls back", async () => {
+    const recorder = makeDeps({ requiredAction: "APPLY" });
+    let verification = 0;
+    recorder.deps.verifyBeforeCommit = async () => {
+      recorder.statements.push("--slow-recovery-check-and-mutation");
+    };
+    recorder.deps.verifyInTransaction = async (session) => {
+      verification += 1;
+      await session.query("--postconditions");
+      if (verification === 2) throw new Error("catalog binding changed");
+    };
+    await expect(runNeutralProductionBaseline(recorder.deps)).rejects.toThrow(
+      /catalog binding changed/,
+    );
+    expect(recorder.statements).toEqual([
+      "BEGIN",
+      "--preflight",
+      "--baseline",
+      "--postconditions",
+      "--slow-recovery-check-and-mutation",
+      "--postconditions",
+      "ROLLBACK",
+    ]);
+    expect(recorder.statements).not.toContain("COMMIT");
+  });
+
   test("rolls back and rethrows when the postconditions fail", async () => {
     const recorder = makeDeps();
     recorder.deps.owner.query = async (sql: string) => {
       recorder.statements.push(sql);
-      if (sql === "--preflight") return { rows: [preflightRow()] as unknown as Record<string, unknown>[] };
-      if (sql === "--postconditions") throw new Error("postconditions failed: x");
+      if (sql === "--preflight")
+        return {
+          rows: [preflightRow()] as unknown as Record<string, unknown>[],
+        };
+      if (sql === "--postconditions")
+        throw new Error("postconditions failed: x");
       return { rows: [] };
     };
     await expect(runNeutralProductionBaseline(recorder.deps)).rejects.toThrow(
@@ -879,7 +976,10 @@ describe("guarded runner", () => {
     expect(error).toBeInstanceOf(Error);
     if (!(error instanceof Error)) throw new Error("expected baseline failure");
     expect(error.message).toMatch(/prisma migrate resolve failed/);
-    expect(error.message).toMatch(/Re-run the SAME apply command/);
+    expect(error.message).toMatch(
+      /npm run neutral-report:production-ledger-resume/,
+    );
+    expect(error.message).toMatch(/never re-run the apply command/);
     expect(error.message).toMatch(/P3009 datasource \[REDACTED_DATABASE_URL\]/);
     // The ledger was never claimed correct and the second verification never ran.
     expect(recorder.durable).toEqual([false]);
@@ -908,7 +1008,9 @@ describe("guarded runner", () => {
       projectRef: REF,
       instanceId: "11111111-2222-4333-8444-555555555555",
     });
-    const recorder = makeDeps({ row: preflightRow({ database_marker: other }) });
+    const recorder = makeDeps({
+      row: preflightRow({ database_marker: other }),
+    });
     await expect(runNeutralProductionBaseline(recorder.deps)).rejects.toThrow(
       /does not match the approved instance/,
     );
@@ -994,7 +1096,9 @@ describe("operator script source contracts", () => {
     expect(apply).toContain('runProductionBaselineEntrypoint("apply")');
     expect(apply).not.toContain('"rehearsal"');
 
-    const entrypoint = read("scripts/neutral-production-baseline-entrypoint.ts");
+    const entrypoint = read(
+      "scripts/neutral-production-baseline-entrypoint.ts",
+    );
     expect(entrypoint).toMatch(
       /delete process\.env\[OT_PRODUCTION_APPLY_TOKEN_VAR\]/,
     );
@@ -1083,7 +1187,9 @@ describe("operator script source contracts", () => {
     expect(executable).not.toContain("iyaxdrehtxsfkaexgxls");
     // Role-attribute validation may inspect `rolsuper`; the baseline must not
     // demand that the connected migration role itself be superuser.
-    expect(executable).not.toMatch(/current_user[^;]{0,160}rolsuper|rolsuper[^;]{0,160}current_user/i);
+    expect(executable).not.toMatch(
+      /current_user[^;]{0,160}rolsuper|rolsuper[^;]{0,160}current_user/i,
+    );
   });
 
   /**
@@ -1134,7 +1240,9 @@ describe("operator script source contracts", () => {
     expect(source).not.toContain(
       "'^CHECK \\(\\(action = ''ENTER_MANUAL_REVIEW''::text\\)\\)$'",
     );
-    expect(source).toContain("regexp_replace(pg_get_constraintdef(c.oid, true)");
+    expect(source).toContain(
+      "regexp_replace(pg_get_constraintdef(c.oid, true)",
+    );
   });
 
   test("the prose that explains those omissions is still present", () => {

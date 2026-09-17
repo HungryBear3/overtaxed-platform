@@ -1,0 +1,457 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
+import { once } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { Client } from "pg";
+import {
+  OT_PRODUCTION_REHEARSAL_SENTINEL_SCHEMA,
+  OT_PRODUCTION_RESTORE_SCHEMA,
+  OT_PRODUCTION_RECOVERY_CATALOG_SQL,
+  OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
+  assertReceiptAuthenticator,
+  assertFreshRehearsalSentinelTimestamp,
+  authenticateReceipt,
+  canonicalJson,
+  assertRecoveryReceipt,
+  sha256,
+  type ProductionRecoveryReceipt,
+  type RehearsalClusterSentinel,
+  type RestoreRehearsalReceipt,
+} from "../lib/fulfillment/neutral-production-recovery";
+import {
+  materializePrivateCopy,
+  readProtectedFile,
+} from "./neutral-production-recovery-gate";
+import { redactProductionDiagnostic } from "../lib/fulfillment/neutral-production-verifier";
+import { resolveRecoveryTarget } from "./neutral-recovery-target";
+
+function sqlLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+async function decryptRestoreSingleSession(input: {
+  rolesEncrypted: string;
+  databaseEncrypted: string;
+  passphrase: string;
+  env: NodeJS.ProcessEnv;
+  sentinel: RehearsalClusterSentinel;
+}): Promise<{ roles: string; database: string }> {
+  const gpgHome = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gpg-"));
+  fs.chmodSync(gpgHome, 0o700);
+  const children = new Set<ChildProcess>();
+  const track = <T extends ChildProcess>(child: T): T => {
+    children.add(child);
+    child.once("close", () => children.delete(child));
+    return child;
+  };
+  const abortPipeline = async (): Promise<void> => {
+    for (const child of children)
+      if (child.exitCode === null) child.kill("SIGTERM");
+    await Promise.race([
+      Promise.all(
+        [...children].map((child) =>
+          child.exitCode === null
+            ? once(child, "close").catch(() => undefined)
+            : undefined,
+        ),
+      ),
+      new Promise((resolve) => setTimeout(resolve, 2_000)),
+    ]);
+    for (const child of children)
+      if (child.exitCode === null) child.kill("SIGKILL");
+  };
+  const psql = track(
+    spawn("psql", ["--no-psqlrc", "--set=ON_ERROR_STOP=1"], {
+      env: input.env,
+      stdio: ["pipe", "ignore", "pipe"],
+      shell: false,
+    }),
+  );
+  const psqlClosed = once(psql, "close") as Promise<
+    [number | null, NodeJS.Signals | null]
+  >;
+  let errors = "";
+  psql.stderr.setEncoding("utf8");
+  psql.stderr.on("data", (chunk) => (errors += chunk));
+  const psqlInputFailed = new Promise<never>((_resolve, reject) => {
+    psql.stdin.once("error", (error) => {
+      errors += `\npsql stdin: ${error.message}`;
+      reject(new Error(`single-session restore input failed: ${errors}`));
+    });
+  });
+  const prematurePsqlExit = psqlClosed.then(([code, signal]) => {
+    throw new Error(
+      `single-session restore exited before commit: code=${String(code)} signal=${String(signal)} ${errors}`,
+    );
+  });
+  const guard = `BEGIN;
+DO $ot_recovery_guard$
+BEGIN
+  IF (pg_control_system()).system_identifier::text <> ${sqlLiteral(input.sentinel.systemIdentifier)}
+     OR encode(sha256(convert_to(current_setting('data_directory'),'UTF8')),'hex') <> ${sqlLiteral(input.sentinel.dataDirectorySha256)}
+     OR current_database() <> ${sqlLiteral(input.sentinel.databaseName)}
+     OR current_user <> ${sqlLiteral(input.sentinel.temporarySuperuser)}
+     OR coalesce((select shobj_description(oid,'pg_database') from pg_database where datname=current_database()),'') <> ${sqlLiteral(canonicalJson(input.sentinel))}
+  THEN
+    RAISE EXCEPTION 'recovery rehearsal sentinel mismatch';
+  END IF;
+END
+$ot_recovery_guard$;
+`;
+  psql.stdin.write(guard);
+
+  const decryptInto = async (
+    encrypted: string,
+    consumer: NodeJS.WritableStream,
+    endConsumer: boolean,
+  ): Promise<string> => {
+    const gpg = track(
+      spawn(
+        "gpg",
+        [
+          "--batch",
+          "--quiet",
+          "--no-options",
+          "--pinentry-mode",
+          "loopback",
+          "--passphrase-fd",
+          "3",
+          "--decrypt",
+          encrypted,
+        ],
+        {
+          env: {
+            PATH: process.env.PATH,
+            NODE_ENV: "production",
+            LANG: "C",
+            LC_ALL: "C",
+            GNUPGHOME: gpgHome,
+          },
+          stdio: ["ignore", "pipe", "pipe", "pipe"],
+          shell: false,
+        },
+      ),
+    );
+    const gpgClosed = once(gpg, "close") as Promise<
+      [number | null, NodeJS.Signals | null]
+    >;
+    const digest = createHash("sha256");
+    gpg.stdout!.on("data", (chunk: Buffer) => digest.update(chunk));
+    gpg.stderr!.setEncoding("utf8");
+    gpg.stderr!.on("data", (chunk) => (errors += chunk));
+    gpg.stdout!.pipe(consumer, { end: endConsumer });
+    (gpg.stdio[3] as NodeJS.WritableStream).end(`${input.passphrase}\n`);
+    const [code] = await Promise.race([
+      gpgClosed,
+      prematurePsqlExit,
+      psqlInputFailed,
+    ]);
+    if (code !== 0) throw new Error(`gpg restore decrypt failed: ${errors}`);
+    return digest.digest("hex");
+  };
+  try {
+    const roles = await decryptInto(input.rolesEncrypted, psql.stdin, false);
+    const restore = track(
+      spawn("pg_restore", ["--exit-on-error", "--file=-"], {
+        env: input.env,
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: false,
+      }),
+    );
+    const restoreClosed = once(restore, "close") as Promise<
+      [number | null, NodeJS.Signals | null]
+    >;
+    restore.stderr.setEncoding("utf8");
+    restore.stderr.on("data", (chunk) => (errors += chunk));
+    const restoreInputFailed = new Promise<never>((_resolve, reject) => {
+      restore.stdin.once("error", (error) => {
+        errors += `\npg_restore stdin: ${error.message}`;
+        reject(new Error(`pg_restore input failed: ${errors}`));
+      });
+    });
+    restore.stdout.pipe(psql.stdin, { end: false });
+    const [database, [restoreCode]] = await Promise.race([
+      Promise.all([
+        decryptInto(input.databaseEncrypted, restore.stdin, true),
+        restoreClosed,
+      ]),
+      prematurePsqlExit,
+      psqlInputFailed,
+      restoreInputFailed,
+    ]);
+    if (restoreCode !== 0)
+      throw new Error(`pg_restore SQL emission failed: ${errors}`);
+    psql.stdin.end("COMMIT;\n");
+    const [psqlCode] = await psqlClosed;
+    if (psqlCode !== 0)
+      throw new Error(`single-session restore failed: ${errors}`);
+    return { roles, database };
+  } finally {
+    await abortPipeline();
+    fs.rmSync(gpgHome, { recursive: true, force: true });
+  }
+}
+
+async function decryptBuffer(
+  file: string,
+  passphrase: string,
+): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  const gpgHome = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gpg-"));
+  fs.chmodSync(gpgHome, 0o700);
+  try {
+    const gpg = spawn(
+      "gpg",
+      [
+        "--batch",
+        "--quiet",
+        "--no-options",
+        "--pinentry-mode",
+        "loopback",
+        "--passphrase-fd",
+        "3",
+        "--decrypt",
+        file,
+      ],
+      {
+        env: {
+          PATH: process.env.PATH,
+          NODE_ENV: "production",
+          LANG: "C",
+          LC_ALL: "C",
+          GNUPGHOME: gpgHome,
+        },
+        stdio: ["ignore", "pipe", "pipe", "pipe"],
+        shell: false,
+      },
+    );
+    let errors = "";
+    gpg.stdout!.on("data", (chunk: Buffer) => chunks.push(chunk));
+    gpg.stderr!.setEncoding("utf8");
+    gpg.stderr!.on("data", (chunk) => (errors += chunk));
+    (gpg.stdio[3] as NodeJS.WritableStream).end(`${passphrase}\n`);
+    const [code] = (await once(gpg, "close")) as [number];
+    if (code !== 0) throw new Error(`gpg decrypt failed: ${errors}`);
+    return Buffer.concat(chunks);
+  } finally {
+    fs.rmSync(gpgHome, { recursive: true, force: true });
+  }
+}
+
+async function main(): Promise<void> {
+  const receiptPath = process.env.OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT;
+  const targetUrl = process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL;
+  const passphrase = process.env.OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE;
+  const authenticationKey = process.env.OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY;
+  const sentinelPath = process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL;
+  if (
+    !receiptPath ||
+    !targetUrl ||
+    !passphrase ||
+    !authenticationKey ||
+    !sentinelPath
+  )
+    throw new Error(
+      "Receipt, target, passphrase, authentication key and cluster sentinel are required",
+    );
+  const resolvedTarget = await resolveRecoveryTarget(targetUrl);
+  const receiptBytes = readProtectedFile(receiptPath);
+  const receipt = JSON.parse(
+    receiptBytes.toString("utf8"),
+  ) as ProductionRecoveryReceipt;
+  assertRecoveryReceipt(receipt);
+  assertReceiptAuthenticator(receipt, authenticationKey);
+  const sentinel = JSON.parse(
+    readProtectedFile(sentinelPath).toString("utf8"),
+  ) as RehearsalClusterSentinel;
+  if (sentinel.schema !== OT_PRODUCTION_REHEARSAL_SENTINEL_SCHEMA)
+    throw new Error("Rehearsal cluster sentinel schema is invalid");
+  assertReceiptAuthenticator(sentinel, authenticationKey);
+  assertFreshRehearsalSentinelTimestamp(sentinel.createdAt);
+
+  const directory = path.dirname(path.resolve(receiptPath));
+  const byFormat = Object.fromEntries(
+    receipt.artifacts.map((artifact) => [artifact.format, artifact]),
+  );
+  const privateArtifacts = new Map<
+    string,
+    ReturnType<typeof materializePrivateCopy>
+  >();
+  let target: Client | undefined;
+  let targetEnded = false;
+  try {
+    for (const artifact of receipt.artifacts) {
+      const bytes = readProtectedFile(path.join(directory, artifact.file));
+      if (
+        bytes.byteLength !== artifact.ciphertextBytes ||
+        sha256(bytes) !== artifact.ciphertextSha256
+      )
+        throw new Error(
+          `Encrypted recovery artifact changed: ${artifact.file}`,
+        );
+      privateArtifacts.set(artifact.file, materializePrivateCopy(bytes));
+    }
+    const pgEnv = resolvedTarget.pgEnvironment;
+    target = new Client(resolvedTarget.clientConfig);
+    await target.connect();
+    const identity = (
+      await target.query(`select current_user username, current_setting('server_version_num')::int version,
+      (pg_control_system()).system_identifier::text system_identifier, current_setting('data_directory') data_directory,
+      coalesce(shobj_description(oid,'pg_database'),'') database_comment from pg_database where datname=current_database()`)
+    ).rows[0]!;
+    const major = Math.floor(Number(identity.version) / 10_000);
+    if (major !== 17 && major !== 18)
+      throw new Error(`Restore target PostgreSQL ${major} is unsupported`);
+    if (
+      sentinel.targetServerMajor !== major ||
+      sentinel.systemIdentifier !== String(identity.system_identifier) ||
+      sentinel.dataDirectorySha256 !==
+        sha256(String(identity.data_directory)) ||
+      sentinel.databaseName !== resolvedTarget.database ||
+      sentinel.temporarySuperuser !== String(identity.username) ||
+      String(identity.database_comment) !== canonicalJson(sentinel)
+    )
+      throw new Error(
+        "Rehearsal cluster sentinel does not match the live cluster",
+      );
+    const rolesBefore = (
+      await target.query(
+        "select rolname from pg_roles where rolname !~ '^pg_' order by 1",
+      )
+    ).rows.map((row) => String(row.rolname));
+    const dbsBefore = (
+      await target.query(
+        "select datname from pg_database where not datistemplate order by 1",
+      )
+    ).rows.map((row) => String(row.datname));
+    if (
+      rolesBefore.length !== 1 ||
+      rolesBefore[0] !== sentinel.temporarySuperuser
+    )
+      throw new Error(
+        "Rehearsal cluster contains unexpected roles before globals restore",
+      );
+    if (
+      dbsBefore.length !== 2 ||
+      !dbsBefore.includes("postgres") ||
+      !dbsBefore.includes(sentinel.databaseName)
+    )
+      throw new Error(
+        "Rehearsal cluster contains unexpected databases before globals restore",
+      );
+    const emptiness = await target.query(
+      "select count(*)::int objects from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname not in ('pg_catalog','information_schema') and n.nspname not like 'pg_toast%'",
+    );
+    if (Number(emptiness.rows[0]!.objects) !== 0)
+      throw new Error("Restore rehearsal target is not empty");
+    await target.end();
+    targetEnded = true;
+
+    // Deterministic adversarial integration hook only; never available in an
+    // operator/Production process. It lets the suite replace a loopback
+    // listener after the preliminary Node inspection and prove the psql guard
+    // refuses that replacement before consuming restore SQL.
+    const testHook = process.env.OT_TEST_RECOVERY_AFTER_NODE_VALIDATION_HOOK;
+    if (process.env.NODE_ENV === "test" && testHook) {
+      fs.writeFileSync(`${testHook}.ready`, "ready", {
+        flag: "wx",
+        mode: 0o600,
+      });
+      const deadline = Date.now() + 10_000;
+      while (!fs.existsSync(`${testHook}.continue`)) {
+        if (Date.now() > deadline)
+          throw new Error("Recovery swap test hook timed out");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+
+    const roles = byFormat["postgres-roles-sql"]!;
+    const database = byFormat["postgres-custom"]!;
+    const restoredArtifactHashes = await decryptRestoreSingleSession({
+      rolesEncrypted: privateArtifacts.get(roles.file)!.file,
+      databaseEncrypted: privateArtifacts.get(database.file)!.file,
+      passphrase,
+      env: pgEnv,
+      sentinel,
+    });
+    const observed: Record<string, string> = {
+      [roles.file]: restoredArtifactHashes.roles,
+      [database.file]: restoredArtifactHashes.database,
+    };
+    const catalog = byFormat["catalog-json"]!;
+    const sourceCatalog = await decryptBuffer(
+      privateArtifacts.get(catalog.file)!.file,
+      passphrase,
+    );
+    observed[catalog.file] = sha256(sourceCatalog);
+    for (const artifact of receipt.artifacts)
+      if (observed[artifact.file] !== artifact.plaintextSha256)
+        throw new Error(
+          `Decrypted recovery artifact checksum mismatch: ${artifact.file}`,
+        );
+
+    const verifier = new Client(resolvedTarget.clientConfig);
+    await verifier.connect();
+    try {
+      const restored = (
+        await verifier.query(OT_PRODUCTION_RECOVERY_CATALOG_SQL, [
+          OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
+        ])
+      ).rows[0]!.snapshot;
+      const restoredDigest = sha256(canonicalJson(restored));
+      if (
+        restoredDigest !== receipt.catalogDigest ||
+        sha256(sourceCatalog) !== receipt.catalogDigest
+      )
+        throw new Error(
+          "Restored catalog/role/ACL snapshot does not match the source receipt",
+        );
+      const rehearsal: RestoreRehearsalReceipt = {
+        schema: OT_PRODUCTION_RESTORE_SCHEMA,
+        backupId: receipt.backupId,
+        backupReceiptSha256: sha256(receiptBytes),
+        targetServerMajor: major,
+        restoredAt: new Date().toISOString(),
+        artifactPlaintextSha256: observed,
+        sourceCatalogDigest: receipt.catalogDigest,
+        restoredCatalogDigest: restoredDigest,
+        verified: true,
+        clusterSystemIdentifier: sentinel.systemIdentifier,
+        clusterSentinelNonce: sentinel.nonce,
+        authenticator: "",
+      };
+      rehearsal.authenticator = authenticateReceipt(
+        rehearsal,
+        authenticationKey,
+      );
+      const output = path.join(directory, `restore-rehearsal-pg${major}.json`);
+      fs.writeFileSync(output, canonicalJson(rehearsal), {
+        mode: 0o600,
+        flag: "wx",
+      });
+      const descriptor = fs.openSync(output, "r");
+      fs.fsyncSync(descriptor);
+      fs.closeSync(descriptor);
+      process.stdout.write(
+        `neutral-report PRODUCTION recovery rehearsal: PASS backup_id=${receipt.backupId} target_pg=${major} catalog=verified artifacts=verified\n`,
+      );
+    } finally {
+      await verifier.end();
+    }
+  } finally {
+    if (target && !targetEnded) await target.end().catch(() => undefined);
+    for (const artifact of privateArtifacts.values()) artifact.cleanup();
+  }
+}
+
+main().catch((error: unknown) => {
+  process.stderr.write(
+    `neutral-report PRODUCTION recovery rehearsal: FAIL\n${redactProductionDiagnostic(
+      error,
+      Object.values(process.env).filter((v): v is string => Boolean(v)),
+    )}\n`,
+  );
+  process.exitCode = 1;
+});
