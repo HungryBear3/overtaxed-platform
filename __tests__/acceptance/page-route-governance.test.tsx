@@ -29,7 +29,10 @@
  *   robots-disallowed       `/dashboard /properties /appeals /account /admin
  *                           /auth` are authenticated and excluded from indexing
  *                           by `app/robots.ts`, which this file reads rather
- *                           than assumes.
+ *                           than assumes. `/packet` joins them as a private
+ *                           transactional surface — excluded from indexing for
+ *                           the same reason, though authorized by a pasted
+ *                           capability rather than by a session.
  *
  * Every exclusion is asserted, not assumed, so an exclusion cannot quietly grow
  * into a hiding place.
@@ -140,7 +143,15 @@ describe("the route set is derived from what Next serves", () => {
       dynamic: DYNAMIC_ROUTES.length,
       authenticated: AUTHENTICATED.length,
       crawlable: CRAWLABLE.length,
-    }).toEqual({ all: 58, dynamic: 11, authenticated: 20, crawlable: 27 })
+      // 58 → 59 and 20 → 21: `/packet` was added as a private transactional
+      // surface where a customer redeems a one-time code. It is excluded from
+      // indexing by `app/robots.ts`, so it lands in the non-crawlable bucket and
+      // the crawlable count is unchanged. Note the bucket is named
+      // `authenticated` for its original members: `/packet` is deliberately NOT
+      // session-authenticated, because an OT order is anonymous and there is no
+      // account to authenticate. What authorizes it is the pasted capability,
+      // checked by `/api/ot/packet/download`, not a session.
+    }).toEqual({ all: 59, dynamic: 11, authenticated: 21, crawlable: 27 })
   })
 
   it("classifies a route handler as not a page", () => {
@@ -161,7 +172,7 @@ describe("the route set is derived from what Next serves", () => {
   })
 
   it("takes the disallowed prefixes from robots.ts rather than assuming them", () => {
-    expect(DISALLOWED).toEqual(["/account", "/admin", "/appeals", "/auth", "/dashboard", "/properties"])
+    expect(DISALLOWED).toEqual(["/account", "/admin", "/appeals", "/auth", "/dashboard", "/packet", "/properties"])
     for (const route of AUTHENTICATED) {
       expect({ route, disallowed: isDisallowed(route) }).toEqual({ route, disallowed: true })
     }
@@ -289,7 +300,7 @@ describe("the neutralized claims are gone and their replacements are live", () =
   it("the homepage replacements are present, and say less", async () => {
     const text = readable(await render("/"))
     expect(text).toContain("A one-page report — your assessed value, your comps, and where every number came from.")
-    expect(text).toContain("Cook County Assessor + Board of Review public records")
+    expect(text).toContain("Cook County Assessor public records")
     expect(text).toContain("Township schedules, as published by the county")
   })
 
