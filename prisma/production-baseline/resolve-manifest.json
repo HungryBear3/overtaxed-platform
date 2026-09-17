@@ -1,0 +1,24 @@
+{
+  "schema": "ot.neutral-production-resolve-manifest.v1",
+  "baselineArtifacts": {
+    "prisma/production-baseline/01_preflight.sql": "4b8ed099ffe8a60bb8eca265cefa6c79dff3f625634fc791a9ee0d241b6fd80d",
+    "prisma/production-baseline/02_baseline.sql": "eb6b03470cd63be8bc1887f98c781dec60f7a42354a47d86c94f7933e36d53be",
+    "prisma/production-baseline/03_postconditions.sql": "2355b897191ff99ea9c78c0a204e759887980759db2faf199ccafe78cad2bea2"
+  },
+  "coveredMigrations": {
+    "prisma/migrations/20260912000000_add_ot_order_attribution/migration.sql": "c7557287e35f7f03cd32fe913f58851fe92e2296d98bf21f71f356e2656fa28b",
+    "prisma/migrations/20260912120000_add_ot_packet_download_and_orphan_quarantine/migration.sql": "458b1377e7677ab8c31c88d0598b9f3c46b992d3130c55bb2eb2215f2bf4c5df",
+    "prisma/migrations/20260912140000_deny_packet_api_access/migration.sql": "654ffc3ba0bd6aceb482965d5100a918132248162350030de6b9113270c5320c",
+    "prisma/migrations/20260912160000_add_ot_t2_delivery_callbacks/migration.sql": "9f001094ff5a81c1618b857bfc2ef3abb271d76f089ed20209c3c30b684e54eb",
+    "prisma/migrations/20260912180000_widen_ot_admin_event_actions/migration.sql": "ade30bf68b32e9be668e555856d16855e13dcf5a31c8d0463615a1489c2af1f9",
+    "prisma/migrations/20260912190000_ot_settlement_revocation/migration.sql": "6e56854cfbef379618fbfe83a1438bd934c27e8e23ca47a5ffd9a9f1075217c1",
+    "prisma/migrations/20260913170000_add_ot_commerce_deadline_capture/migration.sql": "5dc7159a26821e965ae80d648e1a6069f4a83523ee066ae9baefc71ac27f417d",
+    "prisma/migrations/20260915143000_add_ot_neutral_report_repository/migration.sql": "813e404da095a5e1e75a052dc2067925e7f41ac931e4e1f7f5834b79d734c8f6",
+    "prisma/migrations/20260915190000_add_ot_neutral_qa_delivery/migration.sql": "0fa316caf8b70620fbc411180f87b40105b821287b14da62361bb05b7bdb4194",
+    "prisma/migrations/20260915220000_add_ot_neutral_delivery_runtime/migration.sql": "c2916caffc314a3a5f887e3086fc4ce16e79190a6e72803d4492748a700e43d3",
+    "prisma/migrations/20260915230000_constrain_ot_neutral_runtime_commerce_reads/migration.sql": "84e4ad3e148d1b4146106ca59b0a0192e4af3e71a18ba3e01dcefd371789bfe4",
+    "prisma/migrations/20260916120000_reconcile_ot_neutral_qa_delivery_forward/migration.sql": "cd1eb93458d799eae8e6664fbc6980eef3dafb9d6dbfe2ec14c5ea3506f9326d",
+    "prisma/migrations/20260916121000_harden_ot_supabase_owner_roles/migration.sql": "c82d155394032e820c2842a843a0ab5f219fd21888f23ca5f2551c9e86e98586",
+    "prisma/migrations/20260916220000_harden_ot_supabase_public_acl/migration.sql": "965f93b20e139b980762b87a42dbb03d1049aca9430e497d4187d04e76248eb1"
+  }
+}
