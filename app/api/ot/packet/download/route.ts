@@ -115,6 +115,8 @@ async function readBoundedBody(request: NextRequest): Promise<BoundedBody> {
  * between a support ticket and a mystery.
  */
 function refusal(blocker: PacketDownloadRefusal): NextResponse {
+  if (blocker === "CAPABILITY_SPENT_REISSUE_REQUIRED")
+    return json({ ok: false, code: "REISSUE_REQUIRED", message: "This download attempt could not be completed. Contact support for a replacement code." }, 409)
   if (blocker === "CAPABILITY_EXPIRED") return json({ ok: false, code: "EXPIRED" }, 410)
   if (blocker === "CAPABILITY_REVOKED") return json({ ok: false, code: "REVOKED" }, 410)
   if (blocker === "CAPABILITY_EXHAUSTED" || blocker === "CAPABILITY_USE_NOT_CLAIMED")
@@ -192,8 +194,8 @@ export async function POST(request: NextRequest) {
     status: 200,
     headers: {
       ...PRIVATE_HEADERS,
-      "Content-Type": "application/pdf",
-      "Content-Disposition": 'attachment; filename="overtaxed-appeal-evidence.pdf"',
+      "Content-Type": result.mediaType ?? "application/pdf",
+      "Content-Disposition": `attachment; filename="${result.filename ?? "overtaxed-appeal-evidence.pdf"}"`,
       "Content-Length": String(result.byteSize),
     },
   })
