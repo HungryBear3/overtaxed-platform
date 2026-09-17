@@ -110,6 +110,26 @@ function exportedMetadataTitle(
   return undefined;
 }
 
+function namedMetadataTitle(
+  relativePath: string,
+  variableName: string,
+): MetadataTitle | undefined {
+  const source = sourceFile(relativePath);
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (
+        declaration.name.getText() !== variableName ||
+        !declaration.initializer ||
+        !ts.isObjectLiteralExpression(declaration.initializer)
+      ) continue;
+      const title = propertyByName(declaration.initializer, "title");
+      return title ? metadataTitleValue(title.initializer) : undefined;
+    }
+  }
+  return undefined;
+}
+
 function rootTitleTemplate(): string {
   const source = sourceFile("app/layout.tsx");
   for (const statement of source.statements) {
@@ -133,7 +153,8 @@ function effectiveTitle(template: string, leafTitle: string): string {
 }
 
 function resolvedStaticRouteTitle(route: string, metadataFile: string): string {
-  const title = exportedMetadataTitle(metadataFile);
+  const title = exportedMetadataTitle(metadataFile) ??
+    namedMetadataTitle(metadataFile, "legacyMetadata");
 
   // A layout title template only applies to metadata in a child segment. The
   // root page shares app/layout.tsx's segment, so its own title is final.
@@ -244,7 +265,10 @@ describe("root-template metadata titles", () => {
       const metadataFile = coveredRoutes.find(
         ([candidate]) => candidate === route,
       )![1];
-      expect(exportedMetadataTitle(metadataFile)).toBe(expectedLeafTitle);
+      expect(
+        exportedMetadataTitle(metadataFile) ??
+          namedMetadataTitle(metadataFile, "legacyMetadata"),
+      ).toBe(expectedLeafTitle);
     }
 
     expect(new Set(resolved.map(([, title]) => title)).size).toBe(

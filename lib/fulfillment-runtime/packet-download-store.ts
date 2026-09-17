@@ -1,3 +1,4 @@
+import { trustedPaymentAuthority } from "./payment-authority";
 /**
  * Transactional store for T2 packet download capabilities.
  *
@@ -12,7 +13,10 @@
  * lock the authoritative `ot_order` row FOR UPDATE first, then the capability
  * row, and re-verify everything inside that lock against freshly read state. A
  * concurrent refund, dispute, cancellation or revocation that wins the lock is
- * therefore visible before any use is claimed.
+ * therefore visible before any use is claimed. Expiry is judged against the
+ * database's WALL clock read after those locks, never transaction-start time,
+ * so a capability that expired while this transaction queued for the lock is
+ * refused rather than served.
  *
  * The capability VALUE never reaches this module. Callers hash it first, and
  * only the digest is passed, queried, compared or held — so there is nothing
@@ -21,7 +25,8 @@
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { t2PacketDownloadEnabled } from "@/lib/fulfillment/flag";
+import { neutralDeliveryPrisma } from "@/lib/fulfillment-runtime/neutral-delivery-db";
+import { neutralDeliveryEnabled, t2PacketDownloadEnabled } from "@/lib/fulfillment/flag";
 import {
   CAPABILITY_REVOCATION_REASONS,
   decideCapabilityIssuance,
@@ -50,12 +55,32 @@ export type IssueCapabilityOutcome =
     }
   | { ok: false; blocker: PacketDownloadBlocker };
 
+/**
+ * Optional association between a freshly minted capability and the delivery
+ * attempt that is about to hand it out.
+ *
+ * When present, three extra things happen inside the SAME transaction as the
+ * insert, so there is no window in which any of them is half-done:
+ *   - the attempt is locked and required to have NO capability yet, which is
+ *     what makes "an ambiguous send is never re-minted under the same key" an
+ *     invariant of the database rather than a habit of the caller;
+ *   - every other live capability for the fulfillment is revoked as SUPERSEDED,
+ *     so a newly issued credential invalidates the ones it replaces;
+ *   - the attempt records the capability id, so a later revocation or operator
+ *     recovery can name the exact credential that attempt issued.
+ */
+export type CapabilityAttemptBinding = {
+  attemptNumber: number;
+  provider: string;
+};
+
 export interface PacketDownloadStore {
   issue(input: {
     capabilityHash: string;
     fulfillmentId: string;
     ttlSeconds: number;
     maxUses: number;
+    attempt?: CapabilityAttemptBinding;
   }): Promise<IssueCapabilityOutcome>;
   authorize(input: { capabilityHash: string }): Promise<AuthorizeDownloadOutcome>;
   reassert(input: {
@@ -69,9 +94,18 @@ export interface PacketDownloadStore {
 }
 
 /**
- * Wall-clock time after authority locks as a strict RFC3339 UTC instant, rendered by the
- * database — never by a driver date mapping, which would silently apply the
- * server's local UTC offset and expire capabilities at the wrong moment.
+ * WALL-CLOCK time as a strict RFC3339 UTC instant, rendered by the database —
+ * never by a driver date mapping, which would silently apply the server's local
+ * UTC offset and expire capabilities at the wrong moment.
+ *
+ * `clock_timestamp()`, deliberately NOT `CURRENT_TIMESTAMP`/`now()`. Every read
+ * of this happens AFTER a `FOR UPDATE` lock that may have blocked for an
+ * unbounded time behind another writer, and `CURRENT_TIMESTAMP` is frozen at
+ * TRANSACTION START — it does not advance across that wait. A transaction that
+ * began while a capability was still live and then waited past its expiry would
+ * read the pre-wait instant, judge the capability unexpired and serve the
+ * packet. `clock_timestamp()` advances during the transaction, so expiry is
+ * measured at the moment the decision is actually made.
  */
 const TRUSTED_CLOCK_SQL = Prisma.sql`
   SELECT to_char(
@@ -117,6 +151,13 @@ export type PacketDownloadClient = {
   $transaction<T>(work: (tx: PacketDownloadTransaction) => Promise<T>): Promise<T>;
 };
 
+/** The narrow attempt shape the optional binding needs. */
+type AttemptBindingRow = {
+  attemptNumber: number;
+  provider: string;
+  downloadCapabilityId: string | null;
+};
+
 type ContextRows = {
   capability: PacketDownloadCapabilityRow | null;
   order: PacketDownloadOrderRow | null;
@@ -127,6 +168,30 @@ type ContextRows = {
 
 function toInstant(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+async function withNeutralQa(
+  tx: PacketDownloadTransaction,
+  fulfillment: PacketDownloadFulfillmentRow | null,
+): Promise<PacketDownloadFulfillmentRow | null> {
+  if (!fulfillment || fulfillment.kind !== "NEUTRAL_RECORDS_REPORT") return fulfillment;
+  if (!neutralDeliveryEnabled()) return {...fulfillment, neutralQaApproved:false};
+  const rows = await tx.$queryRaw<Array<{ approved: boolean }>>(Prisma.sql`
+    SELECT EXISTS (
+      SELECT 1 FROM "ot_neutral_qa_review" q
+      JOIN "ot_neutral_report_reservation" r ON r."id"=q."reservation_id"
+      JOIN "ot_fulfillment_artifact" a ON a."fulfillment_id"=q."fulfillment_id"
+      WHERE q."fulfillment_id"=${fulfillment.id} AND q."order_id"=${fulfillment.orderId}
+        AND q."status"='APPROVED' AND r."status"='PROMOTED'
+        AND r."superseded_by_sha256" IS NULL
+        AND q."customer_artifact_sha256"=a."artifact_sha256"
+        AND q."artifact_sha256"=r."bundle_sha256"
+        AND q."property_binding_fingerprint"=a."property_binding_fingerprint"
+        AND q."policy_version"=a."template_version"
+        AND a."version"=(SELECT max(x."version") FROM "ot_fulfillment_artifact" x WHERE x."fulfillment_id"=q."fulfillment_id")
+    ) AS "approved"
+  `);
+  return {...fulfillment, neutralQaApproved: rows[0]?.approved === true};
 }
 
 /**
@@ -140,12 +205,11 @@ function toInstant(value: unknown): string {
 async function loadContext(
   tx: PacketDownloadTransaction,
   capabilityHash: string,
+  neutralRestricted=false,
 ): Promise<ContextRows> {
-  const probe = await tx.$queryRaw<Array<{ sourceOrderId: string }>>(
-    Prisma.sql`SELECT "source_order_id" AS "sourceOrderId"
-               FROM "ot_packet_download_capability"
-               WHERE "capability_hash" = ${capabilityHash}`,
-  );
+  const probe = await tx.$queryRaw<Array<{ sourceOrderId: string }>>(neutralRestricted
+    ? Prisma.sql`SELECT c."source_order_id" AS "sourceOrderId" FROM "ot_packet_download_capability" c JOIN "ot_fulfillment" f ON f."id"=c."fulfillment_id" AND f."kind"::text='NEUTRAL_RECORDS_REPORT' WHERE c."capability_hash"=${capabilityHash}`
+    : Prisma.sql`SELECT c."source_order_id" AS "sourceOrderId" FROM "ot_packet_download_capability" c JOIN "ot_fulfillment" f ON f."id"=c."fulfillment_id" AND f."kind"::text<>'NEUTRAL_RECORDS_REPORT' WHERE c."capability_hash"=${capabilityHash}`);
   const orderId = probe[0]?.sourceOrderId;
   if (orderId === undefined) {
     return {
@@ -157,9 +221,10 @@ async function loadContext(
     };
   }
 
-  const orders = await tx.$queryRaw<PacketDownloadOrderRow[]>(
-    Prisma.sql`SELECT ${ORDER_COLUMNS} FROM "ot_order" WHERE "id" = ${orderId} FOR UPDATE`,
-  );
+  if(neutralRestricted)await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`neutral-delivery:${orderId}`}))::text AS "locked"`)
+  const orders = await tx.$queryRaw<PacketDownloadOrderRow[]>(neutralRestricted
+    ? Prisma.sql`SELECT "id","tier","status","propertyPin","propertyAddress" FROM "ot_neutral_delivery_order" WHERE "id"=${orderId} AND "paymentAuthoritative"=true`
+    : Prisma.sql`SELECT ${ORDER_COLUMNS} FROM "ot_order" WHERE "id" = ${orderId} AND ${trustedPaymentAuthority()} FOR UPDATE`);
 
   const capabilities = await tx.$queryRaw<PacketDownloadCapabilityRow[]>(
     Prisma.sql`SELECT ${CAPABILITY_COLUMNS}
@@ -184,14 +249,15 @@ async function loadContext(
       )
     : [];
 
-  // Read AFTER every row and BEFORE any write, so one consistent instant governs
+  // Read AFTER every row — including the FOR UPDATE locks above, which may have
+  // blocked — and BEFORE any write, so one consistent WALL-CLOCK instant governs
   // the whole decision and the update that may follow.
   const clock = await tx.$queryRaw<Array<{ now: unknown }>>(TRUSTED_CLOCK_SQL);
 
   return {
     capability,
     order: orders[0] ?? null,
-    fulfillment: fulfillments[0] ?? null,
+    fulfillment: await withNeutralQa(tx, fulfillments[0] ?? null),
     artifact: artifacts[0] ?? null,
     trustedNow: toInstant(clock[0]?.now),
   };
@@ -199,6 +265,7 @@ async function loadContext(
 
 export function createPrismaPacketDownloadStore(
   client: PacketDownloadClient,
+  options:{neutralRestricted?:boolean}={},
 ): PacketDownloadStore {
   return {
     async issue(input) {
@@ -207,23 +274,50 @@ export function createPrismaPacketDownloadStore(
         return { ok: false, blocker: "FLAG_DISABLED" };
 
       return client.$transaction(async (tx): Promise<IssueCapabilityOutcome> => {
-        const fulfillments = await tx.$queryRaw<PacketDownloadFulfillmentRow[]>(
-          Prisma.sql`SELECT ${FULFILLMENT_COLUMNS} FROM "ot_fulfillment"
-                     WHERE "id" = ${input.fulfillmentId}`,
-        );
+        const fulfillments = await tx.$queryRaw<PacketDownloadFulfillmentRow[]>(options.neutralRestricted
+          ? Prisma.sql`SELECT ${FULFILLMENT_COLUMNS} FROM "ot_fulfillment" WHERE "id"=${input.fulfillmentId} AND "kind"::text='NEUTRAL_RECORDS_REPORT'`
+          : Prisma.sql`SELECT ${FULFILLMENT_COLUMNS} FROM "ot_fulfillment" WHERE "id"=${input.fulfillmentId} AND "kind"::text<>'NEUTRAL_RECORDS_REPORT'`);
         let fulfillment = fulfillments[0] ?? null;
         if (!fulfillment) return { ok: false, blocker: "FULFILLMENT_NOT_FOUND" };
 
-        const orders = await tx.$queryRaw<PacketDownloadOrderRow[]>(
-          Prisma.sql`SELECT ${ORDER_COLUMNS} FROM "ot_order"
-                     WHERE "id" = ${fulfillment.orderId} FOR UPDATE`,
-        );
+        if(options.neutralRestricted)await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`neutral-delivery:${fulfillment.orderId}`}))::text AS "locked"`)
+        const orders = await tx.$queryRaw<PacketDownloadOrderRow[]>(options.neutralRestricted
+          ? Prisma.sql`SELECT "id","tier","status","propertyPin","propertyAddress" FROM "ot_neutral_delivery_order" WHERE "id"=${fulfillment.orderId} AND "paymentAuthoritative"=true`
+          : Prisma.sql`SELECT ${ORDER_COLUMNS} FROM "ot_order" WHERE "id" = ${fulfillment.orderId} AND ${trustedPaymentAuthority()} FOR UPDATE`);
 
-        const refreshed = await tx.$queryRaw<PacketDownloadFulfillmentRow[]>(
-          Prisma.sql`SELECT ${FULFILLMENT_COLUMNS} FROM "ot_fulfillment"
-                     WHERE "id" = ${input.fulfillmentId} FOR UPDATE`,
-        );
-        fulfillment = refreshed[0] ?? null;
+        const refreshed = await tx.$queryRaw<PacketDownloadFulfillmentRow[]>(options.neutralRestricted
+          ? Prisma.sql`SELECT ${FULFILLMENT_COLUMNS} FROM "ot_fulfillment" WHERE "id" = ${input.fulfillmentId}`
+          : Prisma.sql`SELECT ${FULFILLMENT_COLUMNS} FROM "ot_fulfillment" WHERE "id" = ${input.fulfillmentId} FOR UPDATE`);
+        const authorizedFulfillment = await withNeutralQa(tx, refreshed[0] ?? null);
+        if (!authorizedFulfillment) return { ok: false, blocker: "FULFILLMENT_NOT_FOUND" };
+        fulfillment = authorizedFulfillment;
+
+        // Order → fulfillment → attempt, the same lock ordering the delivery
+        // store and the binder use, so the three can never deadlock.
+        const binding = input.attempt;
+        if (binding) {
+          const attempts = await tx.$queryRaw<AttemptBindingRow[]>(
+            Prisma.sql`SELECT "attempt_number" AS "attemptNumber", "provider",
+                              "download_capability_id" AS "downloadCapabilityId"
+                       FROM "ot_delivery_attempt"
+                       WHERE "fulfillment_id" = ${input.fulfillmentId}
+                         AND "attempt_number" = ${binding.attemptNumber}
+                       FOR UPDATE`,
+          );
+          const attempt = attempts[0] ?? null;
+          // No attempt, a different sender, or an attempt that ALREADY issued a
+          // credential. The last case is the important one: a retry of an
+          // ambiguous send must never mint a second value under the same logical
+          // key, because the first value is deliberately not recoverable and the
+          // two messages could never be identical.
+          if (
+            !attempt ||
+            attempt.provider !== binding.provider ||
+            attempt.downloadCapabilityId !== null
+          ) {
+            return { ok: false, blocker: "CAPABILITY_BINDING_MISMATCH" };
+          }
+        }
 
         // The CURRENT artifact is the highest bound version. Nothing here may
         // mint a capability for a version that has been superseded.
@@ -270,6 +364,32 @@ export function createPrismaPacketDownloadStore(
                        ${capability.maxUses}, 0
                      )`,
         );
+
+        if (binding) {
+          // A newly issued credential supersedes the ones it replaces. Scoped to
+          // live rows other than the one just written, so this is idempotent and
+          // can never revoke the capability it is issuing.
+          await tx.$executeRaw(
+            Prisma.sql`UPDATE "ot_packet_download_capability"
+                       SET "revoked_at" = ${new Date(capability.issuedAt)},
+                           "revoked_reason_code" = ${"SUPERSEDED"}
+                       WHERE "fulfillment_id" = ${input.fulfillmentId}
+                         AND "id" <> ${id}
+                         AND "revoked_at" IS NULL`,
+          );
+          // Conditional on the attempt STILL having no capability, so a
+          // concurrent issuer that won the race invalidates this one rather than
+          // both handing out a live value.
+          const bound = await tx.$executeRaw(
+            Prisma.sql`UPDATE "ot_delivery_attempt"
+                       SET "download_capability_id" = ${id}
+                       WHERE "fulfillment_id" = ${input.fulfillmentId}
+                         AND "attempt_number" = ${binding.attemptNumber}
+                         AND "download_capability_id" IS NULL`,
+          );
+          if (bound !== 1) throw new PacketDownloadRollback();
+        }
+
         return {
           ok: true,
           capabilityId: id,
@@ -278,6 +398,13 @@ export function createPrismaPacketDownloadStore(
           expiresAt: capability.expiresAt,
           maxUses: capability.maxUses,
         };
+      }).catch((error: unknown): IssueCapabilityOutcome => {
+        // The rollback signal unwound the transaction, so nothing — not the
+        // capability row, not the supersession, not the attempt binding —
+        // committed. Everything else propagates.
+        if (error instanceof PacketDownloadRollback)
+          return { ok: false, blocker: "CAPABILITY_BINDING_MISMATCH" };
+        throw error;
       });
     },
 
@@ -288,7 +415,7 @@ export function createPrismaPacketDownloadStore(
       try {
         return await client.$transaction(
           async (tx): Promise<AuthorizeDownloadOutcome> => {
-            const context = await loadContext(tx, input.capabilityHash);
+            const context = await loadContext(tx, input.capabilityHash,options.neutralRestricted);
             const decision = decidePacketDownload({
               flagEnabled: t2PacketDownloadEnabled(process.env),
               trustedNow: context.trustedNow,
@@ -338,7 +465,7 @@ export function createPrismaPacketDownloadStore(
         return { ok: false, blocker: "FLAG_DISABLED" };
 
       return client.$transaction(async (tx): Promise<AuthorizeDownloadOutcome> => {
-        const context = await loadContext(tx, input.capabilityHash);
+        const context = await loadContext(tx, input.capabilityHash,options.neutralRestricted);
         const capability = context.capability;
         if (!capability) return { ok: false, blocker: "CAPABILITY_NOT_FOUND" };
 
@@ -426,3 +553,13 @@ class PacketDownloadRollback extends Error {
 export const prismaPacketDownloadStore = createPrismaPacketDownloadStore(
   prisma as unknown as PacketDownloadClient,
 );
+
+export function neutralPacketDownloadStore(executor?:PacketDownloadClient):PacketDownloadStore{
+  return createPrismaPacketDownloadStore(executor??neutralDeliveryPrisma() as unknown as PacketDownloadClient,{neutralRestricted:true})
+}
+export async function authoritativeFulfillmentKind(id:string):Promise<string|null>{
+  const rows=await prisma.$queryRaw<Array<{kind:string}>>(Prisma.sql`SELECT "kind" FROM "ot_fulfillment_kind_authority" WHERE "id"=${id}`);return rows[0]?.kind??null
+}
+export async function authoritativeCapabilityKind(hash:string):Promise<string|null>{
+  const rows=await prisma.$queryRaw<Array<{kind:string}>>(Prisma.sql`SELECT "kind" FROM "ot_packet_capability_kind_authority" WHERE "capability_hash"=${hash}`);return rows[0]?.kind??null
+}
