@@ -2,11 +2,13 @@ import type { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
 import { Suspense } from "react";
 import { ReferralCapture } from "@/components/ReferralCapture";
-import { AnalyticsProviderWithSuspense } from "@/components/analytics";
+import { AnalyticsRouteTracker } from "@/components/analytics";
 import { GoogleAnalytics } from "@/components/analytics";
 import { UtmFirstTouchCapture } from "@/components/analytics/utm-first-touch";
 import { AttributionCodeCapture } from "@/components/analytics/attribution-code-capture";
+import { InstrumentationBoundary } from "@/components/analytics/instrumentation-boundary";
 import { isProductionMarketingRuntime } from "@/lib/marketing/preview-gate";
+import { PrivateDocumentBoundary } from "@/components/analytics/private-document-boundary";
 import "./globals.css";
 
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
@@ -72,26 +74,46 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        {/* First-touch UTM capture (localStorage only — no cookies/network/PII),
-            so campaign attribution survives from the landing page through the
-            funnel. Safe in preview/dev, hence not behind the marketing gate. */}
-        <Suspense fallback={null}>
-          <UtmFirstTouchCapture />
-        </Suspense>
-        {/* First-touch capture of server-APPROVED acquisition codes only. The
-            shipped registry is empty, so this stores nothing until a campaign
-            is approved in lib/attribution/registry. localStorage only. */}
-        <Suspense fallback={null}>
-          <AttributionCodeCapture />
-        </Suspense>
-        {liveMarketing && (
+        <PrivateDocumentBoundary>
+        {/*
+          EVERY instrumentation mount in this layout sits inside
+          <InstrumentationBoundary>, which renders nothing on the private
+          transactional surfaces listed in lib/analytics/private-surfaces.
+
+          There is one root layout for all ~50 routes, so without this gate
+          `/packet` — the page that holds a customer's one-time packet code in
+          memory, and whose own contract says nothing observes what is typed
+          there — would run first-touch capture, the route tracker, and on the
+          production host Google Analytics, Vercel Analytics and the referral
+          capture as well. Route children stay OUTSIDE the boundary, so this can
+          suppress telemetry and can never blank a page.
+        */}
+        <InstrumentationBoundary>
+          {/* First-touch UTM capture (localStorage only — no cookies/network/PII),
+              so campaign attribution survives from the landing page through the
+              funnel. Safe in preview/dev, hence not behind the marketing gate. */}
           <Suspense fallback={null}>
-            <ReferralCapture />
+            <UtmFirstTouchCapture />
           </Suspense>
-        )}
-        {liveMarketing && <GoogleAnalytics measurementId={process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID} />}
-        <AnalyticsProviderWithSuspense>{children}</AnalyticsProviderWithSuspense>
-        {liveMarketing && <Analytics />}
+          {/* First-touch capture of server-APPROVED acquisition codes only. The
+              shipped registry is empty, so this stores nothing until a campaign
+              is approved in lib/attribution/registry. localStorage only. */}
+          <Suspense fallback={null}>
+            <AttributionCodeCapture />
+          </Suspense>
+          {liveMarketing && (
+            <Suspense fallback={null}>
+              <ReferralCapture />
+            </Suspense>
+          )}
+          {liveMarketing && <GoogleAnalytics measurementId={process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID} />}
+          <Suspense fallback={null}>
+            <AnalyticsRouteTracker />
+          </Suspense>
+          {liveMarketing && <Analytics />}
+        </InstrumentationBoundary>
+        {children}
+        </PrivateDocumentBoundary>
       </body>
     </html>
   );
