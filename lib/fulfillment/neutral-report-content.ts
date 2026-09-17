@@ -266,7 +266,7 @@ function formatNeutralReportContent(input: NeutralReportInputs): NeutralReportCo
   const csv = [header.map(csvCell).join(","), ...csvRows].join("\r\n") + "\r\n"
 
   const lines: string[] = [
-    "OVERTAXED IL — COOK COUNTY ASSESSMENT RECORDS & MATCHING PROPERTY REPORT",
+    "OVERTAXED IL - COOK COUNTY ASSESSMENT RECORDS & MATCHING PROPERTY REPORT",
     "=======================================================================",
     "",
     "This report compiles official records and applies a published, non-directional matching filter.",
@@ -275,7 +275,7 @@ function formatNeutralReportContent(input: NeutralReportInputs): NeutralReportCo
     `Prepared: ${input.generatedAt}`,
     `Order reference: ${clean(input.orderId)}`,
     "",
-    "1. SUBJECT PROPERTY — OFFICIAL RECORDS",
+    "1. SUBJECT PROPERTY - OFFICIAL RECORDS",
     `PIN: ${clean(subject.pin)}`,
     `Address: ${clean(subject.address)}, ${clean(subject.city)}`,
     `Township: ${clean(subject.township)}`,
@@ -298,7 +298,7 @@ function formatNeutralReportContent(input: NeutralReportInputs): NeutralReportCo
     "3. MATCHING PROPERTIES AND VISIBLE ARITHMETIC",
   ]
   for (const row of attached.valued) lines.push(`${row.pin} | ${clean(input.addresses.get(row.pin))} | ${row.buildingSqft} sq ft | ${row.yearBuilt} | $${row.assessedTotalValue} / ${row.buildingSqft} = $${fixed(row.assessedPerSqft)} per sq ft`)
-  lines.push("", "No median, relative gap, merits threshold, or conclusion is applied.", "", "4. OFFICIAL FILING WINDOW", `Status: ${deadline.status}; closes: ${clean(deadline.closeDate) || "not published"}`, `Source: ${clean(deadline.sourceName)} — ${clean(deadline.sourceUrl)}`, `Retrieved: ${deadline.retrievedAt}`, "", "5. SOURCE RECEIPTS")
+  lines.push("", "No median, relative gap, merits threshold, or conclusion is applied.", "", "4. OFFICIAL FILING WINDOW", `Status: ${deadline.status}; closes: ${clean(deadline.closeDate) || "not published"}`, `Source: ${clean(deadline.sourceName)} - ${clean(deadline.sourceUrl)}`, `Retrieved: ${deadline.retrievedAt}`, "", "5. SOURCE RECEIPTS")
   for (const source of sources) lines.push(`${clean(source.datasetTitle)} (${clean(source.datasetId)})`, `  ${clean(source.url)}`, `  retrieved ${source.retrievedAt}`, `  content sha256 ${source.contentSha256 ?? "not available from source"}`)
   lines.push("", "6. PROVENANCE MANIFEST", canonicalJson(manifest), "")
   return { ok: true, text: lines.join("\n"), csv, manifest }

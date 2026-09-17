@@ -39,6 +39,8 @@ const MESSAGES: Readonly<Record<string, string>> = {
     "That code has already been used the maximum number of times. Contact support and we can look into it.",
   TEMPORARILY_UNAVAILABLE:
     "The packet could not be read just now. Please try again in a few minutes.",
+  REISSUE_REQUIRED:
+    "This code was spent but the download could not be completed. Contact support for a replacement code.",
   NOT_AVAILABLE: "That code is not valid. Check it was pasted in full.",
   INVALID_REQUEST: "That code is not valid. Check it was pasted in full.",
 }
@@ -89,11 +91,16 @@ export function PacketForm() {
       }
 
       const blob = await response.blob()
+      const contentDisposition = response.headers?.get?.("content-disposition") ?? ""
+      const advertisedFilename = contentDisposition.match(/filename="([^"\\\r\\\n]+)"/i)?.[1]
+      const filename = advertisedFilename === "overtaxed-records-report.zip"
+        ? advertisedFilename
+        : "overtaxed-appeal-evidence.pdf"
       const href = URL.createObjectURL(blob)
       try {
         const link = document.createElement("a")
         link.href = href
-        link.download = "overtaxed-appeal-evidence.pdf"
+        link.download = filename
         link.rel = "noreferrer"
         document.body.appendChild(link)
         link.click()
