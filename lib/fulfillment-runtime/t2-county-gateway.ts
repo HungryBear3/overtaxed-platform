@@ -194,6 +194,78 @@ export type CountyGatewayBlocker =
 export type CountyDataRefusal = { blocker: CountyGatewayBlocker }
 
 /**
+ * INTERNAL-ONLY refusal diagnostics vocabulary.
+ *
+ * A characteristics refusal is whole-neighbourhood by design, and the public
+ * blocker deliberately says only THAT the improvement record was unusable. That
+ * is the right answer for a customer and a useless one for an operator: it does
+ * not distinguish "the Assessor has published no improvement rows for this
+ * township yet" from "one parcel in four hundred carries a half-share
+ * proration", and those two want completely different responses from us.
+ *
+ * These subreasons close that gap without widening what leaves the process.
+ * Each one names a condition [[readCharacteristics]] already tests, and the
+ * observer receives COUNTS ONLY — never a row, a PIN, an address or a URL — so a
+ * diagnostic can say "391 parcels, all missing rows" and can never say which
+ * parcels. The list is closed and stable: a new refusal condition must be given
+ * a name here rather than smuggled through as free text.
+ */
+export type CountyCharacteristicsSubreason =
+  /** The PIN resolved to no improvement row at all. */
+  | "MISSING_ROWS"
+  /** The PIN resolved to more than one improvement row. */
+  | "DUPLICATE_ROW_ARITY"
+  /** `pin_num_cards` unparseable, or not exactly 1. */
+  | "CARDS_MISSING" // absent/null/blank marker
+  | "CARDS_NOT_SINGLE"
+  /** `pin_num_landlines` unparseable, or not exactly 1. */
+  | "LANDLINES_MISSING" // absent/null/blank marker
+  | "LANDLINES_NOT_SINGLE"
+  /** `pin_is_multiland` unparseable, or not explicitly false. */
+  | "MULTILAND_MISSING" // absent/null/blank marker
+  | "MULTILAND_NOT_FALSE"
+  /** `tieback_key_pin` present and naming a different parcel. */
+  | "FOREIGN_TIEBACK"
+  /** A proration rate present and not exactly 1 — a share, not a whole improvement. */
+  | "NON_UNIT_PRORATION"
+  /** Building area, year built, residential subtype or class missing or unusable. */
+  | "INVALID_REQUIRED_FEATURES"
+
+/** Every subreason, in [[readCharacteristics]]'s own precedence order. */
+const CHARACTERISTICS_SUBREASONS: ReadonlyArray<CountyCharacteristicsSubreason> = [
+  "MISSING_ROWS",
+  "DUPLICATE_ROW_ARITY",
+  "CARDS_MISSING",
+  "CARDS_NOT_SINGLE",
+  "LANDLINES_MISSING",
+  "LANDLINES_NOT_SINGLE",
+  "MULTILAND_MISSING",
+  "MULTILAND_NOT_FALSE",
+  "FOREIGN_TIEBACK",
+  "NON_UNIT_PRORATION",
+  "INVALID_REQUIRED_FEATURES",
+]
+
+/**
+ * The whole payload an observer ever receives. Two fixed enums and a set of
+ * integers; no free-form field exists on this type to carry anything else.
+ *
+ * `blocker` is the same value the call returns publicly a moment later, so it
+ * discloses nothing new, and without it an observer could not tell an INCOMPLETE
+ * refusal from an AMBIGUOUS one when both kinds of subreason are present.
+ *
+ * Every subreason key is always present, zero included, so a consumer can total,
+ * diff or chart the counts without probing for optional keys.
+ */
+export type CountyRefusalDiagnostics = {
+  blocker: CountyGatewayBlocker
+  subreasonCounts: Record<CountyCharacteristicsSubreason, number>
+}
+
+/** The optional internal observer. Its return value and its failures are ignored. */
+export type CountyRefusalObserver = (diagnostics: CountyRefusalDiagnostics) => void
+
+/**
  * Exactly the shape `T2ProducerCountyData` requires, structurally rather than by
  * import, so this module and the producer do not depend on each other's types.
  */
@@ -247,6 +319,17 @@ export type CountyFetch = (url: string, init: CountyRequestInit) => Promise<Coun
 export type CountyGatewayDeps = {
   fetch: CountyFetch
   now: () => Date
+  /**
+   * Optional internal diagnostics sink. Unset by default and unset in
+   * [[defaultDeps]], so every existing caller is unaffected.
+   *
+   * It is called at most once per retrieval, only when the retrieval refuses
+   * with a characteristics blocker, and only with [[CountyRefusalDiagnostics]].
+   * It cannot change the outcome: the refusal is already decided when it runs,
+   * it is handed no way to request anything, and both a synchronous throw and a
+   * rejected promise are swallowed. See [[reportCharacteristicsDiagnostics]].
+   */
+  observeRefusalDiagnostics?: CountyRefusalObserver
 }
 
 function defaultDeps(): CountyGatewayDeps {
@@ -382,8 +465,21 @@ function chicagoCalendarYear(at: Date): number | null {
   return Number.isFinite(year) ? year : null
 }
 
+/**
+ * The internal refusal signal.
+ *
+ * `subreason` is carried alongside the blocker but never travels with it: the
+ * blocker is returned to callers, the subreason is only ever read back by
+ * [[classifyCharacteristics]] to build a count. Tagging the throw at the site
+ * that decides it is what keeps the diagnostics from drifting away from the
+ * rules they describe — there is no second copy of the predicates to fall out of
+ * step, because the classifier runs the validator itself.
+ */
 class CountyRefusal extends Error {
-  constructor(readonly blocker: CountyGatewayBlocker) {
+  constructor(
+    readonly blocker: CountyGatewayBlocker,
+    readonly subreason?: CountyCharacteristicsSubreason,
+  ) {
     super(blocker)
     this.name = "CountyRefusal"
   }
@@ -697,7 +793,15 @@ function readCharacteristics(
   pin: string,
   locality: LocalityKeys,
 ): CharacteristicsRow {
-  if (rows.length !== 1) throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS")
+  // Both arities refuse identically, as they always have; they are separated
+  // here only so the internal diagnostics can tell "the county published nothing
+  // for this parcel" from "the county published two things for it".
+  if (rows.length === 0) {
+    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS", "MISSING_ROWS")
+  }
+  if (rows.length > 1) {
+    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS", "DUPLICATE_ROW_ARITY")
+  }
   const row = rows[0]
   requireTaxYear(row)
 
@@ -707,21 +811,37 @@ function readCharacteristics(
     throw new CountyRefusal("CANDIDATE_LOCALITY_MISMATCH")
   }
 
-  if (
-    asExactInteger(row.pin_num_cards) !== 1 ||
-    asExactInteger(row.pin_num_landlines) !== 1 ||
-    !isExplicitlyFalse(row.pin_is_multiland)
-  ) {
-    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS")
+  // One combined condition, evaluated one marker at a time so each carries its
+  // own name. The blocker, and the order in which a parcel is rejected, are
+  // exactly what they were when this was a single expression.
+  if (row.pin_num_cards == null || (typeof row.pin_num_cards === "string" && row.pin_num_cards.trim() === "")) {
+    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS", "CARDS_MISSING")
+  }
+  if (asExactInteger(row.pin_num_cards) !== 1) {
+    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS", "CARDS_NOT_SINGLE")
+  }
+  if (row.pin_num_landlines == null || (typeof row.pin_num_landlines === "string" && row.pin_num_landlines.trim() === "")) {
+    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS", "LANDLINES_MISSING")
+  }
+  if (asExactInteger(row.pin_num_landlines) !== 1) {
+    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS", "LANDLINES_NOT_SINGLE")
+  }
+  if (row.pin_is_multiland == null || (typeof row.pin_is_multiland === "string" && row.pin_is_multiland.trim() === "")) {
+    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS", "MULTILAND_MISSING")
+  }
+  if (!isExplicitlyFalse(row.pin_is_multiland)) {
+    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS", "MULTILAND_NOT_FALSE")
   }
 
   const tieback = asText(row.tieback_key_pin)
   if (tieback !== "" && tieback.replace(/-/g, "") !== pin) {
-    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS")
+    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS", "FOREIGN_TIEBACK")
   }
   for (const rate of [row.tieback_proration_rate, row.card_proration_rate]) {
     if (asText(rate) === "") continue
-    if (asExactDecimal(rate) !== 1) throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS")
+    if (asExactDecimal(rate) !== 1) {
+      throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_AMBIGUOUS", "NON_UNIT_PRORATION")
+    }
   }
 
   // No imputation: every feature the selector reads must be published, and
@@ -742,10 +862,103 @@ function readCharacteristics(
     residentialSubtype === "" ||
     propertyClass === ""
   ) {
-    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_INCOMPLETE")
+    throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_INCOMPLETE", "INVALID_REQUIRED_FEATURES")
   }
 
   return { propertyClass, buildingSqft, yearBuilt, residentialSubtype }
+}
+
+/** The two blockers [[readCharacteristics]] and its arity guard can produce. */
+const CHARACTERISTICS_BLOCKERS: ReadonlySet<CountyGatewayBlocker> = new Set([
+  "CANDIDATE_CHARACTERISTICS_INCOMPLETE",
+  "CANDIDATE_CHARACTERISTICS_AMBIGUOUS",
+])
+
+/**
+ * Why ONE parcel's improvement rows are unusable, or `null` if they are fine.
+ *
+ * The classifier is the validator: it runs [[readCharacteristics]] unchanged and
+ * reads back the subreason the refusal carried. Nothing is re-implemented, so no
+ * criterion can be relaxed here without relaxing the retrieval itself, and no
+ * count can describe a rule the retrieval does not actually apply.
+ *
+ * A parcel that refuses for a reason outside this vocabulary — a mismatched tax
+ * year, another township's row — carries no subreason and is not counted. Those
+ * are different blockers with their own refusals; folding them into a
+ * characteristics tally would misattribute them.
+ */
+function classifyCharacteristics(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  pin: string,
+  locality: LocalityKeys,
+): CountyCharacteristicsSubreason | null {
+  try {
+    readCharacteristics(rows, pin, locality)
+    return null
+  } catch (error) {
+    return error instanceof CountyRefusal ? (error.subreason ?? null) : null
+  }
+}
+
+/**
+ * Count why a neighbourhood's improvement records refused, over the rows ALREADY
+ * IN HAND.
+ *
+ * This issues no request and reads no dataset the retrieval had not already
+ * fetched and paid for: `charsByPin` is the completed characteristics join, and
+ * `pins` is the pool it was joined against. A parcel absent from the map is
+ * counted as [[MISSING_ROWS]] via the same empty-rows path the validator takes.
+ *
+ * Each parcel contributes exactly one subreason — the first one that refuses it,
+ * in the validator's own order — so the counts total the number of parcels the
+ * improvement record cannot describe, and never double-count one parcel that is
+ * wrong in several ways at once.
+ */
+function countCharacteristicsSubreasons(
+  pins: ReadonlyArray<string>,
+  charsByPin: ReadonlyMap<string, Array<Record<string, unknown>>>,
+  locality: LocalityKeys,
+): Record<CountyCharacteristicsSubreason, number> {
+  const counts = Object.fromEntries(
+    CHARACTERISTICS_SUBREASONS.map((subreason) => [subreason, 0]),
+  ) as Record<CountyCharacteristicsSubreason, number>
+
+  for (const pin of pins) {
+    const subreason = classifyCharacteristics(charsByPin.get(pin) ?? [], pin, locality)
+    if (subreason) counts[subreason] += 1
+  }
+  return counts
+}
+
+/**
+ * Hand the counts to the internal observer, if there is one, and never let it
+ * matter.
+ *
+ * The refusal is already decided by the time this runs and is rethrown by the
+ * caller regardless, so the only way an observer could affect a packet is by
+ * escaping — a synchronous throw, or a rejected promise surfacing as an
+ * unhandled rejection. Both are absorbed here. A diagnostic that can break a
+ * retrieval is worse than no diagnostic.
+ */
+function reportCharacteristicsDiagnostics(
+  observe: CountyRefusalObserver | undefined,
+  blocker: CountyGatewayBlocker,
+  pins: ReadonlyArray<string>,
+  charsByPin: ReadonlyMap<string, Array<Record<string, unknown>>>,
+  locality: LocalityKeys,
+): void {
+  if (!observe) return
+  try {
+    const returned: unknown = observe({
+      blocker,
+      subreasonCounts: countCharacteristicsSubreasons(pins, charsByPin, locality),
+    })
+    if (typeof (returned as PromiseLike<void> | undefined)?.then === "function") {
+      void Promise.resolve(returned).catch(() => {})
+    }
+  } catch {
+    // Deliberately swallowed. See the note above.
+  }
 }
 
 /** The mailed total for the exact year, or a refusal. Never certified, never board. */
@@ -950,25 +1163,6 @@ async function assemble(
     pins,
     "CANDIDATE_CHARACTERISTICS_AMBIGUOUS",
   )
-  if (charsByPin.size !== pinCount) throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_INCOMPLETE")
-
-  const values = COUNTY_DATASETS.assessedValues
-  const valuesByPin = await reader.byPins(
-    values,
-    values.select,
-    pins,
-    "CANDIDATE_ASSESSED_VALUE_AMBIGUOUS",
-  )
-  if (valuesByPin.size !== pinCount) throw new CountyRefusal("CANDIDATE_ASSESSED_VALUE_INCOMPLETE")
-
-  const addresses = COUNTY_DATASETS.addresses
-  const addressesByPin = await reader.byPins(
-    addresses,
-    addresses.select,
-    pins,
-    "CANDIDATE_ADDRESS_AMBIGUOUS",
-  )
-  if (addressesByPin.size !== pinCount) throw new CountyRefusal("CANDIDATE_ADDRESS_INCOMPLETE")
 
   const comparableCandidates: ComparableMatchAttributes[] = []
   const comparableAssessedValues = new Map<string, number>()
@@ -976,36 +1170,82 @@ async function assemble(
   let subjectCharacteristics: CharacteristicsRow | null = null
   let subjectAddress: { address: string; city: string } | null = null
 
-  for (const pin of pins) {
-    const characteristics = readCharacteristics(charsByPin.get(pin) ?? [], pin, locality)
-    const { propertyClass: valueClass, mailedTotal } = readMailedTotal(
-      valuesByPin.get(pin) ?? [],
-      locality,
+  // Everything that can refuse on the strength of the characteristics join runs
+  // inside this block, so a characteristics refusal can be described in counts
+  // before it is rethrown unchanged.
+  //
+  // The refusal itself is untouched: the same blocker, on the same parcel, after
+  // the same requests in the same order. Only the internal observer learns
+  // anything extra, and only ever as totals. The one characteristics blocker not
+  // reachable here is `byPins`'s own chunk-integrity guard above — it refuses a
+  // source that answered with parcels nobody asked for, which is a fact about
+  // the response rather than about any parcel's record, and it throws before
+  // there is a join to count.
+  try {
+    if (charsByPin.size !== pinCount) {
+      throw new CountyRefusal("CANDIDATE_CHARACTERISTICS_INCOMPLETE")
+    }
+
+    const values = COUNTY_DATASETS.assessedValues
+    const valuesByPin = await reader.byPins(
+      values,
+      values.select,
+      pins,
+      "CANDIDATE_ASSESSED_VALUE_AMBIGUOUS",
     )
-    const address = readAddress(addressesByPin.get(pin) ?? [])
-    const universeClass = poolClassByPin.get(pin) ?? ""
+    if (valuesByPin.size !== pinCount) throw new CountyRefusal("CANDIDATE_ASSESSED_VALUE_INCOMPLETE")
 
-    // Three datasets each publish the class. They have to agree, or the parcel's
-    // classification — the thing Rule 15 requires comparables to share — is not
-    // established by the record.
-    if (characteristics.propertyClass !== universeClass || valueClass !== universeClass) {
-      throw new CountyRefusal("CANDIDATE_CLASS_AMBIGUOUS")
-    }
+    const addresses = COUNTY_DATASETS.addresses
+    const addressesByPin = await reader.byPins(
+      addresses,
+      addresses.select,
+      pins,
+      "CANDIDATE_ADDRESS_AMBIGUOUS",
+    )
+    if (addressesByPin.size !== pinCount) throw new CountyRefusal("CANDIDATE_ADDRESS_INCOMPLETE")
 
-    comparableCandidates.push({
-      pin,
-      neighborhoodCode,
-      propertyClass: universeClass,
-      residentialSubtype: characteristics.residentialSubtype,
-      buildingSqft: characteristics.buildingSqft,
-      yearBuilt: characteristics.yearBuilt,
-    })
-    comparableAssessedValues.set(pin, mailedTotal)
-    comparableAddresses.set(pin, address.address)
-    if (pin === subjectPin) {
-      subjectCharacteristics = characteristics
-      subjectAddress = address
+    for (const pin of pins) {
+      const characteristics = readCharacteristics(charsByPin.get(pin) ?? [], pin, locality)
+      const { propertyClass: valueClass, mailedTotal } = readMailedTotal(
+        valuesByPin.get(pin) ?? [],
+        locality,
+      )
+      const address = readAddress(addressesByPin.get(pin) ?? [])
+      const universeClass = poolClassByPin.get(pin) ?? ""
+
+      // Three datasets each publish the class. They have to agree, or the parcel's
+      // classification — the thing Rule 15 requires comparables to share — is not
+      // established by the record.
+      if (characteristics.propertyClass !== universeClass || valueClass !== universeClass) {
+        throw new CountyRefusal("CANDIDATE_CLASS_AMBIGUOUS")
+      }
+
+      comparableCandidates.push({
+        pin,
+        neighborhoodCode,
+        propertyClass: universeClass,
+        residentialSubtype: characteristics.residentialSubtype,
+        buildingSqft: characteristics.buildingSqft,
+        yearBuilt: characteristics.yearBuilt,
+      })
+      comparableAssessedValues.set(pin, mailedTotal)
+      comparableAddresses.set(pin, address.address)
+      if (pin === subjectPin) {
+        subjectCharacteristics = characteristics
+        subjectAddress = address
+      }
     }
+  } catch (error) {
+    if (error instanceof CountyRefusal && CHARACTERISTICS_BLOCKERS.has(error.blocker)) {
+      reportCharacteristicsDiagnostics(
+        deps.observeRefusalDiagnostics,
+        error.blocker,
+        pins,
+        charsByPin,
+        locality,
+      )
+    }
+    throw error
   }
 
   if (!subjectCharacteristics || !subjectAddress) {
