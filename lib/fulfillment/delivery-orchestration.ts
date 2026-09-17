@@ -116,8 +116,11 @@ export function decideDeliveryDispatch(
   // The transition to DELIVERY_PENDING must be an allowed edge under the shared
   // transition authority, or this is not a send at all. [[canTransition]] is the
   // right authority here rather than [[nextStatusForEvent]]: the latter folds
-  // PROVIDER events, and a locally originated request from DELAYED — the safe
-  // delivery retry — is a transition we make, not an event a provider reports.
+  // PROVIDER events, and a locally originated delivery request is a transition
+  // we make, not an event a provider reports. The transition table still admits
+  // the DELAYED → DELIVERY_PENDING edge because an operator path may one day
+  // need it; [[decideDeliverySend]] above has already refused that status, and
+  // it — not the table — is the send authority.
   if (!canTransition(input.status as OTFulfillmentStatus, "DELIVERY_PENDING"))
     return { ok: false, blocker: "NOT_SENDABLE" };
 
