@@ -137,7 +137,27 @@ export function isWindowSnapshotFresh(
  * probability, or merits threshold. Those are OD-3's content, and OD-3 is
  * exactly what has not been signed.
  */
-const SIGNED_ELIGIBILITY_POLICIES: Record<string, SignedEligibilityPolicyEntry> = {}
+const SIGNED_ELIGIBILITY_POLICIES: Record<string, SignedEligibilityPolicyEntry> =
+  Object.create(null)
+
+/**
+ * Owner-approved validation target (2026-09-13), deliberately not a signed
+ * policy entry. Code and current-year evidence may be built against these
+ * exact values, but no environment variable can turn them into checkout
+ * authority until the remaining signature gates pass.
+ */
+export const APPROVED_UNSIGNED_ELIGIBILITY_TARGET = Object.freeze({
+  decision: "A1/B2/C2/D2/E1/F1",
+  population: "individual-homeowner-cook-county-one-pin-non-condo-class2-assessor",
+  comparableRule: "R2-same-neighborhood-class-subtype-sqft15-yrblt10-median-all-v1",
+  evidenceThreshold: Object.freeze({
+    minRelativeAssessmentGap: 0.30,
+    minComparables: 5,
+  }),
+  currentYearValidationRequired: true,
+  artifact: "source-packet-only",
+  signed: false,
+} as const)
 
 /**
  * OD-3's content, carried only by a signed entry.
@@ -183,7 +203,21 @@ export type EligibilityPolicy =
 export function resolveEligibilityPolicy(
   requested: string | null = process.env.OT_ELIGIBILITY_POLICY_VERSION?.trim() || null,
 ): EligibilityPolicy {
-  const entry = requested ? SIGNED_ELIGIBILITY_POLICIES[requested] : undefined
+  // Own properties only.
+  //
+  // A plain `{}` registry inherits from `Object.prototype`, so a lookup of
+  // `constructor`, `toString`, `hasOwnProperty`, `__proto__` and eight more
+  // returns a truthy inherited member. With the registry empty that made
+  // `OT_ELIGIBILITY_POLICY_VERSION=constructor` resolve to `signed: true` with
+  // an undefined threshold — an environment variable alone satisfying the half
+  // of the paid-checkout gate that is supposed to require an owner signature in
+  // code. The registry is now prototype-less AND the lookup is guarded, so
+  // neither a future re-initialisation to `{}` nor a future direct index can
+  // reopen it.
+  const entry =
+    requested && Object.prototype.hasOwnProperty.call(SIGNED_ELIGIBILITY_POLICIES, requested)
+      ? SIGNED_ELIGIBILITY_POLICIES[requested]
+      : undefined
   if (!requested || !entry) {
     return { signed: false, version: null, reason: "eligibility_policy_unsigned" }
   }
