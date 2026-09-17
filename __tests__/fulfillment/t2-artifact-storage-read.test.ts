@@ -1,6 +1,8 @@
 /** @jest-environment node */
+import { readFileSync } from "node:fs"
 import { get, put } from "@vercel/blob"
-import { readT2ArtifactBytes, reconcileUnboundT2Artifact } from "@/lib/fulfillment-runtime/t2-artifact-storage"
+import * as storage from "@/lib/fulfillment-runtime/t2-artifact-storage"
+import { readT2ArtifactBytes } from "@/lib/fulfillment-runtime/t2-artifact-storage"
 import { computeArtifactSha256, contentAddressedT2ArtifactLocator } from "@/lib/fulfillment/artifact-digest"
 import { MAX_ARTIFACT_BYTES } from "@/lib/fulfillment/types"
 jest.mock("server-only", () => ({}))
@@ -75,10 +77,14 @@ test("stream errors are sanitized", async () => {
   getMock.mockResolvedValue({ ...response(), stream: new ReadableStream({ start(c) { c.error(new Error("private detail")) } }) } as never)
   await expect(readT2ArtifactBytes({ locator })).rejects.toMatchObject(failure)
 })
-test("orphan reconciliation stays HOLD without provider access", async () => {
-  await expect(reconcileUnboundT2Artifact({ locator, sha256: computeArtifactSha256(bytes) })).rejects.toMatchObject(failure)
-  expect(get).not.toHaveBeenCalled()
-  expect(put).not.toHaveBeenCalled()
+test("the storage module exposes no delete or orphan-cleanup capability", () => {
+  // Orphan handling moved to durable quarantine recording, which has no provider
+  // reach. This module must stay unable to remove a content object: the same
+  // content address may already be bound by another fulfillment.
+  expect(Object.keys(storage).sort()).toEqual(["readT2ArtifactBytes", "uploadT2Artifact"])
+  const source = readFileSync(require.resolve("@/lib/fulfillment-runtime/t2-artifact-storage"), "utf8")
+  expect(source).not.toMatch(/\bdel\b|\bdelete\(|copy\(/)
+  expect(computeArtifactSha256(bytes)).toMatch(/^[0-9a-f]{64}$/)
 })
 
 test("matching plain-text digest and PDF metadata do not substitute for a PDF header", async () => {
