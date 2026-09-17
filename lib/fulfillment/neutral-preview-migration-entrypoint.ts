@@ -24,16 +24,17 @@ export const PRISMA_MIGRATE_DEPLOY_COMMAND: MigrationCommand = {
   args: ["prisma", "migrate", "deploy"],
 };
 
-const neutralFeatureFlags = [
-  "OT_NEUTRAL_REPORT_CHECKOUT_ENABLED",
-  "OT_NEUTRAL_QA_ENABLED",
-  "OT_NEUTRAL_DELIVERY_ENABLED",
-  "OT_NEUTRAL_REPORT_PRIVATE_STORAGE_ENABLED",
-  "OT_NEUTRAL_REFUND_QUEUE_ENABLED",
-  "OT_NEUTRAL_REFUND_VERIFICATION_ENABLED",
-  "OT_NEUTRAL_CUSTOMER_ZIP_STORAGE_ENABLED",
-  "OT_NEUTRAL_CUSTOMER_ZIP_PROMOTION_ENABLED",
-  "OT_NEUTRAL_CHECKOUT_RECONCILIATION_ENABLED",
+export const NEUTRAL_RUNTIME_FEATURE_ACTIVATORS = [
+  ["OT_NEUTRAL_REPORT_CHECKOUT_ENABLED", "true"],
+  ["OT_NEUTRAL_QA_ENABLED", "true"],
+  ["OT_NEUTRAL_DELIVERY_ENABLED", "true"],
+  ["OT_NEUTRAL_REPORT_PRIVATE_STORAGE_ENABLED", "true"],
+  ["OT_NEUTRAL_REFUND_QUEUE_ENABLED", "true"],
+  ["OT_NEUTRAL_REFUND_VERIFICATION_ENABLED", "true"],
+  ["OT_NEUTRAL_CUSTOMER_ZIP_STORAGE_ENABLED", "true"],
+  ["OT_NEUTRAL_CUSTOMER_ZIP_PROMOTION_ENABLED", "true"],
+  ["OT_NEUTRAL_CHECKOUT_RECONCILIATION_ENABLED", "1"],
+  ["OT_NEUTRAL_REPORT_ACTIVE", "1"],
 ] as const;
 
 function succeeded(result: MigrationCommandResult): boolean {
@@ -48,8 +49,8 @@ export function runNeutralPreviewMigrationEntrypoint(
     throw new Error("Neutral migration entrypoint is restricted to Preview");
   }
 
-  const enabledFlag = neutralFeatureFlags.find(
-    (name) => env[name] === "true" || env[name] === "1",
+  const enabledFlag = NEUTRAL_RUNTIME_FEATURE_ACTIVATORS.find(
+    ([name, activeValue]) => env[name] === activeValue,
   );
   if (enabledFlag) {
     throw new Error("Neutral migration entrypoint requires disabled features");
