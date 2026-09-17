@@ -2,6 +2,7 @@ import Link from "next/link";
 import { CheckCircle } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { prisma } from "@/lib/db";
+import { NEUTRAL_REPORT_NAME, NEUTRAL_REPORT_TURNAROUND, neutralReportCopyEnabled } from "@/lib/copy/neutral-report";
 
 interface Props {
   searchParams?: Promise<{ tier?: string; session_id?: string }>;
@@ -31,6 +32,7 @@ export default async function CheckoutSuccessPage({ searchParams }: Props) {
         ? "PAID"
         : "PENDING"
   const isAnalysisOnly = order?.tier === "T2";
+  const neutralReport = isAnalysisOnly && neutralReportCopyEnabled();
 
   return (
     <main className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
@@ -59,6 +61,11 @@ export default async function CheckoutSuccessPage({ searchParams }: Props) {
             <p className="text-gray-500 text-sm">
               Operations has durable recovery records for this session and will contact you if anything else is needed.
             </p>
+          </div>
+        ) : neutralReport ? (
+          <div className="space-y-3">
+            <p className="text-gray-600">We received your payment for the {NEUTRAL_REPORT_NAME}.</p>
+            <p className="text-gray-500 text-sm">{NEUTRAL_REPORT_TURNAROUND} This page does not say that you are eligible to appeal or predict any county outcome.</p>
           </div>
         ) : isAnalysisOnly ? (
           <div className="space-y-3">
