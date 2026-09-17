@@ -28,7 +28,14 @@
     "neutral-report:pre-migration-identity-preflight": "tsx scripts/preflight-neutral-report-before-migration.ts",
     "neutral-report:preview-migrate": "tsx scripts/migrate-neutral-report-preview.ts",
     "neutral-report:migration-preflight": "tsx scripts/preflight-neutral-report-migration.ts",
-    "neutral-report:preview-acceptance": "tsx --tsconfig tsconfig.acceptance.json scripts/run-neutral-preview-acceptance.ts"
+    "neutral-report:preview-acceptance": "tsx --tsconfig tsconfig.acceptance.json scripts/run-neutral-preview-acceptance.ts",
+    "neutral-report:production-record-checksums": "tsx scripts/record-neutral-production-baseline-checksums.ts",
+    "neutral-report:production-check-checksums": "tsx scripts/record-neutral-production-baseline-checksums.ts --check",
+    "neutral-report:production-identity-preflight": "tsx scripts/preflight-neutral-report-production-identities.ts",
+    "neutral-report:production-baseline-rehearsal": "tsx scripts/rehearse-neutral-production-baseline.ts",
+    "neutral-report:production-baseline-apply": "tsx scripts/apply-neutral-production-baseline.ts",
+    "neutral-report:production-verify": "tsx scripts/verify-neutral-production-postconditions.ts",
+    "neutral-report:production-verify-pre-ledger": "OT_NEUTRAL_PRODUCTION_EXPECT_LEDGER=absent tsx scripts/verify-neutral-production-postconditions.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",
