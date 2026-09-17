@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db"
 import { getPropertyByPIN, normalizePIN, searchPropertiesByAddress } from "@/lib/cook-county"
 import { normalizeFreeCheckSearchInput } from "@/lib/free-check-address"
 import { getClientIdentifier, rateLimit } from "@/lib/rate-limit"
-import { projectTownshipDeadline } from "@/lib/appeals/township-deadlines"
+import { projectCommerceDeadline } from "@/lib/deadlines/commerce-deadline-authority"
 import {
   RESOLUTION_SOURCE,
   townshipKeyFromName,
@@ -45,9 +45,14 @@ import { isHeldProduct } from "@/lib/products/held"
 import { heldProductResponse } from "@/lib/products/held-response"
 import { sanitizeAnonymousGaIdentifiers } from "@/lib/analytics/ga4"
 import { resolveAttributionCodes, shippedAttributionRegistry } from "@/lib/attribution/registry"
+import { authorizeNeutralSnapshot, evaluateNeutralCheckout, NEUTRAL_CHECKOUT_FLAG } from "@/lib/commerce/neutral-checkout-gate"
 import {
+  type AttributionBindingFailureReason,
+  type AttributionState,
   type OrderAttributionRow,
+  AttributionBindingError,
   attributionBindingEnabled,
+  attributionFailureReason,
   attributionMetadata,
   bindFirstTouchAttribution,
 } from "@/lib/attribution/record"
@@ -200,6 +205,96 @@ type AddressCandidate = {
   township: string | null
 }
 
+/**
+ * The fail-closed attribution response, and the ONLY place this path logs.
+ *
+ * It logs a fixed classification and the server-generated order id, and never
+ * the originating error: a driver error carries statement text, bound parameter
+ * values and vendor detail, and the bound parameters on this path include the
+ * submitted acquisition codes. Nothing derived from request input is written to
+ * the log line, and the response body has never varied by cause.
+ */
+function attributionUnavailable(reason: AttributionBindingFailureReason, orderId: string | null) {
+  console.error(`[checkout/session] attribution binding unavailable (reason=${reason}, order=${orderId ?? "uncreated"})`)
+  return NextResponse.json(
+    { error: "Checkout is temporarily unavailable. Please try again.", code: "ATTRIBUTION_BINDING_UNAVAILABLE" },
+    { status: 503 },
+  )
+}
+
+/**
+ * PostgreSQL unique-violation, as surfaced by Prisma.
+ *
+ * This is how "another request already created this contract key" is detected.
+ * It is a fact reported by the database, not a guess about row state, which is
+ * what makes the creation indicator below race-safe.
+ */
+function isUniqueViolation(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === "P2002"
+}
+
+/**
+ * Create the canonical order and bind its first touch in ONE transaction.
+ *
+ * The whole point is the creation indicator. Attribution may only ever record
+ * `organic` or `campaign` for an order whose creation THIS request performed —
+ * for any order that already existed, this request is observing a later touch,
+ * not the first one, and must not claim otherwise. Prisma's `upsert` cannot
+ * tell "created" from "found", and neither can any property of the returned row
+ * (`stripeSessionId === null`, `attempt === 0`, a fresh `createdAt`) — an
+ * expired-session retry resets exactly those. The only reliable indicator is
+ * whether OUR insert of the unique `contractKey` succeeded, which is what this
+ * uses.
+ *
+ * Committing both rows together closes the last gap. A concurrent request that
+ * loses the unique race blocks on the index until this transaction commits, so
+ * by the time it sees P2002 the first touch is already durable; its own
+ * `legacy_unattributed` insert is then a no-op and its readback returns the
+ * real first touch. If it were not atomic, the loser could bind
+ * `legacy_unattributed` to a genuinely fresh order first.
+ *
+ * A binding failure rolls the order creation back with it, so a fail-closed
+ * 503 leaves no row behind at all.
+ */
+async function createCanonicalOrderBindingFirstTouch(args: {
+  contractKey: string
+  createData: Record<string, unknown>
+  state: AttributionState
+  campaignCode: string | null
+  creativeCode: string | null
+  registryVersion: string
+}): Promise<
+  | { ok: true; order: any; createdHere: boolean; attribution: OrderAttributionRow | null }
+  | { ok: false; reason: AttributionBindingFailureReason }
+> {
+  try {
+    const committed = await prisma.$transaction(async (tx: any) => {
+      const createdOrder = await tx.oTOrder.create({ data: args.createData as any })
+      const attribution = await bindFirstTouchAttribution(tx, {
+        orderId: createdOrder.id,
+        state: args.state,
+        campaignCode: args.campaignCode,
+        creativeCode: args.creativeCode,
+        registryVersion: args.registryVersion,
+      })
+      return { order: createdOrder, attribution }
+    })
+    return { ok: true, order: committed.order, createdHere: true, attribution: committed.attribution }
+  } catch (error) {
+    // Recovery reads happen OUT here, never inside the aborted transaction: a
+    // failed statement poisons the surrounding transaction in PostgreSQL.
+    if (isUniqueViolation(error)) {
+      const existing = await findOtOrderByContractKey(args.contractKey)
+      return { ok: true, order: existing, createdHere: false, attribution: null }
+    }
+    if (error instanceof AttributionBindingError) return { ok: false, reason: error.reason }
+    // Not an attribution failure — the order itself could not be written. Let
+    // it reach the route's existing checkout-creation handler unchanged rather
+    // than reporting it as an attribution problem.
+    throw error
+  }
+}
+
 async function findOtOrderByContractKey(contractKey: string) {
   if (typeof prisma.oTOrder.findUnique !== "function") return null
   return prisma.oTOrder.findUnique({ where: { contractKey } as any })
@@ -302,13 +397,12 @@ async function resolveProperty(address: string, selectedPin?: string) {
  * same-day rule, and the 900-second serving ceiling all apply to *this*
  * request. There is no persisted snapshot standing in for a current check.
  */
-function snapshotFor(property: Record<string, unknown>, now: Date = new Date()): CheckoutWindowSnapshot {
+async function snapshotFor(property: Record<string, unknown>, now: Date = new Date()): Promise<CheckoutWindowSnapshot> {
   const townshipName = String(property.township ?? "").trim()
   const pin = normalizePIN(String(property.pin ?? ""))
   const at = now.toISOString()
 
-  const projection = projectTownshipDeadline({
-    township: townshipName && pin
+  const resolution = townshipName && pin
       ? {
           inputKind: "pin",
           normalizedPin: pin,
@@ -317,11 +411,13 @@ function snapshotFor(property: Record<string, unknown>, now: Date = new Date()):
           townshipName,
           resolutionSource: RESOLUTION_SOURCE,
           resolvedAt: at,
-        }
-      : null,
-    stage: "assessor",
-    at,
-  })
+        } as const
+      : null
+  const projection = resolution
+    ? await projectCommerceDeadline({ township: resolution, at: now })
+    : { available: false, reason: "township_unresolved", notice: "Official date unavailable or not freshly verified.", statusLabel: "Pending official date", officialSourceUrl: null,
+        showDates: false, showStatus: false, showCountdown: false, allowDeadlineCta: false,
+        allowReminderSignup: false, allowDeadlineEmail: false, allowCheckout: false, allowStructuredData: false } as const
 
   return checkoutSnapshotFromProjection({
     pin,
@@ -435,7 +531,26 @@ export async function POST(req: NextRequest) {
   const resolved = await resolveProperty(input.address, input.propertyPin)
   if (resolved.error) return resolved.error
   const property = resolved.property as unknown as Record<string, unknown>
-  const snapshot = snapshotFor(property)
+  let snapshot = await snapshotFor(property)
+  let neutralEvidence: null | { dataEvidenceSha256: string; sourceContentSha256: string; officialRetrievedAt: string; officialOldestRetrievedAt:string; deadlineEvidenceSha256: string; deadlineIdentitySha256: string; deadlineRetrievedAt: string; admissionSha256: string } = null
+  // Default-off alternative commerce authority. This does not sign or reuse the
+  // strict merits policy: it admits only the owner-approved neutral records
+  // report after independently proving property shape, current-year source
+  // completeness, and the official Assessor window.
+  if (!snapshot.allowCheckout && input.tier === "T2") {
+    let neutralProperty: Record<string, unknown> = {}
+    if (process.env[NEUTRAL_CHECKOUT_FLAG] === "true") {
+      const { loadNeutralCheckoutOfficialProperty, neutralDeadlineEvidence, neutralAdmissionSha256 } = await import("@/lib/commerce/neutral-checkout-runtime")
+      const official = await loadNeutralCheckoutOfficialProperty(snapshot.pin)
+      const deadline = neutralDeadlineEvidence(snapshot)
+      if (official && deadline) {
+        neutralProperty = official.property
+        neutralEvidence = { dataEvidenceSha256: official.dataEvidenceSha256, sourceContentSha256: official.sourceContentSha256, officialRetrievedAt: official.officialRetrievedAt, officialOldestRetrievedAt:official.officialOldestRetrievedAt, deadlineEvidenceSha256: deadline.sha256, deadlineIdentitySha256: deadline.identitySha256, deadlineRetrievedAt: deadline.retrievedAt, admissionSha256: neutralAdmissionSha256({ pin: snapshot.pin, policy: "ot-neutral-records-report/2026-09-15", data: official.dataEvidenceSha256, deadline: deadline.sha256 }) }
+      }
+    }
+    const neutral = evaluateNeutralCheckout({ property: neutralProperty, snapshot })
+    if (neutral.allowed) snapshot = authorizeNeutralSnapshot(snapshot)
+  }
   const window = publicWindow(snapshot)
   const resolvedPropertyAddress = String(property.address ?? input.address).slice(0, 200)
   const noticeReassessmentDate = input.reassessmentNoticeDate
@@ -716,6 +831,14 @@ export async function POST(req: NextRequest) {
 
   let orderId: string | null = null
   let claimedCheckoutContract: Record<string, unknown> | null = null
+  let neutralAttemptId: string | null = null
+  /**
+   * Did THIS request create the canonical order row? Only a `true` here may
+   * ever produce an `organic` or `campaign` first touch.
+   */
+  let canonicalOrderCreatedHere = false
+  /** Set only by the atomic creation above; otherwise bound below as legacy. */
+  let boundAttributionRow: OrderAttributionRow | null = null
   try {
     let order: any = null
     if (approvedNoticeOrder) {
@@ -784,35 +907,56 @@ export async function POST(req: NextRequest) {
         }
       }
     } else {
-      order = await prisma.oTOrder.upsert({
-        where: { contractKey } as any,
-        create: {
+      const canonicalOrderCreateData: Record<string, unknown> = {
+        contractKey,
+        checkoutKey: input.checkoutKey,
+        tier: input.tier,
+        email: normalizedEmail,
+        name: input.name,
+        propertyAddress: resolvedPropertyAddress,
+        propertyPin: snapshot.pin,
+        township: snapshot.township,
+        windowStatus: snapshot.status,
+        windowOpenDate: snapshot.openDate ? new Date(`${snapshot.openDate}T12:00:00Z`) : null,
+        windowCloseDate: snapshot.closeDate ? new Date(`${snapshot.closeDate}T12:00:00Z`) : null,
+        windowSourceUpdated: snapshot.retrievedAt,
+        windowVerifiedAt: snapshot.retrievedAt ? new Date(snapshot.retrievedAt) : null,
+        eligibilitySnapshot: snapshot,
+        analysisAcknowledgedAt: acknowledgedAt,
+        acknowledgmentVersion: acknowledgedAt ? OT_ANALYSIS_ACK_VERSION : null,
+        acknowledgmentEvidence: acknowledgedAt ? { acknowledged: true, version: OT_ANALYSIS_ACK_VERSION } : null,
+        checkoutPriceId: authoritativePriceId,
+        checkoutProductId,
+        checkoutAmountCents,
+        checkoutCurrency,
+        amountPaid: 0,
+        status: "CHECKOUT_PENDING",
+      }
+      if (!attributionBindingEnabled()) {
+        // Gate off: byte-for-byte the pre-attribution path, and not one
+        // statement against `ot_order_attribution` — not even a read.
+        order = await prisma.oTOrder.upsert({
+          where: { contractKey } as any,
+          create: canonicalOrderCreateData as any,
+          update: {},
+        })
+      } else {
+        const creation = await createCanonicalOrderBindingFirstTouch({
           contractKey,
-          checkoutKey: input.checkoutKey,
-          tier: input.tier,
-          email: normalizedEmail,
-          name: input.name,
-          propertyAddress: resolvedPropertyAddress,
-          propertyPin: snapshot.pin,
-          township: snapshot.township,
-          windowStatus: snapshot.status,
-          windowOpenDate: snapshot.openDate ? new Date(`${snapshot.openDate}T12:00:00Z`) : null,
-          windowCloseDate: snapshot.closeDate ? new Date(`${snapshot.closeDate}T12:00:00Z`) : null,
-          windowSourceUpdated: snapshot.retrievedAt,
-          windowVerifiedAt: snapshot.retrievedAt ? new Date(snapshot.retrievedAt) : null,
-          eligibilitySnapshot: snapshot,
-          analysisAcknowledgedAt: acknowledgedAt,
-          acknowledgmentVersion: acknowledgedAt ? OT_ANALYSIS_ACK_VERSION : null,
-          acknowledgmentEvidence: acknowledgedAt ? { acknowledged: true, version: OT_ANALYSIS_ACK_VERSION } : null,
-          checkoutPriceId: authoritativePriceId,
-          checkoutProductId,
-          checkoutAmountCents,
-          checkoutCurrency,
-          amountPaid: 0,
-          status: "CHECKOUT_PENDING",
-        } as any,
-        update: {},
-      })
+          createData: canonicalOrderCreateData,
+          // This is the ONLY place a request's own codes may become the stored
+          // first touch, because it is the only place we know the order did not
+          // exist a moment ago.
+          state: attributionResolution.attribution ? "campaign" : "organic",
+          campaignCode: attributionResolution.attribution?.campaignCode ?? null,
+          creativeCode: attributionResolution.attribution?.creativeCode ?? null,
+          registryVersion: attributionRegistry.version,
+        })
+        if (!creation.ok) return attributionUnavailable(creation.reason, null)
+        order = creation.order
+        canonicalOrderCreatedHere = creation.createdHere
+        boundAttributionRow = creation.attribution
+      }
     }
     if (!order) {
       return NextResponse.json(
@@ -843,35 +987,59 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       )
     }
-    // First touch is bound here: the canonical order is resolved and its
-    // contract verified, and every path below this point either reuses a
-    // session or creates one. Binding before the reuse branch is what stops a
-    // retry carrying different tags from reaching an already-open session with
-    // a contradictory attribution — the insert is a no-op and the readback
-    // returns the original row, so provider metadata cannot contradict it.
-    //
-    // `bindFirstTouchAttribution` returns what is DURABLE, not what was
-    // offered, and that return value is the only thing metadata is built from.
-    let attributionRow: OrderAttributionRow | null = null
-    if (attributionBindingEnabled()) {
+    if (snapshot.policyVersion === "ot-neutral-records-report/2026-09-15") {
+      if (!neutralEvidence) return NextResponse.json({ error: "Checkout is temporarily unavailable.", code: "NEUTRAL_EVIDENCE_UNAVAILABLE" }, { status: 503 })
       try {
-        attributionRow = await bindFirstTouchAttribution(prisma, {
+        const { reserveNeutralCheckout } = await import("@/lib/commerce/neutral-checkout-runtime")
+        const reserved = await reserveNeutralCheckout({ orderId: order.id, propertyPin: snapshot.pin, ...neutralEvidence })
+        if (!reserved.ok) {
+          await prisma.oTOrder.updateMany({ where: { id: order.id, status: "CHECKOUT_PENDING" } as any, data: { status: "CHECKOUT_FAILED", recoveryReason: "NEUTRAL_RESERVATION_FAILED" } as any }).catch(() => {})
+          const { abandonNeutralCheckout } = await import("@/lib/commerce/neutral-checkout-runtime")
+          await abandonNeutralCheckout(order.id).catch(() => false)
+          return NextResponse.json({ error: "Checkout is temporarily unavailable.", code: "NEUTRAL_RESERVATION_UNAVAILABLE" }, { status: 503 })
+        }
+      } catch {
+        await prisma.oTOrder.updateMany({ where: { id: order.id, status: "CHECKOUT_PENDING" } as any, data: { status: "CHECKOUT_FAILED", recoveryReason: "NEUTRAL_RESERVATION_FAILED" } as any }).catch(() => {})
+        const { abandonNeutralCheckout } = await import("@/lib/commerce/neutral-checkout-runtime")
+        await abandonNeutralCheckout(order.id).catch(() => false)
+        return NextResponse.json({ error: "Checkout is temporarily unavailable.", code: "NEUTRAL_RESERVATION_UNAVAILABLE" }, { status: 503 })
+      }
+    }
+    // Every order that reaches this point and was NOT created by this request
+    // is pre-existing: a legacy order from before this feature, an order
+    // created while the gate was off, an approved notice order created on an
+    // earlier request, or the loser of a concurrent create. Its real first
+    // touch was never observed, so the only truthful thing to record is that
+    // it is unattributable.
+    //
+    // It is emphatically NOT this request's campaign. This request is a LATER
+    // touch, and stamping it would invent a first touch — most visibly for a
+    // legacy order already holding an open Stripe session whose metadata says
+    // nothing about any campaign. And it is not `organic` either, which is a
+    // positive claim about an untagged first touch that nothing here measured.
+    //
+    // Because the insert is `ON CONFLICT DO NOTHING` and the readback is the
+    // only source of metadata, doing this against an order that already carries
+    // a real first touch is a no-op that returns the original row — which is
+    // what makes an expired-session retry keep its original campaign rather
+    // than being downgraded to legacy.
+    if (attributionBindingEnabled() && !canonicalOrderCreatedHere) {
+      try {
+        boundAttributionRow = await bindFirstTouchAttribution(prisma, {
           orderId: order.id,
-          campaignCode: attributionResolution.attribution?.campaignCode ?? null,
-          creativeCode: attributionResolution.attribution?.creativeCode ?? null,
+          state: "legacy_unattributed",
+          campaignCode: null,
+          creativeCode: null,
           registryVersion: attributionRegistry.version,
         })
       } catch (attributionError) {
         // Fail closed, and do it here: no `CHECKOUT_CREATING` claim has been
         // taken yet and no provider call has been made, so refusing leaves no
         // half-claimed order and no orphaned Stripe session behind.
-        console.error(`[checkout/session] attribution binding failed for order ${order.id}`, attributionError)
-        return NextResponse.json(
-          { error: "Checkout is temporarily unavailable. Please try again.", code: "ATTRIBUTION_BINDING_UNAVAILABLE" },
-          { status: 503 },
-        )
+        return attributionUnavailable(attributionFailureReason(attributionError), order.id as string)
       }
     }
+    const attributionRow = boundAttributionRow
 
     if (order.status === "NOTICE_REVIEW_REQUIRED") {
       const held = await prisma.oTOrder.updateMany({
@@ -996,6 +1164,12 @@ export async function POST(req: NextRequest) {
     }
 
     const baseUrl = process.env.NEXTAUTH_URL || "https://www.overtaxed-il.com"
+    const providerIdempotencyKey=`ot:${(order as { contractKey?: string }).contractKey}:${(order as { attempt?: number }).attempt ?? 0}`
+    if(snapshot.policyVersion==="ot-neutral-records-report/2026-09-15"){
+      const {intendNeutralCheckout,neutralAdmissionSha256}=await import("@/lib/commerce/neutral-checkout-runtime")
+      neutralAttemptId=await intendNeutralCheckout({orderId:order.id,checkoutKey:String(order.checkoutKey??""),idempotencyKey:providerIdempotencyKey,contractSha256:neutralAdmissionSha256(claimedCheckoutContract)})
+      if(!neutralAttemptId)throw new Error("Neutral checkout intent was not persisted")
+    }
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
@@ -1014,7 +1188,9 @@ export async function POST(req: NextRequest) {
         ...attributionMetadata(attributionRow),
         ...gaIdentifiers,
       },
-    }, { idempotencyKey: `ot:${(order as { contractKey?: string }).contractKey}:${(order as { attempt?: number }).attempt ?? 0}` })
+    }, { idempotencyKey: providerIdempotencyKey })
+
+    if(neutralAttemptId){const {observeNeutralCheckout}=await import("@/lib/commerce/neutral-checkout-runtime");if(!await observeNeutralCheckout(neutralAttemptId,{id:session.id,status:session.status}))throw new Error("Neutral Stripe observation was not persisted")}
 
     if (!session.url) throw new Error("Stripe Checkout session returned no hosted URL")
 
@@ -1042,6 +1218,10 @@ export async function POST(req: NextRequest) {
             { error: "Checkout state could not be finalized. Please contact support.", code: "CHECKOUT_STATE_UNRESOLVED" },
             { status: 500 },
           )
+        }
+        if (snapshot.policyVersion === "ot-neutral-records-report/2026-09-15") {
+          const { markNeutralCheckoutUnknown } = await import("@/lib/commerce/neutral-checkout-runtime")
+          await markNeutralCheckoutUnknown(orderId).catch(() => false)
         }
       } catch (stateError) {
         console.error(`[checkout/session] checkout failure-state write failed for order ${orderId}`, stateError)
