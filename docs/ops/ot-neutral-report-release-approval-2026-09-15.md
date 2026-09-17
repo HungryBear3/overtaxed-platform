@@ -1,97 +1,191 @@
 # OT neutral report release approval packet — 2026-09-15
 
-## Candidate
+## Current candidate
 
-- Branch: `codex/ot-neutral-report-20260915`
-- PR: `#47`
-- Actual PR base: `e80ebf9edc5b6f8a848710652badfe83ec4297ab`
-- Terminal-review input head: `ab94a2343384ac679ccf010c92017a69a958b85e`
-- Preview migration entrypoint remediation head: `ee3320272996f3fce93a52b33e54f85d6dd6d1e5`
-- Complete disabled-feature guard implementation head: `b2f221b27590e3fd4758e06fdad5d24aa5dd25e8`
-- Commerce-read/refund-retry remediation candidate: `9f0c697b94e4774f6f0cd32c0363fada22eede52`
 - Product: **Cook County Assessment Records & Matching Property Report**
 - Price: **$69 USD**
+- Canonical merge chain: the exact 122-PR main-rooted chain in `docs/ops/ot-neutral-canonical-equivalence-2026-09-15.md`.
+- Current implementation tip: PR #210, `32a70273bec8675feb6d2aa01e036f62147a9f09`.
+- The evidence-only documentation update is the next stacked PR and is bound
+  to its exact head by the GitHub PR record after commit.
+- Approved aggregate reference: PR #47, `2203e06d995a29d928ee9efae81771efb00fcbcf`; preserved as a noncanonical reference/fallback.
+- Exact excluded PRs: `docs/ops/ot-neutral-noncanonical-pr-disposition-2026-09-15.md`.
 - Strict automated qualification remains separate, unsigned, and inactive.
 
-## Implemented
+## Implemented controls
 
-1. Exact-byte official county and calendar evidence gateway.
-2. Neutral PDF/CSV generation with non-directional matching and ambiguity disclosure.
-3. Current-year, single-PIN, single-card, class-2, open-window pre-payment gate.
-4. Order/PIN/payment/policy/evidence binding and a ten-paid-order pilot cohort.
-5. Separate restricted database identities for neutral repository and neutral delivery.
-6. Durable checkout-attempt, Blob-attempt, QA, customer-ZIP, delivery, capability, and refund-work ledgers.
-7. QA-only review: 12-minute target, 20-minute hard stop, 25 opened reviews per reviewer/week.
-8. Deterministic private customer ZIP containing only `report.pdf` and `report.csv`.
-9. POST-only, one-use customer capability with reversal/dispute/supersession checks.
-10. Objective report-unavailable refund workflow; refund creation is never automatic and confirmation requires a read-only verified Stripe refund receipt.
-11. Neutral customer copy across homepage, pricing, checkout, Terms, success, and email; legacy copy remains behind the disabled path.
-12. Provider-authoritative reconciliation for expired unpaid Stripe checkout sessions.
+1. Exact-byte official county/calendar evidence and neutral PDF/CSV generation.
+2. Current-year, single-PIN, single-card, class-2, open-window pre-payment gate.
+3. Order/PIN/payment/policy/evidence binding and ten-paid-order pilot cohort.
+4. Separate restricted database identities for migration, app read-side, neutral repository, and neutral delivery.
+5. Durable checkout, Blob, QA, ZIP, delivery, capability, and refund ledgers.
+6. QA-only review with a 20-minute hard stop and 25 opened reviews per reviewer/week.
+7. Deterministic private customer ZIP with only `report.pdf` and `report.csv`.
+8. POST-only one-use capability with reversal/dispute/supersession checks.
+9. Operator-gated refund verification requiring the exact successful $69 USD provider receipt; no automatic refund creation.
+10. Neutral customer copy with no eligibility, savings, or outcome promise.
+11. All neutral runtime feature switches default-off and guarded in Preview.
+
+## Review remediation now bound to the candidate
+
+- Dependent PRs receive real pull-request CI rather than manual-only workflow runs.
+- Oversized PR #89 is removed from canonical ancestry and replaced by compile-safe PRs #87-#88.
+- The hardened migration continues to revoke direct neutral-runtime access to `ot_order`, `ot_payment_binding`, and `ot_settlement_reversal`.
+- The mandatory post-migration preflight now proves SELECT on only the three constrained neutral views, actively proves direct shared-table reads fail, and never restores a shared-table grant.
+- The complete canonical and excluded-PR sets are durably bound by exact PR/base/head/SHA manifests.
+- Zero-diff PR #200 is explicitly excluded.
 
 ## Verification
 
-- Full Jest after complete disabled-feature guard remediation: 4,113 passed, 80 skipped; 204 suites passed and 7 native suites skipped because no test database URLs were supplied.
-- Fulfillment suite after Phase 3: 1,910 passed; native suites excluded without test URLs.
-- Focused final delivery/security: 314 passed; terminal security closure 183 passed.
-- TypeScript: passed (`tsc --noEmit`).
-- Production build: passed, 144 static pages generated.
-- Fresh PostgreSQL 18: all 35 migrations applied from zero.
-- Four identities proved: migration, normal app, neutral repository, neutral delivery.
-- Disposable-local post-migration grant/RLS preflight: passed before PR creation. The separate Preview **PRE-MIGRATION identity/marker preflight** and the post-migration grant/RLS preflight have **not** run against Preview because the four separate Preview credentials and durable Preview database marker have not been provisioned.
-- Native Phase 2 and Phase 3 journeys: 2/2 passed with `--detectOpenHandles`.
-- The neutral repository role cannot select `ot_order`, `ot_payment_binding`, or `ot_settlement_reversal`; native proof shows legacy rows absent from its constrained projection. A transient synthetic provider lookup leaves the recorded receipt pending with audited retry evidence, and a later successful lookup converges to `REFUND_CONFIRMED` without creating a refund.
-- Synthetic owner journey: paid binding → QA → ZIP promotion → capability → POST download; exact ZIP hash/members and one-use exhaustion passed.
-- Playwright production server: 12/12 passed across desktop Chrome and iPhone viewport; no horizontal overflow or application errors.
-- Representative three-page PDF rendered and visually inspected.
+- Focused post-migration/entrypoint suites: 47/47 passed.
+- Fresh disposable PostgreSQL 18 proof: all 35 migrations applied; the
+  hardened four-role post-migration preflight passed; Phase 3 native acceptance
+  passed while direct shared-commerce SELECTs were denied.
+- TypeScript: passed.
+- The pre-remediation canonical implementation passed 204 suites / 4,114 tests and a production build.
+- Exact-head attached CI and Vercel must return terminal green on the rewritten ancestry and PR #210 before independent review can pass.
+- Features remain disabled. No Preview database has been migrated.
 
-### Independent-review remediation
+## Current hard gate
 
-- Marketing pricing guard now renders the runtime pricing component and checks visible text for `$69` and the absence of `$97`; source comments cannot satisfy or fail the assertion.
-- Migration preflight now connects through all four required credentials: `DIRECT_URL`, `DATABASE_URL`, `OT_NEUTRAL_DATABASE_URL`, and `OT_NEUTRAL_DELIVERY_DATABASE_URL`.
-- All four connections must resolve to one database name and one durable database-comment marker with schema `ot.database-environment.v1`, purpose `ot-neutral-report`, environment `preview`, `isolated: true`, `production: false`, and a UUID instance id. Hostnames are intentionally ignored so direct and pooler endpoints can identify the same database safely.
-- Hostile tests prove fail-closed behavior for missing/malformed markers, Production and contradictory markers, non-isolated databases, wrong purpose, invalid instance ids, and mismatched database names or instance ids.
-- A separate `neutral-report:pre-migration-identity-preflight` now runs **before any `prisma migrate` command**. It uses only PostgreSQL catalog/identity queries, so it does not require neutral tables, group roles, or migrations to exist. All four URLs must connect as the exact roles declared in their credentials; `current_user` and `session_user` must both match that declared role; all four roles must be distinct; all four must resolve to the same explicitly isolated non-Production Preview marker; the migration role must have schema and role-migration authority; and the app, neutral repository, and neutral delivery roles must be non-superuser, non-BYPASSRLS, non-CREATEROLE, and unable to create in `public`.
-- The single authorized migration entrypoint for this release is `npm run neutral-report:preview-migrate`. It fails closed unless `VERCEL_ENV=preview` and every neutral feature flag is disabled, runs the PRE-MIGRATION identity proof first, and invokes the exact `npx prisma migrate deploy` command only after that proof exits successfully. It uses argument-vector child processes without a shell and never prints credentials. Tests prove invocation order and prove migration is never invoked after a failed preflight or outside the disabled Preview boundary.
-- Operators must not run raw `prisma migrate`, `prisma migrate deploy`, `npx prisma migrate deploy`, `db push`, or any other migration command for this release. The composed entrypoint is mandatory; bypassing it invalidates the Preview evidence.
-- The existing `neutral-report:migration-preflight` remains a separate **post-migration** check. It proves installed neutral tables, exact group-role membership, grants, ownership, RLS, and denied mutations after migrations and restricted memberships have been applied.
-- PRE-MIGRATION hostile tests reject duplicate or aliased identities, `SET ROLE`/session-role indirection, elevated app/runtime/delivery privileges, insufficient migration authority, database/marker divergence, Production markers, malformed/role-less credentials, and non-PostgreSQL URLs. Focused evidence: `npx jest __tests__/fulfillment/neutral-preview-database-marker.test.ts __tests__/fulfillment/neutral-preview-pre-migration.test.ts --runInBand` → 28/28 passed; `npm run type-check` → passed.
-- The disabled-feature guard exports the complete runtime activation registry and checks each flag against its actual active value. It now includes `OT_NEUTRAL_REPORT_ACTIVE=1` as well as the nine `…ENABLED` switches. A source-discovery assertion scans `app/` and `lib/` for every neutral `…ENABLED` or `…ACTIVE` runtime switch and fails if the guard registry omits one.
-- Composed-entrypoint focused evidence: the entrypoint, identity, and marker suites pass 47/47; full Jest passes 4,113 with only 80 credential-gated native checks skipped; type-check and the 144-page production build pass.
+The code/document candidate is not authorized for merge or Production. Preview database work requires all of the following before any migration command:
 
-## Migration hashes
+1. A separately provisioned, provably isolated Preview PostgreSQL database.
+2. The durable non-Production Preview database marker.
+3. Four distinct protected credentials: migration owner, app reader, neutral repository, neutral delivery.
+4. All neutral feature flags disabled.
+5. Use only `npm run neutral-report:preview-migrate`, followed by `npm run neutral-report:migration-preflight`.
+6. Stop on any failed proof.
 
-- Repository: `813e404da095a5e1e75a052dc2067925e7f41ac931e4e1f7f5834b79d734c8f6`
-- QA/delivery: `0fa316caf8b70620fbc411180f87b40105b821287b14da62361bb05b7bdb4194`
-- Delivery runtime: `c2916caffc314a3a5f887e3086fc4ce16e79190a6e72803d4492748a700e43d3`
-- Neutral commerce projection/refund retry audit: `84e4ad3e148d1b4146106ca59b0a0192e4af3e71a18ba3e01dcefd371789bfe4`
+## Canonical Preview database identity design
 
-## Production remains inactive
+The isolated Supabase Preview database uses the existing `postgres` owner only
+for `DIRECT_URL`. The other three credentials are dedicated logins with fixed
+names; no operator may substitute aliases or reuse a password:
 
-PR #47 exists. The exact implementation candidate is `9f0c697b94e4774f6f0cd32c0363fada22eede52`; its automatic features-disabled Preview is tracked at Vercel dashboard deployment `8aMNG3bJWXn64AYXCmqNpqPAqVnN`. No database was provisioned, marked, migrated, or granted; no environment was changed; and no Production migration/deployment, feature activation, live checkout mutation, real order, Stripe call, email, Blob write, delivery, or refund was performed.
+| Environment variable | PostgreSQL login | Authority before migrations | Authority after migrations |
+| --- | --- | --- | --- |
+| `DIRECT_URL` | `postgres` | Existing Preview owner; must have public-schema CREATE plus role-management authority | Migration/ownership only |
+| `DATABASE_URL` | `ot_preview_app` | LOGIN+INHERIT only; no superuser, BYPASSRLS, CREATEROLE, CREATEDB, replication, or public-schema CREATE | Member of read-only `ot_neutral_app_reader` only |
+| `OT_NEUTRAL_DATABASE_URL` | `ot_preview_neutral_runtime` | Same restricted LOGIN baseline | Member of non-login `ot_neutral_runtime` only |
+| `OT_NEUTRAL_DELIVERY_DATABASE_URL` | `ot_preview_neutral_delivery` | Same restricted LOGIN baseline | Member of non-login `ot_neutral_delivery_runtime` only |
 
-GitHub deployment record `6461605045` is inert metadata only. Its `environment` label is `production`, but GitHub reports `production_environment: false`, it has no deployment statuses, and no provider performed or recorded a deployment from it. The record was not deleted or altered and is not evidence of a Production provider action.
+The three restricted passwords are unique protected secrets named
+`OT_PREVIEW_APP_DATABASE_PASSWORD`, `OT_PREVIEW_NEUTRAL_DATABASE_PASSWORD`, and
+`OT_PREVIEW_DELIVERY_DATABASE_PASSWORD`. They must enter the process through a
+masked secret store; they must never appear in chat, command arguments, files,
+SQL history, logs, or generated evidence. Connection URLs must likewise be
+assembled and stored only in the protected secret flow. For the mandatory
+pre-migration proof, all four URLs use the same Preview database endpoint and
+database name while declaring the four exact usernames above.
 
-All neutral flags remain fail-closed. Required protected configuration includes four distinct credential URLs that resolve to the same separately provisioned isolated Preview database. Before migrations, its database object must be explicitly marked with the durable JSON database comment described above. Credentials must use the supported protected-secret flow and are not placed in chat or logs.
+The repository command `npm run neutral-report:preview-bootstrap-identities` is
+deliberately disabled and always fails closed. A direct PostgreSQL client cannot
+prove that server statement/parameter logging will never retain a role
+password. Bootstrap must therefore use the protected Supabase Management API
+flow, scoped to `api.supabase.com`. Before any write, that flow must prove both
+project ref `iyaxdrehtxsfkaexgxls` and the expected database marker through a
+read-only query. It must create only the three canonical restricted logins via
+protected bound parameters and must verify their attributes/membership graph
+afterward. The disabled command still rejects any URL whose accepted Supabase
+host/pooler and username do not jointly encode the canonical project ref.
+After URLs are assembled, run
+`npm run neutral-report:pre-migration-identity-preflight` before any migration.
 
-## Current gate
+The already-applied migrations `20260913170000` and `20260915190000` are
+immutable. Hosted-Supabase compatibility and the migration-33 partial-object
+incident are handled only by forward migrations `20260916120000` and
+`20260916121000`. The reconciliation migration refuses an incomplete object
+fingerprint and never edits `_prisma_migrations`. It is not validation-only: it
+performs one narrowly scoped, transactional repair by revoking direct Supabase
+API-role privileges from the three incident-created relations before proving
+the normalized final state. Any later failed check aborts the `DO` statement
+and rolls those revocations back. The scoped approval authorizes only that ACL
+repair plus validation; it does not authorize feature activation, application
+data changes, or direct ledger writes. The hardening migration
+accepts only an empty native-PostgreSQL membership graph or Supabase's single
+exact platform-admin edge, removes an interrupted temporary `SET` edge, and
+revokes permanent `CREATE` on `public` from both NOLOGIN owners.
+Because reconciliation executes after `20260915230000`, its refund-work
+fingerprint validates the final 21-column relation, including that migration's
+`provider_lookup_attempts`, `last_provider_lookup_at`, and
+`last_provider_lookup_result` audit fields and their shape constraint. It does
+not attempt to validate the earlier 18-column intermediate state.
+The executable reconciliation proof models the complete migration-33 state and
+the exact migration-34/35 deltas that touch its catalog-proof scope: the
+delivery-runtime QA/reservation policies and QA grant, plus the provider lookup
+audit delta. Migration-34 surfaces outside that scope (delivery authority
+views, functions, triggers, and grants on other tables) are proved separately
+by the executable post-migration preflight and its source-contract tests; they
+are not claimed as part of the reconciliation digest. Before final-state comparison, reconciliation
+revokes Supabase's broad default table privileges from `anon`, `authenticated`,
+and `service_role` on the three incident-created relations, then checks their
+effective table and column privileges so inherited authority cannot survive.
+The remaining
+catalog proof is normalized across native PostgreSQL and hosted Supabase by
+excluding host-specific ACL grantor identities and checking the sole allowed
+platform membership edge separately for both the object-owner and app-reader
+NOLOGIN roles. The app-reader graph must also contain exactly one canonical
+membership edge to the restricted `ot_preview_app` LOGIN (granted by
+`postgres`, without admin, with inheritance and SET); the Supabase platform
+edge is optional independently for each custom role (`ot_neutral_app_reader`
+and `ot_preview_app`), and each must exactly use `postgres` as member,
+`supabase_admin` as grantor, admin=true, inherit=false, and set=false. Every
+other edge is rejected. Both the group role and
+login role attributes are validated fail-closed. `ot_preview_app` uses INHERIT
+to match the canonical login posture and hosted compatibility; the membership
+edge's independent `inherit_option=true` is what confers reader authority. The
+NOLOGIN `ot_neutral_app_reader` group remains NOINHERIT. The graph scan covers every
+incoming and outgoing membership involving either role, including privileges
+granted to `ot_preview_app` and any role granted outward by that login. The post-migration preflight independently
+requires that no Supabase API-role ACL remains on those relations.
+After all portable structural and security checks pass, the final catalog
+comparison accepts exactly two pinned digests: native PostgreSQL 18
+`8782889552b478d71c5ab63e2bace721` and hosted Supabase
+`27b99eb0aada08c4a93990a35f2d0e1c`. Two pins are necessary because hosted
+Supabase and native PostgreSQL render pre-existing reservation column ordinals
+and constraint/policy expressions differently even when the verified security
+state is equivalent. An arbitrary third rendering still fails closed. The
+post-migration preflight re-proves the portable invariants rather than deriving
+or accepting another host-specific digest.
 
-Code review remediation, focused tests, the full Jest suite, type-check, and production build are green. The database phase is intentionally **blocked** until separate Preview-only credentials exist for the migration owner, normal app, neutral repository, and neutral delivery identities. Do not reuse Production credentials or a Production database. Once those protected Preview credentials exist, use only the composed Preview migration entrypoint. On a fresh isolated Preview database, `prisma migrate deploy` correctly applies **all pending repository migrations**, not only the three neutral migrations. The three neutral migration files are separately pinned and hash-verified below to prove the reviewed neutral SQL bytes. After all pending migrations and restricted memberships have been applied, run the existing post-migration grant/RLS preflight before any synthetic database smoke.
+CI downloads the PostgreSQL PGDG key to an unprivileged temporary file, extracts
+only primary public-key fingerprints, requires the exact singleton fingerprint
+`B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8`, and only then installs the key into
+the root-owned apt keyring and removes the temporary file. It installs
+PostgreSQL 18 from that signed official repository, requires the installed
+`initdb --version` output to match an anchored PostgreSQL-18-only expression.
+That expression requires a complete numeric `18.x` version token and permits
+only an optional parenthesized PGDG packaging suffix after it; another major or
+trailing unstructured text fails closed. CI then places that exact major's
+server executables on `PATH` before running the mandatory native security suite.
+This keeps CI aligned with the immutable reconciliation migration's pinned
+native PostgreSQL 18 rendering; the applied migration is not rewritten for a
+different CI host major.
 
-## Requested approval — next gate only
+### Migration-33 missing-ledger resolution gate
 
-Approve:
+Do not silently insert or update `_prisma_migrations`. The immutable original
+`20260915190000_add_ot_neutral_qa_delivery/migration.sql` must first hash to
+`0fa316caf8b70620fbc411180f87b40105b821287b14da62361bb05b7bdb4194` (SHA-256).
+An operator must then capture the scoped transactional ACL-repair/validation
+forward migration result and
+the post-migration preflight proving the expected relations, RLS/forced-RLS,
+policies, reversal function/trigger, NOLOGIN owner, grants, and ownership.
+Only with an explicit scoped approval may the operator run:
 
-1. Push the reviewed remediation to PR #47 and run CI/independent review on its exact head.
-2. Keep the automatic Preview features disabled.
-3. Separately provision and protect the four Preview-only database credentials and durable database marker.
-4. Run only `npm run neutral-report:preview-migrate` with all four protected Preview URLs. This mandatory composed entrypoint proves identities/marker first and, only on success, executes the exact safe `npx prisma migrate deploy`. It must stop on any failure. Do not invoke Prisma migration commands directly.
-5. Confirm that `migrate deploy` applied every pending repository migration to the fresh isolated Preview database. Separately verify the three neutral migration file hashes against this packet; do not interpret those three hashes as a request to selectively apply only three migrations.
-6. Grant the Preview app, neutral repository, and neutral delivery logins their exact restricted role memberships.
-7. Run `npm run neutral-report:migration-preflight` as the post-migration grant/RLS proof. Stop on any failure.
-8. Only after both preflights pass in order, run synthetic checkout/QA/download smokes, desktop/mobile browser checks, and deployment file tracing.
+`npx prisma migrate resolve --applied 20260915190000_add_ot_neutral_qa_delivery`
 
-This approval does **not** authorize Production migration/deployment, feature activation, live charges, customer contact, email delivery, refunds, marketing, or real orders. Those remain a separate gate after Preview evidence.
+The receipt must bind the exact checksum, project ref, database marker, object
+fingerprint evidence, command timestamp, and operator. Without every item, HOLD
+and do not run `migrate deploy`; the forward reconciliation migration performs
+no direct ledger mutation. Its only repair is the approved, scoped,
+transactional ACL revocation described above. Its exact catalog digest also binds relation,
+enum-type, and scoped-sequence ownership; complete non-owner table/column ACLs;
+and the complete scoped policy set. The owner hardening/preflight separately
+binds the capture table, append-only function, publisher function, and reversal
+guard function to their exact NOLOGIN owners.
 
-## PR-size blocker
+## Not authorized
 
-Against current `origin/main`, PR #47 is 215+ files and 36k+ added lines because the neutral work descends from a large unmerged T2 delivery stack. Even the neutral-only range is 112 files and 5,722 added lines before the final remediation. A blind rebase/cherry-pick would omit required payment, artifact, capability, and delivery dependencies. The safe six-PR stacked decomposition and explicit alternative exception request are recorded in `docs/ops/ot-neutral-report-pr-split-plan-2026-09-15.md`. Merge remains blocked pending that owner decision.
+No merge, PR cleanup, Production deployment/migration, feature activation, live charge, real order, customer contact, email, refund, marketing, or protected-secret disclosure is authorized by this packet.

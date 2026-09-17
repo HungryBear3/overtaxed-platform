@@ -6,9 +6,10 @@ import { normalizePIN } from "@/lib/cook-county"
 import { NEUTRAL_REPORT_COMMERCE_POLICY, neutralOrderReservationKey } from "@/lib/commerce/neutral-report-policy"
 import { neutralReportDigest, type NeutralReportReceipt, type NeutralReportRepository, type NeutralReportWrite } from "@/lib/fulfillment/neutral-report-content"
 import { prepareNeutralBundle, readNeutralBundle, writePreparedNeutralBundle } from "@/lib/fulfillment-runtime/neutral-report-storage"
+import { inNeutralTransaction,type NeutralDbExecutor } from "@/lib/fulfillment-runtime/neutral-db-executor"
 
 type Row = { id: string; orderId: string; reservationKey: string; propertyFingerprint: string; propertyPin?:string; status: string; bundleSha256: string | null; privateReferences: unknown; sourceContentSha256?: string; deadlineIdentitySha256?: string; admissionSha256?: string; dataEvidenceSha256?: string; deadlineEvidenceSha256?: string }
-type Db = { $queryRaw<T>(q: unknown): Promise<T>; $executeRaw(q: unknown): Promise<number>; $transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T> }
+type Db = NeutralDbExecutor
 const db = new Proxy({} as Db,{get(_t,key){const value=(neutralPrisma() as any)[key];return typeof value==="function"?value.bind(neutralPrisma()):value}})
 const fingerprint = (pin: string) => neutralReportDigest(`ot-neutral-property/v1\0${pin}`)
 const ref = (row: Row): { locator: string; receipt: NeutralReportReceipt } | null => {
@@ -94,7 +95,7 @@ export const prismaNeutralReportRepository: NeutralReportRepository = {
   async readConfirmed(key) { const row = await findByBundleKey(key), reference = row && ref(row); if (!row?.bundleSha256 || !reference || row.status !== "PROMOTED") return null; try { return { write: await readNeutralBundle(reference.locator, row.bundleSha256), receipt: reference.receipt } } catch { await db.$executeRaw(Prisma.sql`UPDATE "ot_neutral_report_reservation" SET "status"='COMPROMISED',"incident_code"='PROMOTED_STORAGE_CORRUPTION',"reconciliation_code"='OPERATOR_INCIDENT_REQUIRED',"updated_at"=CURRENT_TIMESTAMP WHERE "id"=${row.id} AND "status"='PROMOTED'`).catch(()=>{}); return null } },
   async quarantine(key) { const row = await findByBundleKey(key); if (row) await db.$executeRaw(Prisma.sql`UPDATE "ot_neutral_report_reservation" SET "status"='QUARANTINED', "reconciliation_code"='CONTENT_OR_BINDING_AMBIGUOUS', "updated_at"=CURRENT_TIMESTAMP WHERE "order_id"=${row.orderId} AND "status" <> 'PROMOTED'`) },
 }
-export async function reserveNeutralCheckoutOrder(input: { orderId: string; propertyPin: string; dataEvidenceSha256: string; sourceContentSha256: string; officialRetrievedAt: string; officialOldestRetrievedAt:string; deadlineEvidenceSha256: string; deadlineIdentitySha256: string; deadlineRetrievedAt: string; admissionSha256: string }) {
+export async function reserveNeutralCheckoutOrder(input: { orderId: string; propertyPin: string; dataEvidenceSha256: string; sourceContentSha256: string; officialRetrievedAt: string; officialOldestRetrievedAt:string; deadlineEvidenceSha256: string; deadlineIdentitySha256: string; deadlineRetrievedAt: string; admissionSha256: string },options:{db?:Db}={}) {
   if (process.env.OT_NEUTRAL_REPORT_CHECKOUT_ENABLED !== "true") return { ok: false as const, blocker: "NEUTRAL_CHECKOUT_DISABLED" }
   const key = neutralOrderReservationKey(input.orderId)
   const digests = [input.dataEvidenceSha256,input.sourceContentSha256,input.deadlineEvidenceSha256,input.deadlineIdentitySha256,input.admissionSha256]
@@ -107,7 +108,7 @@ export async function reserveNeutralCheckoutOrder(input: { orderId: string; prop
   const reservedAt = new Date()
   const leaseExpiresAt=new Date(reservedAt.getTime()+30*60*1000)
   try {
-    return await db.$transaction(async tx => {
+    return await inNeutralTransaction(db,options.db,async tx => {
       await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(684921337)::text AS "locked"`)
       await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_report_reservation" r SET "status"='RESERVED',"cohort_position"=(SELECT slot FROM generate_series(1,10) slot WHERE NOT EXISTS(SELECT 1 FROM "ot_neutral_report_reservation" x WHERE x."cohort_position"=slot AND x."status"<>'ABANDONED') ORDER BY slot LIMIT 1),"precheckout_lease_expires_at"=${leaseExpiresAt},"admission_sha256"=${input.admissionSha256},"data_evidence_sha256"=${input.dataEvidenceSha256},"deadline_evidence_sha256"=${input.deadlineEvidenceSha256},"source_content_sha256"=${input.sourceContentSha256},"deadline_identity_sha256"=${input.deadlineIdentitySha256},"official_retrieved_at"=${officialAt},"official_oldest_retrieved_at"=${oldestAt},"official_max_age_seconds"=${derivedMaxAgeSeconds},"deadline_retrieved_at"=${deadlineAt},"reconciliation_code"=NULL,"updated_at"=${reservedAt} FROM "ot_neutral_runtime_order" o WHERE r."order_id"=o."id" AND r."order_id"=${input.orderId} AND r."status"='ABANDONED' AND r."reservation_key"=${key} AND r."property_fingerprint"=${propertyFingerprint} AND o."propertyPin"=${input.propertyPin} AND o."status" IN ('CHECKOUT_PENDING','CHECKOUT_FAILED') AND o."stripeSessionId" IS NULL AND o."amountPaid"=0`)
       const inserted = await tx.$queryRaw<Row[]>(Prisma.sql`
@@ -137,13 +138,13 @@ function stableSourceContentSha256(manifestJson:string):string { try { const m=J
 function stableDeadlineIdentitySha256(value:unknown):string { const d=value as Record<string,unknown>; return neutralReportDigest(JSON.stringify({closeDate:d?.closeDate,sourceUrl:d?.sourceUrl,status:d?.status,townshipKey:d?.townshipKey})) }
 async function findByBundleKey(key: string): Promise<Row | null> { const rows = await db.$queryRaw<Row[]>(Prisma.sql`SELECT "id", "order_id" AS "orderId", "reservation_key" AS "reservationKey", "property_fingerprint" AS "propertyFingerprint", "status"::text AS "status", "bundle_sha256" AS "bundleSha256", "private_references" AS "privateReferences" FROM "ot_neutral_report_reservation" WHERE "private_references"->'receipt'->>'key'=${key} LIMIT 1`); return rows[0] ?? null }
 
-export async function abandonNeutralCheckoutReservation(orderId: string): Promise<boolean> {
-  const count = await db.$executeRaw(Prisma.sql`UPDATE "ot_neutral_report_reservation" r SET "status"='ABANDONED',"reconciliation_code"='CHECKOUT_NEVER_CREATED',"updated_at"=CURRENT_TIMESTAMP FROM "ot_neutral_runtime_order" o WHERE r."order_id"=o."id" AND o."id"=${orderId} AND o."status"='CHECKOUT_FAILED' AND o."stripeSessionId" IS NULL AND o."amountPaid"=0 AND r."status"='RESERVED'`)
+export async function abandonNeutralCheckoutReservation(orderId: string,options:{db?:Db}={}): Promise<boolean> {
+  const count = await (options.db??db).$executeRaw(Prisma.sql`UPDATE "ot_neutral_report_reservation" r SET "status"='ABANDONED',"reconciliation_code"='CHECKOUT_NEVER_CREATED',"updated_at"=CURRENT_TIMESTAMP FROM "ot_neutral_runtime_order" o WHERE r."order_id"=o."id" AND o."id"=${orderId} AND o."status"='CHECKOUT_FAILED' AND o."stripeSessionId" IS NULL AND o."amountPaid"=0 AND r."status"='RESERVED'`)
   return count===1
 }
 
-export async function markNeutralCheckoutOutcomeUnknown(orderId:string):Promise<boolean>{
-  const count=await db.$executeRaw(Prisma.sql`UPDATE "ot_neutral_report_reservation" SET "status"='RECONCILIATION_REQUIRED',"reconciliation_code"='STRIPE_CHECKOUT_OUTCOME_UNKNOWN',"updated_at"=CURRENT_TIMESTAMP WHERE "order_id"=${orderId} AND "status"='RESERVED'`)
+export async function markNeutralCheckoutOutcomeUnknown(orderId:string,options:{db?:Db}={}):Promise<boolean>{
+  const count=await (options.db??db).$executeRaw(Prisma.sql`UPDATE "ot_neutral_report_reservation" SET "status"='RECONCILIATION_REQUIRED',"reconciliation_code"='STRIPE_CHECKOUT_OUTCOME_UNKNOWN',"updated_at"=CURRENT_TIMESTAMP WHERE "order_id"=${orderId} AND "status"='RESERVED'`)
   return count===1
 }
 export async function intendNeutralStripeCheckout(input:{orderId:string;checkoutKey:string;idempotencyKey:string;contractSha256:string}):Promise<string|null>{

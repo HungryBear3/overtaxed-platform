@@ -34,7 +34,7 @@ async function main() {
     const identities = await Promise.all(
       clients.map(async (client, index): Promise<PreMigrationIdentity> => {
         const result = await client.query(
-          `select current_user as "currentRole", session_user as "sessionRole", current_database() as "databaseName", obj_description(d.oid, 'pg_database') as marker, r.rolsuper as "isSuperuser", r.rolbypassrls as "bypassesRls", r.rolcreaterole as "canCreateRole", has_schema_privilege(current_user, 'public', 'CREATE') as "canCreateSchema" from pg_database d join pg_roles r on r.rolname=current_user where d.datname=current_database()`,
+          `select current_user as "currentRole", session_user as "sessionRole", current_database() as "databaseName", shobj_description(d.oid, 'pg_database') as marker, r.rolsuper as "isSuperuser", r.rolbypassrls as "bypassesRls", r.rolcreaterole as "canCreateRole", has_schema_privilege(current_user, 'public', 'CREATE') as "canCreateSchema" from pg_database d join pg_roles r on r.rolname=current_user where d.datname=current_database()`,
         );
         if (result.rows.length !== 1)
           throw new Error(
