@@ -36,6 +36,14 @@ test("global-fetch producer atomically persists exact artifacts/evidence and ret
     expect(result).not.toHaveProperty("pdf"); expect(result).not.toHaveProperty("manifest")
   })
   await withRuntimeFetch(async repo => {
+    const result=await produceNeutralReport({orderId:"ord_unicode_regression",propertyPin:pin});expect(result.ok).toBe(true);if(!result.ok)return
+    const stored=repo.confirmed.get(result.receipt.key);expect(stored).toBeTruthy()
+    for(const bytes of [stored!.write.pdf,stored!.write.csv]){
+      expect(bytes.includes(Buffer.from("\\u{2014}","ascii"))).toBe(false)
+      expect(bytes.includes(Buffer.from("\\u2014","ascii"))).toBe(false)
+    }
+  })
+  await withRuntimeFetch(async repo => {
     repo.mutateRead = value => { value.dataPages[0].bytes[0] ^= 1; return value }
     await expect(produceNeutralReport({ orderId: "ord_fixture", propertyPin: pin })).resolves.toEqual({ ok: false, blocker: "NEUTRAL_STAGE_VERIFY_FAILED" })
   })

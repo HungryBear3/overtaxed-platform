@@ -45,6 +45,7 @@ import { isHeldProduct } from "@/lib/products/held"
 import { heldProductResponse } from "@/lib/products/held-response"
 import { sanitizeAnonymousGaIdentifiers } from "@/lib/analytics/ga4"
 import { resolveAttributionCodes, shippedAttributionRegistry } from "@/lib/attribution/registry"
+import { authorizeNeutralSnapshot, evaluateNeutralCheckout, NEUTRAL_CHECKOUT_FLAG } from "@/lib/commerce/neutral-checkout-gate"
 import {
   type AttributionBindingFailureReason,
   type AttributionState,
@@ -530,7 +531,26 @@ export async function POST(req: NextRequest) {
   const resolved = await resolveProperty(input.address, input.propertyPin)
   if (resolved.error) return resolved.error
   const property = resolved.property as unknown as Record<string, unknown>
-  const snapshot = await snapshotFor(property)
+  let snapshot = await snapshotFor(property)
+  let neutralEvidence: null | { dataEvidenceSha256: string; sourceContentSha256: string; officialRetrievedAt: string; officialOldestRetrievedAt:string; deadlineEvidenceSha256: string; deadlineIdentitySha256: string; deadlineRetrievedAt: string; admissionSha256: string } = null
+  // Default-off alternative commerce authority. This does not sign or reuse the
+  // strict merits policy: it admits only the owner-approved neutral records
+  // report after independently proving property shape, current-year source
+  // completeness, and the official Assessor window.
+  if (!snapshot.allowCheckout && input.tier === "T2") {
+    let neutralProperty: Record<string, unknown> = {}
+    if (process.env[NEUTRAL_CHECKOUT_FLAG] === "true") {
+      const { loadNeutralCheckoutOfficialProperty, neutralDeadlineEvidence, neutralAdmissionSha256 } = await import("@/lib/commerce/neutral-checkout-runtime")
+      const official = await loadNeutralCheckoutOfficialProperty(snapshot.pin)
+      const deadline = neutralDeadlineEvidence(snapshot)
+      if (official && deadline) {
+        neutralProperty = official.property
+        neutralEvidence = { dataEvidenceSha256: official.dataEvidenceSha256, sourceContentSha256: official.sourceContentSha256, officialRetrievedAt: official.officialRetrievedAt, officialOldestRetrievedAt:official.officialOldestRetrievedAt, deadlineEvidenceSha256: deadline.sha256, deadlineIdentitySha256: deadline.identitySha256, deadlineRetrievedAt: deadline.retrievedAt, admissionSha256: neutralAdmissionSha256({ pin: snapshot.pin, policy: "ot-neutral-records-report/2026-09-15", data: official.dataEvidenceSha256, deadline: deadline.sha256 }) }
+      }
+    }
+    const neutral = evaluateNeutralCheckout({ property: neutralProperty, snapshot })
+    if (neutral.allowed) snapshot = authorizeNeutralSnapshot(snapshot)
+  }
   const window = publicWindow(snapshot)
   const resolvedPropertyAddress = String(property.address ?? input.address).slice(0, 200)
   const noticeReassessmentDate = input.reassessmentNoticeDate
@@ -811,6 +831,7 @@ export async function POST(req: NextRequest) {
 
   let orderId: string | null = null
   let claimedCheckoutContract: Record<string, unknown> | null = null
+  let neutralAttemptId: string | null = null
   /**
    * Did THIS request create the canonical order row? Only a `true` here may
    * ever produce an `organic` or `campaign` first touch.
@@ -965,6 +986,24 @@ export async function POST(req: NextRequest) {
         { error: "This checkout key belongs to a different property or service request. Start a new checkout.", code: "CHECKOUT_KEY_CONFLICT" },
         { status: 409 },
       )
+    }
+    if (snapshot.policyVersion === "ot-neutral-records-report/2026-09-15") {
+      if (!neutralEvidence) return NextResponse.json({ error: "Checkout is temporarily unavailable.", code: "NEUTRAL_EVIDENCE_UNAVAILABLE" }, { status: 503 })
+      try {
+        const { reserveNeutralCheckout } = await import("@/lib/commerce/neutral-checkout-runtime")
+        const reserved = await reserveNeutralCheckout({ orderId: order.id, propertyPin: snapshot.pin, ...neutralEvidence })
+        if (!reserved.ok) {
+          await prisma.oTOrder.updateMany({ where: { id: order.id, status: "CHECKOUT_PENDING" } as any, data: { status: "CHECKOUT_FAILED", recoveryReason: "NEUTRAL_RESERVATION_FAILED" } as any }).catch(() => {})
+          const { abandonNeutralCheckout } = await import("@/lib/commerce/neutral-checkout-runtime")
+          await abandonNeutralCheckout(order.id).catch(() => false)
+          return NextResponse.json({ error: "Checkout is temporarily unavailable.", code: "NEUTRAL_RESERVATION_UNAVAILABLE" }, { status: 503 })
+        }
+      } catch {
+        await prisma.oTOrder.updateMany({ where: { id: order.id, status: "CHECKOUT_PENDING" } as any, data: { status: "CHECKOUT_FAILED", recoveryReason: "NEUTRAL_RESERVATION_FAILED" } as any }).catch(() => {})
+        const { abandonNeutralCheckout } = await import("@/lib/commerce/neutral-checkout-runtime")
+        await abandonNeutralCheckout(order.id).catch(() => false)
+        return NextResponse.json({ error: "Checkout is temporarily unavailable.", code: "NEUTRAL_RESERVATION_UNAVAILABLE" }, { status: 503 })
+      }
     }
     // Every order that reaches this point and was NOT created by this request
     // is pre-existing: a legacy order from before this feature, an order
@@ -1125,6 +1164,12 @@ export async function POST(req: NextRequest) {
     }
 
     const baseUrl = process.env.NEXTAUTH_URL || "https://www.overtaxed-il.com"
+    const providerIdempotencyKey=`ot:${(order as { contractKey?: string }).contractKey}:${(order as { attempt?: number }).attempt ?? 0}`
+    if(snapshot.policyVersion==="ot-neutral-records-report/2026-09-15"){
+      const {intendNeutralCheckout,neutralAdmissionSha256}=await import("@/lib/commerce/neutral-checkout-runtime")
+      neutralAttemptId=await intendNeutralCheckout({orderId:order.id,checkoutKey:String(order.checkoutKey??""),idempotencyKey:providerIdempotencyKey,contractSha256:neutralAdmissionSha256(claimedCheckoutContract)})
+      if(!neutralAttemptId)throw new Error("Neutral checkout intent was not persisted")
+    }
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
@@ -1143,7 +1188,9 @@ export async function POST(req: NextRequest) {
         ...attributionMetadata(attributionRow),
         ...gaIdentifiers,
       },
-    }, { idempotencyKey: `ot:${(order as { contractKey?: string }).contractKey}:${(order as { attempt?: number }).attempt ?? 0}` })
+    }, { idempotencyKey: providerIdempotencyKey })
+
+    if(neutralAttemptId){const {observeNeutralCheckout}=await import("@/lib/commerce/neutral-checkout-runtime");if(!await observeNeutralCheckout(neutralAttemptId,{id:session.id,status:session.status}))throw new Error("Neutral Stripe observation was not persisted")}
 
     if (!session.url) throw new Error("Stripe Checkout session returned no hosted URL")
 
@@ -1171,6 +1218,10 @@ export async function POST(req: NextRequest) {
             { error: "Checkout state could not be finalized. Please contact support.", code: "CHECKOUT_STATE_UNRESOLVED" },
             { status: 500 },
           )
+        }
+        if (snapshot.policyVersion === "ot-neutral-records-report/2026-09-15") {
+          const { markNeutralCheckoutUnknown } = await import("@/lib/commerce/neutral-checkout-runtime")
+          await markNeutralCheckoutUnknown(orderId).catch(() => false)
         }
       } catch (stateError) {
         console.error(`[checkout/session] checkout failure-state write failed for order ${orderId}`, stateError)
