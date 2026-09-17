@@ -20,6 +20,7 @@ import {
   type MigrationCommandResult,
 } from "../lib/fulfillment/neutral-production-baseline-runner";
 import { readApprovedProductionDatabase } from "../lib/fulfillment/neutral-production-identity";
+import { assertProductionRecoveryGate } from "./neutral-production-recovery-gate";
 import {
   redactProductionDiagnostic,
   runNeutralProductionPostconditionChecks,
@@ -92,9 +93,7 @@ function makeSpawn(
       shell: false,
       maxBuffer: 8 * 1024 * 1024,
     });
-    const raw = [result.stdout ?? "", result.stderr ?? ""]
-      .join("\n")
-      .trim();
+    const raw = [result.stdout ?? "", result.stderr ?? ""].join("\n").trim();
     return {
       status: result.status,
       error: result.error,
@@ -103,13 +102,31 @@ function makeSpawn(
   };
 }
 
+function minimalResolveEnvironment(directUrl: string): NodeJS.ProcessEnv {
+  return {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME,
+    TMPDIR: process.env.TMPDIR,
+    LANG: "C",
+    LC_ALL: "C",
+    NODE_ENV: "production",
+    DIRECT_URL: directUrl,
+  };
+}
+
 export async function runProductionBaselineEntrypoint(
   mode: BaselineMode,
+  intent: "commit" | "ledger-resume" = "commit",
 ): Promise<void> {
   if (mode === "rehearsal") {
     // Before anything is read, connected to, or spawned. A rehearsal cannot
     // apply, and after this line there is nothing in this process that could.
     delete process.env[OT_PRODUCTION_APPLY_TOKEN_VAR];
+    delete process.env[OT_PRODUCTION_RESOLVE_TOKEN_VAR];
+  }
+  if (mode === "apply" && intent === "commit") {
+    // Phase 5 cannot accidentally consume a resolve token left in the shell.
+    // Ledger writes belong only to the catalog-REPLAY resume entrypoint.
     delete process.env[OT_PRODUCTION_RESOLVE_TOKEN_VAR];
   }
 
@@ -122,6 +139,26 @@ export async function runProductionBaselineEntrypoint(
   // durable check and the standalone Phase 7 script all prove the same thing
   // about which database they are talking to.
   const expectedDatabase = readApprovedProductionDatabase(process.env);
+  // Require fresh marker-bound bounded baseline rollback evidence and successful
+  // restore receipts from both supported PostgreSQL majors before opening the
+  // Production socket. This is not general disaster recovery or zero-RPO data
+  // recovery; transactional apply provides zero-partial-apply safety.
+  // Rehearsal remains read-only and deliberately does not require this gate.
+  if (mode === "apply" && intent === "commit")
+    await assertProductionRecoveryGate({
+      env: process.env,
+      projectRef: expectedDatabase.projectRef,
+      markerInstanceId: expectedDatabase.markerInstanceId,
+    });
+  if (mode === "apply" && intent === "ledger-resume") {
+    const expected = `resume-production-ledger:${expectedDatabase.markerInstanceId}`;
+    if (
+      process.env.OT_NEUTRAL_PRODUCTION_LEDGER_RESUME_CONFIRMATION !== expected
+    )
+      throw new Error(
+        "OT_NEUTRAL_PRODUCTION_LEDGER_RESUME_CONFIRMATION is not the exact marker-bound resume token",
+      );
+  }
   const prismaBinary = localPrismaBinary();
 
   const postconditions = artifact(
@@ -162,6 +199,16 @@ export async function runProductionBaselineEntrypoint(
           expectedDatabase,
         });
       },
+      verifyBeforeCommit:
+        mode === "apply" && intent === "commit"
+          ? async () => {
+              await assertProductionRecoveryGate({
+                env: process.env,
+                projectRef: expectedDatabase.projectRef,
+                markerInstanceId: expectedDatabase.markerInstanceId,
+              });
+            }
+          : undefined,
       // A SEPARATE connection, so a poisoned or mid-transaction owner session
       // can never be the thing that reports success.
       verifyDurable: async ({ expectLedgerResolved }) => {
@@ -180,7 +227,13 @@ export async function runProductionBaselineEntrypoint(
         }
       },
       prismaBinary,
-      spawn: makeSpawn(process.env),
+      spawn: makeSpawn(minimalResolveEnvironment(datasource.url)),
+      requiredAction:
+        mode === "apply"
+          ? intent === "commit"
+            ? "APPLY"
+            : "REPLAY"
+          : undefined,
     });
 
     process.stdout.write(

@@ -4,8 +4,8 @@ import {
 } from "./neutral-production-baseline-entrypoint";
 
 /**
- * The Production baseline APPLY entrypoint. Phase 5, and Phase 6 with the
- * resolve token added.
+ * The Production baseline APPLY entrypoint. Phase 5 only. It requires an
+ * ABSENT/APPLY catalog and deletes any inherited resolve token.
  *
  * This command MUTATES PRODUCTION. It refuses to start without
  * OT_NEUTRAL_PRODUCTION_APPLY_CONFIRMATION set to the exact apply token for the
@@ -14,10 +14,7 @@ import {
  * `scripts/rehearse-neutral-production-baseline.ts` is for, and an apply command
  * that sometimes rehearses produces receipts nobody can tell apart.
  *
- * With OT_NEUTRAL_PRODUCTION_RESOLVE_CONFIRMATION also set, it records the
- * covered migrations with `prisma migrate resolve` after the schema has been
- * verified inside the transaction and again on a separate connection. That step
- * is resumable: a run interrupted part-way re-reads the ledger, skips every
- * migration already recorded, and continues from the first one that is not.
+ * Phase 6 uses resume-neutral-production-ledger.ts, which requires a
+ * COMPLETE/REPLAY catalog and can never execute the baseline body.
  */
 runProductionBaselineEntrypoint("apply").catch(reportProductionBaselineFailure);
