@@ -223,6 +223,16 @@ function application(
 }
 
 describe("application refuses everything it cannot prove", () => {
+  it("requires the separate neutral-delivery flag for neutral callbacks", () => {
+    const fulfillment = {
+      ...application().fulfillment!,
+      kind: "NEUTRAL_RECORDS_REPORT",
+      neutralQaApproved: true,
+    }
+    expect(decideCallbackApplication(application({ fulfillment }))).toEqual({ ok: false, code: "FULFILLMENT_NOT_FOUND" })
+    expect(decideCallbackApplication(application({ fulfillment, neutralDeliveryEnabled: true })).ok).toBe(true)
+  })
+
   it("applies a delivered event to the current attempt", () => {
     expect(decideCallbackApplication(application())).toEqual({
       ok: true,
