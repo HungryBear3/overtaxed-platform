@@ -12,6 +12,9 @@ import { join } from "node:path"
 import PacketPage, { metadata } from "@/app/packet/page"
 import { PacketForm } from "@/app/packet/packet-form"
 
+import { PrivateDocumentBoundary } from "@/components/analytics/private-document-boundary"
+jest.mock("next/navigation", () => ({ usePathname: () => "/packet" }))
+
 const CODE = "Zm9vYmFyYmF6cXV1eGNvcmdlZ3JhdWx0Z2FycGx5Z2g"
 const PDF = new Uint8Array([0x25, 0x50, 0x44, 0x46])
 
@@ -20,10 +23,11 @@ const PDF = new Uint8Array([0x25, 0x50, 0x44, 0x46])
  * provide the global, and the form only ever reads `ok`, `json()` and `blob()`.
  */
 function fakeResponse(
-  init: { ok: boolean; body?: unknown } = { ok: true },
+  init: { ok: boolean; body?: unknown; contentDisposition?: string } = { ok: true },
 ): Response {
   return {
     ok: init.ok,
+    headers: { get: (name: string) => name.toLowerCase() === "content-disposition" ? init.contentDisposition ?? null : null },
     async json() { return init.body ?? {} },
     async blob() { return new Blob([PDF], { type: "application/pdf" }) },
   } as unknown as Response
@@ -116,6 +120,16 @@ describe("the code is POSTed and never navigated", () => {
     expect(document.querySelector(`a[href="${created[0]}"]`)).toBeNull()
   })
 
+  it("uses the neutral ZIP filename only when the server advertises it", async () => {
+    fetchMock.mockResolvedValue(fakeResponse({
+      ok: true,
+      contentDisposition: 'attachment; filename="overtaxed-records-report.zip"',
+    }))
+    await submit(CODE)
+    await waitFor(() => expect(clicked).toHaveLength(1))
+    expect(clicked[0].download).toBe("overtaxed-records-report.zip")
+  })
+
   it("clears the input once the request resolves", async () => {
     const { input } = await submit(CODE)
     await waitFor(() => expect((input as HTMLInputElement).value).toBe(""))
@@ -129,6 +143,7 @@ describe("refusals are coarse and the input is still cleared", () => {
     ["REVOKED", /no longer active/i],
     ["EXHAUSTED", /maximum number of times/i],
     ["TEMPORARILY_UNAVAILABLE", /try again in a few minutes/i],
+    ["REISSUE_REQUIRED", /replacement code/i],
     ["NOT_AVAILABLE", /not valid/i],
     ["SOMETHING_NEW", /something went wrong/i],
   ])("shows a message for %s", async (code, pattern) => {
@@ -191,7 +206,7 @@ describe("the page is private, accessible, and works on a small screen", () => {
   })
 
   it("renders a labelled input with a live status region", () => {
-    render(<PacketPage />)
+    render(<PrivateDocumentBoundary><PacketPage /></PrivateDocumentBoundary>)
     const input = screen.getByLabelText(/one-time code/i)
     expect(input).toHaveAttribute("autocomplete", "off")
     expect(input).toHaveAttribute("spellcheck", "false")
@@ -201,7 +216,7 @@ describe("the page is private, accessible, and works on a small screen", () => {
   })
 
   it("lays out fluidly rather than at a fixed desktop width", () => {
-    const { container } = render(<PacketPage />)
+    const { container } = render(<PrivateDocumentBoundary><PacketPage /></PrivateDocumentBoundary>)
     const main = container.querySelector("main")!
     // A max-width with responsive padding and a full-width control: usable at
     // 320px and not stretched across a desktop monitor.
@@ -212,7 +227,7 @@ describe("the page is private, accessible, and works on a small screen", () => {
   })
 
   it("tells the customer the code is never in a link and never asked for by reply", () => {
-    render(<PacketPage />)
+    render(<PrivateDocumentBoundary><PacketPage /></PrivateDocumentBoundary>)
     expect(screen.getByText(/never put the code in a link/i)).toBeInTheDocument()
   })
 })
