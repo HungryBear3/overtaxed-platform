@@ -813,8 +813,8 @@ describe("adversarial download", () => {
     damaged[20] ^= 1
     objects.set(artifact.storageLocator as string, damaged)
     const response = await redeem(code)
-    expect(response.status).toBe(503)
-    await expect(response.json()).resolves.toEqual({ ok: false, code: "TEMPORARILY_UNAVAILABLE" })
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toEqual({ ok: false, code: "REISSUE_REQUIRED", message: "This download attempt could not be completed. Contact support for a replacement code." })
   })
 })
 
