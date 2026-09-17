@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import CheckoutPage from "@/components/ot-design/CheckoutPage";
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
 import "../ot-design.css";
+import { neutralReportCopyEnabled } from "@/lib/copy/neutral-report";
 
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
 
@@ -43,8 +44,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
   return (
     <div className="ot-root">
       <SiteHeader active="offer" />
-      <CheckoutPage initialPlan={initialPlan} />
-      <SiteFooter />
+      <CheckoutPage initialPlan={initialPlan} neutralReport={neutralReportCopyEnabled()} />
+      <SiteFooter neutralReport={neutralReportCopyEnabled()} />
     </div>
   );
 }
