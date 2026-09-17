@@ -43,6 +43,7 @@ import {
   isValidProviderEventId,
   isValidProviderMessageId,
   isValidProviderName,
+  parseProviderInstant,
   parseStrictInstant,
   PG_INT_MAX,
 } from "@/lib/fulfillment/validation";
@@ -137,7 +138,18 @@ export type CallbackNonApplicationCode =
   | "NOT_APPLICABLE"
   | "TERMINAL_LOCKED"
   | "UNTRUSTED_CLOCK"
-  | "UNMATCHED_STORE_FULL";
+  | "UNMATCHED_STORE_FULL"
+  /**
+   * One provider message id resolved to more than one delivery attempt.
+   *
+   * `ot_delivery_attempt` carries a UNIQUE `(provider, provider_message_id)`, so
+   * this cannot happen while that index exists — which is exactly why it must be
+   * a refusal rather than an unstated assumption. If the index is ever dropped,
+   * relaxed, or replaced during a migration, the alternative is picking the
+   * first row an unordered query happened to return and folding a provider event
+   * onto an arbitrary one of two orders.
+   */
+  | "AMBIGUOUS_MESSAGE_BINDING";
 
 export const CALLBACK_NON_APPLICATION_CODES: ReadonlySet<string> =
   new Set<string>([
@@ -154,6 +166,7 @@ export const CALLBACK_NON_APPLICATION_CODES: ReadonlySet<string> =
     "TERMINAL_LOCKED",
     "UNTRUSTED_CLOCK",
     "UNMATCHED_STORE_FULL",
+    "AMBIGUOUS_MESSAGE_BINDING",
   ]);
 
 /**
@@ -170,7 +183,13 @@ export type SanitizedProviderCallback = {
   eventType: OTDeliveryEventType;
   /** Allowlisted code, or null when the event carries no reason. */
   reasonCode: string | null;
-  /** Strict canonical RFC3339 UTC instant. */
+  /**
+   * Strict canonical RFC3339 UTC instant.
+   *
+   * NORMALIZED, never the provider's own spelling. A provider may legitimately
+   * write six fractional digits or a `+00:00` offset; what leaves this module is
+   * always `YYYY-MM-DDTHH:MM:SS.mmmZ`, so nothing downstream has to know that.
+   */
   occurredAt: string;
 };
 
@@ -270,14 +289,24 @@ export function normalizeProviderCallback(
   if (!isValidProviderMessageId(messageId))
     return { ok: false, code: "INVALID_MESSAGE_ID" };
 
-  const occurredAt = typeof body.created_at === "string" ? body.created_at : "";
-  const occurredMs = parseStrictInstant(occurredAt);
-  if (occurredMs === null) return { ok: false, code: "INVALID_TIMESTAMP" };
+  // `created_at` is the PROVIDER's spelling of the instant, not ours, so it is
+  // parsed with the wider RFC3339 grammar and normalized once — deliberately,
+  // by [[parseProviderInstant]], and never by handing the string to `Date`.
+  //
+  // This is the difference between refusing and admitting a real
+  // `email.delivered`: Resend documents six fractional digits and a `+00:00`
+  // offset on its timestamps, and the strict canonical validator — correct for
+  // instants this system itself renders — accepts neither. What crosses out of
+  // here is always the canonical form, so every downstream comparison, column
+  // and event row still sees exactly one timestamp shape.
+  const stated = parseProviderInstant(body.created_at);
+  if (stated === null) return { ok: false, code: "INVALID_TIMESTAMP" };
+  // `receivedAt` is ours, so it is held to the strict rule.
   const receivedMs = parseStrictInstant(input.receivedAt);
   if (receivedMs === null) return { ok: false, code: "INVALID_TIMESTAMP" };
   if (
-    occurredMs > receivedMs + MAX_CALLBACK_FUTURE_SKEW_MS ||
-    occurredMs < receivedMs - MAX_CALLBACK_PAST_SKEW_MS
+    stated.epochMs > receivedMs + MAX_CALLBACK_FUTURE_SKEW_MS ||
+    stated.epochMs < receivedMs - MAX_CALLBACK_PAST_SKEW_MS
   ) {
     return { ok: false, code: "IMPLAUSIBLE_TIMESTAMP" };
   }
@@ -290,7 +319,7 @@ export function normalizeProviderCallback(
       providerMessageId: messageId,
       eventType,
       reasonCode: reasonFor(eventType, data),
-      occurredAt,
+      occurredAt: stated.canonical,
     },
   };
 }
@@ -310,6 +339,7 @@ export type CallbackFulfillmentRow = {
   status: OTFulfillmentStatus | string;
   statusRevision: number;
   attemptCount: number;
+  neutralQaApproved?: boolean;
 };
 
 export type CallbackAttemptRow = {
@@ -327,6 +357,8 @@ export type CallbackApplicationInput = {
   /** Highest bound artifact version for this fulfillment, read under the lock. */
   currentArtifactVersion: number | null;
   trustedNow: string;
+  /** Separate default-off authority; required only for neutral reports. */
+  neutralDeliveryEnabled?: boolean;
 };
 
 export type CallbackApplicationPlan = {
@@ -375,7 +407,8 @@ export function decideCallbackApplication(
 
   if (fulfillment.orderId !== order.id)
     return { ok: false, code: "FULFILLMENT_ORDER_MISMATCH" };
-  if (fulfillment.kind !== "T2_APPEAL_EVIDENCE")
+  if (fulfillment.kind !== "T2_APPEAL_EVIDENCE" &&
+      !(fulfillment.kind === "NEUTRAL_RECORDS_REPORT" && input.neutralDeliveryEnabled === true && fulfillment.neutralQaApproved === true))
     return { ok: false, code: "FULFILLMENT_NOT_FOUND" };
   if (attempt.fulfillmentId !== fulfillment.id)
     return { ok: false, code: "ATTEMPT_FULFILLMENT_MISMATCH" };
@@ -452,6 +485,18 @@ export const MAX_UNMATCHED_CALLBACKS = 1000;
 
 /** Ceiling on how many stored callbacks one reconciliation pass may replay. */
 export const MAX_RECONCILIATION_BATCH = 50;
+
+/**
+ * Ceiling on how many times one stored callback may be replayed, ever.
+ *
+ * The column's own CHECK bounds it at 1000, and the claim that begins a replay
+ * is a compare-and-set on this counter. A counter pinned AT the ceiling would
+ * satisfy its own compare-and-set forever — two concurrent reconcilers would
+ * both "win" the same row — so the claim requires strictly less than this and a
+ * row that reaches it stops being offered for replay at all. It keeps its
+ * evidence; it simply stops costing work.
+ */
+export const MAX_CALLBACK_REPLAYS = 1000;
 
 export function isReconcilable(input: {
   receivedAt: string;

@@ -69,7 +69,7 @@ function store(): ProviderCallbackStore & {
     },
     async reconcile(input) {
       reconciled.push(input)
-      return { examined: 0, applied: 0, stillUnmatched: 0 }
+      return { examined: 0, applied: 0, stillUnmatched: 0, skipped: 0 }
     },
   }
 }
