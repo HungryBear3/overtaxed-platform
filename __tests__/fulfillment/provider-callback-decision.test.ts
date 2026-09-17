@@ -223,6 +223,16 @@ function application(
 }
 
 describe("application refuses everything it cannot prove", () => {
+  it("requires the separate neutral-delivery flag for neutral callbacks", () => {
+    const fulfillment = {
+      ...application().fulfillment!,
+      kind: "NEUTRAL_RECORDS_REPORT",
+      neutralQaApproved: true,
+    }
+    expect(decideCallbackApplication(application({ fulfillment }))).toEqual({ ok: false, code: "FULFILLMENT_NOT_FOUND" })
+    expect(decideCallbackApplication(application({ fulfillment, neutralDeliveryEnabled: true })).ok).toBe(true)
+  })
+
   it("applies a delivered event to the current attempt", () => {
     expect(decideCallbackApplication(application())).toEqual({
       ok: true,
@@ -327,5 +337,97 @@ describe("reconciliation bounds", () => {
   it("keeps the durable unmatched store bounded", () => {
     expect(MAX_UNMATCHED_CALLBACKS).toBeGreaterThan(0)
     expect(MAX_UNMATCHED_CALLBACKS).toBeLessThanOrEqual(10_000)
+  })
+})
+
+/**
+ * A provider writes its own timestamps, and RFC3339 lets it write them in shapes
+ * this system never produces. The strict canonical validator is right for our
+ * OWN instants and wrong for theirs: Resend documents `created_at` with six
+ * fractional digits and a `+00:00` offset, and refusing those would drop a
+ * genuine, signed, authenticated `email.delivered` on the floor — the packet
+ * would simply never be recorded as delivered.
+ *
+ * The fix is a wider grammar normalized ONCE, deliberately, with explicit
+ * arithmetic. It is emphatically not `new Date(value)`: these assertions pin
+ * both halves — what is now admitted, and what is still refused that a
+ * permissive `Date` coercion would have accepted.
+ */
+describe("provider-stated created_at is normalized, never coerced", () => {
+  const occurredAt = (patch: Record<string, unknown>) => {
+    const result = normalize(patch)
+    if (!result.ok) throw new Error(`expected admission, got ${result.code}`)
+    return result.event.occurredAt
+  }
+
+  it.each([
+    ["the canonical form unchanged", "2026-09-12T11:59:30.000Z", "2026-09-12T11:59:30.000Z"],
+    ["no fractional part at all", "2026-09-12T11:59:30Z", "2026-09-12T11:59:30.000Z"],
+    ["six fractional digits, truncated", "2026-09-12T11:59:30.674981Z", "2026-09-12T11:59:30.674Z"],
+    ["nine fractional digits, truncated", "2026-09-12T11:59:30.999999999Z", "2026-09-12T11:59:30.999Z"],
+    ["a single fractional digit as TENTHS", "2026-09-12T11:59:30.6Z", "2026-09-12T11:59:30.600Z"],
+    ["two fractional digits as HUNDREDTHS", "2026-09-12T11:59:30.06Z", "2026-09-12T11:59:30.060Z"],
+    ["a zero offset spelled +00:00", "2026-09-12T11:59:30.674981+00:00", "2026-09-12T11:59:30.674Z"],
+    ["RFC3339's unknown-offset -00:00", "2026-09-12T11:59:30.000-00:00", "2026-09-12T11:59:30.000Z"],
+    ["a lowercase z", "2026-09-12T11:59:30.000z", "2026-09-12T11:59:30.000Z"],
+    ["a positive offset, resolved by subtraction", "2026-09-12T13:29:30.000+01:30", "2026-09-12T11:59:30.000Z"],
+    ["a negative offset, resolved by addition", "2026-09-12T06:59:30.000-05:00", "2026-09-12T11:59:30.000Z"],
+    ["an offset that crosses a date boundary", "2026-09-13T00:59:30.000+13:00", "2026-09-12T11:59:30.000Z"],
+  ])("admits %s", (_label, created_at, expected) => {
+    expect(occurredAt({ created_at })).toBe(expected)
+  })
+
+  it("truncates toward the PAST, so an event can never outrun its arrival", () => {
+    // Rounding .9999 up would put this event after `receivedAt` and make a
+    // truthful provider look like it reported the future.
+    expect(occurredAt({ created_at: "2026-09-12T11:59:30.999999Z" })).toBe(
+      "2026-09-12T11:59:30.999Z",
+    )
+  })
+
+  it.each([
+    ["a naive local time", "2026-09-12T11:59:30"],
+    ["a space separator", "2026-09-12 11:59:30Z"],
+    ["a date only", "2026-09-12"],
+    ["a year only", "2026"],
+    ["a spelled-out date Date would accept", "Sep 12 2026 11:59:30 UTC"],
+    ["an impossible calendar date", "2026-02-30T00:00:00Z"],
+    ["month 13", "2026-13-01T00:00:00Z"],
+    ["hour 24", "2026-09-12T24:00:00Z"],
+    ["a leap second", "2026-09-12T11:59:60Z"],
+    ["a 60-minute offset field", "2026-09-12T11:59:30.000+00:60"],
+    ["a 24-hour offset field", "2026-09-12T11:59:30.000+24:00"],
+    ["ten fractional digits", "2026-09-12T11:59:30.0000000001Z"],
+    ["a bare offset sign", "2026-09-12T11:59:30.000+"],
+    ["an unterminated instant", "2026-09-12T11:59:30.000"],
+    ["leading whitespace", " 2026-09-12T11:59:30.000Z"],
+    ["trailing whitespace", "2026-09-12T11:59:30.000Z "],
+    ["an epoch integer as a string", "1789041570000"],
+  ])("still refuses %s", (_label, created_at) => {
+    expect(normalize({ created_at })).toEqual({
+      ok: false,
+      code: "INVALID_TIMESTAMP",
+    })
+  })
+
+  it.each([null, 1789041570000, {}, [], true, undefined])(
+    "refuses the non-string created_at %p",
+    (created_at) => {
+      expect(normalize({ created_at })).toEqual({
+        ok: false,
+        code: "INVALID_TIMESTAMP",
+      })
+    },
+  )
+
+  it("applies the plausibility window to the NORMALIZED instant, not the text", () => {
+    // 13:29:30+01:30 is 11:59:30Z — inside the window. The same wall-clock
+    // digits read naively would be 89 minutes in the future and implausible.
+    expect(normalize({ created_at: "2026-09-12T13:29:30.000+01:30" }).ok).toBe(true)
+    // And an offset that genuinely puts the event in the future is still caught.
+    expect(normalize({ created_at: "2026-09-12T12:30:00.000-00:00" })).toEqual({
+      ok: false,
+      code: "IMPLAUSIBLE_TIMESTAMP",
+    })
   })
 })

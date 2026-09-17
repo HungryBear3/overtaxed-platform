@@ -79,6 +79,7 @@ function liveCapability(patch: Partial<CapabilityRow> = {}): CapabilityRow {
 }
 
 type World = {
+  paymentAuthority?: boolean
   now: string
   order: Record<string, unknown> | null
   fulfillment: Record<string, unknown> | null
@@ -146,7 +147,9 @@ function fakeClient(
       }
       if (sql.includes('FROM "ot_order"')) {
         if (sql.includes("FOR UPDATE")) { state.locks.push("order"); hooks.onOrderLock?.() }
-        return (state.order ? [state.order] : []) as T
+        expect(sql).toContain('b.session_id = "ot_order"."stripeSessionId"')
+        expect(sql).toContain('r.payment_intent = b.payment_intent')
+        return (state.order && state.paymentAuthority !== false ? [state.order] : []) as T
       }
       if (sql.includes('FROM "ot_packet_download_capability"')) {
         if (sql.includes("FOR UPDATE")) state.locks.push("capability")
@@ -304,6 +307,7 @@ describe("authorize claims exactly one use under the authoritative order lock", 
   })
 
   it.each([
+    ["unbound PAID order", { paymentAuthority: false }, "ORDER_NOT_FOUND"],
     ["refunded order", { order: { id: ORDER_ID, tier: "T2", status: "REFUNDED", propertyPin: PIN, propertyAddress: ADDRESS } }, "ORDER_NOT_ELIGIBLE"],
     ["cancelled order", { order: { id: ORDER_ID, tier: "T2", status: "CANCELLED", propertyPin: PIN, propertyAddress: ADDRESS } }, "ORDER_NOT_ELIGIBLE"],
     ["terminal fulfillment", { fulfillment: { id: FULFILLMENT_ID, orderId: ORDER_ID, kind: "T2_APPEAL_EVIDENCE", status: "BOUNCED" } }, "FULFILLMENT_NOT_DOWNLOADABLE"],
@@ -474,6 +478,13 @@ describe("revocation", () => {
 })
 
 describe("issuance", () => {
+  it("denies unbound PAID issuance without persisting a capability", async () => {
+    const state = world({ capability: null, paymentAuthority: false })
+    const store = createPrismaPacketDownloadStore(fakeClient(state))
+    await expect(store.issue({ capabilityHash: HASH, fulfillmentId: FULFILLMENT_ID, ttlSeconds: 604800, maxUses: 5 })).resolves.toMatchObject({ ok: false })
+    expect(state.inserted).toEqual([])
+  })
+
   it("persists only the hash — never the capability value", async () => {
     const state = world({ capability: null })
     const store = createPrismaPacketDownloadStore(fakeClient(state))

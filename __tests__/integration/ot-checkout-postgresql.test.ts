@@ -1,27 +1,32 @@
 /** @jest-environment node */
 
-import { PrismaPg } from "@prisma/adapter-pg"
-import { PrismaClient } from "@prisma/client"
-import { Pool } from "pg"
+import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaClient } from "@prisma/client";
+import { Pool } from "pg";
+import { randomBytes } from "node:crypto";
+import { assertPreviewAcceptanceRunId } from "@/lib/fulfillment/neutral-preview-acceptance";
 
-const testDatabaseUrl = process.env.TEST_DATABASE_URL
-const describeIfDb = testDatabaseUrl ? describe : describe.skip
+const testDatabaseUrl = process.env.TEST_DATABASE_URL;
+const describeIfDb = testDatabaseUrl ? describe : describe.skip;
 
 describeIfDb("OT checkout PostgreSQL contract proof", () => {
-  jest.setTimeout(30_000)
+  jest.setTimeout(30_000);
 
-  let pool: Pool
-  let prisma: PrismaClient
-  let prefix: string
+  let pool: Pool;
+  let prisma: PrismaClient;
+  let prefix: string;
 
   beforeAll(() => {
-    pool = new Pool({ connectionString: testDatabaseUrl, max: 5, ssl: false })
-    prisma = new PrismaClient({ adapter: new PrismaPg(pool) })
-  })
+    pool = new Pool({ connectionString: testDatabaseUrl, max: 5, ssl: false });
+    prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
+  });
 
   beforeEach(() => {
-    prefix = `ot_pg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-  })
+    const runId = process.env.OT_NEUTRAL_ACCEPTANCE_RUN_ID
+      ? assertPreviewAcceptanceRunId(process.env.OT_NEUTRAL_ACCEPTANCE_RUN_ID)
+      : `ot-accept-${"b".repeat(32)}-00000000-0000-4000-8000-000000000000`;
+    prefix = `${runId}-checkout-${randomBytes(12).toString("hex")}`;
+  });
 
   afterEach(async () => {
     await prisma.oTOrder.deleteMany({
@@ -33,13 +38,13 @@ describeIfDb("OT checkout PostgreSQL contract proof", () => {
           { email: { startsWith: prefix } },
         ],
       },
-    })
-  })
+    });
+  });
 
   afterAll(async () => {
-    await prisma.$disconnect()
-    await pool.end()
-  })
+    await prisma.$disconnect();
+    await pool.end();
+  });
 
   const orderData = () => ({
     id: `${prefix}_order`,
@@ -54,22 +59,35 @@ describeIfDb("OT checkout PostgreSQL contract proof", () => {
     checkoutCurrency: "usd",
     status: "PENDING",
     attempt: 0,
-  })
+  });
 
   it("enforces unique checkout and contract identities", async () => {
-    const data = orderData()
+    const data = orderData();
     const [first, second] = await Promise.allSettled([
       prisma.oTOrder.create({ data }),
-      prisma.oTOrder.create({ data: { ...data, id: `${prefix}_other`, email: `${prefix}_other@example.com` } }),
-    ])
-    expect([first.status, second.status].sort()).toEqual(["fulfilled", "rejected"])
-    const rejected = [first, second].find((result) => result.status === "rejected") as PromiseRejectedResult
-    expect(rejected.reason?.code).toBe("P2002")
-    expect(await prisma.oTOrder.count({ where: { checkoutKey: data.checkoutKey } })).toBe(1)
-  })
+      prisma.oTOrder.create({
+        data: {
+          ...data,
+          id: `${prefix}_other`,
+          email: `${prefix}_other@example.com`,
+        },
+      }),
+    ]);
+    expect([first.status, second.status].sort()).toEqual([
+      "fulfilled",
+      "rejected",
+    ]);
+    const rejected = [first, second].find(
+      (result) => result.status === "rejected",
+    ) as PromiseRejectedResult;
+    expect(rejected.reason?.code).toBe("P2002");
+    expect(
+      await prisma.oTOrder.count({ where: { checkoutKey: data.checkoutKey } }),
+    ).toBe(1);
+  });
 
   it("allows only one concurrent checkout claim for the exact durable tuple", async () => {
-    const order = await prisma.oTOrder.create({ data: orderData() })
+    const order = await prisma.oTOrder.create({ data: orderData() });
     const where = {
       id: order.id,
       contractKey: order.contractKey,
@@ -83,16 +101,22 @@ describeIfDb("OT checkout PostgreSQL contract proof", () => {
       attempt: order.attempt,
       status: order.status,
       updatedAt: order.updatedAt,
-    }
+    };
     const results = await Promise.all([
-      prisma.oTOrder.updateMany({ where, data: { status: "CHECKOUT_CREATING" } }),
-      prisma.oTOrder.updateMany({ where, data: { status: "CHECKOUT_CREATING" } }),
-    ])
-    expect(results.map((result) => result.count).sort()).toEqual([0, 1])
-  })
+      prisma.oTOrder.updateMany({
+        where,
+        data: { status: "CHECKOUT_CREATING" },
+      }),
+      prisma.oTOrder.updateMany({
+        where,
+        data: { status: "CHECKOUT_CREATING" },
+      }),
+    ]);
+    expect(results.map((result) => result.count).sort()).toEqual([0, 1]);
+  });
 
   it("allows only one exact settlement transition and preserves the winner", async () => {
-    const data = orderData()
+    const data = orderData();
     const order = await prisma.oTOrder.create({
       data: {
         ...data,
@@ -102,9 +126,12 @@ describeIfDb("OT checkout PostgreSQL contract proof", () => {
         checkoutProductId: `${prefix}_product`,
         analysisAcknowledgedAt: new Date(),
         acknowledgmentVersion: "analysis_ack_v1",
-        acknowledgmentEvidence: { acknowledged: true, version: "analysis_ack_v1" },
+        acknowledgmentEvidence: {
+          acknowledged: true,
+          version: "analysis_ack_v1",
+        },
       },
-    })
+    });
     const where = {
       id: order.id,
       status: "CHECKOUT_CREATED",
@@ -113,16 +140,32 @@ describeIfDb("OT checkout PostgreSQL contract proof", () => {
       contractKey: order.contractKey,
       checkoutAmountCents: order.checkoutAmountCents,
       checkoutCurrency: order.checkoutCurrency,
-    }
+    };
     const results = await Promise.all([
-      prisma.oTOrder.updateMany({ where, data: { status: "PAID", settledAmountCents: 6900, settledCurrency: "usd" } }),
-      prisma.oTOrder.updateMany({ where, data: { status: "PAID", settledAmountCents: 6900, settledCurrency: "usd" } }),
-    ])
-    expect(results.map((result) => result.count).sort()).toEqual([0, 1])
-    expect(await prisma.oTOrder.findUnique({ where: { id: order.id } })).toMatchObject({
+      prisma.oTOrder.updateMany({
+        where,
+        data: {
+          status: "PAID",
+          settledAmountCents: 6900,
+          settledCurrency: "usd",
+        },
+      }),
+      prisma.oTOrder.updateMany({
+        where,
+        data: {
+          status: "PAID",
+          settledAmountCents: 6900,
+          settledCurrency: "usd",
+        },
+      }),
+    ]);
+    expect(results.map((result) => result.count).sort()).toEqual([0, 1]);
+    expect(
+      await prisma.oTOrder.findUnique({ where: { id: order.id } }),
+    ).toMatchObject({
       status: "PAID",
       settledAmountCents: 6900,
       settledCurrency: "usd",
-    })
-  })
-})
+    });
+  });
+});
