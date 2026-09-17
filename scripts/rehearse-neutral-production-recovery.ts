@@ -7,6 +7,8 @@ import path from "node:path";
 import { Client } from "pg";
 import {
   OT_PRODUCTION_REHEARSAL_SENTINEL_SCHEMA,
+  OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY,
+  OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES,
   OT_PRODUCTION_RESTORE_SCHEMA,
   OT_PRODUCTION_RECOVERY_CATALOG_SQL,
   OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
@@ -17,18 +19,25 @@ import {
   authenticateReceipt,
   canonicalJson,
   assertRecoveryReceipt,
+  assertRecoveryExtensionPortability,
   countNormalizedManagedMemberships,
+  recoveryExtensionPortability,
   sha256,
   type ProductionRecoveryReceipt,
   type RehearsalClusterSentinel,
   type RestoreRehearsalReceipt,
 } from "../lib/fulfillment/neutral-production-recovery";
 import {
+  RecoveryExtensionSqlTransform,
+  type ExtensionSqlPortabilityProof,
+} from "../lib/fulfillment/neutral-production-extension-portability";
+import {
   materializePrivateCopy,
   readProtectedFile,
 } from "./neutral-production-recovery-gate";
 import { redactProductionDiagnostic } from "../lib/fulfillment/neutral-production-verifier";
 import { resolveRecoveryTarget } from "./neutral-recovery-target";
+import { assertManagedExtensionFixtureInstalled } from "./neutral-production-extension-fixture-files";
 
 function sqlLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
@@ -41,7 +50,12 @@ async function decryptRestoreSingleSession(input: {
   passphrase: string;
   env: NodeJS.ProcessEnv;
   sentinel: RehearsalClusterSentinel;
-}): Promise<{ roles: string; adaptedRoles: string; database: string }> {
+}): Promise<{
+  roles: string;
+  adaptedRoles: string;
+  database: string;
+  extensions: ExtensionSqlPortabilityProof;
+}> {
   const gpgHome = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gpg-"));
   fs.chmodSync(gpgHome, 0o700);
   const children = new Set<ChildProcess>();
@@ -173,6 +187,8 @@ $ot_recovery_guard$;
     const restoreClosed = once(restore, "close") as Promise<
       [number | null, NodeJS.Signals | null]
     >;
+    const extensionTransform = new RecoveryExtensionSqlTransform();
+    const extensionTransformEnded = once(extensionTransform, "end");
     restore.stderr.setEncoding("utf8");
     restore.stderr.on("data", (chunk) => (errors += chunk));
     const restoreInputFailed = new Promise<never>((_resolve, reject) => {
@@ -181,11 +197,12 @@ $ot_recovery_guard$;
         reject(new Error(`pg_restore input failed: ${errors}`));
       });
     });
-    restore.stdout.pipe(psql.stdin, { end: false });
+    restore.stdout.pipe(extensionTransform).pipe(psql.stdin, { end: false });
     const [database, [restoreCode]] = await Promise.race([
       Promise.all([
         decryptInto(input.databaseEncrypted, restore.stdin, true),
         restoreClosed,
+        extensionTransformEnded,
       ]),
       prematurePsqlExit,
       psqlInputFailed,
@@ -201,6 +218,7 @@ $ot_recovery_guard$;
       roles: input.rolesPlaintextSha256,
       adaptedRoles,
       database,
+      extensions: extensionTransform.proof(),
     };
   } finally {
     await abortPipeline();
@@ -271,6 +289,7 @@ async function main(): Promise<void> {
       "Receipt, target, passphrase, authentication key and cluster sentinel are required",
     );
   const resolvedTarget = await resolveRecoveryTarget(targetUrl);
+  const installedFixture = assertManagedExtensionFixtureInstalled();
   const receiptBytes = readProtectedFile(receiptPath);
   const receipt = JSON.parse(
     receiptBytes.toString("utf8"),
@@ -284,6 +303,13 @@ async function main(): Promise<void> {
     throw new Error("Rehearsal cluster sentinel schema is invalid");
   assertReceiptAuthenticator(sentinel, authenticationKey);
   assertFreshRehearsalSentinelTimestamp(sentinel.createdAt);
+  if (
+    sentinel.managedExtensionFixture?.policy !==
+      OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY ||
+    canonicalJson(sentinel.managedExtensionFixture.filesSha256) !==
+      canonicalJson(OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES)
+  )
+    throw new Error("Rehearsal managed extension fixture proof is invalid");
 
   const directory = path.dirname(path.resolve(receiptPath));
   const byFormat = Object.fromEntries(
@@ -321,6 +347,7 @@ async function main(): Promise<void> {
       throw new Error(`Restore target PostgreSQL ${major} is unsupported`);
     if (
       sentinel.targetServerMajor !== major ||
+      installedFixture.major !== major ||
       sentinel.systemIdentifier !== String(identity.system_identifier) ||
       sentinel.dataDirectorySha256 !==
         sha256(String(identity.data_directory)) ||
@@ -415,6 +442,13 @@ async function main(): Promise<void> {
     const sourceCatalogSnapshot = JSON.parse(
       sourceCatalog.toString("utf8"),
     ) as unknown;
+    const sourceExtensionPortability = recoveryExtensionPortability(
+      sourceCatalogSnapshot,
+    );
+    assertRecoveryExtensionPortability(
+      receipt.extensionPortability,
+      sourceCatalogSnapshot,
+    );
     const normalizedSourceCount = countNormalizedManagedMemberships(
       sourceCatalogSnapshot,
     );
@@ -428,6 +462,7 @@ async function main(): Promise<void> {
     });
 
     const database = byFormat["postgres-custom"]!;
+    assertManagedExtensionFixtureInstalled();
     const restoredArtifactHashes = await decryptRestoreSingleSession({
       rolesSql: adaptedRoles.bytes,
       rolesPlaintextSha256: sha256(rolesPlaintext),
@@ -457,12 +492,34 @@ async function main(): Promise<void> {
         ])
       ).rows[0]!.snapshot;
       const restoredDigest = sha256(canonicalJson(restored));
+      const restoredExtensionPortability =
+        recoveryExtensionPortability(restored);
       if (
         restoredDigest !== receipt.catalogDigest ||
-        sha256(sourceCatalog) !== receipt.catalogDigest
+        sha256(sourceCatalog) !== receipt.catalogDigest ||
+        canonicalJson(restoredExtensionPortability) !==
+          canonicalJson(sourceExtensionPortability)
       )
         throw new Error(
-          "Restored catalog/role/ACL snapshot does not match the source receipt",
+          `Restored catalog/role/ACL snapshot does not match the source receipt (sections=${
+            [
+              ...new Set([
+                ...Object.keys(
+                  sourceCatalogSnapshot as Record<string, unknown>,
+                ),
+                ...Object.keys(restored as Record<string, unknown>),
+              ]),
+            ]
+              .filter(
+                (key) =>
+                  canonicalJson(
+                    (sourceCatalogSnapshot as Record<string, unknown>)[key],
+                  ) !==
+                  canonicalJson((restored as Record<string, unknown>)[key]),
+              )
+              .sort()
+              .join(",") || "unknown"
+          })`,
         );
       const rehearsal: RestoreRehearsalReceipt = {
         schema: OT_PRODUCTION_RESTORE_SCHEMA,
@@ -480,6 +537,10 @@ async function main(): Promise<void> {
           pristineTargetCount: pristineTargetManagedMembershipCount,
           adaptedStatementCount: adaptedRoles.managedMembershipCount,
           adaptedRolesSha256: restoredArtifactHashes.adaptedRoles,
+        },
+        extensionPortability: {
+          ...sourceExtensionPortability,
+          ...restoredArtifactHashes.extensions,
         },
         verified: true,
         clusterSystemIdentifier: sentinel.systemIdentifier,

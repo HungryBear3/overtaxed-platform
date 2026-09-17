@@ -15,10 +15,12 @@ import {
   canonicalJson,
   authenticateReceipt,
   countNormalizedManagedMemberships,
+  recoveryExtensionPortability,
   sha256,
   type ProductionRecoveryReceipt,
   type RecoveryArtifact,
 } from "@/lib/fulfillment/neutral-production-recovery";
+import { assertManagedExtensionFixtureInstalled } from "@/scripts/neutral-production-extension-fixture-files";
 
 function available(): boolean {
   try {
@@ -29,6 +31,13 @@ function available(): boolean {
       execFileSync(bin ? path.join(bin, "initdb") : "initdb", ["--version"], {
         stdio: "ignore",
       });
+    for (const bin of [
+      process.env.OT_TEST_SOURCE_PG_BIN,
+      process.env.OT_TEST_TARGET_PG_BIN,
+    ])
+      assertManagedExtensionFixtureInstalled(
+        bin ? path.join(bin, "pg_config") : "pg_config",
+      );
     execFileSync("gpg", ["--version"], { stdio: "ignore" });
     return true;
   } catch {
@@ -114,6 +123,12 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
       create role ot_prod_app login inherit;
       create role ot_prod_neutral_runtime login inherit;
       create role ot_prod_neutral_delivery login inherit;
+      create schema extensions authorization postgres;
+      create schema vault authorization supabase_admin;
+      create extension pg_stat_statements with schema extensions version '1.11';
+      create extension pgcrypto with schema extensions version '1.3';
+      create extension supabase_vault with schema vault version '0.3.1';
+      create extension "uuid-ossp" with schema extensions version '1.1';
       alter schema public owner to postgres;
       set role postgres;
       create table public.recovery_fixture(id text primary key, value text not null);
@@ -277,6 +292,7 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
         normalizedGrantor: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR,
         managedMembershipCount: countNormalizedManagedMemberships(catalog),
       },
+      extensionPortability: recoveryExtensionPortability(catalog),
       authenticator: "",
     };
     receipt.authenticator = authenticateReceipt(receipt, authenticationKey);

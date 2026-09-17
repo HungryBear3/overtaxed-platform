@@ -320,9 +320,17 @@ rehearse_major() (
   superuser="ot_recovery_admin_pg${major}"
   cleanup() {
     "$pg_bin/pg_ctl" -D "$data" -m fast -w stop >/dev/null 2>&1 || true
-    trash -- "$root"
+    if [[ "${fixture_installed:-false}" == true ]]; then
+      OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG="$pg_bin/pg_config" \
+        npm run neutral-report:production-recovery-extension-fixture -- remove >/dev/null 2>&1 || true
+    fi
+    trash "$root"
   }
   trap cleanup EXIT INT TERM
+  fixture_installed=false
+  OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG="$pg_bin/pg_config" \
+    npm run neutral-report:production-recovery-extension-fixture -- install
+  fixture_installed=true
   mkdir -m 0700 "$socket"
   "$pg_bin/initdb" -D "$data" -A trust -U "$superuser"
   "$pg_bin/pg_ctl" -D "$data" -o "-F -k $socket -h 127.0.0.1 -p $port" -w start
@@ -364,12 +372,30 @@ signed source count must equal the pristine target's pre-existing normalized
 initdb membership count plus the adapted `pg_dumpall` statement count before the
 transaction can begin. This accounts for bootstrap-owned `pg_*` memberships
 that exist in both clusters but are intentionally absent from pg_dumpall. Each
-v2 restore receipt records the portability policy, authenticated source count,
+v3 restore receipt records the portability policy, authenticated source count,
 pristine-target count, adapted statement count, and SHA-256 of the exact adapted
 roles SQL sent to psql. The apply gate requires both majors to report the same
 adapted digest and rechecks the count equation. It writes
 `restore-rehearsal-pg17.json` or `restore-rehearsal-pg18.json` beside the backup
 receipt.
+
+The only managed binary absent from stock PostgreSQL in the authenticated
+Production extension set is `supabase_vault` `0.3.1` in schema `vault`.
+Before each disposable cluster starts, the fixture command exclusively stages
+two hash-pinned, read-only extension files in that major's PostgreSQL shared
+extension directory and refuses an existing, unknown, writable, linked, or
+mismatched file. The signed cluster sentinel binds those exact fixture hashes;
+setup also proves the control metadata through
+`pg_available_extension_versions`. The restore stream accepts only the exact
+authenticated five-extension set (`plpgsql`, `pg_stat_statements`, `pgcrypto`,
+`supabase_vault`, and `uuid-ossp`), pins every emitted version, and rejects an
+unknown, missing, repeated, differently-versioned, or differently-schematized
+`CREATE EXTENSION` statement. Final catalog comparison covers the managed
+extension member identities, relation/column/function properties, view and
+index definitions, constraints, ACLs, and extension-config table binding. The
+fixture's native crypto functions are intentionally inert and are never called;
+this is an empty disposable restore proof, not a Supabase Vault runtime. Cleanup
+stops the owned cluster before removing only hash-matching fixture files.
 
 **Stop gate:** both commands print `PASS ... catalog=verified
 artifacts=verified`; both receipts exist beside the backup receipt. Set
@@ -526,14 +552,14 @@ environment. **Activation is not part of this packet and has no phase here.**
 
 ## Rollback states, summarised
 
-| After                                          | State                                                                   | Rollback                                                                                                            |
-| ---------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Phase 1–3                                      | Nothing changed                                                         | Stop                                                                                                                |
-| Phase 4                                        | Nothing changed; encrypted logical recovery set restore-proved on 17/18 | Stop                                                                                                                |
-| Phase 5                                        | Schema committed, ledger untouched, all features off                    | Keep inert; resume ledger. Never restore over newer customer writes.                                                |
+| After                                          | State                                                                   | Rollback                                                                                                                                                                    |
+| ---------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 1–3                                      | Nothing changed                                                         | Stop                                                                                                                                                                        |
+| Phase 4                                        | Nothing changed; encrypted logical recovery set restore-proved on 17/18 | Stop                                                                                                                                                                        |
+| Phase 5                                        | Schema committed, ledger untouched, all features off                    | Keep inert; resume ledger. Never restore over newer customer writes.                                                                                                        |
 | Phase 6 interrupted                            | Schema committed, ledger partially written                              | Run exactly the Phase 6 `npm run neutral-report:production-ledger-resume` command with both marker-bound resume/resolve confirmations; never run the Phase 5 apply command. |
-| Phase 6                                        | Schema committed, ledger resolved                                       | Keep inert; any future removal is a separately reviewed forward cleanup.                                            |
-| Partial **schema** state observed at any point | Unknown                                                                 | **Do not re-run or restore data.** Preserve evidence and investigate; normal transactional apply cannot produce it. |
+| Phase 6                                        | Schema committed, ledger resolved                                       | Keep inert; any future removal is a separately reviewed forward cleanup.                                                                                                    |
+| Partial **schema** state observed at any point | Unknown                                                                 | **Do not re-run or restore data.** Preserve evidence and investigate; normal transactional apply cannot produce it.                                                         |
 
 ## Known residuals
 

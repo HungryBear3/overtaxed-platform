@@ -4,11 +4,14 @@ import path from "node:path";
 import { Client } from "pg";
 import {
   OT_PRODUCTION_REHEARSAL_SENTINEL_SCHEMA,
+  OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY,
+  OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES,
   authenticateReceipt,
   canonicalJson,
   sha256,
   type RehearsalClusterSentinel,
 } from "../lib/fulfillment/neutral-production-recovery";
+import { assertManagedExtensionFixtureInstalled } from "./neutral-production-extension-fixture-files";
 import { redactProductionDiagnostic } from "../lib/fulfillment/neutral-production-verifier";
 import { resolveRecoveryTarget } from "./neutral-recovery-target";
 
@@ -40,13 +43,36 @@ async function main(): Promise<void> {
     `)
     ).rows[0]!;
     const major = Math.floor(Number(identity.version) / 10_000);
+    const fixture = assertManagedExtensionFixtureInstalled();
     if (
       (major !== 17 && major !== 18) ||
+      fixture.major !== major ||
       identity.username !== superuser ||
       !identity.is_superuser
     )
       throw new Error(
         "Rehearsal cluster identity or temporary superuser is invalid",
+      );
+    const availableExtension = await client.query(`
+      select name, version, superuser, trusted, relocatable, schema,
+             coalesce(array_to_string(requires,','),'') requires,
+             comment
+      from pg_available_extension_versions
+      where name='supabase_vault'
+    `);
+    if (
+      availableExtension.rows.length !== 1 ||
+      availableExtension.rows[0]!.name !== "supabase_vault" ||
+      availableExtension.rows[0]!.version !== "0.3.1" ||
+      availableExtension.rows[0]!.superuser !== true ||
+      availableExtension.rows[0]!.trusted !== false ||
+      availableExtension.rows[0]!.relocatable !== false ||
+      availableExtension.rows[0]!.schema !== "vault" ||
+      availableExtension.rows[0]!.requires !== "" ||
+      availableExtension.rows[0]!.comment !== "Supabase Vault Extension"
+    )
+      throw new Error(
+        "Managed extension fixture availability or control metadata is invalid",
       );
 
     const roles = (
@@ -86,6 +112,12 @@ async function main(): Promise<void> {
       databaseName,
       temporarySuperuser: superuser,
       targetServerMajor: major,
+      managedExtensionFixture: {
+        policy: OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY,
+        filesSha256: {
+          ...OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES,
+        },
+      },
       authenticator: "",
     };
     sentinel.authenticator = authenticateReceipt(sentinel, authenticationKey);

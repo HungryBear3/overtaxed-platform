@@ -14,10 +14,14 @@ import {
   adaptManagedRoleMembershipGrantors,
   assertReceiptAuthenticator,
   assertRecoveryReceipt,
+  assertRecoveryExtensionPortability,
+  canonicalJson,
+  recoveryExtensionPortability,
   sha256,
   type ProductionRecoveryReceipt,
   type RestoreRehearsalReceipt,
 } from "../lib/fulfillment/neutral-production-recovery";
+import { expectedExtensionSqlPortabilityProof } from "../lib/fulfillment/neutral-production-extension-portability";
 
 export function readProtectedFile(
   file: string,
@@ -256,6 +260,9 @@ export async function assertProductionRecoveryGate(input: {
   const directory = path.dirname(path.resolve(receiptPath));
   let independentlyAdaptedRolesSha256: string | undefined;
   let independentlyAdaptedStatementCount: number | undefined;
+  let independentlyVerifiedExtensionPortability:
+    | ProductionRecoveryReceipt["extensionPortability"]
+    | undefined;
   for (const artifact of receipt.artifacts) {
     const absolute = path.join(directory, artifact.file);
     const bytes = readProtectedFile(absolute);
@@ -272,7 +279,8 @@ export async function assertProductionRecoveryGate(input: {
       const decrypted = await decryptArtifact(
         privateCopy.file,
         passphrase,
-        artifact.format === "postgres-roles-sql",
+        artifact.format === "postgres-roles-sql" ||
+          artifact.format === "catalog-json",
       );
       if (artifact.format === "postgres-roles-sql") {
         if (!decrypted.plaintext)
@@ -294,10 +302,31 @@ export async function assertProductionRecoveryGate(input: {
         } finally {
           decrypted.plaintext.fill(0);
         }
-      } else if (decrypted.plaintextSha256 !== artifact.plaintextSha256)
-        throw new Error(
-          `Production recovery artifact plaintext changed: ${artifact.file}`,
-        );
+      } else {
+        if (decrypted.plaintextSha256 !== artifact.plaintextSha256)
+          throw new Error(
+            `Production recovery artifact plaintext changed: ${artifact.file}`,
+          );
+        if (artifact.format === "catalog-json") {
+          if (!decrypted.plaintext)
+            throw new Error(
+              "Production recovery catalog artifact was not read",
+            );
+          try {
+            const snapshot = JSON.parse(
+              decrypted.plaintext.toString("utf8"),
+            ) as unknown;
+            independentlyVerifiedExtensionPortability =
+              recoveryExtensionPortability(snapshot);
+            assertRecoveryExtensionPortability(
+              receipt.extensionPortability,
+              snapshot,
+            );
+          } finally {
+            decrypted.plaintext.fill(0);
+          }
+        }
+      }
     } finally {
       privateCopy.cleanup();
     }
@@ -309,9 +338,14 @@ export async function assertProductionRecoveryGate(input: {
     throw new Error(
       "Production recovery roles portability evidence is incomplete",
     );
+  if (!independentlyVerifiedExtensionPortability)
+    throw new Error(
+      "Production recovery extension portability evidence is incomplete",
+    );
   const receiptDigest = sha256(receiptBytes);
   let adaptedRolesSha256: string | undefined;
   let adaptedStatementCount: number | undefined;
+  const expectedExtensionSql = expectedExtensionSqlPortabilityProof();
   for (const major of [17, 18] as const) {
     const parsed = JSON.parse(
       readProtectedFile(
@@ -360,6 +394,25 @@ export async function assertProductionRecoveryGate(input: {
       );
     adaptedRolesSha256 = portability.adaptedRolesSha256;
     adaptedStatementCount = portability.adaptedStatementCount;
+    const extensionPortability = parsed.extensionPortability;
+    assertRecoveryExtensionPortability(extensionPortability);
+    if (
+      canonicalJson({
+        policy: extensionPortability.policy,
+        sourceExtensions: extensionPortability.sourceExtensions,
+        sourceExtensionsSha256: extensionPortability.sourceExtensionsSha256,
+        managedExtensionCatalogSha256:
+          extensionPortability.managedExtensionCatalogSha256,
+        fixtureFilesSha256: extensionPortability.fixtureFilesSha256,
+      }) !== canonicalJson(independentlyVerifiedExtensionPortability) ||
+      extensionPortability.pinnedCreateExtensionStatements !==
+        expectedExtensionSql.pinnedCreateExtensionStatements ||
+      extensionPortability.pinnedCreateExtensionStatementsSha256 !==
+        expectedExtensionSql.pinnedCreateExtensionStatementsSha256
+    )
+      throw new Error(
+        `Production recovery PostgreSQL ${major} extension portability proof is invalid`,
+      );
     const restoredAt = parsed.restoredAt
       ? Date.parse(parsed.restoredAt)
       : Number.NaN;

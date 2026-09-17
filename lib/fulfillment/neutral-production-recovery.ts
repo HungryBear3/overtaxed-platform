@@ -8,11 +8,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const OT_PRODUCTION_RECOVERY_SCHEMA =
-  "ot.neutral-production-recovery.v2" as const;
+  "ot.neutral-production-recovery.v3" as const;
 export const OT_PRODUCTION_RESTORE_SCHEMA =
-  "ot.neutral-production-restore-rehearsal.v2" as const;
+  "ot.neutral-production-restore-rehearsal.v3" as const;
 export const OT_PRODUCTION_REHEARSAL_SENTINEL_SCHEMA =
-  "ot.neutral-production-rehearsal-sentinel.v1" as const;
+  "ot.neutral-production-rehearsal-sentinel.v2" as const;
 export const OT_PRODUCTION_RECOVERY_RECEIPT_VAR =
   "OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT" as const;
 export const OT_PRODUCTION_RECOVERY_AUTH_KEY_VAR =
@@ -29,6 +29,121 @@ export const OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR =
   "__ot_managed_source_grantor_normalization_sentinel_not_a_postgresql_role__" as const;
 export const OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY =
   "supabase-managed-grantor-v1" as const;
+export const OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY =
+  "supabase-managed-extension-fixture-v1" as const;
+
+export const OT_PRODUCTION_RECOVERY_SUPPORTED_EXTENSIONS = [
+  {
+    extname: "pg_stat_statements",
+    extversion: "1.11",
+    schema_name: "extensions",
+    portability: "stock" as const,
+  },
+  {
+    extname: "pgcrypto",
+    extversion: "1.3",
+    schema_name: "extensions",
+    portability: "stock" as const,
+  },
+  {
+    extname: "plpgsql",
+    extversion: "1.0",
+    schema_name: "pg_catalog",
+    portability: "bootstrap" as const,
+  },
+  {
+    extname: "supabase_vault",
+    extversion: "0.3.1",
+    schema_name: "vault",
+    portability: "managed-fixture" as const,
+  },
+  {
+    extname: "uuid-ossp",
+    extversion: "1.1",
+    schema_name: "extensions",
+    portability: "stock" as const,
+  },
+] as const;
+
+export const OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_MEMBERS = [
+  {
+    type: "function",
+    schema: "vault",
+    name: "",
+    identity:
+      "vault._crypto_aead_det_decrypt(pg_catalog.bytea,pg_catalog.bytea,bigint,pg_catalog.bytea,pg_catalog.bytea)",
+  },
+  {
+    type: "function",
+    schema: "vault",
+    name: "",
+    identity:
+      "vault._crypto_aead_det_encrypt(pg_catalog.bytea,pg_catalog.bytea,bigint,pg_catalog.bytea,pg_catalog.bytea)",
+  },
+  {
+    type: "function",
+    schema: "vault",
+    name: "",
+    identity: "vault._crypto_aead_det_noncegen()",
+  },
+  {
+    type: "function",
+    schema: "vault",
+    name: "",
+    identity:
+      "vault.create_secret(pg_catalog.text,pg_catalog.text,pg_catalog.text,pg_catalog.uuid)",
+  },
+  {
+    type: "function",
+    schema: "vault",
+    name: "",
+    identity:
+      "vault.update_secret(pg_catalog.uuid,pg_catalog.text,pg_catalog.text,pg_catalog.text,pg_catalog.uuid)",
+  },
+  {
+    type: "table",
+    schema: "vault",
+    name: "secrets",
+    identity: "vault.secrets",
+  },
+  {
+    type: "type",
+    schema: "vault",
+    name: "_decrypted_secrets",
+    identity: "vault.decrypted_secrets[]",
+  },
+  {
+    type: "type",
+    schema: "vault",
+    name: "_secrets",
+    identity: "vault.secrets[]",
+  },
+  {
+    type: "type",
+    schema: "vault",
+    name: "decrypted_secrets",
+    identity: "vault.decrypted_secrets",
+  },
+  {
+    type: "type",
+    schema: "vault",
+    name: "secrets",
+    identity: "vault.secrets",
+  },
+  {
+    type: "view",
+    schema: "vault",
+    name: "decrypted_secrets",
+    identity: "vault.decrypted_secrets",
+  },
+] as const;
+
+export const OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES = {
+  "supabase_vault.control":
+    "92dce37b7096985c4f60c43726f09f383ed80c5ff7844d1557ad485085db7742",
+  "supabase_vault--0.3.1.sql":
+    "4bea17027ffd365fc31b4711e07784b0d0979dccdce4863f1983da17885d64ce",
+} as const;
 
 export const OT_PRODUCTION_RECOVERY_RELEVANT_ROLES = [
   "postgres",
@@ -115,6 +230,103 @@ with role_rows as (
 ), extension_rows as (
   select e.extname, e.extversion, n.nspname schema_name
   from pg_extension e join pg_namespace n on n.oid=e.extnamespace order by 1
+), managed_extension_member_rows as (
+  select e.extname, identified.type, coalesce(identified.schema,'') schema,
+         coalesce(identified.name,'') name, identified.identity
+  from pg_extension e
+  join pg_depend d on d.refclassid='pg_extension'::regclass
+   and d.refobjid=e.oid and d.deptype='e'
+  cross join lateral pg_identify_object(d.classid,d.objid,d.objsubid) identified
+  where e.extname='supabase_vault'
+  order by 1,2,3,4,5
+), managed_extension_relation_rows as (
+  select e.extname, c.relname, c.relkind, c.relpersistence,
+         c.relrowsecurity, c.relforcerowsecurity,
+         coalesce(array_to_string(c.reloptions,','),'') options,
+         case when c.relkind in ('v','m') then pg_get_viewdef(c.oid,true) else '' end definition
+  from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+  join pg_class c on c.relnamespace=n.oid
+  where e.extname='supabase_vault' and c.relkind in ('r','p','v','m','S','f')
+  order by 1,2,3
+), managed_extension_column_rows as (
+  select e.extname, c.relname, a.attname, a.attnum,
+         format_type(a.atttypid,a.atttypmod) data_type, a.attnotnull,
+         a.attidentity, a.attgenerated,
+         coalesce(pg_get_expr(ad.adbin,ad.adrelid,true),'') default_expression
+  from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+  join pg_class c on c.relnamespace=n.oid
+  join pg_attribute a on a.attrelid=c.oid and a.attnum>0 and not a.attisdropped
+  left join pg_attrdef ad on ad.adrelid=c.oid and ad.adnum=a.attnum
+  where e.extname='supabase_vault' and c.relkind in ('r','p','v','m','f')
+  order by 1,2,4
+), managed_extension_function_rows as (
+  select e.extname, p.oid::regprocedure::text identity,
+         pg_get_function_result(p.oid) result_type, p.prokind, p.provolatile,
+         p.proisstrict, p.prosecdef, p.proleakproof, p.proparallel,
+         coalesce(array_to_string(p.proconfig,','),'') config
+  from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+  join pg_proc p on p.pronamespace=n.oid
+  where e.extname='supabase_vault'
+  order by 1,2
+), managed_extension_index_rows as (
+  select e.extname, c.relname, i.relname index_name, pg_get_indexdef(i.oid) definition
+  from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+  join pg_class c on c.relnamespace=n.oid and c.relkind in ('r','p','m')
+  join pg_index x on x.indrelid=c.oid
+  join pg_class i on i.oid=x.indexrelid
+  where e.extname='supabase_vault'
+  order by 1,2,3
+), managed_extension_constraint_rows as (
+  select e.extname, c.relname, x.conname, x.contype,
+         pg_get_constraintdef(x.oid,true) definition
+  from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+  join pg_class c on c.relnamespace=n.oid and c.relkind in ('r','p','m')
+  join pg_constraint x on x.conrelid=c.oid
+  where e.extname='supabase_vault' and x.contype <> 'n'
+  order by 1,2,3
+), managed_extension_config_rows as (
+  select e.extname, c.ord position, coalesce(c.relation::regclass::text,'') relation,
+         coalesce(e.extcondition[c.ord],'') condition
+  from pg_extension e
+  cross join lateral unnest(coalesce(e.extconfig,'{}'::oid[])) with ordinality c(relation,ord)
+  where e.extname='supabase_vault'
+  order by 1,2
+), managed_extension_acl_rows as (
+  select rows.extname, rows.object_identity, rows.subobject,
+         case when rows.grantee=0 then 'PUBLIC'
+              when grantee.rolname = any($2::text[])
+              then '${OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR}'
+              else grantee.rolname end grantee_role,
+         case when grantor.rolname = any($2::text[])
+              then '${OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR}'
+              else grantor.rolname end grantor_role,
+         rows.privilege_type, rows.is_grantable
+  from (
+    select e.extname, c.oid::regclass::text object_identity, '' subobject,
+           acl.grantee, acl.grantor, acl.privilege_type, acl.is_grantable
+    from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+    join pg_class c on c.relnamespace=n.oid
+    cross join lateral aclexplode(case when cardinality(c.relacl)>0 then c.relacl end) acl
+    where e.extname='supabase_vault'
+    union all
+    select e.extname, p.oid::regprocedure::text object_identity, '' subobject,
+           acl.grantee, acl.grantor, acl.privilege_type, acl.is_grantable
+    from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+    join pg_proc p on p.pronamespace=n.oid
+    cross join lateral aclexplode(case when cardinality(p.proacl)>0 then p.proacl end) acl
+    where e.extname='supabase_vault'
+    union all
+    select e.extname, c.oid::regclass::text object_identity, a.attname subobject,
+           acl.grantee, acl.grantor, acl.privilege_type, acl.is_grantable
+    from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+    join pg_class c on c.relnamespace=n.oid
+    join pg_attribute a on a.attrelid=c.oid and a.attnum>0 and not a.attisdropped
+    cross join lateral aclexplode(case when cardinality(a.attacl)>0 then a.attacl end) acl
+    where e.extname='supabase_vault'
+  ) rows
+  left join pg_roles grantee on grantee.oid=rows.grantee
+  join pg_roles grantor on grantor.oid=rows.grantor
+  order by 1,2,3,4,5,6,7
 )
 select jsonb_build_object(
   'public_schema_owner', pg_get_userbyid(n.nspowner),
@@ -129,7 +341,15 @@ select jsonb_build_object(
   'triggers', coalesce((select jsonb_agg(to_jsonb(trigger_rows) order by relname,tgname) from trigger_rows),'[]'::jsonb),
   'constraints', coalesce((select jsonb_agg(to_jsonb(constraint_rows) order by relname,conname) from constraint_rows),'[]'::jsonb),
   'types', coalesce((select jsonb_agg(to_jsonb(type_rows) order by typname) from type_rows),'[]'::jsonb),
-  'extensions', coalesce((select jsonb_agg(to_jsonb(extension_rows) order by extname) from extension_rows),'[]'::jsonb)
+  'extensions', coalesce((select jsonb_agg(to_jsonb(extension_rows) order by extname) from extension_rows),'[]'::jsonb),
+  'managed_extension_members', coalesce((select jsonb_agg(to_jsonb(managed_extension_member_rows) order by extname,type,schema,name,identity) from managed_extension_member_rows),'[]'::jsonb),
+  'managed_extension_relations', coalesce((select jsonb_agg(to_jsonb(managed_extension_relation_rows) order by extname,relname,relkind) from managed_extension_relation_rows),'[]'::jsonb),
+  'managed_extension_columns', coalesce((select jsonb_agg(to_jsonb(managed_extension_column_rows) order by extname,relname,attnum) from managed_extension_column_rows),'[]'::jsonb),
+  'managed_extension_functions', coalesce((select jsonb_agg(to_jsonb(managed_extension_function_rows) order by extname,identity) from managed_extension_function_rows),'[]'::jsonb),
+  'managed_extension_indexes', coalesce((select jsonb_agg(to_jsonb(managed_extension_index_rows) order by extname,relname,index_name) from managed_extension_index_rows),'[]'::jsonb),
+  'managed_extension_constraints', coalesce((select jsonb_agg(to_jsonb(managed_extension_constraint_rows) order by extname,relname,conname) from managed_extension_constraint_rows),'[]'::jsonb),
+  'managed_extension_config', coalesce((select jsonb_agg(to_jsonb(managed_extension_config_rows) order by extname,position) from managed_extension_config_rows),'[]'::jsonb),
+  'managed_extension_acls', coalesce((select jsonb_agg(to_jsonb(managed_extension_acl_rows) order by extname,object_identity,subobject,grantee_role,grantor_role,privilege_type,is_grantable) from managed_extension_acl_rows),'[]'::jsonb)
 ) snapshot
 from pg_namespace n
 where n.nspname='public'`;
@@ -163,7 +383,21 @@ export type ProductionRecoveryReceipt = {
     normalizedGrantor: typeof OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR;
     managedMembershipCount: number;
   };
+  extensionPortability: RecoveryExtensionPortability;
   authenticator: string;
+};
+
+export type RecoveryExtensionPortability = {
+  policy: typeof OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY;
+  sourceExtensions: Array<{
+    extname: string;
+    extversion: string;
+    schema_name: string;
+    portability: "bootstrap" | "stock" | "managed-fixture";
+  }>;
+  sourceExtensionsSha256: string;
+  managedExtensionCatalogSha256: string;
+  fixtureFilesSha256: Record<string, string>;
 };
 
 export type RestoreRehearsalReceipt = {
@@ -182,6 +416,10 @@ export type RestoreRehearsalReceipt = {
     adaptedStatementCount: number;
     adaptedRolesSha256: string;
   };
+  extensionPortability: RecoveryExtensionPortability & {
+    pinnedCreateExtensionStatements: number;
+    pinnedCreateExtensionStatementsSha256: string;
+  };
   verified: true;
   clusterSystemIdentifier: string;
   clusterSentinelNonce: string;
@@ -197,6 +435,10 @@ export type RehearsalClusterSentinel = {
   databaseName: string;
   temporarySuperuser: string;
   targetServerMajor: 17 | 18;
+  managedExtensionFixture: {
+    policy: typeof OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY;
+    filesSha256: Record<string, string>;
+  };
   authenticator: string;
 };
 
@@ -207,12 +449,126 @@ const SQL_IDENTIFIER = String.raw`(?:"(?:[^"]|"")*"|[a-z_][a-z0-9_$]*)`;
 const ROLE_MEMBERSHIP_GRANT = new RegExp(
   String.raw`^GRANT (?<granted>${SQL_IDENTIFIER}) TO (?<member>${SQL_IDENTIFIER})(?: WITH (?<options>(?:ADMIN OPTION|INHERIT (?:TRUE|FALSE)|SET (?:TRUE|FALSE))(?:, (?:ADMIN OPTION|INHERIT (?:TRUE|FALSE)|SET (?:TRUE|FALSE)))*))? GRANTED BY (?<grantor>${SQL_IDENTIFIER});$`,
 );
+const MANAGED_EXTENSION_CATALOG_KEYS = [
+  "managed_extension_members",
+  "managed_extension_relations",
+  "managed_extension_columns",
+  "managed_extension_functions",
+  "managed_extension_indexes",
+  "managed_extension_constraints",
+  "managed_extension_config",
+  "managed_extension_acls",
+] as const;
 
 export const sha256 = (value: Buffer | string): string =>
   createHash("sha256").update(value).digest("hex");
 
 export const canonicalJson = (value: unknown): string =>
   `${JSON.stringify(sortJson(value), null, 2)}\n`;
+
+function requiredArray(
+  snapshot: Record<string, unknown>,
+  key: string,
+): unknown[] {
+  const value = snapshot[key];
+  if (!Array.isArray(value))
+    throw new Error(`Recovery catalog ${key} is invalid`);
+  return value;
+}
+
+export function recoveryExtensionPortability(
+  snapshot: unknown,
+): RecoveryExtensionPortability {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot))
+    throw new Error("Recovery catalog snapshot is invalid");
+  const catalog = snapshot as Record<string, unknown>;
+  const extensionRows = requiredArray(catalog, "extensions");
+  const observed = extensionRows.map((row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row))
+      throw new Error("Recovery catalog extension row is invalid");
+    const value = row as Record<string, unknown>;
+    return {
+      extname: String(value.extname ?? ""),
+      extversion: String(value.extversion ?? ""),
+      schema_name: String(value.schema_name ?? ""),
+    };
+  });
+  const expected = OT_PRODUCTION_RECOVERY_SUPPORTED_EXTENSIONS.map(
+    ({ portability: _ignored, ...extension }) => extension,
+  );
+  if (canonicalJson(observed) !== canonicalJson(expected))
+    throw new Error(
+      "Recovery source extension set, version, or schema is unsupported",
+    );
+
+  const members = requiredArray(catalog, "managed_extension_members");
+  if (
+    canonicalJson(
+      members.map((row) => {
+        if (!row || typeof row !== "object" || Array.isArray(row))
+          throw new Error("Recovery managed extension member row is invalid");
+        const value = row as Record<string, unknown>;
+        return {
+          type: String(value.type ?? ""),
+          schema: String(value.schema ?? ""),
+          name: String(value.name ?? ""),
+          identity: String(value.identity ?? ""),
+        };
+      }),
+    ) !== canonicalJson(OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_MEMBERS)
+  )
+    throw new Error("Recovery managed extension member set is unsupported");
+
+  const managedCatalog = Object.fromEntries(
+    MANAGED_EXTENSION_CATALOG_KEYS.map((key) => [
+      key,
+      requiredArray(catalog, key),
+    ]),
+  );
+  const sourceExtensions = OT_PRODUCTION_RECOVERY_SUPPORTED_EXTENSIONS.map(
+    (row) => ({ ...row }),
+  );
+  return {
+    policy: OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY,
+    sourceExtensions,
+    sourceExtensionsSha256: sha256(canonicalJson(sourceExtensions)),
+    managedExtensionCatalogSha256: sha256(canonicalJson(managedCatalog)),
+    fixtureFilesSha256: {
+      ...OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES,
+    },
+  };
+}
+
+export function assertRecoveryExtensionPortability(
+  value: unknown,
+  snapshot?: unknown,
+): asserts value is RecoveryExtensionPortability {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error(
+      "Production recovery extension portability evidence is invalid",
+    );
+  const observed = value as Partial<RecoveryExtensionPortability>;
+  const expected = snapshot
+    ? recoveryExtensionPortability(snapshot)
+    : undefined;
+  if (
+    observed.policy !== OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY ||
+    !Array.isArray(observed.sourceExtensions) ||
+    !HEX.test(observed.sourceExtensionsSha256 ?? "") ||
+    !HEX.test(observed.managedExtensionCatalogSha256 ?? "") ||
+    canonicalJson(observed.fixtureFilesSha256) !==
+      canonicalJson(OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES) ||
+    sha256(canonicalJson(observed.sourceExtensions)) !==
+      observed.sourceExtensionsSha256 ||
+    canonicalJson(observed.sourceExtensions) !==
+      canonicalJson(OT_PRODUCTION_RECOVERY_SUPPORTED_EXTENSIONS) ||
+    (expected !== undefined &&
+      canonicalJson(observed) !== canonicalJson(expected))
+  )
+    throw new Error(
+      "Production recovery extension portability evidence is invalid",
+    );
+}
 
 function sqlIdentifierValue(identifier: string): string {
   return identifier.startsWith('"')
@@ -470,6 +826,7 @@ export function assertRecoveryReceipt(
     throw new Error(
       "Production recovery role membership portability evidence is invalid",
     );
+  assertRecoveryExtensionPortability(receipt.extensionPortability);
   if (!receipt.authenticator || !HEX.test(receipt.authenticator))
     throw new Error("Production recovery receipt authenticator is invalid");
 }

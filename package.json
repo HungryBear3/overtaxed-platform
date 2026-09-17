@@ -35,6 +35,7 @@
     "neutral-report:production-baseline-rehearsal": "tsx scripts/rehearse-neutral-production-baseline.ts",
     "neutral-report:production-recovery-backup": "tsx scripts/create-neutral-production-recovery.ts",
     "neutral-report:production-recovery-rehearsal-setup": "tsx scripts/setup-neutral-production-recovery-rehearsal.ts",
+    "neutral-report:production-recovery-extension-fixture": "tsx scripts/stage-neutral-production-recovery-extension-fixture.ts",
     "neutral-report:production-recovery-rehearsal": "tsx scripts/rehearse-neutral-production-recovery.ts",
     "neutral-report:production-baseline-apply": "tsx scripts/apply-neutral-production-baseline.ts",
     "neutral-report:production-ledger-resume": "tsx scripts/resume-neutral-production-ledger.ts",

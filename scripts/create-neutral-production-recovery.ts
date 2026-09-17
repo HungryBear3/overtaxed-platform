@@ -15,6 +15,7 @@ import {
   canonicalJson,
   authenticateReceipt,
   countNormalizedManagedMemberships,
+  recoveryExtensionPortability,
   newBackupId,
   sha256,
   type ProductionRecoveryReceipt,
@@ -257,6 +258,7 @@ async function main(): Promise<void> {
       if (beforeResult.rows.length !== 1)
         throw new Error("Recovery catalog snapshot did not return one row");
       const before = beforeResult.rows[0]!.snapshot as Record<string, unknown>;
+      const extensionPortability = recoveryExtensionPortability(before);
       const markerResult = await client.query(
         "select coalesce(shobj_description(oid,'pg_database'),'') marker from pg_database where datname=current_database()",
       );
@@ -347,6 +349,7 @@ async function main(): Promise<void> {
           normalizedGrantor: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR,
           managedMembershipCount: countNormalizedManagedMemberships(before),
         },
+        extensionPortability,
         authenticator: "",
       };
       receipt.authenticator = authenticateReceipt(receipt, authenticationKey);

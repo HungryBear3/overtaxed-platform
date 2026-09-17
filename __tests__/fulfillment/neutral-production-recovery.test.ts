@@ -9,6 +9,8 @@ import {
   OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR,
   OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY,
   OT_PRODUCTION_RECOVERY_SCHEMA,
+  OT_PRODUCTION_RECOVERY_SUPPORTED_EXTENSIONS,
+  OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_MEMBERS,
   OT_PRODUCTION_RESTORE_SCHEMA,
   adaptManagedRoleMembershipGrantors,
   authenticateReceipt,
@@ -16,9 +18,18 @@ import {
   assertManagedRoleMembershipPortabilityCounts,
   assertRecoveryReceipt,
   canonicalJson,
+  recoveryExtensionPortability,
   sha256,
   type ProductionRecoveryReceipt,
 } from "@/lib/fulfillment/neutral-production-recovery";
+import {
+  adaptRecoveryExtensionSql,
+  expectedExtensionSqlPortabilityProof,
+} from "@/lib/fulfillment/neutral-production-extension-portability";
+import {
+  assertManagedExtensionFixtureSource,
+  stageManagedExtensionFixture,
+} from "@/scripts/neutral-production-extension-fixture-files";
 import {
   assertProductionRecoveryGate,
   materializePrivateCopy,
@@ -38,6 +49,24 @@ function fixture() {
   const rolesPlaintext = Buffer.from(
     "GRANT anon TO authenticator WITH INHERIT TRUE GRANTED BY supabase_admin;\n",
   );
+  const catalogSnapshot = {
+    extensions: OT_PRODUCTION_RECOVERY_SUPPORTED_EXTENSIONS.map(
+      ({ portability: _ignored, ...extension }) => extension,
+    ),
+    managed_extension_members:
+      OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_MEMBERS.map((row) => ({
+        extname: "supabase_vault",
+        ...row,
+      })),
+    managed_extension_relations: [],
+    managed_extension_columns: [],
+    managed_extension_functions: [],
+    managed_extension_indexes: [],
+    managed_extension_constraints: [],
+    managed_extension_config: [],
+    managed_extension_acls: [],
+  };
+  const catalogPlaintext = Buffer.from(canonicalJson(catalogSnapshot));
   const adaptedRoles = adaptManagedRoleMembershipGrantors(rolesPlaintext);
   const formats = [
     ["database.dump.gpg", "postgres-custom"],
@@ -61,7 +90,9 @@ function fixture() {
       const plain =
         format === "postgres-roles-sql"
           ? rolesPlaintext
-          : Buffer.from(`plain-${index}`);
+          : format === "catalog-json"
+            ? catalogPlaintext
+            : Buffer.from(`plain-${index}`);
       const absolute = path.join(directory, file);
       execFileSync(
         "gpg",
@@ -96,13 +127,14 @@ function fixture() {
         ciphertextBytes: cipher.length,
       };
     }),
-    catalogDigest: sha256("catalog"),
+    catalogDigest: sha256(catalogPlaintext),
     roleMembershipPortability: {
       policy: OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY,
       sourceGrantors: [OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS[0]],
       normalizedGrantor: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR,
       managedMembershipCount: 1,
     },
+    extensionPortability: recoveryExtensionPortability(catalogSnapshot),
     authenticator: "",
   };
   receipt.authenticator = authenticateReceipt(receipt, AUTH);
@@ -130,6 +162,10 @@ function fixture() {
         pristineTargetCount: 0,
         adaptedStatementCount: 1,
         adaptedRolesSha256: sha256(adaptedRoles.bytes),
+      },
+      extensionPortability: {
+        ...receipt.extensionPortability,
+        ...expectedExtensionSqlPortabilityProof(),
       },
       verified: true as const,
       clusterSystemIdentifier: `system-${major}`,
@@ -201,6 +237,37 @@ describe("Production no-PITR recovery gate", () => {
           now: new Date("2026-09-17T18:30:00Z"),
         }),
       ).rejects.toThrow(/portability proof is invalid/);
+    } finally {
+      fs.rmSync(value.directory, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects mutually agreeing extension proofs that do not match the independently decrypted catalog", async () => {
+    const value = fixture();
+    try {
+      const forgedCatalogDigest = sha256("mutually-agreeing-extension-forgery");
+      rewriteAuthenticatedJson(value.receiptPath, (receipt) => {
+        receipt.extensionPortability.managedExtensionCatalogSha256 =
+          forgedCatalogDigest;
+      });
+      const changedReceiptDigest = sha256(fs.readFileSync(value.receiptPath));
+      for (const major of [17, 18] as const)
+        rewriteAuthenticatedJson(
+          path.join(value.directory, `restore-rehearsal-pg${major}.json`),
+          (proof) => {
+            proof.backupReceiptSha256 = changedReceiptDigest;
+            proof.extensionPortability.managedExtensionCatalogSha256 =
+              forgedCatalogDigest;
+          },
+        );
+      await expect(
+        assertProductionRecoveryGate({
+          env: envFor(value.receiptPath),
+          projectRef: PROJECT,
+          markerInstanceId: INSTANCE,
+          now: new Date("2026-09-17T18:30:00Z"),
+        }),
+      ).rejects.toThrow(/extension portability evidence is invalid/);
     } finally {
       fs.rmSync(value.directory, { recursive: true, force: true });
     }
@@ -347,6 +414,156 @@ describe("Production no-PITR recovery gate", () => {
     expect(canonicalJson({ z: 1, a: { y: 2, b: 3 } })).toBe(
       canonicalJson({ a: { b: 3, y: 2 }, z: 1 }),
     );
+  });
+
+  test("pins every exact authenticated extension statement and proves the transformed set", () => {
+    const source = [
+      "CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions;",
+      "CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;",
+      "CREATE EXTENSION IF NOT EXISTS supabase_vault WITH SCHEMA vault;",
+      'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;',
+      "",
+    ].join("\n");
+    const adapted = adaptRecoveryExtensionSql(source);
+    expect(adapted.sql).toContain(
+      "CREATE EXTENSION IF NOT EXISTS supabase_vault WITH SCHEMA vault VERSION '0.3.1';",
+    );
+    expect(adapted.sql).toContain(
+      "CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions VERSION '1.11';",
+    );
+    expect(adapted.proof).toEqual(expectedExtensionSqlPortabilityProof());
+  });
+
+  test.each([
+    "CREATE EXTENSION IF NOT EXISTS attacker_extension WITH SCHEMA public;",
+    "CREATE EXTENSION IF NOT EXISTS supabase_vault WITH SCHEMA public;",
+    "CREATE EXTENSION supabase_vault WITH SCHEMA vault;",
+  ])("rejects unknown or mismatched extension SQL: %s", (statement) => {
+    const supported = [
+      "CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions;",
+      "CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;",
+      "CREATE EXTENSION IF NOT EXISTS supabase_vault WITH SCHEMA vault;",
+      'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;',
+    ];
+    supported[2] = statement;
+    expect(() =>
+      adaptRecoveryExtensionSql(`${supported.join("\n")}\n`),
+    ).toThrow(/unknown or mismatched CREATE EXTENSION/);
+  });
+
+  test("rejects missing and repeated authenticated extension SQL", () => {
+    const supported = [
+      "CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions;",
+      "CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;",
+      "CREATE EXTENSION IF NOT EXISTS supabase_vault WITH SCHEMA vault;",
+      'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;',
+    ];
+    expect(() =>
+      adaptRecoveryExtensionSql(`${supported.slice(1).join("\n")}\n`),
+    ).toThrow(/missing CREATE EXTENSION/);
+    expect(() =>
+      adaptRecoveryExtensionSql(`${[...supported, supported[0]].join("\n")}\n`),
+    ).toThrow(/repeats CREATE EXTENSION/);
+  });
+
+  test.each(["unknown", "version", "schema", "members"] as const)(
+    "rejects unsupported source extension catalog state: %s",
+    (mutation) => {
+      const value = fixture();
+      try {
+        const encryptedCatalog = value.receipt.artifacts.find(
+          (artifact) => artifact.format === "catalog-json",
+        );
+        expect(encryptedCatalog).toBeDefined();
+        const snapshot = {
+          extensions: OT_PRODUCTION_RECOVERY_SUPPORTED_EXTENSIONS.map(
+            ({ portability: _ignored, ...extension }) => ({ ...extension }),
+          ) as Array<{
+            extname: string;
+            extversion: string;
+            schema_name: string;
+          }>,
+          managed_extension_members:
+            OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_MEMBERS.map((row) => ({
+              extname: "supabase_vault",
+              ...row,
+            })),
+          managed_extension_relations: [],
+          managed_extension_columns: [],
+          managed_extension_functions: [],
+          managed_extension_indexes: [],
+          managed_extension_constraints: [],
+          managed_extension_config: [],
+          managed_extension_acls: [],
+        };
+        if (mutation === "unknown")
+          snapshot.extensions.push({
+            extname: "unknown_extension",
+            extversion: "1.0",
+            schema_name: "public",
+          });
+        if (mutation === "version")
+          snapshot.extensions[3]!.extversion = "0.3.0";
+        if (mutation === "schema")
+          snapshot.extensions[3]!.schema_name = "public";
+        if (mutation === "members") snapshot.managed_extension_members.pop();
+        expect(() => recoveryExtensionPortability(snapshot)).toThrow(
+          /unsupported/,
+        );
+      } finally {
+        fs.rmSync(value.directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("pins the checked-in managed extension fixture bytes", () => {
+    expect(() => assertManagedExtensionFixtureSource()).not.toThrow();
+  });
+
+  test("stages only exclusive hash-pinned read-only fixture files and removes atomically", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ot-extension-stage-"));
+    try {
+      const shared = path.join(root, "share");
+      const extension = path.join(shared, "extension");
+      fs.mkdirSync(extension, { recursive: true, mode: 0o700 });
+      const pgConfig = path.join(root, "pg_config");
+      fs.writeFileSync(
+        pgConfig,
+        `#!/bin/sh\ncase "$1" in\n  --version) printf '%s\\n' 'PostgreSQL 17.11';;\n  --sharedir) printf '%s\\n' '${shared}';;\n  *) exit 1;;\nesac\n`,
+        { mode: 0o700 },
+      );
+      stageManagedExtensionFixture({ action: "install", pgConfig });
+      for (const name of [
+        "supabase_vault.control",
+        "supabase_vault--0.3.1.sql",
+      ])
+        expect(fs.statSync(path.join(extension, name)).mode & 0o777).toBe(
+          0o444,
+        );
+      expect(() =>
+        stageManagedExtensionFixture({ action: "install", pgConfig }),
+      ).toThrow();
+
+      const changed = path.join(extension, "supabase_vault.control");
+      fs.chmodSync(changed, 0o644);
+      fs.appendFileSync(changed, "# tampered\n");
+      expect(() =>
+        stageManagedExtensionFixture({ action: "remove", pgConfig }),
+      ).toThrow(/Refusing to remove mismatched/);
+      expect(
+        fs.existsSync(path.join(extension, "supabase_vault--0.3.1.sql")),
+      ).toBe(true);
+
+      fs.copyFileSync(
+        path.join(process.cwd(), "fixtures/postgresql/supabase_vault.control"),
+        changed,
+      );
+      fs.chmodSync(changed, 0o444);
+      stageManagedExtensionFixture({ action: "remove", pgConfig });
+      expect(fs.readdirSync(extension)).toEqual([]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("rejects pre-portability v1 backup receipts", () => {
