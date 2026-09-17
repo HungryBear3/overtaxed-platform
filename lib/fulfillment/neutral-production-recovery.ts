@@ -8,9 +8,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const OT_PRODUCTION_RECOVERY_SCHEMA =
-  "ot.neutral-production-recovery.v1" as const;
+  "ot.neutral-production-recovery.v2" as const;
 export const OT_PRODUCTION_RESTORE_SCHEMA =
-  "ot.neutral-production-restore-rehearsal.v1" as const;
+  "ot.neutral-production-restore-rehearsal.v2" as const;
 export const OT_PRODUCTION_REHEARSAL_SENTINEL_SCHEMA =
   "ot.neutral-production-rehearsal-sentinel.v1" as const;
 export const OT_PRODUCTION_RECOVERY_RECEIPT_VAR =
@@ -20,12 +20,22 @@ export const OT_PRODUCTION_RECOVERY_AUTH_KEY_VAR =
 export const OT_PRODUCTION_RECOVERY_PASSPHRASE_VAR =
   "OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE" as const;
 export const OT_PRODUCTION_RECOVERY_MAX_AGE_MINUTES = 60;
+// Keep this singleton: normalizing multiple grantors would collapse distinct
+// pg_auth_members rows and make the catalog proof ambiguous.
+export const OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS = [
+  "supabase_admin",
+] as const;
+export const OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR =
+  "__ot_managed_source_grantor_normalization_sentinel_not_a_postgresql_role__" as const;
+export const OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY =
+  "supabase-managed-grantor-v1" as const;
 
 export const OT_PRODUCTION_RECOVERY_RELEVANT_ROLES = [
   "postgres",
   "anon",
   "authenticated",
   "service_role",
+  "supabase_admin",
   "ot_prod_app",
   "ot_prod_neutral_runtime",
   "ot_prod_neutral_delivery",
@@ -44,13 +54,18 @@ with role_rows as (
   from pg_roles where rolname = any($1::text[]) order by rolname
 ), membership_rows as (
   select granted.rolname granted_role, member.rolname member_role,
-         grantor.rolname grantor_role, m.admin_option, m.inherit_option, m.set_option
+         case when grantor.rolname = any($2::text[])
+              then '${OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR}'
+              else grantor.rolname::text end grantor_role,
+         m.admin_option, m.inherit_option, m.set_option
   from pg_auth_members m
   join pg_roles granted on granted.oid=m.roleid
   join pg_roles member on member.oid=m.member
   join pg_roles grantor on grantor.oid=m.grantor
-  where granted.rolname = any($1::text[]) or member.rolname = any($1::text[])
-  order by 1,2,3
+  where granted.rolname = any($1::text[])
+     or member.rolname = any($1::text[])
+     or grantor.rolname = any($2::text[])
+  order by 1,2,3,4,5,6
 ), default_acl_rows as (
   select owner.rolname owner_role, coalesce(n.nspname,'') schema_name,
          d.defaclobjtype object_type, coalesce(d.defaclacl::text,'') acl
@@ -105,7 +120,7 @@ select jsonb_build_object(
   'public_schema_owner', pg_get_userbyid(n.nspowner),
   'public_schema_acl', coalesce(n.nspacl::text,''),
   'roles', coalesce((select jsonb_agg(to_jsonb(role_rows) order by rolname) from role_rows),'[]'::jsonb),
-  'memberships', coalesce((select jsonb_agg(to_jsonb(membership_rows) order by granted_role,member_role,grantor_role) from membership_rows),'[]'::jsonb),
+  'memberships', coalesce((select jsonb_agg(to_jsonb(membership_rows) order by granted_role,member_role,grantor_role collate "C",admin_option,inherit_option,set_option) from membership_rows),'[]'::jsonb),
   'default_acls', coalesce((select jsonb_agg(to_jsonb(default_acl_rows) order by owner_role,schema_name,object_type,acl) from default_acl_rows),'[]'::jsonb),
   'relations', coalesce((select jsonb_agg(to_jsonb(relation_rows) order by relname,relkind) from relation_rows),'[]'::jsonb),
   'column_acls', coalesce((select jsonb_agg(to_jsonb(column_acl_rows) order by relname,attname) from column_acl_rows),'[]'::jsonb),
@@ -142,6 +157,12 @@ export type ProductionRecoveryReceipt = {
   };
   artifacts: RecoveryArtifact[];
   catalogDigest: string;
+  roleMembershipPortability: {
+    policy: typeof OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY;
+    sourceGrantors: [(typeof OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS)[number]];
+    normalizedGrantor: typeof OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR;
+    managedMembershipCount: number;
+  };
   authenticator: string;
 };
 
@@ -154,6 +175,13 @@ export type RestoreRehearsalReceipt = {
   artifactPlaintextSha256: Record<string, string>;
   sourceCatalogDigest: string;
   restoredCatalogDigest: string;
+  roleMembershipPortability: {
+    policy: typeof OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY;
+    authenticatedSourceCount: number;
+    pristineTargetCount: number;
+    adaptedStatementCount: number;
+    adaptedRolesSha256: string;
+  };
   verified: true;
   clusterSystemIdentifier: string;
   clusterSentinelNonce: string;
@@ -175,12 +203,118 @@ export type RehearsalClusterSentinel = {
 const HEX = /^[0-9a-f]{64}$/;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SQL_IDENTIFIER = String.raw`(?:"(?:[^"]|"")*"|[a-z_][a-z0-9_$]*)`;
+const ROLE_MEMBERSHIP_GRANT = new RegExp(
+  String.raw`^GRANT (?<granted>${SQL_IDENTIFIER}) TO (?<member>${SQL_IDENTIFIER})(?: WITH (?<options>(?:ADMIN OPTION|INHERIT (?:TRUE|FALSE)|SET (?:TRUE|FALSE))(?:, (?:ADMIN OPTION|INHERIT (?:TRUE|FALSE)|SET (?:TRUE|FALSE)))*))? GRANTED BY (?<grantor>${SQL_IDENTIFIER});$`,
+);
 
 export const sha256 = (value: Buffer | string): string =>
   createHash("sha256").update(value).digest("hex");
 
 export const canonicalJson = (value: unknown): string =>
   `${JSON.stringify(sortJson(value), null, 2)}\n`;
+
+function sqlIdentifierValue(identifier: string): string {
+  return identifier.startsWith('"')
+    ? identifier.slice(1, -1).replaceAll('""', '"')
+    : identifier;
+}
+
+/**
+ * PostgreSQL 17 cannot replay some Supabase-managed membership rows with an
+ * explicit `GRANTED BY supabase_admin`: the legacy managed grantor lacks the
+ * ADMIN edge that stock PostgreSQL now requires. The edge and every option are
+ * portable; only that explicit grantor metadata is not.
+ *
+ * This adapter accepts only pg_dumpall's strict, standalone membership form,
+ * removes only the exact managed suffix, and leaves every other grantor and
+ * every membership option byte-for-byte unchanged. The caller must compare the
+ * adapted count with the independently captured normalized source catalog.
+ */
+export function adaptManagedRoleMembershipGrantors(input: Buffer): {
+  bytes: Buffer;
+  managedMembershipCount: number;
+} {
+  const source = new TextDecoder("utf-8", { fatal: true }).decode(input);
+  let managedMembershipCount = 0;
+  const output = source
+    .split(/(?<=\n)/)
+    .map((line) => {
+      const newline = line.endsWith("\r\n")
+        ? "\r\n"
+        : line.endsWith("\n")
+          ? "\n"
+          : "";
+      const statement = newline ? line.slice(0, -newline.length) : line;
+      // pg_dumpall emits membership statements in canonical uppercase GRANT
+      // form. Other statements may legitimately contain the text
+      // "GRANTED BY" inside a role comment or ALTER ROLE ... SET value and
+      // must remain opaque. Once a canonical GRANT mentions GRANTED BY,
+      // however, require the entire line to be the one supported membership
+      // grammar so a second statement or trailing payload cannot be hidden.
+      if (!statement.startsWith("GRANT ")) return line;
+      if (!/\bGRANTED\s+BY\b/i.test(statement)) return line;
+      const match = ROLE_MEMBERSHIP_GRANT.exec(statement);
+      if (!match?.groups)
+        throw new Error(
+          "Role backup contains an ambiguous GRANTED BY statement",
+        );
+      const grantor = sqlIdentifierValue(match.groups.grantor!);
+      if (!OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS.includes(grantor as never))
+        return line;
+      managedMembershipCount += 1;
+      const suffix = ` GRANTED BY ${match.groups.grantor};`;
+      if (!statement.endsWith(suffix))
+        throw new Error(
+          "Managed role membership grantor suffix is not canonical",
+        );
+      return `${statement.slice(0, -suffix.length)};${newline}`;
+    })
+    .join("");
+  return {
+    bytes: Buffer.from(output, "utf8"),
+    managedMembershipCount,
+  };
+}
+
+export function countNormalizedManagedMemberships(snapshot: unknown): number {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot))
+    throw new Error("Recovery catalog snapshot is invalid");
+  const memberships = (snapshot as { memberships?: unknown }).memberships;
+  if (!Array.isArray(memberships))
+    throw new Error("Recovery catalog memberships are invalid");
+  return memberships.filter((membership) => {
+    if (
+      !membership ||
+      typeof membership !== "object" ||
+      Array.isArray(membership)
+    )
+      throw new Error("Recovery catalog membership row is invalid");
+    return (
+      (membership as { grantor_role?: unknown }).grantor_role ===
+      OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR
+    );
+  }).length;
+}
+
+export function assertManagedRoleMembershipPortabilityCounts(input: {
+  authenticatedSourceCount: number;
+  sourceCatalogCount: number;
+  pristineTargetCount: number;
+  adaptedStatementCount: number;
+}): void {
+  for (const [name, value] of Object.entries(input))
+    if (!Number.isSafeInteger(value) || value < 0)
+      throw new Error(`Managed role membership ${name} is invalid`);
+  if (
+    input.sourceCatalogCount !== input.authenticatedSourceCount ||
+    input.pristineTargetCount + input.adaptedStatementCount !==
+      input.sourceCatalogCount
+  )
+    throw new Error(
+      `Managed role membership portability count does not match the authenticated source catalog and pristine target (authenticated=${input.authenticatedSourceCount} source=${input.sourceCatalogCount} pristine=${input.pristineTargetCount} adapted=${input.adaptedStatementCount})`,
+    );
+}
 
 export function assertFreshRehearsalSentinelTimestamp(
   createdAt: string,
@@ -321,6 +455,21 @@ export function assertRecoveryReceipt(
   }
   if (!receipt.catalogDigest || !HEX.test(receipt.catalogDigest))
     throw new Error("Production recovery catalog digest is invalid");
+  const portability = receipt.roleMembershipPortability;
+  if (
+    portability?.policy !== OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY ||
+    portability.normalizedGrantor !==
+      OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR ||
+    !Array.isArray(portability.sourceGrantors) ||
+    portability.sourceGrantors.length !== 1 ||
+    portability.sourceGrantors[0] !==
+      OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS[0] ||
+    !Number.isSafeInteger(portability.managedMembershipCount) ||
+    portability.managedMembershipCount < 0
+  )
+    throw new Error(
+      "Production recovery role membership portability evidence is invalid",
+    );
   if (!receipt.authenticator || !HEX.test(receipt.authenticator))
     throw new Error("Production recovery receipt authenticator is invalid");
 }

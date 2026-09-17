@@ -9,7 +9,9 @@ import {
   OT_PRODUCTION_RECOVERY_MAX_AGE_MINUTES,
   OT_PRODUCTION_RECOVERY_PASSPHRASE_VAR,
   OT_PRODUCTION_RECOVERY_RECEIPT_VAR,
+  OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY,
   OT_PRODUCTION_RESTORE_SCHEMA,
+  adaptManagedRoleMembershipGrantors,
   assertReceiptAuthenticator,
   assertRecoveryReceipt,
   sha256,
@@ -144,10 +146,11 @@ export function materializePrivateCopy(bytes: Buffer): {
   };
 }
 
-async function decryptAndHash(
+async function decryptArtifact(
   file: string,
   passphrase: string,
-): Promise<string> {
+  capturePlaintext = false,
+): Promise<{ plaintextSha256: string; plaintext?: Buffer }> {
   const homedir = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gpg-"));
   fs.chmodSync(homedir, 0o700);
   try {
@@ -177,17 +180,27 @@ async function decryptAndHash(
       },
     );
     const hash = createHash("sha256");
+    const plaintextChunks: Buffer[] = [];
     let error = "";
-    child.stdout!.on("data", (chunk: Buffer) => hash.update(chunk));
+    child.stdout!.on("data", (chunk: Buffer) => {
+      hash.update(chunk);
+      if (capturePlaintext) plaintextChunks.push(Buffer.from(chunk));
+    });
     child.stderr!.setEncoding("utf8");
     child.stderr!.on("data", (chunk) => (error += chunk));
     (child.stdio[3] as NodeJS.WritableStream).end(`${passphrase}\n`);
     const [code] = (await once(child, "close")) as [number];
-    if (code !== 0)
+    if (code !== 0) {
+      for (const chunk of plaintextChunks) chunk.fill(0);
       throw new Error(
         `Production recovery artifact is not decryptable: ${error.trim()}`,
       );
-    return hash.digest("hex");
+    }
+    const plaintextSha256 = hash.digest("hex");
+    if (!capturePlaintext) return { plaintextSha256 };
+    const plaintext = Buffer.concat(plaintextChunks);
+    for (const chunk of plaintextChunks) chunk.fill(0);
+    return { plaintextSha256, plaintext };
   } finally {
     fs.rmSync(homedir, { recursive: true, force: true });
   }
@@ -241,6 +254,8 @@ export async function assertProductionRecoveryGate(input: {
   if (age < 0 || age > OT_PRODUCTION_RECOVERY_MAX_AGE_MINUTES * 60_000)
     throw new Error("Production recovery receipt is stale or from the future");
   const directory = path.dirname(path.resolve(receiptPath));
+  let independentlyAdaptedRolesSha256: string | undefined;
+  let independentlyAdaptedStatementCount: number | undefined;
   for (const artifact of receipt.artifacts) {
     const absolute = path.join(directory, artifact.file);
     const bytes = readProtectedFile(absolute);
@@ -254,10 +269,32 @@ export async function assertProductionRecoveryGate(input: {
       );
     const privateCopy = materializePrivateCopy(bytes);
     try {
-      if (
-        (await decryptAndHash(privateCopy.file, passphrase)) !==
-        artifact.plaintextSha256
-      )
+      const decrypted = await decryptArtifact(
+        privateCopy.file,
+        passphrase,
+        artifact.format === "postgres-roles-sql",
+      );
+      if (artifact.format === "postgres-roles-sql") {
+        if (!decrypted.plaintext)
+          throw new Error("Production recovery roles artifact was not read");
+        try {
+          if (decrypted.plaintextSha256 !== artifact.plaintextSha256)
+            throw new Error(
+              `Production recovery artifact plaintext changed: ${artifact.file}`,
+            );
+          const adapted = adaptManagedRoleMembershipGrantors(
+            decrypted.plaintext,
+          );
+          try {
+            independentlyAdaptedRolesSha256 = sha256(adapted.bytes);
+            independentlyAdaptedStatementCount = adapted.managedMembershipCount;
+          } finally {
+            adapted.bytes.fill(0);
+          }
+        } finally {
+          decrypted.plaintext.fill(0);
+        }
+      } else if (decrypted.plaintextSha256 !== artifact.plaintextSha256)
         throw new Error(
           `Production recovery artifact plaintext changed: ${artifact.file}`,
         );
@@ -265,7 +302,16 @@ export async function assertProductionRecoveryGate(input: {
       privateCopy.cleanup();
     }
   }
+  if (
+    independentlyAdaptedRolesSha256 === undefined ||
+    independentlyAdaptedStatementCount === undefined
+  )
+    throw new Error(
+      "Production recovery roles portability evidence is incomplete",
+    );
   const receiptDigest = sha256(receiptBytes);
+  let adaptedRolesSha256: string | undefined;
+  let adaptedStatementCount: number | undefined;
   for (const major of [17, 18] as const) {
     const parsed = JSON.parse(
       readProtectedFile(
@@ -289,6 +335,31 @@ export async function assertProductionRecoveryGate(input: {
       throw new Error(
         `Production recovery PostgreSQL ${major} cluster proof is incomplete`,
       );
+    const portability = parsed.roleMembershipPortability;
+    if (
+      portability?.policy !== OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY ||
+      portability.authenticatedSourceCount !==
+        receipt.roleMembershipPortability.managedMembershipCount ||
+      !Number.isSafeInteger(portability.pristineTargetCount) ||
+      portability.pristineTargetCount < 0 ||
+      !Number.isSafeInteger(portability.adaptedStatementCount) ||
+      portability.adaptedStatementCount < 0 ||
+      portability.pristineTargetCount + portability.adaptedStatementCount !==
+        portability.authenticatedSourceCount ||
+      !/^[0-9a-f]{64}$/.test(portability.adaptedRolesSha256) ||
+      portability.adaptedRolesSha256 !== independentlyAdaptedRolesSha256 ||
+      portability.adaptedStatementCount !==
+        independentlyAdaptedStatementCount ||
+      (adaptedRolesSha256 !== undefined &&
+        portability.adaptedRolesSha256 !== adaptedRolesSha256) ||
+      (adaptedStatementCount !== undefined &&
+        portability.adaptedStatementCount !== adaptedStatementCount)
+    )
+      throw new Error(
+        `Production recovery PostgreSQL ${major} role membership portability proof is invalid`,
+      );
+    adaptedRolesSha256 = portability.adaptedRolesSha256;
+    adaptedStatementCount = portability.adaptedStatementCount;
     const restoredAt = parsed.restoredAt
       ? Date.parse(parsed.restoredAt)
       : Number.NaN;

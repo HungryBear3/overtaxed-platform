@@ -5,10 +5,16 @@ import os from "node:os";
 import path from "node:path";
 import {
   OT_PRODUCTION_RECOVERY_RECEIPT_VAR,
+  OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
+  OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR,
+  OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY,
   OT_PRODUCTION_RECOVERY_SCHEMA,
   OT_PRODUCTION_RESTORE_SCHEMA,
+  adaptManagedRoleMembershipGrantors,
   authenticateReceipt,
   assertFreshRehearsalSentinelTimestamp,
+  assertManagedRoleMembershipPortabilityCounts,
+  assertRecoveryReceipt,
   canonicalJson,
   sha256,
   type ProductionRecoveryReceipt,
@@ -29,6 +35,10 @@ const PASSPHRASE = "unit-recovery-passphrase-at-least-24";
 function fixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gate-"));
   fs.chmodSync(directory, 0o700);
+  const rolesPlaintext = Buffer.from(
+    "GRANT anon TO authenticator WITH INHERIT TRUE GRANTED BY supabase_admin;\n",
+  );
+  const adaptedRoles = adaptManagedRoleMembershipGrantors(rolesPlaintext);
   const formats = [
     ["database.dump.gpg", "postgres-custom"],
     ["roles.sql.gpg", "postgres-roles-sql"],
@@ -48,7 +58,10 @@ function fixture() {
       plaintextAtRest: false,
     },
     artifacts: formats.map(([file, format], index) => {
-      const plain = Buffer.from(`plain-${index}`);
+      const plain =
+        format === "postgres-roles-sql"
+          ? rolesPlaintext
+          : Buffer.from(`plain-${index}`);
       const absolute = path.join(directory, file);
       execFileSync(
         "gpg",
@@ -84,6 +97,12 @@ function fixture() {
       };
     }),
     catalogDigest: sha256("catalog"),
+    roleMembershipPortability: {
+      policy: OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY,
+      sourceGrantors: [OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS[0]],
+      normalizedGrantor: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR,
+      managedMembershipCount: 1,
+    },
     authenticator: "",
   };
   receipt.authenticator = authenticateReceipt(receipt, AUTH);
@@ -105,6 +124,13 @@ function fixture() {
       ),
       sourceCatalogDigest: receipt.catalogDigest,
       restoredCatalogDigest: receipt.catalogDigest,
+      roleMembershipPortability: {
+        policy: OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY,
+        authenticatedSourceCount: 1,
+        pristineTargetCount: 0,
+        adaptedStatementCount: 1,
+        adaptedRolesSha256: sha256(adaptedRoles.bytes),
+      },
       verified: true as const,
       clusterSystemIdentifier: `system-${major}`,
       clusterSentinelNonce: `nonce-${major}`,
@@ -126,6 +152,16 @@ const envFor = (receiptPath: string) => ({
   OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE: PASSPHRASE,
 });
 
+function rewriteAuthenticatedJson(
+  file: string,
+  mutate: (value: Record<string, any>) => void,
+): void {
+  const value = JSON.parse(fs.readFileSync(file, "utf8"));
+  mutate(value);
+  value.authenticator = authenticateReceipt(value, AUTH);
+  fs.writeFileSync(file, canonicalJson(value), { mode: 0o600 });
+}
+
 describe("Production no-PITR recovery gate", () => {
   test("accepts authenticated, decryptable evidence with both restore proofs", async () => {
     const value = fixture();
@@ -142,6 +178,100 @@ describe("Production no-PITR recovery gate", () => {
       fs.rmSync(value.directory, { recursive: true, force: true });
     }
   });
+
+  test("rejects mutually agreeing restore proofs that do not match independently adapted roles bytes", async () => {
+    const value = fixture();
+    try {
+      for (const major of [17, 18] as const)
+        rewriteAuthenticatedJson(
+          path.join(value.directory, `restore-rehearsal-pg${major}.json`),
+          (proof) => {
+            proof.roleMembershipPortability.pristineTargetCount = 1;
+            proof.roleMembershipPortability.adaptedStatementCount = 0;
+            proof.roleMembershipPortability.adaptedRolesSha256 = sha256(
+              "mutually-agreeing-forgery",
+            );
+          },
+        );
+      await expect(
+        assertProductionRecoveryGate({
+          env: envFor(value.receiptPath),
+          projectRef: PROJECT,
+          markerInstanceId: INSTANCE,
+          now: new Date("2026-09-17T18:30:00Z"),
+        }),
+      ).rejects.toThrow(/portability proof is invalid/);
+    } finally {
+      fs.rmSync(value.directory, { recursive: true, force: true });
+    }
+  });
+
+  test.each(["adapted-count", "adapted-digest"] as const)(
+    "rejects PostgreSQL 18 portability evidence that differs from PostgreSQL 17: %s",
+    async (mutation) => {
+      const value = fixture();
+      try {
+        rewriteAuthenticatedJson(
+          path.join(value.directory, "restore-rehearsal-pg18.json"),
+          (proof) => {
+            if (mutation === "adapted-count") {
+              proof.roleMembershipPortability.pristineTargetCount = 1;
+              proof.roleMembershipPortability.adaptedStatementCount = 0;
+            } else {
+              proof.roleMembershipPortability.adaptedRolesSha256 = "0".repeat(
+                64,
+              );
+            }
+          },
+        );
+        await expect(
+          assertProductionRecoveryGate({
+            env: envFor(value.receiptPath),
+            projectRef: PROJECT,
+            markerInstanceId: INSTANCE,
+            now: new Date("2026-09-17T18:30:00Z"),
+          }),
+        ).rejects.toThrow(/portability proof is invalid/);
+      } finally {
+        fs.rmSync(value.directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test.each(["missing", "tampered"] as const)(
+    "rejects %s authenticated backup portability evidence",
+    async (mutation) => {
+      const value = fixture();
+      try {
+        rewriteAuthenticatedJson(value.receiptPath, (receipt) => {
+          if (mutation === "missing") delete receipt.roleMembershipPortability;
+          else receipt.roleMembershipPortability.managedMembershipCount = 2;
+        });
+        if (mutation === "tampered") {
+          const changedReceiptDigest = sha256(
+            fs.readFileSync(value.receiptPath),
+          );
+          for (const major of [17, 18] as const)
+            rewriteAuthenticatedJson(
+              path.join(value.directory, `restore-rehearsal-pg${major}.json`),
+              (proof) => {
+                proof.backupReceiptSha256 = changedReceiptDigest;
+              },
+            );
+        }
+        await expect(
+          assertProductionRecoveryGate({
+            env: envFor(value.receiptPath),
+            projectRef: PROJECT,
+            markerInstanceId: INSTANCE,
+            now: new Date("2026-09-17T18:30:00Z"),
+          }),
+        ).rejects.toThrow(/portability/);
+      } finally {
+        fs.rmSync(value.directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("rejects forged receipt fields even when attacker recomputes plain SHA-256 fields", async () => {
     const value = fixture();
@@ -170,6 +300,7 @@ describe("Production no-PITR recovery gate", () => {
       "cipher",
       "stale",
       "matrix",
+      "portability",
     ] as const) {
       const value = fixture();
       try {
@@ -184,6 +315,16 @@ describe("Production no-PITR recovery gate", () => {
           );
         if (mutation === "matrix")
           fs.rmSync(path.join(value.directory, "restore-rehearsal-pg18.json"));
+        if (mutation === "portability") {
+          const proofPath = path.join(
+            value.directory,
+            "restore-rehearsal-pg17.json",
+          );
+          const proof = JSON.parse(fs.readFileSync(proofPath, "utf8"));
+          proof.roleMembershipPortability.adaptedStatementCount = 2;
+          proof.authenticator = authenticateReceipt(proof, AUTH);
+          fs.writeFileSync(proofPath, canonicalJson(proof), { mode: 0o600 });
+        }
         const now =
           mutation === "stale"
             ? new Date("2026-09-17T19:00:01Z")
@@ -206,6 +347,111 @@ describe("Production no-PITR recovery gate", () => {
     expect(canonicalJson({ z: 1, a: { y: 2, b: 3 } })).toBe(
       canonicalJson({ a: { b: 3, y: 2 }, z: 1 }),
     );
+  });
+
+  test("rejects pre-portability v1 backup receipts", () => {
+    const value = fixture();
+    try {
+      expect(() =>
+        assertRecoveryReceipt({
+          ...value.receipt,
+          schema: "ot.neutral-production-recovery.v1",
+        }),
+      ).toThrow(/schema is unknown/);
+    } finally {
+      fs.rmSync(value.directory, { recursive: true, force: true });
+    }
+  });
+
+  test("adapts only strict Supabase-managed membership grantors and preserves every option", () => {
+    const source = Buffer.from(
+      [
+        "CREATE ROLE anon;",
+        "GRANT anon TO authenticator WITH INHERIT TRUE GRANTED BY supabase_admin;",
+        'GRANT \"Case Role\" TO \"Case Member\" WITH ADMIN OPTION, INHERIT FALSE, SET FALSE GRANTED BY \"supabase_admin\";',
+        "GRANT authenticated TO service_role WITH SET FALSE GRANTED BY postgres;",
+        "",
+      ].join("\n"),
+    );
+    const adapted = adaptManagedRoleMembershipGrantors(source);
+    expect(adapted.managedMembershipCount).toBe(2);
+    expect(adapted.bytes.toString("utf8")).toBe(
+      [
+        "CREATE ROLE anon;",
+        "GRANT anon TO authenticator WITH INHERIT TRUE;",
+        'GRANT \"Case Role\" TO \"Case Member\" WITH ADMIN OPTION, INHERIT FALSE, SET FALSE;',
+        "GRANT authenticated TO service_role WITH SET FALSE GRANTED BY postgres;",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test.each([
+    "GRANT anon, authenticated TO authenticator GRANTED BY supabase_admin;",
+    "GRANT SELECT ON secrets TO authenticator GRANTED BY supabase_admin;",
+    "GRANT anon TO authenticator GRANTED BY supabase_admin; -- trailing",
+    "GRANT anon TO authenticator GRANTED BY supabase_admin; GRANT authenticated TO service_role;",
+  ])("rejects ambiguous managed grant syntax: %s", (statement) => {
+    expect(() =>
+      adaptManagedRoleMembershipGrantors(Buffer.from(`${statement}\n`)),
+    ).toThrow(/ambiguous GRANTED BY/);
+  });
+
+  test("passes non-GRANT statements containing GRANTED BY text through byte-for-byte", () => {
+    const source = Buffer.from(
+      [
+        "COMMENT ON ROLE anon IS 'managed by text: GRANTED BY supabase_admin';",
+        "ALTER ROLE anon SET application_name = 'GRANTED BY supabase_admin';",
+        "grant anon to authenticator granted by supabase_admin;",
+        "",
+      ].join("\n"),
+    );
+    const adapted = adaptManagedRoleMembershipGrantors(source);
+    expect(adapted.managedMembershipCount).toBe(0);
+    expect(adapted.bytes).toEqual(source);
+  });
+
+  test("does not hide a well-formed arbitrary explicit grantor", () => {
+    const source = Buffer.from(
+      "GRANT anon TO authenticator WITH INHERIT TRUE GRANTED BY attacker_admin;\n",
+    );
+    const adapted = adaptManagedRoleMembershipGrantors(source);
+    expect(adapted.managedMembershipCount).toBe(0);
+    expect(adapted.bytes).toEqual(source);
+  });
+
+  test("binds managed dump adaptation to source and pristine-target catalog counts", () => {
+    expect(() =>
+      assertManagedRoleMembershipPortabilityCounts({
+        authenticatedSourceCount: 24,
+        sourceCatalogCount: 24,
+        pristineTargetCount: 3,
+        adaptedStatementCount: 21,
+      }),
+    ).not.toThrow();
+    for (const mismatch of [
+      {
+        authenticatedSourceCount: 23,
+        sourceCatalogCount: 24,
+        pristineTargetCount: 3,
+        adaptedStatementCount: 21,
+      },
+      {
+        authenticatedSourceCount: 24,
+        sourceCatalogCount: 24,
+        pristineTargetCount: 3,
+        adaptedStatementCount: 20,
+      },
+      {
+        authenticatedSourceCount: 24,
+        sourceCatalogCount: 24,
+        pristineTargetCount: 4,
+        adaptedStatementCount: 21,
+      },
+    ])
+      expect(() =>
+        assertManagedRoleMembershipPortabilityCounts(mismatch),
+      ).toThrow(/portability count/);
   });
 
   test("rejects invalid, future, and stale rehearsal sentinel timestamps", () => {

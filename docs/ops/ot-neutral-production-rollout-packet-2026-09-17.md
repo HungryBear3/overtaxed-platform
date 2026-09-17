@@ -261,6 +261,18 @@ read-only at mode 0400 before the command can report success. Password hashes
 are deliberately excluded from `roles.sql.gpg`; existing credentials remain in
 the secret manager and are never copied into a backup artifact.
 
+The v2 recovery receipt also binds the exact count of legacy Supabase-managed
+role memberships whose source grantor is `supabase_admin`. PostgreSQL 17 cannot
+replay those legacy rows with `GRANTED BY supabase_admin` when that managed
+grantor lacks the ADMIN edge now required by stock PostgreSQL. The encrypted
+roles artifact remains the unmodified `pg_dumpall` output. Before any restore
+mutation, the rehearsal decrypts and authenticates both that artifact and the
+source catalog, accepts only strict standalone pg_dumpall role-membership
+statements, and removes only the exact trailing managed-grantor clause in
+memory. Every granted role, member role, ADMIN/INHERIT/SET option, duplicate,
+and statement count remains unchanged. A different explicit grantor remains
+byte-for-byte intact; malformed or ambiguous `GRANTED BY` syntax is refused.
+
 For each newly initialized PostgreSQL 17 and 18 target, create only a temporary
 superuser, `postgres`, and a database named
 `ot_neutral_recovery_rehearsal_*`. Set the target URL, expected superuser and a
@@ -343,8 +355,21 @@ session and one transaction, so a swapped loopback listener cannot pass a Node
 check and receive mutations on a later connection. It restores roles and
 memberships first; restores the database in that transaction; then
 proves decrypted hashes and the exact relevant role/public-schema/default-ACL
-catalog digest. It writes `restore-rehearsal-pg17.json` or
-`restore-rehearsal-pg18.json` beside the backup receipt.
+catalog digest. Catalog comparison normalizes grantor identity only for the
+authenticated managed set: source `supabase_admin` and the disposable target's
+temporary superuser share one fixed sentinel label. All memberships granted by
+either normalized grantor are included even when neither endpoint is otherwise
+in the relevant-role set; all other grantor identities remain exact. The
+signed source count must equal the pristine target's pre-existing normalized
+initdb membership count plus the adapted `pg_dumpall` statement count before the
+transaction can begin. This accounts for bootstrap-owned `pg_*` memberships
+that exist in both clusters but are intentionally absent from pg_dumpall. Each
+v2 restore receipt records the portability policy, authenticated source count,
+pristine-target count, adapted statement count, and SHA-256 of the exact adapted
+roles SQL sent to psql. The apply gate requires both majors to report the same
+adapted digest and rechecks the count equation. It writes
+`restore-rehearsal-pg17.json` or `restore-rehearsal-pg18.json` beside the backup
+receipt.
 
 **Stop gate:** both commands print `PASS ... catalog=verified
 artifacts=verified`; both receipts exist beside the backup receipt. Set
@@ -512,6 +537,15 @@ environment. **Activation is not part of this packet and has no phase here.**
 
 ## Known residuals
 
+- **`roles.sql.gpg` is a raw, encrypted source artifact and requires the scoped
+  grantor portability adapter for stock PostgreSQL restore.** The adapter
+  removes only the terminal `GRANTED BY supabase_admin` clause from canonical,
+  standalone role-membership `GRANT` statements; it leaves comments, role
+  settings, membership options and every non-managed grantor byte-for-byte
+  unchanged. Before apply, the gate decrypts this artifact in memory, reruns
+  the adapter, and requires both PostgreSQL 17 and 18 receipts to prove the
+  same adapted statement count and the SHA-256 of those identical adapted
+  bytes. No decrypted roles file is written to disk.
 - **The logical restore proof is deliberately scoped to state this baseline can
   affect.** The database-level marker is captured and HMAC-bound separately and
   is re-read from Production by the apply verifier. Database-level ACL/config
