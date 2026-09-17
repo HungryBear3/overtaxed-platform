@@ -208,7 +208,7 @@ const BASE_ACLS = new Set([
   ...["ot_neutral_runtime_order","ot_neutral_runtime_payment_binding","ot_neutral_runtime_settlement_reversal"].map(o => ACL("ot_neutral_runtime",o,"SELECT")),
   ACL("ot_neutral_runtime","ot_neutral_customer_zip_attempt","SELECT"), ACL("ot_neutral_runtime","ot_neutral_customer_zip_attempt","INSERT",cols("id","reservation_id","zip_sha256","byte_size","storage_locator","status")), ACL("ot_neutral_runtime","ot_neutral_customer_zip_attempt","UPDATE",cols("status","reason_code","observed_at")),
   ACL("ot_neutral_runtime","ot_neutral_qa_review","SELECT"), ACL("ot_neutral_runtime","ot_neutral_qa_review","INSERT",cols("id","reservation_id","order_id","status","reviewer_key","reviewer_week_start","started_at","policy_version","artifact_sha256","evidence_digest_sha256","payment_binding_sha256","property_binding_fingerprint","updated_at")), ACL("ot_neutral_runtime","ot_neutral_qa_review","UPDATE",cols("status","minutes_spent","reason_code","decided_at","fulfillment_id","customer_artifact_sha256","updated_at")),
-  ACL("ot_neutral_runtime","ot_neutral_refund_work","SELECT"), ACL("ot_neutral_runtime","ot_neutral_refund_work","INSERT",cols("id","qa_review_id","order_id","status","reason_code","payment_binding_sha256","artifact_sha256","updated_at")), ACL("ot_neutral_runtime","ot_neutral_refund_work","UPDATE",cols("status","claimed_by","claimed_at","provider_attempt_key","provider_receipt_id","provider_receipt_sha256","verification_reason","verified_at","confirmed_by","confirmed_at","updated_at")),
+  ACL("ot_neutral_runtime","ot_neutral_refund_work","SELECT"), ACL("ot_neutral_runtime","ot_neutral_refund_work","INSERT",cols("id","qa_review_id","order_id","status","reason_code","payment_binding_sha256","artifact_sha256","updated_at")), ACL("ot_neutral_runtime","ot_neutral_refund_work","UPDATE",cols("status","claimed_by","claimed_at","provider_attempt_key","provider_receipt_id","provider_receipt_sha256","verification_reason","verified_at","confirmed_by","confirmed_at","updated_at","provider_lookup_attempts","last_provider_lookup_at","last_provider_lookup_result")),
   ACL("ot_neutral_runtime","ot_fulfillment","SELECT",cols("id","order_id","kind","status","attempt_count")), ACL("ot_neutral_runtime","ot_fulfillment","INSERT",cols("id","order_id","kind","status","updated_at")),
   ACL("ot_neutral_runtime","ot_fulfillment_artifact","SELECT",cols("fulfillment_id","version","artifact_sha256","byte_size","storage_locator","generator_version","template_version","source_order_id","property_binding_fingerprint")), ACL("ot_neutral_runtime","ot_fulfillment_artifact","INSERT",cols("id","fulfillment_id","version","artifact_sha256","byte_size","storage_locator","generator_version","template_version","generated_at","source_order_id","property_binding_fingerprint")),
   ...["ot_neutral_report_reservation","ot_neutral_qa_review"].map(o => ACL("ot_neutral_app_reader",o,"SELECT", o.endsWith("reservation") ? cols("id","order_id","status","bundle_sha256","policy_version","property_fingerprint","superseded_by_sha256","customer_zip_sha256","customer_zip_byte_size","customer_zip_locator","customer_zip_media_type","customer_zip_filename") : cols("reservation_id","order_id","status","policy_version","artifact_sha256","customer_artifact_sha256","property_binding_fingerprint","fulfillment_id"))),
@@ -246,17 +246,24 @@ export function assertPreviewAuthority(rows: readonly PreviewAuthorityRow[]): vo
  * routines. SECURITY DEFINER execution is therefore impossible by contract. */
 export function assertPreviewEffectiveAcls(rows: readonly PreviewAclRow[]): void {
   const expected = new Set(expectedPreviewAclRows().map(aclKey));
+  const unexpected: string[] = [];
   for (const row of rows) {
     if (row.kind === "routine") {
       if (row.security_definer)
-        throw new Error("Restricted Preview effective ACL inventory is invalid");
+        unexpected.push(`${aclKey(row)}|security-definer`);
       continue;
     }
     const key = aclKey(row);
-    if (row.public_derived || !expected.delete(key))
-      throw new Error("Restricted Preview effective ACL inventory is invalid");
+    if (row.public_derived) unexpected.push(`${key}|PUBLIC-derived`);
+    else if (!expected.delete(key)) unexpected.push(key);
   }
-  if (expected.size) throw new Error("Restricted Preview effective ACL inventory is incomplete");
+  if (unexpected.length || expected.size) {
+    const details = [
+      unexpected.length ? `unexpected=${unexpected.slice(0, 12).join(",")}` : "",
+      expected.size ? `missing=${[...expected].slice(0, 12).join(",")}` : "",
+    ].filter(Boolean).join("; ");
+    throw new Error(`Restricted Preview effective ACL inventory is invalid or incomplete: ${details}`);
+  }
 }
 
 function aclKey(row: PreviewAclRow): string {
@@ -281,6 +288,18 @@ export function expectedPreviewAclRows(): PreviewAclRow[] {
   }
   return rows;
 }
+
+export const PREVIEW_EFFECTIVE_ACL_SQL = `with principals as (select oid,rolname from pg_roles where rolname=any($1::text[])),
+ relations as (select c.oid,n.nspname schema,c.relname,c.relkind,c.relacl,c.relowner from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname<>'information_schema' and n.nspname<>'pg_catalog' and n.nspname!~'^pg_(toast|temp)' and c.relkind=any(array['r','p','v','m','f','S']::"char"[])),
+ candidates as (select p.oid principal_oid,p.rolname role,r.*,v.privilege from principals p cross join relations r cross join lateral (values ('SELECT'),('INSERT'),('UPDATE'),('DELETE'),('TRUNCATE'),('REFERENCES'),('TRIGGER'),('USAGE')) v(privilege)),
+ relation_privileges as (select c.role,c.schema,c.relname object,case when c.relkind='S' then 'sequence' else 'relation' end kind,c.privilege,
+   case when c.relkind='S' then case when c.privilege in ('SELECT','UPDATE','USAGE') then has_sequence_privilege(c.principal_oid,c.oid,c.privilege) else false end else case when c.privilege<>'USAGE' then has_table_privilege(c.principal_oid,c.oid,c.privilege) else false end end table_wide,
+   case when c.relkind='S' or c.privilege not in ('SELECT','INSERT','UPDATE','REFERENCES') then array[]::text[] else coalesce((select array_agg(a.attname order by a.attname) from pg_attribute a where a.attrelid=c.oid and a.attnum>0 and not a.attisdropped and has_column_privilege(c.principal_oid,c.oid,a.attnum,c.privilege)),array[]::text[]) end columns,
+   coalesce((select bool_or(a.grantee=0 and a.privilege_type=c.privilege) from aclexplode(coalesce(c.relacl,acldefault(case when c.relkind='S' then 'S'::"char" else 'r'::"char" end,c.relowner))) a),false) or coalesce((select bool_or(x.grantee=0 and x.privilege_type=c.privilege) from pg_attribute aa cross join lateral aclexplode(case when cardinality(aa.attacl)>0 then aa.attacl end) x where aa.attrelid=c.oid),false) public_derived
+   from candidates c where case when c.relkind='S' then case when c.privilege in ('SELECT','UPDATE','USAGE') then has_sequence_privilege(c.principal_oid,c.oid,c.privilege) else false end else case when c.privilege<>'USAGE' then has_table_privilege(c.principal_oid,c.oid,c.privilege) or (c.privilege in ('SELECT','INSERT','UPDATE','REFERENCES') and exists(select 1 from pg_attribute a where a.attrelid=c.oid and a.attnum>0 and not a.attisdropped and has_column_privilege(c.principal_oid,c.oid,a.attnum,c.privilege))) else false end end),
+ routines as (select p.rolname role,n.nspname schema,format('%I(%s)',x.proname,pg_get_function_identity_arguments(x.oid)) object,'routine' kind,'EXECUTE' privilege,false table_wide,array[]::text[] columns,x.prosecdef security_definer,coalesce((select bool_or(a.grantee=0 and a.privilege_type='EXECUTE') from aclexplode(coalesce(x.proacl,acldefault('f',x.proowner))) a),false) public_derived from principals p cross join pg_proc x join pg_namespace n on n.oid=x.pronamespace where (x.prosecdef or n.nspname~'^(ot|private)' or x.proname~'^ot_') and has_function_privilege(p.oid,x.oid,'EXECUTE'))
+ select role,schema,object,kind,privilege,table_wide,to_json(columns) columns,false security_definer,public_derived from relation_privileges
+ union all select role,schema,object,kind,privilege,table_wide,to_json(columns) columns,security_definer,public_derived from routines order by 1,2,3,4,5`;
 
 export function createPreviewAcceptanceRunId(): string {
   return `ot-accept-${randomUUID()}`;
@@ -347,11 +366,13 @@ function assertUrlIdentity(
   if (typeof config.sslmode !== "string" || config.sslmode.toLowerCase() !== "verify-full" || config.ssl === false)
     throw new Error("Parsed database URL TLS semantics are not verify-full");
   const pooler = typeof config.host === "string" && APPROVED_POOLER_HOSTS.has(config.host);
+  const approvedDirectTarget =
+    config.host === `db.${OT_PREVIEW_PROJECT_REF}.supabase.co` || pooler;
   const expectedUser = pooler
     ? `${expectedRole}.${OT_PREVIEW_PROJECT_REF}`
     : expectedRole;
   if (
-    (direct && config.host !== `db.${OT_PREVIEW_PROJECT_REF}.supabase.co`) ||
+    (direct && !approvedDirectTarget) ||
     (!direct && !pooler) ||
     config.database !== "postgres" ||
     Number(config.port ?? 5432) !== 5432 ||
@@ -440,37 +461,29 @@ export async function provePreviewAcceptanceIdentity(
       [[...AUTHORITY_PRINCIPALS]],
     );
     assertPreviewAuthority(authority.rows as PreviewAuthorityRow[]);
-    const effectiveAcls = await clients[0]!.query(
-      `with principals as (select oid,rolname from pg_roles where rolname=any($1::text[])),
-       relations as (select c.oid,n.nspname schema,c.relname,c.relkind,c.relacl,c.relowner from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname<>'information_schema' and n.nspname<>'pg_catalog' and n.nspname!~'^pg_(toast|temp)' and c.relkind=any(array['r','p','v','m','f','S']::"char"[])),
-       candidates as (select p.oid principal_oid,p.rolname role,r.*,v.privilege from principals p cross join relations r cross join lateral (values ('SELECT'),('INSERT'),('UPDATE'),('DELETE'),('TRUNCATE'),('REFERENCES'),('TRIGGER'),('USAGE')) v(privilege)),
-       relation_privileges as (select c.role,c.schema,c.relname object,case when c.relkind='S' then 'sequence' else 'relation' end kind,c.privilege,
-         case when c.relkind='S' then case when c.privilege in ('SELECT','UPDATE','USAGE') then has_sequence_privilege(c.principal_oid,c.oid,c.privilege) else false end else case when c.privilege<>'USAGE' then has_table_privilege(c.principal_oid,c.oid,c.privilege) else false end end table_wide,
-         case when c.relkind='S' or c.privilege not in ('SELECT','INSERT','UPDATE','REFERENCES') then array[]::text[] else coalesce((select array_agg(a.attname order by a.attname) from pg_attribute a where a.attrelid=c.oid and a.attnum>0 and not a.attisdropped and has_column_privilege(c.principal_oid,c.oid,a.attnum,c.privilege)),array[]::text[]) end columns,
-         coalesce((select bool_or(a.grantee=0 and a.privilege_type=c.privilege) from aclexplode(coalesce(c.relacl,acldefault(case when c.relkind='S' then 'S'::"char" else 'r'::"char" end,c.relowner))) a),false) or coalesce((select bool_or(x.grantee=0 and x.privilege_type=c.privilege) from pg_attribute aa cross join lateral aclexplode(coalesce(aa.attacl,'{}'::aclitem[])) x where aa.attrelid=c.oid),false) public_derived
-         from candidates c where case when c.relkind='S' then case when c.privilege in ('SELECT','UPDATE','USAGE') then has_sequence_privilege(c.principal_oid,c.oid,c.privilege) else false end else case when c.privilege<>'USAGE' then has_table_privilege(c.principal_oid,c.oid,c.privilege) or (c.privilege in ('SELECT','INSERT','UPDATE','REFERENCES') and exists(select 1 from pg_attribute a where a.attrelid=c.oid and a.attnum>0 and not a.attisdropped and has_column_privilege(c.principal_oid,c.oid,a.attnum,c.privilege))) else false end end),
-       routines as (select p.rolname role,n.nspname schema,format('%I(%s)',x.proname,pg_get_function_identity_arguments(x.oid)) object,'routine' kind,'EXECUTE' privilege,false table_wide,array[]::text[] columns,x.prosecdef security_definer,coalesce((select bool_or(a.grantee=0 and a.privilege_type='EXECUTE') from aclexplode(coalesce(x.proacl,acldefault('f',x.proowner))) a),false) public_derived from principals p cross join pg_proc x join pg_namespace n on n.oid=x.pronamespace where (x.prosecdef or n.nspname~'^(ot|private)' or x.proname~'^ot_') and has_function_privilege(p.oid,x.oid,'EXECUTE'))
-       select role,schema,object,kind,privilege,table_wide,columns,false security_definer,public_derived from relation_privileges
-       union all select role,schema,object,kind,privilege,table_wide,columns,security_definer,public_derived from routines order by 1,2,3,4,5`,
-      [[...AUTHORITY_PRINCIPALS]],
-    );
+    const effectiveAcls = await clients[0]!.query(PREVIEW_EFFECTIVE_ACL_SQL, [[...AUTHORITY_PRINCIPALS]]);
     assertPreviewEffectiveAcls(effectiveAcls.rows as PreviewAclRow[]);
-    if (
-      appSecurity.rows[0]?.can_create ||
-      !appSecurity.rows[0]?.reader_member ||
-      appSecurity.rows[0]?.owned_objects !== 0 ||
-      !runtimeSecurity.rows[0]?.forced_rls ||
-      runtimeSecurity.rows[0]?.excessive ||
-      runtimeSecurity.rows[0]?.can_create ||
-      !runtimeSecurity.rows[0]?.expected_member ||
-      runtimeSecurity.rows[0]?.owns_scoped ||
-      !deliverySecurity.rows[0]?.forced_rls ||
-      deliverySecurity.rows[0]?.excessive ||
-      deliverySecurity.rows[0]?.can_create ||
-      !deliverySecurity.rows[0]?.expected_member ||
-      deliverySecurity.rows[0]?.owns_scoped
-    )
-      throw new Error("Restricted-role/RLS Preview invariants are invalid");
+    const app = appSecurity.rows[0];
+    const runtime = runtimeSecurity.rows[0];
+    const delivery = deliverySecurity.rows[0];
+    const invariants: ReadonlyArray<readonly [string, boolean]> = [
+      ["app-no-schema-create", app?.can_create === false],
+      ["app-reader-member", app?.reader_member === true],
+      ["app-owns-zero", app?.owned_objects === 0],
+      ["runtime-forced-rls", runtime?.forced_rls === true],
+      ["runtime-no-excessive", runtime?.excessive === false],
+      ["runtime-no-schema-create", runtime?.can_create === false],
+      ["runtime-member", runtime?.expected_member === true],
+      ["runtime-owns-none", runtime?.owns_scoped === false],
+      ["delivery-forced-rls", delivery?.forced_rls === true],
+      ["delivery-no-excessive", delivery?.excessive === false],
+      ["delivery-no-schema-create", delivery?.can_create === false],
+      ["delivery-member", delivery?.expected_member === true],
+      ["delivery-owns-none", delivery?.owns_scoped === false],
+    ];
+    const failed = invariants.filter(([, valid]) => !valid).map(([name]) => name);
+    if (failed.length)
+      throw new Error(`Restricted-role/RLS Preview invariants are invalid: ${failed.join(",")}`);
   } finally {
     await Promise.allSettled(clients.map((client) => client.end()));
   }

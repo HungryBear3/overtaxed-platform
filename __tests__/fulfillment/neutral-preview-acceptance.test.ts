@@ -173,6 +173,28 @@ describe("Preview acceptance safety contract", () => {
       }),
     ).toThrow(/approved Preview identity/);
   });
+  test("accepts the exact owner role through an approved session pooler", () => {
+    const poolerOwner = env.DIRECT_URL.replace(
+      `postgres:p%40ss@db.${ref}.supabase.co`,
+      `postgres.${ref}:p%40ss@aws-0-us-east-2.pooler.supabase.com`,
+    );
+    expect(
+      readPreviewAcceptanceConfig({ ...env, DIRECT_URL: poolerOwner }).urls
+        .direct,
+    ).toBe(poolerOwner);
+  });
+  test("keeps Prisma-only pooler options out of the acceptance credential", () => {
+    const poolerOwner = env.DIRECT_URL.replace(
+      `postgres:p%40ss@db.${ref}.supabase.co`,
+      `postgres.${ref}:p%40ss@aws-0-us-east-2.pooler.supabase.com`,
+    );
+    expect(() =>
+      readPreviewAcceptanceConfig({
+        ...env,
+        DIRECT_URL: `${poolerOwner}&pgbouncer=true`,
+      }),
+    ).toThrow(/Unknown database URL option/);
+  });
   test.each([
     "host=evil",
     "hostaddr=1.2.3.4",
