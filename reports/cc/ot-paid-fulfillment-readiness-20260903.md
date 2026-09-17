@@ -32,14 +32,17 @@ checkout remains closed throughout.
 | Worktree | `/Users/abigailclaw/cc-worktrees/ot-paid-fulfillment-readiness-20260903` |
 | Branch (local only) | `cc/ot-paid-fulfillment-readiness-20260903` |
 | Parent | `ab1a21a633186b96262c653399593508f85539d6` |
-| First candidate (audited) | `4302d8ad54e49237abdfb81af67e83016bf2e78b`, tree `cc318ac8…` |
-| **Current HEAD (post-remediation)** | **`a5628ced46b6084b8f339fec78f8810e030c8b38`** |
-| Tree | `4a1d82ae178004f4341abe8866cc978b11cec4eb` |
-| Working tree | clean (`git status --porcelain` empty) |
-| Diffstat vs base | 15 files changed, 3259 insertions, 37 deletions (report included) |
-| Diff SHA-256 vs base, code only | `a2d196214e7930c2a298dc2cbab7e9c2e64957098805ed317e22a6e8deefc557` |
-| Diff SHA-256 vs base, code + report | `343e8e8246c9551e84ed5532f62e1b463a35e837e62d8b0b2473e14ed9ffffe3` |
+| First candidate (audited, superseded) | `4302d8ad54e49237abdfb81af67e83016bf2e78b`, tree `cc318ac8…` |
+| Second candidate (independently reviewed: `FAIL`, superseded) | `a5628ced46b6084b8f339fec78f8810e030c8b38`, tree `4a1d82ae…`; at that commit: 15 files, 3259 insertions, 37 deletions; diff SHA-256 vs base code-only `a2d19621…`, code + report `343e8e82…` |
 | Report-only follow-up | `9d02ced55ec03742d841b74352ff646c45dde02a`, tree `7dbcebfc…`, parent `a5628ced` |
+| Third candidate (independently re-reviewed: `FAIL`, superseded) | `e5383bbc1017a66201cc9b885ecb67d731f66700`, tree `164a068fc6c100eca80cd57a51d2bb6de2052931`, parent `9d02ced`; at that commit: 15 files, 4505 insertions, 36 deletions; diff SHA-256 vs base `5abab0a2f916797c9af4e382a2f217305a3924e32886b5c16ee4386675c9637f`; report SHA-256 `7c408bde484457111acdd7e45e1820765c4ed7d648f6b5d7972a3a968769e66b` |
+| **Current HEAD** | **the single commit after `e5383bbc` — revision 4, below** |
+| Working tree | clean (`git status --porcelain -uall` empty after the revision-4 commit) |
+
+> **Corrected after independent re-review (L1).** Until revision 4 this table
+> still labelled `a5628ced` as "Current HEAD (post-remediation)" with its tree
+> and diffstat, while the revision-3 table below said the current HEAD was the
+> commit after `9d02ced`. Every superseded candidate is now labelled as such.
 
 **Revision 3 — the bounded remediation commit (2026-09-04).** Exactly one new
 commit after `9d02ced`, on the same branch, amending nothing. Its own SHA
@@ -57,10 +60,30 @@ What can be bound here is the code it contains:
 | Code files changed vs `a5628ced` | 7 (three tests, four modules); 1,948 insertions, 924 deletions, of which the large majority is Prettier normalisation of the six candidate-created files |
 | Code files changed vs base | 14, as before; no new file |
 
-**The review target has moved twice.** `4302d8ad` was audited and found to
-need remediation; `a5628ced` was independently reviewed and found to need this
-bounded remediation; the commit after `9d02ced` is what should be reviewed
-now. `bd49efea` and `9d02ced` are report-only.
+**Revision 4 — the bounded remediation of the independent re-review of
+`e5383bbc` (2026-09-04).** Exactly one new commit after `e5383bbc`, on the same
+branch, amending nothing. As with revision 3, its own SHA, tree, full diffstat
+and full binary diff hash cannot appear inside the report it carries (the
+report is part of that diff); they are sealed in the remediation record at
+`~/cc-worktrees/ot-paid-fulfillment-remediation-e5383bbc-followup-20260904-out/`.
+What can be bound here is the code it contains:
+
+| | |
+|---|---|
+| Parent | `e5383bbc1017a66201cc9b885ecb67d731f66700` |
+| Frozen failed re-review target | `e5383bbc` (independent re-review: `FAIL`, one MEDIUM, three LOW) |
+| Remediated review target | the single commit after `e5383bbc` — the new branch HEAD |
+| Code-only diff SHA-256, `ab1a21a..HEAD` (`git diff --binary`, `reports/` excluded) | `9910301c5f060804606e4168d9910013f8afe8c052a3aef8b62f82a5d5cf9d0e` |
+| Code-only diff SHA-256, `e5383bbc..HEAD` | `8a18782c5511ce8691c1f076ed04cb4306f49409ff5c5452bf01261b8d52730e` |
+| Code files changed vs `e5383bbc` | 5 (two modules, two existing suites, one new suite): 741 insertions, 64 deletions |
+| Code files changed vs base | 15 (the 14 as before plus `__tests__/fulfillment/t2-artifact-content-accounting-invariant.test.ts`) |
+| Producer / template version | `t2-evidence-packet/1.1.1` / `t2-evidence-packet-text/1.1.1` |
+
+**The review target has moved three times.** `4302d8ad` was audited and found
+to need remediation; `a5628ced` was independently reviewed and found to need
+revision 3; `e5383bbc` was independently re-reviewed and found to need
+revision 4; the commit after `e5383bbc` is what should be reviewed now.
+`bd49efea` and `9d02ced` are report-only.
 
 Evidence packet hashes required by the brief, both verified before any work:
 
@@ -206,7 +229,9 @@ and no manifest, so nothing is uploaded, bound, or delivered:
 `MISSING_PROPERTY_CHARACTERISTICS`, `INSUFFICIENT_COMPARABLES`,
 `COMPARABLE_VALUE_INCOMPLETE`, `COMPARABLE_ADDRESS_MISSING`,
 `UNIFORMITY_NOT_COMPUTABLE`,
-`BELOW_SIGNED_EVIDENCE_THRESHOLD`, `INCOMPLETE_SOURCE_MANIFEST`, plus
+`BELOW_SIGNED_EVIDENCE_THRESHOLD`, `INCOMPLETE_SOURCE_MANIFEST`,
+`CANDIDATE_ACCOUNTING_MISMATCH` (revision 4: the pool accounting invariant
+failed inside construction; never expected, always refused), plus
 `ORDER_NOT_FOUND`, `FULFILLMENT_NOT_FOUND`, `FULFILLMENT_ORDER_MISMATCH`,
 `GENERATION_INSTANT_UNAVAILABLE`, `SUBJECT_RECORD_UNAVAILABLE`,
 `COMPARABLE_SOURCE_UNAVAILABLE` and the retained
@@ -242,6 +267,42 @@ artifact (changed sources, changed policy) is unchanged: it still conflicts.
 > (wrong order or wrong kind) / `GENERATION_INSTANT_UNAVAILABLE`, and a test
 > proves identical bytes and provenance across two attempts three days apart.
 
+> **Corrected after independent re-review (M1, revision 4).** Revision 3
+> counted rejections per PIN: one `duplicate_pin` entry however many identical
+> repeats arrived, one `conflicting_duplicate_rows` entry although every row of
+> the contradictory group was dropped. So `candidateAcceptedCount +
+> Σ candidateRejectedByReason` was less than `candidateCount` whenever the feed
+> repeated a PIN, while the packet body printed `candidateCount −
+> candidateAcceptedCount` "did not, counted by reason in the provenance
+> manifest" — an arithmetically false sentence in exactly the case the code's
+> own comment calls realistic. This report's own twelve-row example showed it
+> (12 rows, 5 accepted, reasons summing to 6, body saying 7).
+>
+> **Accounting is now per row.** A group of *n* identical rows for one PIN
+> yields one surviving row and *n−1* `duplicate_pin` rejections; a group of
+> *n* contradictory rows yields *n* `conflicting_duplicate_rows` rejections and
+> no survivor; every invalid row is one `missing_or_invalid_attributes`; every
+> surviving row is accepted or rejected for exactly one attribute reason. The
+> partition identity `candidateAcceptedCount + Σ candidateRejectedByReason ===
+> candidateCount` is enforced **inside `buildT2ArtifactContent`**, not only in
+> tests: if selection ever violates it the packet refuses
+> `CANDIDATE_ACCOUNTING_MISMATCH` with no text and no manifest (proved by a
+> suite that substitutes a broken selector). The body's "did not" figure is now
+> printed from the per-reason counts themselves. Rejections are ordered by PIN
+> then reason so several entries per PIN cannot depend on arrival order.
+> Selection remains value-blind; the pool count and digest are unchanged in
+> meaning (the digest already bound every raw row); producer and template
+> versions are `1.1.1` because manifest semantics changed, and a `1.1.0`
+> binding conflicts with a `1.1.1` replay rather than matching.
+>
+> **Also in revision 4 (L2).** The order id and the deadline close date,
+> retrieval instant and source URL are rendered through the same one-line-safe
+> policy as county text, and that policy now collapses C1 controls (NEL,
+> U+0085) and the Unicode line and paragraph separators (U+2028, U+2029) as
+> well as C0 and DEL. The manifest still carries every value exactly as
+> received. The default gateway's stricter validation and every cutoff and
+> deadline decision are unchanged.
+
 The manifest preserves everything needed to bind an artifact to how it was made:
 policy version, owner decisions, signature date and both thresholds; the
 selection rule id, tolerances and an explicit `selectionIsDirectional: false`;
@@ -256,7 +317,7 @@ subject and median dollars per square foot and the relative gap; the deadline
 source, URL, retrieval instant, close date and business days remaining at
 generation; every dataset id, title, URL, retrieval timestamp and — when the
 source supplies one — a content SHA-256, with `null` recorded explicitly when it
-does not; and the producer and template versions (`1.1.0`). The manifest is
+does not; and the producer and template versions (`1.1.1`). The manifest is
 rendered as canonical JSON inside the artifact bytes, so the content hash covers
 it. The packet body prints the candidate count and explains what the pool hash
 lets a reviewer check.
@@ -342,6 +403,21 @@ acceptance, or savings guarantee. Asserted directly in the copy suite.
 > the scan. The guard-the-guard test now plants every phrasing. No customer
 > delivery promise in any of those forms exists anywhere in the tree.
 
+> **Narrowed after independent re-review (L3, revision 4).** The exemptions
+> above were whole-file: the walker skipped an exempted file entirely, so a
+> brand-new 24-hour promise inside one — the re-reviewer planted one in
+> `lib/email/send.ts`, the customer confirmation e-mail module — passed all six
+> tests. Exemptions are now by line content: each entry names the exact phrases
+> allowed to match in that file, and a line is allowed only if, once every
+> allowed phrase is removed from it, nothing on the line still matches. A new
+> variant anywhere else in an exempted file, on the line beside the allowed
+> landlord language, or appended to the allowed line itself, is an offender
+> reported as `file:line`. The classifier is a pure function over file
+> contents, so the suite proves those three cases in-process without touching
+> the tree, and the on-disk mutation evidence (a planted promise in
+> `lib/email/send.ts` and one beside the landlord line, each failing the sweep
+> with its exact line number) is recorded in the revision-4 remediation record.
+
 **Session lifetime versus the cutoff (disclosed after review, L5).** The
 three-business-day rule gates the *creation* of a hosted Stripe Checkout
 Session. A session created with exactly three business days left remains
@@ -361,6 +437,7 @@ A  __tests__/checkout/business-days.test.ts
 M  __tests__/checkout/session-contract-reuse.test.ts
 M  __tests__/checkout/session-window-gates.test.ts
 A  __tests__/copy/delivery-promise.test.ts
+A  __tests__/fulfillment/t2-artifact-content-accounting-invariant.test.ts   (revision 4)
 A  __tests__/fulfillment/t2-artifact-producer.test.ts
 M  app/api/checkout/session/route.ts
 M  app/checkout/success/page.tsx
@@ -381,10 +458,31 @@ Revision 3 touches seven of these and adds none: `t2-artifact-producer.ts`
 `t2-artifact-content.ts` (pool provenance, source content hash, control-safe
 rendering, version `1.1.0`), `t2-comparables.ts` (bounded reason vocabulary,
 pool digest, rejection counts), the producer and copy suites, and — by Prettier
-only — `business-days.ts` and its suite. `t2-artifact-producer.ts` and this
-report are the two changed files still unclean under Prettier: the producer
-module was already unclean at base and is left in the house style of its
-neighbours, and the report is prose.
+only — `business-days.ts` and its suite.
+
+> **Corrected after independent re-review (N4).** Revision 3 said the
+> producer module and this report were "the two changed files still unclean
+> under Prettier". Under `prettier --check` on all changed files the true
+> count at `e5383bbc` was **nine**: the eight pre-existing code files the
+> candidate touches (`session-contract-reuse.test.ts`,
+> `session-window-gates.test.ts`, `checkout/session/route.ts`,
+> `checkout/success/page.tsx`, `ot-contract.ts`, `email/send.ts`,
+> `t2-artifact-producer.ts`, `t2-artifact-workflow.ts`), every one already
+> unclean at `ab1a21a`, plus the prose report. The six candidate-created files
+> were clean. None was a regression. Revision 4's figures are in §5.
+
+Revision 4 touches five code files and adds one. `t2-comparables.ts` (per-row
+rejection accounting, ordered rejections), `t2-artifact-content.ts` (accounting
+invariant with its refusal code, sanitised order id and deadline fields, wider
+control-character policy, version `1.1.1`), the producer suite (partition
+identity on the twelve-row fixture; three-identical, four-conflicting and
+sixteen-row mixed fixtures under 26 permutations; the four sanitised fields and
+county text under ten separators; the `1.1.0`-versus-`1.1.1` conflict), the
+copy suite (line-content exemptions, pure classifier, masking probes), and the
+new `__tests__/fulfillment/t2-artifact-content-accounting-invariant.test.ts`,
+which substitutes a broken selector and proves construction refuses. No runtime
+file outside `lib/fulfillment/` changed; the producer, workflow, route, e-mail
+and page modules are byte-identical to `e5383bbc`.
 
 `lib/checkout/ot-contract.ts` is **outside the two blockers this brief named**,
 and it is changed anyway. The independent audit found that its policy registry
@@ -472,6 +570,26 @@ less shared, 6 copy, 6 route cutoff). What they prove, against the brief's list:
   the producer refuses through the **real** default gateway with no injection;
 - conflicting duplicate comparable rows produce the same result in either order.
 
+**Revision 4 figures (2026-09-04).** Produced in the candidate worktree at the
+revision-4 tree, immediately before it was committed; the same `node_modules`
+as revision 3, no `.env`, `DATABASE_URL` unset.
+
+| Check | Result (revision 4) |
+|---|---|
+| Red-first on frozen `e5383bbc` | the revised producer and copy suites and the new invariant suite, copied unchanged onto a detached `e5383bbc` checkout: **21 failed / 75 passed** — every new M1, L2 and invariant case plus the corrected twelve-row assertion; the copy suite has no live offender to turn red on, so L3's red evidence is the on-disk mutation at `e5383bbc` recorded by the re-review (a planted promise in `lib/email/send.ts` passed all six tests there) |
+| Focused suites (normal) | 24 suites, 825 tests, exit 0 (one new suite, 29 new tests over revision 3) |
+| Focused suites (serial) | 24 suites, 825 tests, exit 0 |
+| Full suite (serial) | **128 suites passed, 4 skipped; 2498 tests passed, 77 skipped; 0 failed**, exit 0 |
+| Production build | `prisma generate` + `next build`, exit 0, "Compiled successfully". No migration ran: `scripts/build-with-migrate-retry.mjs` executes only those two commands (its migrate mention is a comment), `DATABASE_URL` was absent from the environment, and the build log contains no migrate output |
+| TypeScript vs base | 82 diagnostics at candidate, 82 at a pristine detached `ab1a21a` sharing `node_modules`; identical set ignoring line/column; zero in any changed file |
+| `git diff --check` | clean |
+| Prettier | the six candidate-created files and the new invariant suite are clean; the eight pre-existing code files remain unclean exactly as at `ab1a21a`; the report is prose. Nine unclean of sixteen changed files, none a regression |
+| Lint | `next lint` broken identically at base and candidate (Next 16). Pre-existing |
+| Secret / PII scan | no secret shape, no non-`99` 14-digit PIN, no e-mail address in any added line |
+| Reachability | `runT2ArtifactBindingWorkflow` still has no caller outside tests; no cron, script, tool, route, dynamic import or environment path reaches it |
+| On-disk copy mutations | a promise appended to `lib/email/send.ts` fails the sweep as `lib/email/send.ts:310`; a promise inserted beside the allowed landlord line fails as `public/downloads/landlord-notices/03-entry-notice.md:4`; both restored before commit |
+| Fresh probes | 200 random duplicate/conflict/invalid pool shapes: `accepted + rejected === rows` and shuffle-invariant selection every time; three-identical + four-conflicting fixture counts exactly (2 / 4); pool digest unchanged by the accounting change; `1.1.0` binding conflicts with `1.1.1`; all four fields under ten separators leave no separator and start no line while the manifest keeps the raw value; twelve refusals emit only `{ok, blocker}`; the real default gateway refuses before any other call |
+
 ---
 
 ## 6. Artifact example (synthetic data only)
@@ -479,6 +597,10 @@ less shared, 6 copy, 6 route cutoff). What they prove, against the brief's list:
 Generated (revision 3, producer `1.1.0`) from the producer suite's synthetic
 fixtures — subject `99010010010000` at $25.00/sq ft, six comparables at $20.00/sq
 ft, generation instant `2026-06-08T10:15:30Z`; no real parcel, order, or person.
+Kept as the revision-3 example: revision 4 changes only the version strings on
+these inputs (no duplicate rows, so the accounting lines are identical), and
+therefore the current producer's bytes and hash for the same inputs differ
+from the figures below by exactly those strings.
 Bytes SHA-256 `f6a012b3aec894f2a331d5d10d11e9317d90077dc6366a455e058caa9ef9f90f`,
 8,853 bytes. Reproducible from `lib/fulfillment/t2-artifact-content.ts` with
 those inputs on any machine.
@@ -596,12 +718,12 @@ Nothing in this candidate opens paid checkout. In order:
    the owner should see.
 9. **Draft argument component** — OD-5, as above.
 
-**Smallest next step:** an independent exact-SHA review of the remediation
-commit — the single commit after `9d02ced` on this branch — against the
-independent review's finding list (§8c). It needs no owner policy decision,
-nothing is deployed or enabled by it, and it is the only gate between this
-candidate and being ready to sit behind a future OD-2/OD-3 signature and the
-orchestration slice above.
+**Smallest next step:** an independent exact-SHA review of the revision-4
+commit — the single commit after `e5383bbc` on this branch — against the
+re-review's finding list (§8d). It needs no owner policy decision, nothing is
+deployed or enabled by it, and it is the only gate between this candidate and
+being ready to sit behind a future OD-2/OD-3 signature and the orchestration
+slice above.
 
 ---
 
@@ -702,10 +824,43 @@ deployment, checkout timing, or Production behaviour.
 
 ---
 
+## 8d. Response to the independent exact-SHA re-review of `e5383bbc` (2026-09-04)
+
+The re-review was run in a fresh session that had not authored, remediated or
+previously reviewed the candidate, against a detached checkout at exactly
+`e5383bbc`, with every identity, both diff hashes, the report hash, PR #38/#39
+and the unpushed state verified first. It returned **`FAIL`** — no HIGH, no
+safety blocker, every gate green, M1/M2/M3 of the prior review confirmed
+closed — on one new MEDIUM introduced by the M3 remediation itself, three LOWs
+and four NITs, and prescribed one bounded follow-up commit. Its report is at
+`~/cc-worktrees/ot-paid-fulfillment-rereview-e5383bbc-20260904-out/REVIEW-ot-paid-fulfillment-e5383bbc-20260904.md`
+(SHA-256 `4ae5c97afb6f08032b1d246f639e883347bb828e76e74a67b0e153cab8682ba2`).
+Revision 4 is that commit. Every finding was reproduced before being acted on.
+
+| Finding | Status | Where |
+|---|---|---|
+| **M1** rejection counts per PIN, not per row; body's "did not" count disagrees with the manifest whenever a PIN repeats; accounting does not partition the rows | **closed** — per-row accounting; partition identity enforced in construction with `CANDIDATE_ACCOUNTING_MISMATCH`; body figure printed from the per-reason counts; rejections ordered by PIN then reason; twelve-row fixture now asserts the identity; three-identical, four-conflicting and sixteen-row mixed fixtures under permutation; broken-selector suite; versions `1.1.1` | `t2-comparables.ts`, `t2-artifact-content.ts`, producer suite, new invariant suite, §3.1 |
+| **L1** §1 first table labelled `a5628ced` "Current HEAD" with stale tree and diffstat | **closed** — every superseded candidate labelled as such; revision-4 table added | §1 |
+| **L2** `orderId`, `deadlineCloseDate`, `deadlineRetrievedAt`, `deadlineSourceUrl` rendered raw | **closed** — all four pass through `safeText`; policy widened to C1 and U+2028/U+2029; ten separators tested per field; manifest raw; determinism proved | `t2-artifact-content.ts`, producer suite |
+| **L3** whole-file copy exemptions mask a new promise inside an exempted file | **closed** — line-content exemptions; pure classifier; in-process masking probes for the e-mail module, beside the landlord line and on the landlord line; on-disk mutation evidence | `delivery-promise.test.ts`, §3.3 |
+| **N1** C1 / U+2028 survive into the body | **closed** incidentally by the L2 policy widening | `t2-artifact-content.ts` |
+| **N2** producer does not compare `fulfillment.id` to the request or refuse a future `createdAt` | **recorded**, no change — the gateway loads by id and the binder refuses `GENERATED_AT_IN_FUTURE` against its trusted clock; out of this remediation's scope by instruction | re-review report |
+| **N3** checkout route samples the clock three times per request | **recorded**, no change — request-scoped; out of scope by instruction | re-review report |
+| **N4** seal undercounted Prettier-unclean changed files as "two" | **closed** — corrected in §4 and §5 | §4, §5 |
+
+Not closed, and not attempted, by design: N2, N3, the holiday authority, the
+county gateway, the orchestration caller, condominium coverage, checkout
+enablement, and every owner decision. Nothing in revision 4 changes the
+producer runtime module, the workflow, the webhook, scheduler, queue,
+deployment, checkout timing, or Production behaviour.
+
+---
+
 ## 9. Zero-side-effect ledger
 
 | Surface | Action |
 |---|---|
+| Revision 4 (2026-09-04) | one new local commit after `e5383bbc`; `4302d8ad`, `bd49efea`, `a5628ced`, `9d02ced`, `e5383bbc` unchanged; a detached baseline worktree at `ab1a21a` for the `tsc`/Prettier comparison, removed after use; the re-review's detached worktree at `e5383bbc` used only to run the new tests red, then restored with `git checkout`/`git clean`; two on-disk copy mutations (`lib/email/send.ts`, the landlord notice) applied and reverted with `git checkout --` before commit; a probe suite written under `tests/visual/` and deleted. No file outside this worktree and the `-out` remediation directory was written. |
 | Revision 3 (2026-09-04) | one new local commit after `9d02ced`; `4302d8ad`, `bd49efea`, `a5628ced`, `9d02ced` unchanged; `npm ci` in the candidate worktree (`node_modules` is git-ignored); a detached baseline worktree at `ab1a21a` for the `tsc` comparison, removed after use; a detached review worktree at `a5628ced` used only to run the new tests red, then cleaned. No file outside this worktree and the `-out` handoff directory was written. |
 | `main` / GitHub refs | untouched. `origin/main` `ab1a21a…`, PR #38 `05072b60…`, PR #39 `dfd4365f…` all unchanged; both PRs read only. |
 | Other worktrees | untouched. Main checkout porcelain SHA-256 byte-identical to its recorded August value. |

@@ -40,10 +40,10 @@ import { createHash } from "node:crypto";
  * produced it.
  */
 export const NON_DIRECTIONAL_RULE_ID =
-  "R1-same-neighborhood-class-subtype-sqft25-yrblt15-median-v1";
+  "R2-same-neighborhood-class-subtype-sqft15-yrblt10-median-all-v1";
 
-export const SQFT_TOLERANCE = 0.25;
-export const YEAR_BUILT_TOLERANCE = 15;
+export const SQFT_TOLERANCE = 0.15;
+export const YEAR_BUILT_TOLERANCE = 10;
 
 /**
  * Cook County Assessor Rule 15: "At least 3 comparable properties must be
@@ -227,6 +227,16 @@ export function selectNonDirectionalComparables(
   // Identical repeats collapse to one. Rows that disagree about the same parcel
   // are a contradiction in the source, so that PIN is dropped entirely and
   // reported: choosing between them would be choosing which record to believe.
+  //
+  // Accounting is per ROW, not per PIN (independent re-review of e5383bbc,
+  // M1). A group of n identical rows yields one surviving row and n-1
+  // `duplicate_pin` rejections; a group of n contradictory rows yields n
+  // `conflicting_duplicate_rows` rejections and no survivor. Every raw
+  // candidate row therefore lands in exactly one partition — accepted, or one
+  // rejection reason — and `accepted + rejected === candidates.length` holds
+  // by construction. The packet body states that identity to the reader, so
+  // it has to be arithmetically true for every duplicate shape, and
+  // `buildT2ArtifactContent` refuses rather than render if it ever is not.
   const byPin = new Map<string, ComparableMatchAttributes[]>();
   const invalid: ComparableMatchAttributes[] = [];
   for (const candidate of candidates) {
@@ -259,10 +269,16 @@ export function selectNonDirectionalComparables(
     if (rows.length > 1) {
       const distinct = new Set(rows.map(identity));
       if (distinct.size > 1) {
-        rejected.push({ pin, reason: "conflicting_duplicate_rows" });
+        // Contradictory group: every row is rejected, none survives.
+        for (let i = 0; i < rows.length; i += 1) {
+          rejected.push({ pin, reason: "conflicting_duplicate_rows" });
+        }
         continue;
       }
-      rejected.push({ pin, reason: "duplicate_pin" });
+      // Identical group: one row survives, each extra row is a duplicate.
+      for (let i = 1; i < rows.length; i += 1) {
+        rejected.push({ pin, reason: "duplicate_pin" });
+      }
     }
     deduped.push(rows[0]);
   }
@@ -305,7 +321,19 @@ export function selectNonDirectionalComparables(
   }
 
   accepted.sort((a, b) => (a.pin < b.pin ? -1 : a.pin > b.pin ? 1 : 0));
-  rejected.sort((a, b) => (a.pin < b.pin ? -1 : a.pin > b.pin ? 1 : 0));
+  // Several rejections may now share a PIN, so order by PIN and then by
+  // reason: the list must not depend on the order the source returned rows in.
+  rejected.sort((a, b) =>
+    a.pin < b.pin
+      ? -1
+      : a.pin > b.pin
+        ? 1
+        : a.reason < b.reason
+          ? -1
+          : a.reason > b.reason
+            ? 1
+            : 0,
+  );
   return {
     ruleId: NON_DIRECTIONAL_RULE_ID,
     accepted,

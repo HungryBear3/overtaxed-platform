@@ -1,0 +1,566 @@
+/**
+ * Transactional store for authenticated provider callbacks.
+ *
+ * Every admitted callback lands in `ot_delivery_provider_callback` FIRST, inside
+ * the same transaction as anything it goes on to change. That ordering is what
+ * makes the whole thing safe:
+ *
+ *   - the unique `(provider, provider_event_id)` is the replay identity, taken
+ *     from the SIGNED envelope rather than the body, so a duplicate signed
+ *     delivery collapses to a no-op even if the first one crashed midway;
+ *   - an event we cannot correlate yet is RECORDED as UNMATCHED rather than
+ *     dropped, so the send/callback race never costs us evidence;
+ *   - an event we decline to apply is RECORDED as REFUSED with a bounded reason,
+ *     so "we chose not to act on this" is a fact on disk, not an absence.
+ *
+ * No correlation tag is ever consulted. The provider is not required to echo
+ * one and this system never assumes it does; the only correlation is the
+ * provider's message id, which becomes usable when the send returns and binds it
+ * to an attempt. Until then, matching is genuinely impossible and we say so.
+ *
+ * Concurrency contract, identical to the delivery store's so the two cannot
+ * deadlock: lock `ot_order` FOR UPDATE first, then `ot_fulfillment`, then the
+ * attempt, and re-verify everything inside that lock against freshly read state.
+ *
+ * Nothing free-form is persisted here: no recipient, no subject, no bounce text,
+ * no raw body, and no capability.
+ */
+import { randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/db";
+import { neutralDeliveryEnabled } from "@/lib/fulfillment/flag";
+import {
+  decideCallbackApplication,
+  MAX_CALLBACK_REPLAYS,
+  MAX_RECONCILIATION_BATCH,
+  MAX_UNMATCHED_CALLBACKS,
+  UNMATCHED_RECONCILIATION_WINDOW_MS,
+  type CallbackAttemptRow,
+  type CallbackFulfillmentRow,
+  type CallbackNonApplicationCode,
+  type CallbackOrderRow,
+  type SanitizedProviderCallback,
+} from "@/lib/fulfillment/provider-callbacks";
+
+export type CallbackIngestResult =
+  /** A previously admitted signed delivery. Nothing was written. */
+  | { outcome: "DUPLICATE" }
+  /** Bound to an attempt and folded into the summary. */
+  | { outcome: "APPLIED"; fulfillmentId: string; attemptNumber: number; status: string }
+  /** Recorded, correlation not yet possible. Reconciled once the id is bound. */
+  | { outcome: "UNMATCHED" }
+  /** Recorded, deliberately not applied. */
+  | { outcome: "REFUSED"; code: CallbackNonApplicationCode }
+  /**
+   * Reconciliation only. This pass did not own the replay: a concurrent
+   * reconciler claimed the row, it was resolved between the batch read and the
+   * claim, or it has spent its replay budget. Distinct from DUPLICATE — which
+   * means the signed delivery had already been admitted — because conflating
+   * them made a lost race look like a de-duplicated one, and made `examined`
+   * silently fail to account for its own rows.
+   */
+  | { outcome: "CONFLICTED" };
+
+export interface ProviderCallbackStore {
+  ingest(event: SanitizedProviderCallback): Promise<CallbackIngestResult>;
+  /**
+   * Re-attempt every stored UNMATCHED callback for one provider message id.
+   * Called once a send returns and the id becomes correlatable, and available to
+   * the bounded operator recovery control.
+   */
+  reconcile(input: {
+    provider: string;
+    providerMessageId: string;
+  }): Promise<ReconciliationSummary>;
+}
+
+/**
+ * What one reconciliation pass did.
+ *
+ * `examined` is the size of the batch that was read, and the other three account
+ * for every row in it: `examined === applied + stillUnmatched + skipped`. That
+ * identity is the point — without `skipped`, a pass that lost every claim to a
+ * concurrent reconciler reported `applied: 0, stillUnmatched: 0` against a
+ * non-zero `examined` and looked like a pass that had silently dropped rows.
+ */
+export type ReconciliationSummary = {
+  examined: number;
+  applied: number;
+  stillUnmatched: number;
+  /** Claimed by someone else, resolved mid-pass, or out of replay budget. */
+  skipped: number;
+};
+
+const TRUSTED_CLOCK_SQL = Prisma.sql`
+  SELECT to_char(
+    clock_timestamp() AT TIME ZONE 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+  ) AS "now"
+`;
+
+/**
+ * Transaction-scoped advisory lock serializing the unmatched-spool cap decision.
+ *
+ * `SELECT COUNT(*) … > MAX` is not, by itself, a cap. Under READ COMMITTED a
+ * concurrent transaction's inserted-but-uncommitted row is invisible, so N
+ * ingesters racing each other can each count MAX, each conclude there is room,
+ * and each commit — leaving MAX + N durable unresolved rows. The ceiling exists
+ * to bound unbounded attacker-driven growth, and a ceiling that a burst walks
+ * straight through is not one.
+ *
+ * Holding this lock across the count makes the decision serial, because an
+ * advisory XACT lock is held until commit: the next holder's count therefore
+ * sees every earlier holder's row already committed. Each transaction decides
+ * against (all committed rows) + (its own), which is exact.
+ *
+ * It is taken ONLY on the unmatched branch, which is reached before `apply`
+ * takes any row lock, so it can never be held while waiting on `ot_order` and
+ * cannot participate in a deadlock cycle with the delivery store. The matched
+ * path never takes it at all.
+ *
+ * The key is an arbitrary fixed constant pair, namespaced by the first element
+ * so another advisory-lock user in this database cannot collide with it.
+ */
+// Prisma cannot deserialize PostgreSQL void. Cast only the returned value;
+// the transaction-scoped lock itself is still acquired and held until commit.
+const SPOOL_CAP_LOCK_SQL = Prisma.sql`
+  SELECT pg_advisory_xact_lock(19260912, 1)::text AS "locked"
+`;
+
+export type ProviderCallbackTransaction = {
+  $queryRaw<T>(query: Prisma.Sql): Promise<T>;
+  $executeRaw(query: Prisma.Sql): Promise<number>;
+};
+export type ProviderCallbackClient = {
+  $transaction<T>(work: (tx: ProviderCallbackTransaction) => Promise<T>): Promise<T>;
+};
+
+type StoredCallbackRow = {
+  id: string;
+  provider: string;
+  providerEventId: string;
+  providerMessageId: string;
+  eventType: string;
+  reasonCode: string | null;
+  occurredAt: Date | string;
+  receivedAt: Date | string;
+  replayCount: number;
+};
+
+type AttemptLookupRow = {
+  fulfillmentId: string;
+  attemptNumber: number;
+  orderId: string;
+};
+
+function toInstant(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+/** The database's wall clock, or "" when it cannot be trusted. */
+async function readTrustedNow(tx: ProviderCallbackTransaction): Promise<string> {
+  const clock = await tx.$queryRaw<Array<{ now: unknown }>>(TRUSTED_CLOCK_SQL);
+  return toInstant(clock[0]?.now);
+}
+
+function asInstant(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : String(value);
+}
+
+/** Internal signal: unwind (and roll back) the transaction with a bounded code. */
+class CallbackRollback extends Error {
+  constructor(readonly code: CallbackNonApplicationCode) {
+    super(code);
+    this.name = "CallbackRollback";
+  }
+}
+
+export function createPrismaProviderCallbackStore(
+  client: ProviderCallbackClient,
+): ProviderCallbackStore {
+  /**
+   * Try to bind an already-recorded callback to an attempt and fold it.
+   *
+   * Shared by first-arrival ingestion and by reconciliation so the two can never
+   * disagree about what is allowed to move a fulfillment.
+   */
+  async function apply(
+    tx: ProviderCallbackTransaction,
+    callbackId: string,
+    event: SanitizedProviderCallback,
+  ): Promise<CallbackIngestResult> {
+    // The ONLY correlation: the provider's message id, bound to exactly one
+    // attempt by the schema's unique (provider, provider_message_id).
+    const located = await tx.$queryRaw<AttemptLookupRow[]>(
+      Prisma.sql`SELECT t."fulfillment_id" AS "fulfillmentId",
+                        t."attempt_number" AS "attemptNumber",
+                        f."order_id" AS "orderId"
+                 FROM "ot_delivery_attempt" t
+                 JOIN "ot_fulfillment" f ON f."id" = t."fulfillment_id"
+                 WHERE t."provider" = ${event.provider}
+                   AND t."provider_message_id" = ${event.providerMessageId}
+                 LIMIT 2`,
+    );
+    // `LIMIT 2`, not `LIMIT 1`, so a second row is SEEN rather than silently
+    // discarded. The schema's unique (provider, provider_message_id) should make
+    // this unreachable; reading `located[0]` out of an unordered result would
+    // turn any future loss of that index into "fold this provider event onto
+    // whichever of two orders came back first", which is not a thing to guess.
+    if (located.length > 1) {
+      const trustedNow = await readTrustedNow(tx);
+      await markRefused(tx, callbackId, "AMBIGUOUS_MESSAGE_BINDING", trustedNow, {
+        fulfillmentId: null,
+        attemptNumber: null,
+      });
+      return { outcome: "REFUSED", code: "AMBIGUOUS_MESSAGE_BINDING" };
+    }
+    const found = located[0];
+    if (!found) return { outcome: "UNMATCHED" };
+
+    // Order → fulfillment → attempt.
+    const orders = await tx.$queryRaw<CallbackOrderRow[]>(
+      Prisma.sql`SELECT "id", "tier", "status" FROM "ot_order"
+                 WHERE "id" = ${found.orderId} FOR UPDATE`,
+    );
+    const summaries = await tx.$queryRaw<CallbackFulfillmentRow[]>(
+      Prisma.sql`SELECT "id", "order_id" AS "orderId", "kind"::text AS "kind",
+                        "status"::text AS "status",
+                        "status_revision" AS "statusRevision",
+                        "attempt_count" AS "attemptCount"
+                 FROM "ot_fulfillment" WHERE "id" = ${found.fulfillmentId} FOR UPDATE`,
+    );
+    const attempts = await tx.$queryRaw<CallbackAttemptRow[]>(
+      Prisma.sql`SELECT "fulfillment_id" AS "fulfillmentId",
+                        "attempt_number" AS "attemptNumber",
+                        "provider",
+                        "artifact_version" AS "artifactVersion"
+                 FROM "ot_delivery_attempt"
+                 WHERE "fulfillment_id" = ${found.fulfillmentId}
+                   AND "attempt_number" = ${found.attemptNumber} FOR UPDATE`,
+    );
+    const artifacts = await tx.$queryRaw<Array<{ version: number }>>(
+      Prisma.sql`SELECT "version" FROM "ot_fulfillment_artifact"
+                 WHERE "fulfillment_id" = ${found.fulfillmentId}
+                 ORDER BY "version" DESC LIMIT 1`,
+    );
+    const clock = await tx.$queryRaw<Array<{ now: unknown }>>(TRUSTED_CLOCK_SQL);
+    const trustedNow = toInstant(clock[0]?.now);
+
+    let callbackFulfillment = summaries[0] ?? null;
+    if (callbackFulfillment?.kind === "NEUTRAL_RECORDS_REPORT") {
+      if (!neutralDeliveryEnabled()) {
+        callbackFulfillment = {...callbackFulfillment, neutralQaApproved: false};
+      } else {
+      const qa = await tx.$queryRaw<Array<{ approved: boolean }>>(Prisma.sql`
+        SELECT EXISTS (
+          SELECT 1 FROM "ot_neutral_qa_review" q
+          JOIN "ot_neutral_report_reservation" r ON r."id"=q."reservation_id"
+          JOIN LATERAL (SELECT * FROM "ot_fulfillment_artifact" z WHERE z."fulfillment_id"=q."fulfillment_id" ORDER BY z."version" DESC LIMIT 1) z ON TRUE
+          WHERE q."fulfillment_id"=${callbackFulfillment.id} AND q."order_id"=${callbackFulfillment.orderId}
+            AND q."status"='APPROVED' AND r."status"='PROMOTED' AND r."superseded_by_sha256" IS NULL
+            AND q."customer_artifact_sha256"=z."artifact_sha256"
+            AND q."artifact_sha256"=r."bundle_sha256"
+            AND q."property_binding_fingerprint"=z."property_binding_fingerprint"
+            AND q."policy_version"=z."template_version"
+            AND EXISTS (
+              SELECT 1 FROM "ot_order" o
+              JOIN "ot_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId"
+              WHERE o."id"=q."order_id" AND o."status"='PAID' AND o."tier"='T2'
+                AND NOT EXISTS (SELECT 1 FROM "ot_settlement_reversal" x WHERE x."payment_intent"=b."payment_intent")
+            )
+        ) AS "approved"
+      `);
+      callbackFulfillment = {...callbackFulfillment,neutralQaApproved:qa[0]?.approved===true};
+      }
+    }
+    const decision = decideCallbackApplication({
+      event,
+      order: orders[0] ?? null,
+      fulfillment: callbackFulfillment,
+      attempt: attempts[0] ?? null,
+      currentArtifactVersion: artifacts[0]?.version ?? null,
+      trustedNow,
+      neutralDeliveryEnabled: neutralDeliveryEnabled(),
+    });
+    if (!decision.ok) {
+      await markRefused(tx, callbackId, decision.code, trustedNow, {
+        fulfillmentId: found.fulfillmentId,
+        attemptNumber: found.attemptNumber,
+      });
+      return { outcome: "REFUSED", code: decision.code };
+    }
+    const plan = decision.plan;
+    const occurredAt = new Date(plan.occurredAt);
+
+    // Append-only evidence. The authenticated provider event id is reused as the
+    // event log's dedup identity, so the two dedup surfaces agree.
+    const sequences = await tx.$queryRaw<Array<{ next: number }>>(
+      Prisma.sql`SELECT COALESCE(MAX("sequence"), 0) + 1 AS "next"
+                 FROM "ot_delivery_event"
+                 WHERE "fulfillment_id" = ${plan.fulfillmentId}`,
+    );
+    await tx.$executeRaw(
+      Prisma.sql`INSERT INTO "ot_delivery_event" (
+                   "id", "fulfillment_id", "attempt_number", "provider",
+                   "provider_event_id", "event_type", "sequence",
+                   "occurred_at", "received_at", "reason_code"
+                 ) VALUES (
+                   ${randomUUID()}, ${plan.fulfillmentId}, ${plan.attemptNumber},
+                   ${event.provider}, ${event.providerEventId},
+                   ${plan.eventType}::"OTDeliveryEventType",
+                   ${Number(sequences[0]?.next ?? 1)},
+                   ${occurredAt}, ${new Date(trustedNow)}, ${plan.reasonCode}
+                 )
+                 ON CONFLICT ("provider", "provider_event_id") DO NOTHING`,
+    );
+
+    // Lifecycle timestamps are set once and never rewritten, so a later replay
+    // cannot move the moment something happened.
+    await tx.$executeRaw(
+      Prisma.sql`UPDATE "ot_delivery_attempt"
+                 SET "provider_accepted_at" = CASE WHEN ${plan.eventType === "ACCEPTED"}
+                       THEN COALESCE("provider_accepted_at", ${occurredAt}) ELSE "provider_accepted_at" END,
+                     "delivered_at" = CASE WHEN ${plan.eventType === "DELIVERED"}
+                       THEN COALESCE("delivered_at", ${occurredAt}) ELSE "delivered_at" END,
+                     "delayed_at" = CASE WHEN ${plan.eventType === "DELAYED"}
+                       THEN COALESCE("delayed_at", ${occurredAt}) ELSE "delayed_at" END,
+                     "failed_at" = CASE WHEN ${
+                       plan.eventType === "BOUNCED" ||
+                       plan.eventType === "COMPLAINED" ||
+                       plan.eventType === "FAILED"
+                     }
+                       THEN COALESCE("failed_at", ${occurredAt}) ELSE "failed_at" END,
+                     "reason_code" = COALESCE("reason_code", ${plan.reasonCode})
+                 WHERE "fulfillment_id" = ${plan.fulfillmentId}
+                   AND "attempt_number" = ${plan.attemptNumber}`,
+    );
+
+    // Advance only from the EXACT revision the decision was made against.
+    const advanced = await tx.$executeRaw(
+      Prisma.sql`UPDATE "ot_fulfillment"
+                 SET "status" = ${plan.nextStatus}::"OTFulfillmentStatus",
+                     "status_revision" = ${plan.expectedStatusRevision + 1},
+                     "last_reason_code" = COALESCE(${plan.reasonCode}, "last_reason_code")
+                 WHERE "id" = ${plan.fulfillmentId}
+                   AND "status"::text = ${plan.fromStatus}
+                   AND "status_revision" = ${plan.expectedStatusRevision}`,
+    );
+    if (advanced !== 1) throw new CallbackRollback("STALE_ATTEMPT");
+
+    // A terminal outcome ends customer access immediately rather than waiting for
+    // the next download to notice the status is no longer downloadable.
+    if (plan.revokesCapabilities) {
+      await tx.$executeRaw(
+        Prisma.sql`UPDATE "ot_packet_download_capability"
+                   SET "revoked_at" = ${new Date(trustedNow)},
+                       "revoked_reason_code" = ${"UNDELIVERABLE"}
+                   WHERE "fulfillment_id" = ${plan.fulfillmentId}
+                     AND "revoked_at" IS NULL`,
+      );
+    }
+
+    await tx.$executeRaw(
+      Prisma.sql`UPDATE "ot_delivery_provider_callback"
+                 SET "disposition" = ${"APPLIED"}, "disposition_code" = NULL,
+                     "fulfillment_id" = ${plan.fulfillmentId},
+                     "attempt_number" = ${plan.attemptNumber},
+                     "resolved_at" = ${new Date(trustedNow)}
+                 WHERE "id" = ${callbackId}`,
+    );
+
+    return {
+      outcome: "APPLIED",
+      fulfillmentId: plan.fulfillmentId,
+      attemptNumber: plan.attemptNumber,
+      status: plan.nextStatus,
+    };
+  }
+
+  async function markRefused(
+    tx: ProviderCallbackTransaction,
+    callbackId: string,
+    code: CallbackNonApplicationCode,
+    trustedNow: string,
+    binding: { fulfillmentId: string | null; attemptNumber: number | null },
+  ): Promise<void> {
+    const resolvedAt = trustedNow === "" ? null : new Date(trustedNow);
+    await tx.$executeRaw(
+      Prisma.sql`UPDATE "ot_delivery_provider_callback"
+                 SET "disposition" = ${"REFUSED"}, "disposition_code" = ${code},
+                     "fulfillment_id" = ${binding.fulfillmentId},
+                     "attempt_number" = ${binding.attemptNumber},
+                     "resolved_at" = COALESCE("resolved_at", ${resolvedAt})
+                 WHERE "id" = ${callbackId}`,
+    );
+  }
+
+  return {
+    async ingest(event) {
+      try {
+        return await client.$transaction(
+          async (tx): Promise<CallbackIngestResult> => {
+            const clock = await tx.$queryRaw<Array<{ now: unknown }>>(
+              TRUSTED_CLOCK_SQL,
+            );
+            const trustedNow = toInstant(clock[0]?.now);
+            if (trustedNow === "")
+              return { outcome: "REFUSED", code: "UNTRUSTED_CLOCK" };
+
+            // Replay protection FIRST, before anything is read or decided. The
+            // unique index is the authority; a conflicting insert writes nothing
+            // and reports zero, which is the duplicate answer.
+            const id = randomUUID();
+            const inserted = await tx.$executeRaw(
+              Prisma.sql`INSERT INTO "ot_delivery_provider_callback" (
+                           "id", "provider", "provider_event_id", "provider_message_id",
+                           "event_type", "reason_code", "occurred_at", "received_at",
+                           "disposition", "replay_count"
+                         ) VALUES (
+                           ${id}, ${event.provider}, ${event.providerEventId},
+                           ${event.providerMessageId},
+                           ${event.eventType}::"OTDeliveryEventType",
+                           ${event.reasonCode}, ${new Date(event.occurredAt)},
+                           ${new Date(trustedNow)}, ${"UNMATCHED"}, 0
+                         )
+                         ON CONFLICT ("provider", "provider_event_id") DO NOTHING`,
+            );
+            if (inserted !== 1) return { outcome: "DUPLICATE" };
+
+            const applied = await apply(tx, id, event);
+            if (applied.outcome !== "UNMATCHED") return applied;
+
+            // Genuinely uncorrelatable: the send has not yet bound this message
+            // id to an attempt. The row stays UNMATCHED and is reconciled later.
+            // The ceiling is enforced AFTER the insert so the count includes this
+            // row; over the ceiling we keep the evidence but stop pretending it
+            // will be replayed.
+            //
+            // Serialized: without this lock the count is a snapshot that cannot
+            // see concurrent uncommitted inserts, and a burst of ingests would
+            // each independently conclude there was room. See SPOOL_CAP_LOCK_SQL.
+            await tx.$queryRaw<Array<{ locked: unknown }>>(SPOOL_CAP_LOCK_SQL);
+            const counts = await tx.$queryRaw<Array<{ live: bigint | number }>>(
+              Prisma.sql`SELECT COUNT(*) AS "live"
+                         FROM "ot_delivery_provider_callback"
+                         WHERE "disposition" = 'UNMATCHED' AND "resolved_at" IS NULL`,
+            );
+            if (Number(counts[0]?.live ?? 0) > MAX_UNMATCHED_CALLBACKS) {
+              await markRefused(tx, id, "UNMATCHED_STORE_FULL", trustedNow, {
+                fulfillmentId: null,
+                attemptNumber: null,
+              });
+              return { outcome: "REFUSED", code: "UNMATCHED_STORE_FULL" };
+            }
+            return { outcome: "UNMATCHED" };
+          },
+        );
+      } catch (error) {
+        if (error instanceof CallbackRollback)
+          return { outcome: "REFUSED", code: error.code };
+        throw error;
+      }
+    },
+
+    async reconcile(input) {
+      // Deliberately NOT one big transaction.
+      //
+      // `apply` can fail its compare-and-set after it has already appended an
+      // event row, and unwinding that has to roll back exactly that row's work —
+      // not the rows reconciled before it. Prisma's raw seam offers no
+      // savepoints, so each stored callback gets its own transaction. The pass is
+      // therefore re-runnable, and one poisoned row cannot undo the others.
+      const horizonNow = await client.$transaction((tx) => readTrustedNow(tx));
+      if (horizonNow === "")
+        return { examined: 0, applied: 0, stillUnmatched: 0, skipped: 0 };
+      const horizon = new Date(
+        new Date(horizonNow).getTime() - UNMATCHED_RECONCILIATION_WINDOW_MS,
+      );
+
+      // Bounded in count and in age. Oldest first, so the fold sees provider
+      // events in the order the provider observed them.
+      const stored = await client.$transaction((tx) =>
+        tx.$queryRaw<StoredCallbackRow[]>(
+          Prisma.sql`SELECT "id", "provider", "provider_event_id" AS "providerEventId",
+                            "provider_message_id" AS "providerMessageId",
+                            "event_type"::text AS "eventType",
+                            "reason_code" AS "reasonCode",
+                            "occurred_at" AS "occurredAt",
+                            "received_at" AS "receivedAt",
+                            "replay_count" AS "replayCount"
+                     FROM "ot_delivery_provider_callback"
+                     WHERE "provider" = ${input.provider}
+                       AND "provider_message_id" = ${input.providerMessageId}
+                       AND "disposition" = 'UNMATCHED'
+                       AND "resolved_at" IS NULL
+                       AND "received_at" >= ${horizon}
+                       AND "replay_count" < ${MAX_CALLBACK_REPLAYS}
+                     ORDER BY "occurred_at" ASC, "received_at" ASC
+                     LIMIT ${MAX_RECONCILIATION_BATCH}`,
+        ),
+      );
+
+      let applied = 0;
+      let stillUnmatched = 0;
+      let skipped = 0;
+      for (const row of stored) {
+        let result: CallbackIngestResult;
+        try {
+          result = await client.$transaction(
+            async (tx): Promise<CallbackIngestResult> => {
+              // Claim the row conditionally. Losing this to a concurrent
+              // reconciler means somebody else owns this replay, so we do
+              // nothing rather than applying the same event twice.
+              //
+              // The increment is unclamped and the predicate requires strictly
+              // less than the ceiling. `LEAST(count + 1, MAX)` looked safer and
+              // was not: at the ceiling it wrote MAX over MAX, so the
+              // compare-and-set `replay_count = <observed>` stayed satisfiable
+              // forever and stopped excluding a concurrent reconciler — the one
+              // thing this statement exists to do. A row that reaches the
+              // ceiling is now simply no longer claimable.
+              const claimed = await tx.$executeRaw(
+                Prisma.sql`UPDATE "ot_delivery_provider_callback"
+                           SET "replay_count" = "replay_count" + 1
+                           WHERE "id" = ${row.id}
+                             AND "disposition" = 'UNMATCHED'
+                             AND "resolved_at" IS NULL
+                             AND "replay_count" = ${row.replayCount}
+                             AND "replay_count" < ${MAX_CALLBACK_REPLAYS}`,
+              );
+              // Not ours to replay: either a concurrent reconciler claimed it,
+              // it was resolved while we read the batch, or it is spent.
+              if (claimed !== 1) return { outcome: "CONFLICTED" };
+              return apply(tx, row.id, {
+                provider: row.provider,
+                providerEventId: row.providerEventId,
+                providerMessageId: row.providerMessageId,
+                eventType:
+                  row.eventType as SanitizedProviderCallback["eventType"],
+                reasonCode: row.reasonCode,
+                occurredAt: asInstant(row.occurredAt),
+              });
+            },
+          );
+        } catch (error) {
+          // This row's writes rolled back with its own transaction. It stays
+          // UNMATCHED and a later pass may pick it up again.
+          if (error instanceof CallbackRollback) {
+            stillUnmatched += 1;
+            continue;
+          }
+          throw error;
+        }
+        if (result.outcome === "APPLIED") applied += 1;
+        else if (result.outcome === "UNMATCHED") stillUnmatched += 1;
+        // REFUSED is a resolved row, CONFLICTED and DUPLICATE were not ours to
+        // act on. None of the three is unmatched work still waiting.
+        else skipped += 1;
+      }
+      return { examined: stored.length, applied, stillUnmatched, skipped };
+    },
+  };
+}
+
+export const prismaProviderCallbackStore = createPrismaProviderCallbackStore(
+  prisma as unknown as ProviderCallbackClient,
+);

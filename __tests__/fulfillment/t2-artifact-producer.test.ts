@@ -1,3 +1,4 @@
+import { PDFDocument } from "pdf-lib";
 /**
  * The T2 artifact producer.
  *
@@ -49,6 +50,7 @@ import {
   type T2ProducerFulfillment,
   type T2ProducerOrder,
 } from "@/lib/fulfillment-runtime/t2-artifact-producer";
+import { isIdenticalBinding } from "@/lib/fulfillment/artifact-binding";
 
 jest.mock("server-only", () => ({}));
 
@@ -869,8 +871,14 @@ describe("independent review remediation (2026-09-04)", () => {
 
   describe("M2: artifact bytes are deterministic given the stable generation instant", () => {
     it("bumps the producer and template versions because bytes and manifest semantics changed", () => {
-      expect(T2_PRODUCER_VERSION).toBe("t2-evidence-packet/1.1.0");
-      expect(T2_TEMPLATE_VERSION).toBe("t2-evidence-packet-text/1.1.0");
+      // 1.1.0 was this bump; 1.1.1 followed (re-review M1). The exact current
+      // value is pinned in the re-review block; here only the bump itself.
+      expect(T2_PRODUCER_VERSION).not.toBe("t2-evidence-packet/1.0.0");
+      expect(T2_TEMPLATE_VERSION).not.toBe("t2-evidence-packet-text/1.0.0");
+      expect(T2_PRODUCER_VERSION).toMatch(/^t2-evidence-packet\/1\.2\.\d+$/);
+      expect(T2_TEMPLATE_VERSION).toMatch(
+        /^t2-evidence-packet-pdf\/1\.2\.\d+$/,
+      );
     });
 
     it("produces byte-identical packets and hashes across attempts with different wall clocks", async () => {
@@ -897,10 +905,10 @@ describe("independent review remediation (2026-09-04)", () => {
       );
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      const text = result.bytes.toString("utf8");
-      expect(text).toContain("Prepared: 2026-06-08T10:15:30Z");
-      expect(text).not.toContain("2026-06-11T21:45:10");
-      expect(text).not.toContain("2026-06-11");
+      expect(result.bytes.subarray(0, 5).toString()).toBe("%PDF-");
+      const pdf = await PDFDocument.load(result.bytes.toString("base64"), { updateMetadata: false });
+      expect(pdf.getCreationDate()?.toISOString()).toBe("2026-06-08T10:15:30.000Z");
+      expect(pdf.getModificationDate()?.toISOString()).toBe("2026-06-08T10:15:30.000Z");
     });
 
     it("samples the runtime clock exactly once and hands that instant to deadline resolution", async () => {
@@ -1078,7 +1086,9 @@ describe("independent review remediation (2026-09-04)", () => {
         different_class: 1,
         building_sqft_out_of_band: 1,
         duplicate_pin: 1,
-        conflicting_duplicate_rows: 1,
+        // Per row (re-review M1): BOTH rows of the contradictory pair are
+        // rejected, so the count is 2, not 1 per PIN.
+        conflicting_duplicate_rows: 2,
         missing_or_invalid_attributes: 1,
         same_parcel_as_subject: 0,
         different_subtype: 0,
@@ -1088,6 +1098,16 @@ describe("independent review remediation (2026-09-04)", () => {
       // Six original comparables, less the one dropped as conflicting.
       expect(result.manifest.candidateAcceptedCount).toBe(5);
       expect(result.text).toContain("Candidate rows handed to selection: 12");
+      // The partition identity, not just the individual counts: every one of
+      // the 12 rows is accepted or rejected for exactly one reason.
+      const rejectedTotal = Object.values(counts).reduce((a, b) => a + b, 0);
+      expect(rejectedTotal).toBe(7);
+      expect(result.manifest.candidateAcceptedCount + rejectedTotal).toBe(
+        result.manifest.candidateCount,
+      );
+      expect(result.text).toContain(
+        "  5 qualified; 7 did not, counted by reason in the provenance manifest.",
+      );
     });
 
     it("carries a source content hash when one is available and says so when it is not", () => {
@@ -1156,5 +1176,282 @@ describe("independent review remediation (2026-09-04)", () => {
       );
       expect(result.text).toContain("City:                    Chi cago");
     });
+  });
+});
+
+/* ── remediation of the independent exact-SHA re-review of e5383bbc ─────── */
+
+describe("independent re-review remediation (2026-09-04, e5383bbc)", () => {
+  const subjectMatch = {
+    pin: SUBJECT_PIN,
+    neighborhoodCode: "99010",
+    propertyClass: "203",
+    residentialSubtype: "1 Story",
+    buildingSqft: 1200,
+    yearBuilt: 1955,
+  };
+  const reasonTotal = (counts: Record<string, number>) =>
+    Object.values(counts).reduce((a, b) => a + b, 0);
+  /** A deterministic shuffle so the permutation evidence is reproducible. */
+  function permutations<T>(rows: T[], count: number): T[][] {
+    let seed = 11;
+    const rnd = () =>
+      (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    return Array.from({ length: count }, () =>
+      [...rows].sort(() => rnd() - 0.5),
+    );
+  }
+
+  describe("M1: rejection accounting is per row and partitions the pool", () => {
+    it("bumps the producer and template versions because manifest semantics changed", () => {
+      expect(T2_PRODUCER_VERSION).toBe("t2-evidence-packet/1.2.0");
+      expect(T2_TEMPLATE_VERSION).toBe("t2-evidence-packet-pdf/1.2.0");
+    });
+
+    it("a 1.1.0 binding never replays as identical to a 1.1.1 artifact", () => {
+      const next = {
+        artifactSha256: "a".repeat(64),
+        byteSize: 10,
+        storageLocator: "loc",
+        generatorVersion: T2_PRODUCER_VERSION,
+        templateVersion: T2_TEMPLATE_VERSION,
+        sourceOrderId: ORDER.id,
+        propertyBindingFingerprint: "fp",
+        generatedAt: "2026-06-08T10:15:30Z",
+      };
+      const existing110 = {
+        ...next,
+        generatorVersion: "t2-evidence-packet/1.1.0",
+        templateVersion: "t2-evidence-packet-text/1.1.0",
+        generatedAt: new Date("2026-06-08T10:15:30Z"),
+      };
+      expect(isIdenticalBinding(existing110, next as never)).toBe(false);
+      expect(
+        isIdenticalBinding(
+          { ...next, generatedAt: new Date("2026-06-08T10:15:30Z") },
+          next as never,
+        ),
+      ).toBe(true);
+    });
+
+    it("three identical rows: one accepted, two duplicate_pin rejections", () => {
+      const good = { ...subjectMatch, pin: "99010010050001" };
+      const selection = selectNonDirectionalComparables(subjectMatch, [
+        { ...good },
+        { ...good },
+        { ...good },
+      ])!;
+      expect(selection.accepted.map((c) => c.pin)).toEqual(["99010010050001"]);
+      expect(selection.rejected).toEqual([
+        { pin: "99010010050001", reason: "duplicate_pin" },
+        { pin: "99010010050001", reason: "duplicate_pin" },
+      ]);
+      expect(selection.accepted.length + selection.rejected.length).toBe(3);
+    });
+
+    it("a contradictory group of four rows: none accepted, four conflicting rejections", () => {
+      const base = { ...subjectMatch, pin: "99010010050002" };
+      const rows = [
+        { ...base },
+        { ...base, yearBuilt: 1901 },
+        { ...base },
+        { ...base, buildingSqft: 1300 },
+      ];
+      const selection = selectNonDirectionalComparables(subjectMatch, rows)!;
+      expect(selection.accepted).toHaveLength(0);
+      expect(selection.rejected).toEqual(
+        rows.map(() => ({
+          pin: "99010010050002",
+          reason: "conflicting_duplicate_rows",
+        })),
+      );
+      expect(selection.rejected).toHaveLength(4);
+    });
+
+    it("mixed pool: every row lands in exactly one partition, the manifest and body agree, and bytes are permutation-invariant", () => {
+      const { candidates, values, addresses } = comparableFixtures(); // 6 accepted
+      const dupA = { ...candidates[0] }; // identical repeats of an accepted PIN
+      const conflictPin = "99010010050003";
+      const conflictRows = [
+        { ...subjectMatch, pin: conflictPin },
+        { ...subjectMatch, pin: conflictPin, yearBuilt: 1900 },
+        { ...subjectMatch, pin: conflictPin, buildingSqft: 3000 },
+      ];
+      const invalid = [
+        { ...candidates[0], pin: "bad" },
+        { ...candidates[0], pin: "99010010050004", buildingSqft: 0 },
+      ];
+      const outOfBand = [
+        { ...subjectMatch, pin: "99010010050005", neighborhoodCode: "99011" },
+        { ...subjectMatch, pin: "99010010050006", yearBuilt: 1900 },
+      ];
+      const selfRow = { ...subjectMatch };
+      const rows: ComparableMatchAttributes[] = [
+        ...candidates,
+        dupA,
+        { ...dupA },
+        ...conflictRows,
+        ...invalid,
+        ...outOfBand,
+        selfRow,
+      ];
+      expect(rows).toHaveLength(16);
+
+      const expectedCounts = {
+        same_parcel_as_subject: 1,
+        different_neighborhood: 1,
+        different_class: 0,
+        different_subtype: 0,
+        building_sqft_out_of_band: 0,
+        year_built_out_of_band: 1,
+        missing_or_invalid_attributes: 2,
+        duplicate_pin: 2,
+        conflicting_duplicate_rows: 3,
+      };
+
+      let firstText: string | null = null;
+      for (const permuted of [rows, ...permutations(rows, 25)]) {
+        const selection = selectNonDirectionalComparables(
+          subjectMatch,
+          permuted,
+        )!;
+        // Stable ordering regardless of arrival order.
+        expect(selection.accepted.map((c) => c.pin)).toEqual(
+          candidates.map((c) => c.pin).sort(),
+        );
+        expect(selection.rejected).toEqual(
+          [...selection.rejected].sort((a, b) =>
+            `${a.pin}|${a.reason}` < `${b.pin}|${b.reason}` ? -1 : 1,
+          ),
+        );
+        const result = buildT2ArtifactContent(
+          contentInputs({
+            comparableCandidates: permuted,
+            comparableAssessedValues: values,
+            comparableAddresses: addresses,
+          }),
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        const m = result.manifest;
+        expect(m.candidateCount).toBe(16);
+        expect(m.candidateAcceptedCount).toBe(6);
+        expect(m.candidateRejectedByReason).toEqual(expectedCounts);
+        expect(reasonTotal(m.candidateRejectedByReason)).toBe(10);
+        expect(
+          m.candidateAcceptedCount + reasonTotal(m.candidateRejectedByReason),
+        ).toBe(m.candidateCount);
+        expect(result.text).toContain("Candidate rows handed to selection: 16");
+        expect(result.text).toContain(
+          "  6 qualified; 10 did not, counted by reason in the provenance manifest.",
+        );
+        // The manifest rendered in the body is the manifest returned.
+        const rendered = result.text
+          .split("\n")
+          .find((l) => l.startsWith('{"businessDaysRemainingAtGeneration"'));
+        expect(JSON.parse(rendered ?? "null")).toEqual(
+          JSON.parse(JSON.stringify(m)),
+        );
+        if (firstText === null) firstText = result.text;
+        else
+          expect(
+            encodeT2Artifact(result.text).equals(encodeT2Artifact(firstText)),
+          ).toBe(true);
+      }
+    });
+  });
+
+  describe("L2: the order id and deadline fields render one-line-safe", () => {
+    // Every injection is built from code points so the source carries none.
+    const cp = (...codes: number[]) => String.fromCodePoint(...codes);
+    const INJECTIONS: Array<[string, string]> = [
+      ["LF", "\n"],
+      ["CR", "\r"],
+      ["CRLF", "\r\n"],
+      ["TAB", "\t"],
+      ["NUL", cp(0)],
+      ["ESC", cp(27)],
+      ["DEL", cp(127)],
+      ["NEL U+0085", cp(0x85)],
+      ["LS U+2028", cp(0x2028)],
+      ["PS U+2029", cp(0x2029)],
+    ];
+    const SEPARATOR = new RegExp(
+      `[${cp(0)}-${cp(31)}${cp(127)}-${cp(159)}${cp(0x2028)}${cp(0x2029)}]`,
+    );
+    const bodyOf = (text: string) => text.split("\n8. PROVENANCE MANIFEST")[0];
+
+    it.each(INJECTIONS)(
+      "%s in orderId, closeDate, retrievedAt and sourceUrl starts no line and leaves no separator",
+      (_label, inj) => {
+        const inputs = contentInputs({
+          orderId: `ord_x${inj}INJECTED-ORDER`,
+          deadline: {
+            ...TRUSTED_DEADLINE,
+            closeDate: `2026-06-30${inj}INJECTED-CLOSE`,
+            retrievedAt: `2026-06-08T12:00:00Z${inj}INJECTED-RETRIEVED`,
+            sourceUrl: `https://example.invalid/x${inj}INJECTED-URL`,
+          },
+        });
+        const first = buildT2ArtifactContent(inputs);
+        const second = buildT2ArtifactContent(inputs);
+        expect(first.ok).toBe(true);
+        if (!first.ok || !second.ok) return;
+        expect(
+          encodeT2Artifact(first.text).equals(encodeT2Artifact(second.text)),
+        ).toBe(true);
+        const body = bodyOf(first.text);
+        const lines = body.split("\n");
+        expect(lines.some((l) => /^INJECTED-/.test(l))).toBe(false);
+        expect(SEPARATOR.test(body.replace(/\n/g, ""))).toBe(false);
+        expect(body).toContain("Order reference: ord_x INJECTED-ORDER");
+        expect(body).toContain(
+          "Assessor window closes: 2026-06-30 INJECTED-CLOSE",
+        );
+        expect(body).toContain("2026-06-08T12:00:00Z INJECTED-RETRIEVED");
+        expect(body).toContain(
+          "Source: https://example.invalid/x INJECTED-URL",
+        );
+        // The manifest keeps the value exactly as received.
+        expect(first.manifest.orderId).toBe(`ord_x${inj}INJECTED-ORDER`);
+        expect(first.manifest.deadlineSourceUrl).toBe(
+          `https://example.invalid/x${inj}INJECTED-URL`,
+        );
+      },
+    );
+
+    it.each(INJECTIONS)(
+      "%s in county text (subject, comparables, sources) still leaves no separator",
+      (_label, inj) => {
+        const { candidates, values, addresses } = comparableFixtures();
+        addresses.set(candidates[0].pin, `1 EXAMPLE AVE${inj}INJECTED-ADDRESS`);
+        const result = buildT2ArtifactContent(
+          contentInputs({
+            subject: {
+              ...SUBJECT,
+              address: `1 EXAMPLE ST${inj}INJECTED-SUBJECT`,
+              city: `Chi${inj}cago`,
+              township: `Ex${inj}ample`,
+              assessmentStage: `mai${inj}led`,
+            },
+            comparableCandidates: candidates,
+            comparableAssessedValues: values,
+            comparableAddresses: addresses,
+            sources: SOURCES.map((s) => ({
+              ...s,
+              datasetTitle: `${s.datasetTitle}${inj}INJECTED-TITLE`,
+              url: `${s.url}${inj}INJECTED-SOURCE-URL`,
+            })),
+          }),
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        const body = bodyOf(result.text);
+        expect(body.split("\n").some((l) => /^INJECTED-/.test(l))).toBe(false);
+        expect(SEPARATOR.test(body.replace(/\n/g, ""))).toBe(false);
+        expect(body).toContain("1 EXAMPLE AVE INJECTED-ADDRESS");
+        expect(body).toContain("City:                    Chi cago");
+      },
+    );
   });
 });
