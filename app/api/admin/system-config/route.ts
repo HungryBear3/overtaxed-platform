@@ -3,8 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
 
-export const COOK_COUNTY_REP_CODE_KEY = "COOK_COUNTY_REP_CODE"
-export const FILING_BUSINESS_EMAIL_KEY = "FILING_BUSINESS_EMAIL"
+import { COOK_COUNTY_REP_CODE_KEY, FILING_BUSINESS_EMAIL_KEY } from "@/lib/system-config-keys"
 
 async function requireAdmin(request?: NextRequest) {
   const session = await getSession(request)

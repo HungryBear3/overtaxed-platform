@@ -2,6 +2,11 @@
 import { PDFDocument } from "pdf-lib";
 import { renderT2ArtifactPdf } from "@/lib/fulfillment/t2-artifact-pdf";
 const AT = "2026-06-08T10:15:30Z";
+test("literal escape text never aliases non-ASCII source content", async () => {
+  const unicode = await renderT2ArtifactPdf("Café", AT);
+  const literal = await renderT2ArtifactPdf("Caf\\u{e9}", AT);
+  expect(unicode.equals(literal)).toBe(false);
+});
 test("emits a readable PDF with stable creation metadata and deterministic bytes", async () => {
   const input = "OT SYNTHETIC EVIDENCE\n1. SUMMARY\nPrepared: " + AT;
   const first = await renderT2ArtifactPdf(input, AT);
