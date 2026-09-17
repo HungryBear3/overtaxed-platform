@@ -38,6 +38,7 @@ import {
   prismaProviderCallbackStore,
   type CallbackIngestResult,
   type ProviderCallbackStore,
+  type ReconciliationSummary,
 } from "@/lib/fulfillment-runtime/provider-callback-store";
 
 /** Environment variable holding the T2 callback secret. Distinct from outreach. */
@@ -200,7 +201,7 @@ export async function ingestT2ResendCallback(
 export async function reconcileT2ResendCallbacks(
   input: { providerMessageId: string },
   deps: T2CallbackDeps = {},
-): Promise<{ examined: number; applied: number; stillUnmatched: number }> {
+): Promise<ReconciliationSummary> {
   const store = deps.store ?? prismaProviderCallbackStore;
   return store.reconcile({
     provider: RESEND_PROVIDER,

@@ -1,10 +1,11 @@
+import { trustedPaymentAuthority } from "./payment-authority";
 /**
  * Transactional store for T2 delivery attempts.
  *
  * The ordering invariant this store exists to enforce: **the attempt is durable
  * before the send happens.** `persistAttempt` inserts the attempt row, its
- * REQUESTED event, and the ARTIFACT_READY/DELAYED → DELIVERY_PENDING transition
- * in one transaction, and only then may a caller hand anything to a provider. A
+ * REQUESTED event, and the ARTIFACT_READY → DELIVERY_PENDING transition in one
+ * transaction, and only then may a caller hand anything to a provider. A
  * process that dies between the two leaves a DELIVERY_PENDING summary — which
  * [[decideDeliverySend]] refuses as UNRESOLVED_SEND — rather than a silent
  * possible duplicate.
@@ -46,7 +47,7 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { classifyPropertyBinding } from "@/lib/fulfillment/artifact-binding";
-import { t2DeliveryEnabled } from "@/lib/fulfillment/flag";
+import { neutralDeliveryEnabled, t2DeliveryEnabled } from "@/lib/fulfillment/flag";
 import { evaluateLease, type LeaseSnapshot } from "@/lib/fulfillment/lease";
 import {
   decideDeliveryDispatch,
@@ -198,6 +199,7 @@ type SummaryRow = {
   leaseOwner: string | null;
   leaseToken: string | null;
   leaseExpiresAt: Date | string | null;
+  neutralQaApproved?: boolean;
 };
 
 type ArtifactRow = {
@@ -277,7 +279,7 @@ async function lockedContext(
 ): Promise<{ order: OrderRow | null; summary: SummaryRow | null }> {
   const orders = await tx.$queryRaw<OrderRow[]>(
     Prisma.sql`SELECT "id", "status", "tier", "propertyPin", "propertyAddress"
-               FROM "ot_order" WHERE "id" = ${orderId} FOR UPDATE`,
+               FROM "ot_order" WHERE "id" = ${orderId} AND ${trustedPaymentAuthority()} FOR UPDATE`,
   );
   const order = orders[0] ?? null;
   if (!order) return { order: null, summary: null };
@@ -285,12 +287,32 @@ async function lockedContext(
     Prisma.sql`SELECT ${SUMMARY_COLUMNS} FROM "ot_fulfillment"
                WHERE "id" = ${fulfillmentId} FOR UPDATE`,
   );
-  return { order, summary: summaries[0] ?? null };
+  const summary = summaries[0] ?? null;
+  if (!summary || summary.kind !== "NEUTRAL_RECORDS_REPORT") return { order, summary };
+  const approvals = await tx.$queryRaw<Array<{ approved: boolean }>>(Prisma.sql`
+    SELECT EXISTS (
+      SELECT 1 FROM "ot_neutral_qa_review" q
+      JOIN "ot_neutral_report_reservation" r ON r."id"=q."reservation_id"
+      JOIN LATERAL (SELECT * FROM "ot_fulfillment_artifact" a WHERE a."fulfillment_id"=q."fulfillment_id" ORDER BY a."version" DESC LIMIT 1) a ON TRUE
+      WHERE q."fulfillment_id"=${summary.id} AND q."order_id"=${order.id}
+        AND q."status"='APPROVED' AND r."status"='PROMOTED' AND r."superseded_by_sha256" IS NULL
+        AND q."customer_artifact_sha256"=a."artifact_sha256"
+        AND q."artifact_sha256"=r."bundle_sha256"
+        AND q."property_binding_fingerprint"=a."property_binding_fingerprint"
+        AND q."policy_version"=a."template_version"
+    ) AS "approved"
+  `);
+  return { order, summary: {...summary,neutralQaApproved:approvals[0]?.approved===true} };
 }
 
 /** Settlement must be exactly a paid T2 order, read fresh under the lock. */
 function settlementOk(order: OrderRow | null): boolean {
   return order?.status === "PAID" && order.tier === "T2";
+}
+
+function fulfillmentKindOk(summary: SummaryRow): boolean {
+  return summary.kind === "T2_APPEAL_EVIDENCE" ||
+    (summary.kind === "NEUTRAL_RECORDS_REPORT" && neutralDeliveryEnabled() && summary.neutralQaApproved === true);
 }
 
 /**
@@ -378,14 +400,14 @@ export function createPrismaT2DeliveryStore(
         if (!settlementOk(order) || !summary) return false;
         if (
           summary.orderId !== input.orderId ||
-          summary.kind !== "T2_APPEAL_EVIDENCE"
+          !fulfillmentKindOk(summary)
         ) {
           return false;
         }
-        // Only a state a send could legally begin from may be leased. A
-        // DELIVERY_PENDING row is unresolved, not claimable.
-        if (summary.status !== "ARTIFACT_READY" && summary.status !== "DELAYED")
-          return false;
+        // Only a state a send could legally begin from may be leased.
+        // DELIVERY_PENDING, PROVIDER_ACCEPTED and DELAYED are all unresolved —
+        // a provider still holds a message in each — so none is claimable.
+        if (summary.status !== "ARTIFACT_READY") return false;
 
         // The database's wall clock, read AFTER the locks above, decides both
         // whether the incumbent lease has expired and when ours will. A
@@ -415,7 +437,7 @@ export function createPrismaT2DeliveryStore(
                      SET "lease_owner" = ${input.owner}, "lease_token" = ${input.token},
                          "lease_expires_at" = ${expiresAt}
                      WHERE "id" = ${input.fulfillmentId}
-                       AND "status"::text IN ('ARTIFACT_READY', 'DELAYED')
+                       AND "status"::text = 'ARTIFACT_READY'
                        AND ("lease_owner" IS NULL
                             OR "lease_expires_at" IS NULL
                             OR "lease_expires_at" <= ${new Date(nowMs)}
@@ -453,7 +475,7 @@ export function createPrismaT2DeliveryStore(
           if (!summary) return { ok: false, blocker: "FULFILLMENT_NOT_FOUND" };
           if (summary.orderId !== input.orderId)
             return { ok: false, blocker: "FULFILLMENT_ORDER_MISMATCH" };
-          if (summary.kind !== "T2_APPEAL_EVIDENCE")
+          if (!fulfillmentKindOk(summary))
             return { ok: false, blocker: "INELIGIBLE_FULFILLMENT_STATUS" };
 
           const trustedNow = await readTrustedNow(tx);
@@ -604,7 +626,7 @@ export function createPrismaT2DeliveryStore(
           if (!summary) return { ok: false, blocker: "FULFILLMENT_NOT_FOUND" };
           if (summary.orderId !== input.orderId)
             return { ok: false, blocker: "FULFILLMENT_ORDER_MISMATCH" };
-          if (summary.kind !== "T2_APPEAL_EVIDENCE")
+          if (!fulfillmentKindOk(summary))
             return { ok: false, blocker: "INELIGIBLE_FULFILLMENT_STATUS" };
 
           // Exactly the state the persist left behind, at exactly the revision
@@ -695,7 +717,7 @@ export function createPrismaT2DeliveryStore(
             return { ok: false, blocker: "INELIGIBLE_SETTLEMENT" };
           if (summary.orderId !== input.orderId)
             return { ok: false, blocker: "FULFILLMENT_ORDER_MISMATCH" };
-          if (summary.kind !== "T2_APPEAL_EVIDENCE")
+          if (!fulfillmentKindOk(summary))
             return { ok: false, blocker: "INELIGIBLE_FULFILLMENT_STATUS" };
           if (!Number.isSafeInteger(input.attemptNumber) || input.attemptNumber < 1)
             return { ok: false, blocker: "ATTEMPT_NOT_FOUND" };

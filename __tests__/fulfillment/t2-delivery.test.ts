@@ -89,16 +89,17 @@ describe("dispatch decisions reuse the existing send authority", () => {
     expect(decision.plan.idempotencyKey).toContain(`sha=${sha}`)
   })
 
-  it("treats a retry from DELAYED as a send of the SAME artifact version", () => {
-    const decision = decideDeliveryDispatch({
-      ...dispatch,
-      status: "DELAYED",
-      attemptCount: 1,
-    })
-    expect(decision).toMatchObject({
-      ok: true,
-      plan: { attemptNumber: 2, artifactVersion: 1 },
-    })
+  /**
+   * `email.delivery_delayed` means the provider ACCEPTED the message and is
+   * still retrying it downstream. Dispatching again from DELAYED creates a
+   * second attempt under a second idempotency key, which mints and mails a
+   * second code the provider's own deduplication cannot suppress — two
+   * different codes for one order, the first of them superseded and dead.
+   */
+  it("refuses a second send from DELAYED: a delay is not a failure", () => {
+    expect(
+      decideDeliveryDispatch({ ...dispatch, status: "DELAYED", attemptCount: 1 }),
+    ).toEqual({ ok: false, blocker: "PROVIDER_DELAY_IN_FLIGHT" })
   })
 
   it("refuses an unresolved in-flight send rather than risking a duplicate", () => {
@@ -128,7 +129,7 @@ describe("dispatch decisions reuse the existing send authority", () => {
     expect(
       decideDeliveryDispatch({
         ...dispatch,
-        status: "DELAYED",
+        status: "ARTIFACT_READY",
         attemptCount: T2_MAX_DELIVERY_ATTEMPTS,
       }),
     ).toEqual({ ok: false, blocker: "MAX_ATTEMPTS" })
@@ -144,14 +145,10 @@ describe("dispatch decisions reuse the existing send authority", () => {
     expect(decideDeliveryDispatch({ ...dispatch, ...patch })).toEqual({ ok: false, blocker })
   })
 
-  it("never plans a send from a pre-artifact status", () => {
+  it("plans a send from ARTIFACT_READY and from no other status at all", () => {
     for (const status of FULFILLMENT_STATUSES) {
       const decision = decideDeliveryDispatch({ ...dispatch, status })
-      if (status === "ARTIFACT_READY" || status === "DELAYED") {
-        expect(decision.ok).toBe(true)
-      } else {
-        expect(decision.ok).toBe(false)
-      }
+      expect([status, decision.ok]).toEqual([status, status === "ARTIFACT_READY"])
     }
   })
 })
@@ -268,6 +265,7 @@ type OrderFixture = {
 }
 
 type World = {
+  paymentAuthority?: boolean
   now: string
   order: OrderFixture | null
   summary: Record<string, unknown> | null
@@ -339,7 +337,10 @@ function fakeClient(state: World): T2DeliveryClient {
       const sql = query.sql
       state.sql.push(sql)
       if (sql.includes("clock_timestamp()")) return [{ now: state.now }] as T
-      if (sql.includes('FROM "ot_order"')) return (state.order ? [state.order] : []) as T
+      if (sql.includes('FROM "ot_order"')) { expect(sql).toContain('b.session_id = "ot_order"."stripeSessionId"')
+        expect(sql).toContain('r.payment_intent = b.payment_intent')
+        return (state.order && state.paymentAuthority !== false ? [state.order] : []) as T
+      }
       if (sql.includes('FROM "ot_fulfillment_artifact"'))
         return (state.artifact ? [state.artifact] : []) as T
       if (sql.includes('FROM "ot_fulfillment"'))
@@ -803,6 +804,12 @@ describe("a lease is proved against the database, never against a caller", () =>
     expect(state.summary?.leaseOwner).toBeNull()
   })
 
+  it("refuses dispatch for an otherwise eligible PAID order without trusted binding", async () => {
+    const state = world({ paymentAuthority: false })
+    await expect(claim(state)).resolves.toBe(false)
+    expect(state.summary?.leaseOwner).toBeNull()
+  })
+
   it("refuses a live lease held by someone else, measured by the DB clock", async () => {
     const state = leasedWorld()
     await expect(
@@ -818,6 +825,40 @@ describe("a lease is proved against the database, never against a caller", () =>
       claim(state, { owner: "ot-t2-delivery:other", token: "tok-other" }),
     ).resolves.toBe(true)
     expect(state.summary?.leaseOwner).toBe("ot-t2-delivery:other")
+  })
+
+  /**
+   * The claim is the outermost gate on a send, so it must agree with
+   * [[decideDeliverySend]] about which statuses have nothing in flight. DELAYED
+   * has a message in flight by definition — the provider said so — and a lease
+   * taken from it is a lease taken to mail a duplicate.
+   */
+  it.each([
+    "DELAYED",
+    "DELIVERY_PENDING",
+    "PROVIDER_ACCEPTED",
+    "DELIVERED",
+    "BOUNCED",
+    "ARTIFACT_PENDING",
+  ])("refuses to lease a %s fulfillment for a send", async (status) => {
+    const state = world()
+    if (state.summary) state.summary.status = status
+    await expect(claim(state)).resolves.toBe(false)
+    expect(state.summary?.leaseOwner).toBeNull()
+  })
+
+  it("leases ARTIFACT_READY, the one status that has sent nothing", async () => {
+    const state = world()
+    await expect(claim(state)).resolves.toBe(true)
+    expect(state.summary?.leaseOwner).toBe(OWNER)
+  })
+
+  it("keeps the status predicate in the write, not only in the read", async () => {
+    const state = world()
+    await claim(state)
+    const write = state.sql.find((sql) => sql.includes('SET "lease_owner" ='))
+    expect(write).toContain(`"status"::text = 'ARTIFACT_READY'`)
+    expect(write).not.toContain("DELAYED")
   })
 
   it("refuses to persist an attempt with no lease at all", async () => {
@@ -991,6 +1032,13 @@ describe("the pre-send gate re-reads authority after the durable attempt", () =>
       ok: false,
       blocker: "LEASE_NOT_HELD",
     })
+  })
+
+  it("denies pre-send when trusted payment authority is absent after persistence", async () => {
+    const state = leasedWorld()
+    const { store, assertion } = await pending(state)
+    state.paymentAuthority = false
+    await expect(store.assertSendable(assertion)).resolves.toEqual({ ok: false, blocker: "ORDER_NOT_FOUND" })
   })
 
   it("denies a send when the summary moved on under us", async () => {
