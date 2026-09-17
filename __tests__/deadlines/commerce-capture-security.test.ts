@@ -28,4 +28,18 @@ describe("commerce capture authority", () => {
     expect(sql).toContain("requires an isolated privileged migration connection")
     expect(sql).not.toContain("GRANT ot_commerce_capture_owner TO")
   })
+
+  it("hardens the applied owner through a forward-only migration", () => {
+    const hardening = fs.readFileSync(
+      path.join(process.cwd(), "prisma/migrations/20260916121000_harden_ot_supabase_owner_roles/migration.sql"),
+      "utf8",
+    )
+    expect(hardening).toContain("ot_commerce_capture_owner")
+    expect(hardening).toContain("supabase_admin")
+    expect(hardening).toContain("m.admin_option = true")
+    expect(hardening).toContain("m.inherit_option = false")
+    expect(hardening).toContain("m.set_option = false")
+    expect(hardening).toContain("REVOKE CREATE ON SCHEMA public")
+    expect(hardening).toContain("GRANTED BY postgres")
+  })
 })

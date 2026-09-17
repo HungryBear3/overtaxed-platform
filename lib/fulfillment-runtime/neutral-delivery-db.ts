@@ -18,8 +18,9 @@ export function neutralDeliveryPrisma():PrismaClient{
 }
 
 export async function disconnectNeutralDeliveryPrisma(){if(client){await client.$disconnect();client=undefined}}
-export async function isNeutralDeliveryFulfillment(fulfillmentId:string):Promise<boolean>{
+type NeutralDeliveryQueryExecutor={ $queryRaw<T>(query:unknown):Promise<T> }
+export async function isNeutralDeliveryFulfillment(fulfillmentId:string,executor?:NeutralDeliveryQueryExecutor):Promise<boolean>{
   if(!process.env.OT_NEUTRAL_DELIVERY_DATABASE_URL)return false
-  const rows=await neutralDeliveryPrisma().$queryRaw<Array<{found:boolean}>>(Prisma.sql`SELECT EXISTS(SELECT 1 FROM "ot_fulfillment" WHERE "id"=${fulfillmentId} AND "kind"::text='NEUTRAL_RECORDS_REPORT') "found"`)
+  const rows=await (executor??neutralDeliveryPrisma()).$queryRaw<Array<{found:boolean}>>(Prisma.sql`SELECT EXISTS(SELECT 1 FROM "ot_fulfillment" WHERE "id"=${fulfillmentId} AND "kind"::text='NEUTRAL_RECORDS_REPORT') "found"`)
   return rows[0]?.found===true
 }
