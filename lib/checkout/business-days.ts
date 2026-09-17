@@ -39,6 +39,19 @@ export const MIN_BUSINESS_DAYS_BEFORE_CLOSE = 3;
  */
 export const NO_HOLIDAY_AUTHORITY: ReadonlySet<string> = new Set<string>();
 
+/**
+ * Cook County's published 2026 observed-holiday calendar. This is intentionally
+ * year-bounded: checkout must fail closed rather than infer a future year's
+ * calendar. Source: Cook County Office Under the President, 2026 holiday
+ * schedule (county-observed dates).
+ */
+export const COOK_COUNTY_OBSERVED_HOLIDAYS_2026: ReadonlySet<string> = new Set([
+  "2026-01-01", "2026-01-19", "2026-02-12", "2026-02-16",
+  "2026-03-02", "2026-05-25", "2026-06-19", "2026-07-03",
+  "2026-09-07", "2026-10-12", "2026-11-11", "2026-11-26",
+  "2026-11-27", "2026-12-25",
+]);
+
 const DAY_MS = 86_400_000;
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -136,7 +149,8 @@ export type CheckoutCutoffDecision =
         | "close_date_missing"
         | "close_date_invalid"
         | "window_already_closed"
-        | "insufficient_business_days";
+        | "insufficient_business_days"
+        | "unsupported_holiday_calendar";
       businessDaysRemaining: number | null;
       evaluatedChicagoDay: string;
       closeDay: string | null;
@@ -160,7 +174,7 @@ export function evaluateCheckoutBusinessDayCutoff(input: {
   holidays?: ReadonlySet<string>;
   minimumBusinessDays?: number;
 }): CheckoutCutoffDecision {
-  const holidays = input.holidays ?? NO_HOLIDAY_AUTHORITY;
+  const holidays = input.holidays ?? COOK_COUNTY_OBSERVED_HOLIDAYS_2026;
   const minimum = input.minimumBusinessDays ?? MIN_BUSINESS_DAYS_BEFORE_CLOSE;
   const today = chicagoCalendarDay(input.now);
 
@@ -192,6 +206,17 @@ export function evaluateCheckoutBusinessDayCutoff(input: {
       allowed: false,
       reason: "window_already_closed",
       businessDaysRemaining: 0,
+      evaluatedChicagoDay: today,
+      closeDay,
+    };
+  }
+  // Every calendar day in the interval must have an explicitly approved
+  // holiday authority. Never apply 2026's set to 2027 by omission.
+  if (!today.startsWith("2026-") || !closeDay.startsWith("2026-")) {
+    return {
+      allowed: false,
+      reason: "unsupported_holiday_calendar",
+      businessDaysRemaining: null,
       evaluatedChicagoDay: today,
       closeDay,
     };
