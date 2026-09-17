@@ -18,7 +18,28 @@ describe("commerce capture authority", () => {
     expect(sql).toContain("SECURITY DEFINER")
     expect(sql).toContain("ot_commerce_capture_owner NOLOGIN NOINHERIT")
     expect(sql).toContain('ALTER TABLE public."ot_commerce_deadline_capture" OWNER TO ot_commerce_capture_owner')
-    expect(sql).toContain("capture_source_body <> decode")
-    expect(sql).toContain("encode(sha256(capture_source_body), 'hex')")
+    expect(sql).toContain("(embedded #>> '{snapshot,sources,assessor,retrievedAt}') IS NULL")
+    expect(sql).toContain("(embedded #>> '{snapshot,sources,assessor,contentSha256}') IS NULL")
+    expect(sql).toContain("(embedded #>> '{sourceBodyBase64}') IS NULL")
+    expect(sql).toContain("capture_source_body IS DISTINCT FROM decode")
+    expect(sql).toContain("capture_content_sha256 IS DISTINCT FROM encode(sha256(capture_source_body), 'hex')")
+    expect(sql).toContain("WHERE roleid = owner_role_oid OR member = owner_role_oid")
+    expect(sql).toContain("pre-existing ot_commerce_capture_owner role is not isolated")
+    expect(sql).toContain("requires an isolated privileged migration connection")
+    expect(sql).not.toContain("GRANT ot_commerce_capture_owner TO")
+  })
+
+  it("hardens the applied owner through a forward-only migration", () => {
+    const hardening = fs.readFileSync(
+      path.join(process.cwd(), "prisma/migrations/20260916121000_harden_ot_supabase_owner_roles/migration.sql"),
+      "utf8",
+    )
+    expect(hardening).toContain("ot_commerce_capture_owner")
+    expect(hardening).toContain("supabase_admin")
+    expect(hardening).toContain("m.admin_option = true")
+    expect(hardening).toContain("m.inherit_option = false")
+    expect(hardening).toContain("m.set_option = false")
+    expect(hardening).toContain("REVOKE CREATE ON SCHEMA public")
+    expect(hardening).toContain("GRANTED BY postgres")
   })
 })
