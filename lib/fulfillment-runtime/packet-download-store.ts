@@ -25,7 +25,8 @@ import { trustedPaymentAuthority } from "./payment-authority";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { t2PacketDownloadEnabled } from "@/lib/fulfillment/flag";
+import { neutralDeliveryPrisma } from "@/lib/fulfillment-runtime/neutral-delivery-db";
+import { neutralDeliveryEnabled, t2PacketDownloadEnabled } from "@/lib/fulfillment/flag";
 import {
   CAPABILITY_REVOCATION_REASONS,
   decideCapabilityIssuance,
@@ -169,6 +170,30 @@ function toInstant(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+async function withNeutralQa(
+  tx: PacketDownloadTransaction,
+  fulfillment: PacketDownloadFulfillmentRow | null,
+): Promise<PacketDownloadFulfillmentRow | null> {
+  if (!fulfillment || fulfillment.kind !== "NEUTRAL_RECORDS_REPORT") return fulfillment;
+  if (!neutralDeliveryEnabled()) return {...fulfillment, neutralQaApproved:false};
+  const rows = await tx.$queryRaw<Array<{ approved: boolean }>>(Prisma.sql`
+    SELECT EXISTS (
+      SELECT 1 FROM "ot_neutral_qa_review" q
+      JOIN "ot_neutral_report_reservation" r ON r."id"=q."reservation_id"
+      JOIN "ot_fulfillment_artifact" a ON a."fulfillment_id"=q."fulfillment_id"
+      WHERE q."fulfillment_id"=${fulfillment.id} AND q."order_id"=${fulfillment.orderId}
+        AND q."status"='APPROVED' AND r."status"='PROMOTED'
+        AND r."superseded_by_sha256" IS NULL
+        AND q."customer_artifact_sha256"=a."artifact_sha256"
+        AND q."artifact_sha256"=r."bundle_sha256"
+        AND q."property_binding_fingerprint"=a."property_binding_fingerprint"
+        AND q."policy_version"=a."template_version"
+        AND a."version"=(SELECT max(x."version") FROM "ot_fulfillment_artifact" x WHERE x."fulfillment_id"=q."fulfillment_id")
+    ) AS "approved"
+  `);
+  return {...fulfillment, neutralQaApproved: rows[0]?.approved === true};
+}
+
 /**
  * Read every row the decision needs, under the authoritative order lock.
  *
@@ -180,12 +205,11 @@ function toInstant(value: unknown): string {
 async function loadContext(
   tx: PacketDownloadTransaction,
   capabilityHash: string,
+  neutralRestricted=false,
 ): Promise<ContextRows> {
-  const probe = await tx.$queryRaw<Array<{ sourceOrderId: string }>>(
-    Prisma.sql`SELECT "source_order_id" AS "sourceOrderId"
-               FROM "ot_packet_download_capability"
-               WHERE "capability_hash" = ${capabilityHash}`,
-  );
+  const probe = await tx.$queryRaw<Array<{ sourceOrderId: string }>>(neutralRestricted
+    ? Prisma.sql`SELECT c."source_order_id" AS "sourceOrderId" FROM "ot_packet_download_capability" c JOIN "ot_fulfillment" f ON f."id"=c."fulfillment_id" AND f."kind"::text='NEUTRAL_RECORDS_REPORT' WHERE c."capability_hash"=${capabilityHash}`
+    : Prisma.sql`SELECT c."source_order_id" AS "sourceOrderId" FROM "ot_packet_download_capability" c JOIN "ot_fulfillment" f ON f."id"=c."fulfillment_id" AND f."kind"::text<>'NEUTRAL_RECORDS_REPORT' WHERE c."capability_hash"=${capabilityHash}`);
   const orderId = probe[0]?.sourceOrderId;
   if (orderId === undefined) {
     return {
@@ -197,9 +221,10 @@ async function loadContext(
     };
   }
 
-  const orders = await tx.$queryRaw<PacketDownloadOrderRow[]>(
-    Prisma.sql`SELECT ${ORDER_COLUMNS} FROM "ot_order" WHERE "id" = ${orderId} AND ${trustedPaymentAuthority()} FOR UPDATE`,
-  );
+  if(neutralRestricted)await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`neutral-delivery:${orderId}`}))::text AS "locked"`)
+  const orders = await tx.$queryRaw<PacketDownloadOrderRow[]>(neutralRestricted
+    ? Prisma.sql`SELECT "id","tier","status","propertyPin","propertyAddress" FROM "ot_neutral_delivery_order" WHERE "id"=${orderId} AND "paymentAuthoritative"=true`
+    : Prisma.sql`SELECT ${ORDER_COLUMNS} FROM "ot_order" WHERE "id" = ${orderId} AND ${trustedPaymentAuthority()} FOR UPDATE`);
 
   const capabilities = await tx.$queryRaw<PacketDownloadCapabilityRow[]>(
     Prisma.sql`SELECT ${CAPABILITY_COLUMNS}
@@ -232,7 +257,7 @@ async function loadContext(
   return {
     capability,
     order: orders[0] ?? null,
-    fulfillment: fulfillments[0] ?? null,
+    fulfillment: await withNeutralQa(tx, fulfillments[0] ?? null),
     artifact: artifacts[0] ?? null,
     trustedNow: toInstant(clock[0]?.now),
   };
@@ -240,6 +265,7 @@ async function loadContext(
 
 export function createPrismaPacketDownloadStore(
   client: PacketDownloadClient,
+  options:{neutralRestricted?:boolean}={},
 ): PacketDownloadStore {
   return {
     async issue(input) {
@@ -248,23 +274,23 @@ export function createPrismaPacketDownloadStore(
         return { ok: false, blocker: "FLAG_DISABLED" };
 
       return client.$transaction(async (tx): Promise<IssueCapabilityOutcome> => {
-        const fulfillments = await tx.$queryRaw<PacketDownloadFulfillmentRow[]>(
-          Prisma.sql`SELECT ${FULFILLMENT_COLUMNS} FROM "ot_fulfillment"
-                     WHERE "id" = ${input.fulfillmentId}`,
-        );
+        const fulfillments = await tx.$queryRaw<PacketDownloadFulfillmentRow[]>(options.neutralRestricted
+          ? Prisma.sql`SELECT ${FULFILLMENT_COLUMNS} FROM "ot_fulfillment" WHERE "id"=${input.fulfillmentId} AND "kind"::text='NEUTRAL_RECORDS_REPORT'`
+          : Prisma.sql`SELECT ${FULFILLMENT_COLUMNS} FROM "ot_fulfillment" WHERE "id"=${input.fulfillmentId} AND "kind"::text<>'NEUTRAL_RECORDS_REPORT'`);
         let fulfillment = fulfillments[0] ?? null;
         if (!fulfillment) return { ok: false, blocker: "FULFILLMENT_NOT_FOUND" };
 
-        const orders = await tx.$queryRaw<PacketDownloadOrderRow[]>(
-          Prisma.sql`SELECT ${ORDER_COLUMNS} FROM "ot_order"
-                     WHERE "id" = ${fulfillment.orderId} AND ${trustedPaymentAuthority()} FOR UPDATE`,
-        );
+        if(options.neutralRestricted)await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`neutral-delivery:${fulfillment.orderId}`}))::text AS "locked"`)
+        const orders = await tx.$queryRaw<PacketDownloadOrderRow[]>(options.neutralRestricted
+          ? Prisma.sql`SELECT "id","tier","status","propertyPin","propertyAddress" FROM "ot_neutral_delivery_order" WHERE "id"=${fulfillment.orderId} AND "paymentAuthoritative"=true`
+          : Prisma.sql`SELECT ${ORDER_COLUMNS} FROM "ot_order" WHERE "id" = ${fulfillment.orderId} AND ${trustedPaymentAuthority()} FOR UPDATE`);
 
-        const refreshed = await tx.$queryRaw<PacketDownloadFulfillmentRow[]>(
-          Prisma.sql`SELECT ${FULFILLMENT_COLUMNS} FROM "ot_fulfillment"
-                     WHERE "id" = ${input.fulfillmentId} FOR UPDATE`,
-        );
-        fulfillment = refreshed[0] ?? null;
+        const refreshed = await tx.$queryRaw<PacketDownloadFulfillmentRow[]>(options.neutralRestricted
+          ? Prisma.sql`SELECT ${FULFILLMENT_COLUMNS} FROM "ot_fulfillment" WHERE "id" = ${input.fulfillmentId}`
+          : Prisma.sql`SELECT ${FULFILLMENT_COLUMNS} FROM "ot_fulfillment" WHERE "id" = ${input.fulfillmentId} FOR UPDATE`);
+        const authorizedFulfillment = await withNeutralQa(tx, refreshed[0] ?? null);
+        if (!authorizedFulfillment) return { ok: false, blocker: "FULFILLMENT_NOT_FOUND" };
+        fulfillment = authorizedFulfillment;
 
         // Order → fulfillment → attempt, the same lock ordering the delivery
         // store and the binder use, so the three can never deadlock.
@@ -389,7 +415,7 @@ export function createPrismaPacketDownloadStore(
       try {
         return await client.$transaction(
           async (tx): Promise<AuthorizeDownloadOutcome> => {
-            const context = await loadContext(tx, input.capabilityHash);
+            const context = await loadContext(tx, input.capabilityHash,options.neutralRestricted);
             const decision = decidePacketDownload({
               flagEnabled: t2PacketDownloadEnabled(process.env),
               trustedNow: context.trustedNow,
@@ -439,7 +465,7 @@ export function createPrismaPacketDownloadStore(
         return { ok: false, blocker: "FLAG_DISABLED" };
 
       return client.$transaction(async (tx): Promise<AuthorizeDownloadOutcome> => {
-        const context = await loadContext(tx, input.capabilityHash);
+        const context = await loadContext(tx, input.capabilityHash,options.neutralRestricted);
         const capability = context.capability;
         if (!capability) return { ok: false, blocker: "CAPABILITY_NOT_FOUND" };
 
@@ -527,3 +553,13 @@ class PacketDownloadRollback extends Error {
 export const prismaPacketDownloadStore = createPrismaPacketDownloadStore(
   prisma as unknown as PacketDownloadClient,
 );
+
+export function neutralPacketDownloadStore(executor?:PacketDownloadClient):PacketDownloadStore{
+  return createPrismaPacketDownloadStore(executor??neutralDeliveryPrisma() as unknown as PacketDownloadClient,{neutralRestricted:true})
+}
+export async function authoritativeFulfillmentKind(id:string):Promise<string|null>{
+  const rows=await prisma.$queryRaw<Array<{kind:string}>>(Prisma.sql`SELECT "kind" FROM "ot_fulfillment_kind_authority" WHERE "id"=${id}`);return rows[0]?.kind??null
+}
+export async function authoritativeCapabilityKind(hash:string):Promise<string|null>{
+  const rows=await prisma.$queryRaw<Array<{kind:string}>>(Prisma.sql`SELECT "kind" FROM "ot_packet_capability_kind_authority" WHERE "capability_hash"=${hash}`);return rows[0]?.kind??null
+}
