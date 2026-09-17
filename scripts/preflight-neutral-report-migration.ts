@@ -2,6 +2,9 @@ import { Client } from "pg";
 import { assertSameNeutralPreviewDatabase } from "../lib/fulfillment/neutral-preview-database-marker";
 
 async function main() {
+  // Reconciliation's catalog proof pins separate native-PG18 and hosted-
+  // Supabase renderings. This preflight intentionally re-proves the portable
+  // security invariants below rather than recomputing a host-rendered digest.
   const migrationUrl = process.env.DIRECT_URL?.trim();
   const appUrl = process.env.DATABASE_URL?.trim();
   const runtimeUrl = process.env.OT_NEUTRAL_DATABASE_URL?.trim();
@@ -105,6 +108,70 @@ async function main() {
       group.rows[0].rolbypassrls
     )
       throw new Error("Neutral runtime role invariants are invalid");
+    const appReaderGroup = await migration.query(
+      `select r.rolcanlogin,r.rolinherit,r.rolsuper,r.rolcreaterole,r.rolcreatedb,r.rolreplication,r.rolbypassrls,
+         has_schema_privilege(r.rolname,'public','CREATE') can_create,
+         (select count(*)::int from pg_auth_members m join pg_roles member_role on member_role.oid=m.member join pg_roles grantor_role on grantor_role.oid=m.grantor
+           where m.roleid=r.oid and member_role.rolname='ot_preview_app' and grantor_role.rolname='postgres'
+             and m.admin_option=false and m.inherit_option=true and m.set_option=true) canonical_login_edges,
+         (select count(*)::int from pg_auth_members m join pg_roles member_role on member_role.oid=m.member join pg_roles grantor_role on grantor_role.oid=m.grantor
+           where m.roleid=r.oid and member_role.rolname='postgres' and grantor_role.rolname='supabase_admin'
+             and m.admin_option=true and m.inherit_option=false and m.set_option=false) reader_platform_edges,
+         (select count(*)::int from pg_auth_members m join pg_roles granted_role on granted_role.oid=m.roleid
+           join pg_roles member_role on member_role.oid=m.member join pg_roles grantor_role on grantor_role.oid=m.grantor
+           where granted_role.rolname='ot_preview_app' and member_role.rolname='postgres' and grantor_role.rolname='supabase_admin'
+             and m.admin_option=true and m.inherit_option=false and m.set_option=false) app_login_platform_edges,
+         (select count(*)::int from pg_auth_members m join pg_roles granted_role on granted_role.oid=m.roleid
+           join pg_roles member_role on member_role.oid=m.member join pg_roles grantor_role on grantor_role.oid=m.grantor
+           where (granted_role.rolname in ('ot_neutral_app_reader','ot_preview_app') or member_role.rolname in ('ot_neutral_app_reader','ot_preview_app'))
+             and not (granted_role.rolname='ot_neutral_app_reader' and (
+               (member_role.rolname='ot_preview_app' and grantor_role.rolname='postgres' and m.admin_option=false and m.inherit_option=true and m.set_option=true)
+               or (member_role.rolname='postgres' and grantor_role.rolname='supabase_admin' and m.admin_option=true and m.inherit_option=false and m.set_option=false)))
+             and not (granted_role.rolname='ot_preview_app' and member_role.rolname='postgres' and grantor_role.rolname='supabase_admin'
+               and m.admin_option=true and m.inherit_option=false and m.set_option=false)) unexpected_edges,
+         coalesce((select bool_and(m.roleid=r.oid and (
+             (member_role.rolname='ot_preview_app' and grantor_role.rolname='postgres' and m.admin_option=false and m.inherit_option=true and m.set_option=true)
+             or (member_role.rolname='postgres' and grantor_role.rolname='supabase_admin' and m.admin_option=true and m.inherit_option=false and m.set_option=false)))
+           from pg_auth_members m join pg_roles member_role on member_role.oid=m.member join pg_roles grantor_role on grantor_role.oid=m.grantor
+           where m.roleid=r.oid or m.member=r.oid),true) memberships_safe
+       from pg_roles r where r.rolname='ot_neutral_app_reader'`,
+    );
+    const appLogin = await migration.query(
+      `select rolcanlogin,rolinherit,rolsuper,rolcreaterole,rolcreatedb,rolreplication,rolbypassrls,
+         has_schema_privilege(rolname,'public','USAGE') schema_usage,
+         has_schema_privilege(rolname,'public','CREATE') schema_create
+       from pg_roles where rolname='ot_preview_app'`,
+    );
+    if (
+      appReaderGroup.rows.length !== 1 ||
+      appReaderGroup.rows[0].rolcanlogin ||
+      appReaderGroup.rows[0].rolinherit ||
+      appReaderGroup.rows[0].rolsuper ||
+      appReaderGroup.rows[0].rolcreaterole ||
+      appReaderGroup.rows[0].rolcreatedb ||
+      appReaderGroup.rows[0].rolreplication ||
+      appReaderGroup.rows[0].rolbypassrls ||
+      appReaderGroup.rows[0].can_create ||
+      appReaderGroup.rows[0].canonical_login_edges !== 1 ||
+      ![0, 1].includes(appReaderGroup.rows[0].reader_platform_edges) ||
+      ![0, 1].includes(appReaderGroup.rows[0].app_login_platform_edges) ||
+      appReaderGroup.rows[0].unexpected_edges !== 0 ||
+      !appReaderGroup.rows[0].memberships_safe
+    )
+      throw new Error("Neutral app-reader role invariants are invalid");
+    if (
+      appLogin.rows.length !== 1 ||
+      !appLogin.rows[0].rolcanlogin ||
+      !appLogin.rows[0].rolinherit ||
+      appLogin.rows[0].rolsuper ||
+      appLogin.rows[0].rolcreaterole ||
+      appLogin.rows[0].rolcreatedb ||
+      appLogin.rows[0].rolreplication ||
+      appLogin.rows[0].rolbypassrls ||
+      !appLogin.rows[0].schema_usage ||
+      appLogin.rows[0].schema_create
+    )
+      throw new Error("Canonical Preview app login invariants are invalid");
     const deliveryGroup = await migration.query(
       `select rolcanlogin,rolsuper,rolbypassrls from pg_roles where rolname='ot_neutral_delivery_runtime'`,
     );
@@ -115,6 +182,76 @@ async function main() {
       deliveryGroup.rows[0].rolbypassrls
     )
       throw new Error("Neutral delivery role invariants are invalid");
+    const ownerSecurity = await migration.query(
+      `with owners(role_name) as (
+         values ('ot_commerce_capture_owner'::text), ('ot_neutral_reversal_guard_owner'::text)
+       )
+       select o.role_name,
+         r.rolcanlogin, r.rolinherit, r.rolsuper, r.rolcreaterole,
+         r.rolcreatedb, r.rolreplication, r.rolbypassrls,
+         has_schema_privilege(o.role_name, 'public', 'CREATE') as can_create_schema,
+         (select count(*)::int from pg_auth_members m where m.roleid = r.oid or m.member = r.oid) as membership_count,
+         (select count(*)::int
+          from pg_auth_members m
+          join pg_roles member_role on member_role.oid = m.member
+          join pg_roles grantor_role on grantor_role.oid = m.grantor
+          where (m.roleid = r.oid or m.member = r.oid)
+            and m.roleid = r.oid
+            and member_role.rolname = 'postgres'
+            and grantor_role.rolname = 'supabase_admin'
+            and m.admin_option = true
+            and m.inherit_option = false
+            and m.set_option = false) as platform_edge_count,
+         coalesce((
+           select bool_and(
+             m.roleid = r.oid
+             and member_role.rolname = 'postgres'
+             and grantor_role.rolname = 'supabase_admin'
+             and m.admin_option = true
+             and m.inherit_option = false
+             and m.set_option = false
+           )
+           from pg_auth_members m
+           join pg_roles member_role on member_role.oid = m.member
+           join pg_roles grantor_role on grantor_role.oid = m.grantor
+           where m.roleid = r.oid or m.member = r.oid
+         ), true) as memberships_safe
+       from owners o
+       left join pg_roles r on r.rolname = o.role_name`,
+    );
+    if (
+      ownerSecurity.rows.length !== 2 ||
+      ownerSecurity.rows.some(
+        (row) =>
+          !row.role_name ||
+          row.rolcanlogin !== false ||
+          row.rolinherit !== false ||
+          row.rolsuper !== false ||
+          row.rolcreaterole !== false ||
+          row.rolcreatedb !== false ||
+          row.rolreplication !== false ||
+          row.rolbypassrls !== false ||
+          row.can_create_schema !== false ||
+          ![0, 1].includes(row.membership_count) ||
+          row.platform_edge_count !== row.membership_count ||
+          row.memberships_safe !== true,
+      )
+    )
+      throw new Error("Owner-role final-state security invariants are invalid");
+    const ownerObjects = await migration.query(
+      `select
+         pg_get_userbyid((select relowner from pg_class where oid='public.ot_commerce_deadline_capture'::regclass)) capture_table_owner,
+         pg_get_userbyid((select proowner from pg_proc where oid='public.ot_commerce_deadline_capture_append_only()'::regprocedure)) append_function_owner,
+         pg_get_userbyid((select proowner from pg_proc where oid='public.ot_publish_commerce_deadline_capture(text,timestamptz,text,text,bytea)'::regprocedure)) publish_function_owner,
+         pg_get_userbyid((select proowner from pg_proc where oid='public.ot_neutral_hold_on_settlement_reversal()'::regprocedure)) reversal_function_owner`,
+    );
+    if (
+      ownerObjects.rows[0]?.capture_table_owner !== "ot_commerce_capture_owner" ||
+      ownerObjects.rows[0]?.append_function_owner !== "ot_commerce_capture_owner" ||
+      ownerObjects.rows[0]?.publish_function_owner !== "ot_commerce_capture_owner" ||
+      ownerObjects.rows[0]?.reversal_function_owner !== "ot_neutral_reversal_guard_owner"
+    )
+      throw new Error("Owner-object final-state topology is invalid");
     const deliveryGrants = await delivery.query(
       `select has_column_privilege(current_user,'ot_packet_download_capability','capability_hash','SELECT') and has_column_privilege(current_user,'ot_packet_download_capability','capability_hash','INSERT') and has_column_privilege(current_user,'ot_packet_download_capability','use_count','UPDATE') allowed,has_table_privilege(current_user,'ot_packet_download_capability','DELETE,TRUNCATE,REFERENCES,TRIGGER') excessive,has_column_privilege(current_user,'ot_delivery_attempt','download_capability_id','UPDATE') attempt_update`,
     );
@@ -134,6 +271,18 @@ async function main() {
       !tables.rows[0]?.refund_work
     )
       throw new Error("Neutral report Phase 3 migrations are not installed");
+    const hostedApiAcl = await migration.query(
+      `select api.role_name,scoped.table_name
+       from (values ('anon'),('authenticated'),('service_role')) api(role_name)
+       cross join (values ('ot_neutral_customer_zip_attempt'),('ot_neutral_qa_review'),('ot_neutral_refund_work')) scoped(table_name)
+       where exists(select 1 from pg_roles where rolname=api.role_name)
+         and (has_table_privilege(api.role_name,format('public.%I',scoped.table_name),'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+           or has_any_column_privilege(api.role_name,format('public.%I',scoped.table_name),'SELECT,INSERT,UPDATE,REFERENCES'))`,
+    );
+    if (hostedApiAcl.rows.length !== 0)
+      throw new Error(
+        "Supabase API roles retain unsafe effective neutral QA/refund privileges",
+      );
     const grants = await runtime.query(
       `select has_table_privilege(current_user,'ot_neutral_report_reservation','SELECT,INSERT,UPDATE') as allowed, has_table_privilege(current_user,'ot_neutral_report_reservation','DELETE,TRUNCATE,REFERENCES,TRIGGER') as excessive`,
     );
