@@ -21,8 +21,10 @@ import {
   loadOfficialCountyData,
   parseOrderPin,
   type CountyBody,
+  type CountyCharacteristicsSubreason,
   type CountyGatewayBlocker,
   type CountyGatewayDeps,
+  type CountyRefusalDiagnostics,
   type CountyResponse,
 } from "@/lib/fulfillment-runtime/t2-county-gateway"
 
@@ -930,5 +932,396 @@ describe("retrieval freshness", () => {
   it("completes inside the window for an ordinary neighbourhood", async () => {
     const { result } = await run(makeCounty(20), {}, makeClock("2026-09-12T15:00:00Z", 50).now)
     expect(result.ok).toBe(true)
+  })
+})
+
+// Independent-review regressions: malformed source types and stalled response bodies.
+describe("independent county gateway review", () => {
+  it("does not coerce boolean residential subtype or numeric street address into evidence", async () => {
+    const malformedFeature = makeCounty(4)
+    malformedFeature[COUNTY_DATASETS.characteristics.id][0].char_type_resd = true
+    await expectBlocker(malformedFeature, "CANDIDATE_CHARACTERISTICS_INCOMPLETE")
+    const malformedAddress = makeCounty(4)
+    malformedAddress[COUNTY_DATASETS.addresses.id][0].prop_address_full = 12345
+    await expectBlocker(malformedAddress, "CANDIDATE_ADDRESS_INCOMPLETE")
+  })
+
+  it("aborts a stalled body at the remaining global budget rather than granting a new 15 seconds", async () => {
+    jest.useFakeTimers()
+    try {
+      let calls = 0
+      let aborted = false
+      const start = new Date("2026-09-12T15:00:00Z").getTime()
+      const pending = fetchCountyEvidence(ORDER, {
+        now: () => new Date(start + (++calls >= 3 ? MAX_RETRIEVAL_WINDOW_MS - 1000 : 0)),
+        fetch: async (_url, init) => ({
+          ok: true, status: 200,
+          text: async () => { throw new Error("must stream") },
+          body: { getReader: () => ({
+            read: () => new Promise((_, reject) => {
+              init.signal.addEventListener("abort", () => {
+                aborted = true
+                reject(new Error("body aborted"))
+              }, { once: true })
+            }),
+            cancel: async () => {},
+          }) },
+        }),
+      })
+      await jest.advanceTimersByTimeAsync(999)
+      expect(aborted).toBe(false)
+      await jest.advanceTimersByTimeAsync(1)
+      expect(aborted).toBe(true)
+      await expect(pending).resolves.toMatchObject({ ok: false, blocker: "COUNTY_SOURCE_UNAVAILABLE" })
+    } finally { jest.useRealTimers() }
+  })
+})
+
+it("rejects invalid UTF-8 rather than recording a hash of replacement bytes", async () => {
+  let read = false
+  const result = await fetchCountyEvidence(ORDER, {
+    now: makeClock().now,
+    fetch: async () => ({
+      ok: true, status: 200, text: async () => "",
+      body: { getReader: () => ({
+        read: async () => {
+          if (read) return { done: true }
+          read = true
+          return { done: false, value: new Uint8Array([91, 34, 255, 34, 93]) }
+        },
+        cancel: async () => {},
+      }) },
+    }),
+  })
+  expect(result).toMatchObject({ ok: false, blocker: "COUNTY_SOURCE_UNAVAILABLE", sources: [] })
+})
+
+/* ------------------------------------------------ internal refusal diagnostics */
+
+/**
+ * The internal observer.
+ *
+ * Everything here is about a refusal the caller ALREADY gets: the observer only
+ * ever adds counts, and these tests hold the public answer, the refusal scope
+ * and the wire traffic fixed while they check them.
+ */
+
+const ALL_SUBREASONS: CountyCharacteristicsSubreason[] = [
+  "MISSING_ROWS",
+  "DUPLICATE_ROW_ARITY",
+  "CARDS_MISSING",
+  "CARDS_NOT_SINGLE",
+  "LANDLINES_MISSING",
+  "LANDLINES_NOT_SINGLE",
+  "MULTILAND_MISSING",
+  "MULTILAND_NOT_FALSE",
+  "FOREIGN_TIEBACK",
+  "NON_UNIT_PRORATION",
+  "INVALID_REQUIRED_FEATURES",
+]
+
+/** Every subreason at zero, so a case can state only what it expects to differ. */
+function noSubreasons(): Record<CountyCharacteristicsSubreason, number> {
+  return Object.fromEntries(ALL_SUBREASONS.map((name) => [name, 0])) as Record<
+    CountyCharacteristicsSubreason,
+    number
+  >
+}
+
+function counts(
+  overrides: Partial<Record<CountyCharacteristicsSubreason, number>>,
+): Record<CountyCharacteristicsSubreason, number> {
+  return { ...noSubreasons(), ...overrides }
+}
+
+type Observed = {
+  result: Awaited<ReturnType<typeof fetchCountyEvidence>>
+  sim: Sim
+  seen: CountyRefusalDiagnostics[]
+}
+
+async function runObserved(
+  county: County,
+  options: SimOptions = {},
+  observe?: (diagnostics: CountyRefusalDiagnostics) => void,
+): Promise<Observed> {
+  const seen: CountyRefusalDiagnostics[] = []
+  const sim = makeSim(county, options)
+  const result = await fetchCountyEvidence(ORDER, {
+    ...makeDeps(sim),
+    observeRefusalDiagnostics: (diagnostics) => {
+      seen.push(diagnostics)
+      observe?.(diagnostics)
+    },
+  })
+  return { result, sim, seen }
+}
+
+/** One refusal, one diagnostic, and exactly the counts the case names. */
+async function expectDiagnostics(
+  county: County,
+  blocker: CountyGatewayBlocker,
+  subreasonCounts: Partial<Record<CountyCharacteristicsSubreason, number>>,
+): Promise<void> {
+  const { result, seen } = await runObserved(county)
+  expect(result).toMatchObject({ ok: false, blocker })
+  expect(seen).toHaveLength(1)
+  expect(seen[0]).toEqual({ blocker, subreasonCounts: counts(subreasonCounts) })
+}
+
+describe("internal refusal diagnostics — subreasons", () => {
+  it("distinguishes a parcel with no improvement row from one with duplicates", async () => {
+    const missing = makeCounty(5)
+    dropRow(missing, COUNTY_DATASETS.characteristics.id, pinAt(3))
+    await expectDiagnostics(missing, "CANDIDATE_CHARACTERISTICS_INCOMPLETE", { MISSING_ROWS: 1 })
+
+    const duplicated = makeCounty(5)
+    rowsFor(duplicated, COUNTY_DATASETS.characteristics.id).push({
+      ...findRow(duplicated, COUNTY_DATASETS.characteristics.id, pinAt(2)),
+    })
+    await expectDiagnostics(duplicated, "CANDIDATE_CHARACTERISTICS_AMBIGUOUS", {
+      DUPLICATE_ROW_ARITY: 1,
+    })
+  })
+
+  it("distinguishes absent markers from explicit non-singular markers", async () => {
+    const cases: Array<[string, unknown, CountyCharacteristicsSubreason]> = [
+      ["pin_num_cards", "2", "CARDS_NOT_SINGLE"],
+      ["pin_num_cards", "", "CARDS_MISSING"],
+      ["pin_num_landlines", "2", "LANDLINES_NOT_SINGLE"],
+      ["pin_num_landlines", "", "LANDLINES_MISSING"],
+      ["pin_is_multiland", "true", "MULTILAND_NOT_FALSE"],
+      ["pin_is_multiland", "", "MULTILAND_MISSING"],
+      ["pin_is_multiland", "maybe", "MULTILAND_NOT_FALSE"],
+    ]
+    for (const [field, value, subreason] of cases) {
+      const county = makeCounty(4)
+      findRow(county, COUNTY_DATASETS.characteristics.id, pinAt(1))[field] = value
+      await expectDiagnostics(county, "CANDIDATE_CHARACTERISTICS_AMBIGUOUS", { [subreason]: 1 })
+    }
+
+    const absent = makeCounty(4)
+    delete findRow(absent, COUNTY_DATASETS.characteristics.id, pinAt(1)).pin_is_multiland
+    await expectDiagnostics(absent, "CANDIDATE_CHARACTERISTICS_AMBIGUOUS", {
+      MULTILAND_MISSING: 1,
+    })
+  })
+
+  it("separates a tieback to another parcel from a part-share proration", async () => {
+    const foreign = makeCounty(4)
+    findRow(foreign, COUNTY_DATASETS.characteristics.id, pinAt(2)).tieback_key_pin = pinAt(3)
+    await expectDiagnostics(foreign, "CANDIDATE_CHARACTERISTICS_AMBIGUOUS", { FOREIGN_TIEBACK: 1 })
+
+    for (const field of ["tieback_proration_rate", "card_proration_rate"]) {
+      const county = makeCounty(4)
+      findRow(county, COUNTY_DATASETS.characteristics.id, pinAt(2))[field] = "0.5"
+      await expectDiagnostics(county, "CANDIDATE_CHARACTERISTICS_AMBIGUOUS", {
+        NON_UNIT_PRORATION: 1,
+      })
+    }
+  })
+
+  it("groups every unusable required feature under one name", async () => {
+    const cases: Array<[string, unknown]> = [
+      ["char_bldg_sf", ""],
+      ["char_bldg_sf", "0"],
+      ["char_bldg_sf", "1,800"],
+      ["char_yrblt", "1955.5"],
+      ["char_yrblt", String(OFFICIAL_TAX_YEAR + 1)],
+      ["char_type_resd", ""],
+      ["char_type_resd", true],
+    ]
+    for (const [field, value] of cases) {
+      const county = makeCounty(4)
+      findRow(county, COUNTY_DATASETS.characteristics.id, pinAt(1))[field] = value
+      await expectDiagnostics(county, "CANDIDATE_CHARACTERISTICS_INCOMPLETE", {
+        INVALID_REQUIRED_FEATURES: 1,
+      })
+    }
+  })
+})
+
+describe("internal refusal diagnostics — aggregation", () => {
+  it("counts every affected parcel, not only the one that refused first", async () => {
+    const county = makeCounty(6)
+    findRow(county, COUNTY_DATASETS.characteristics.id, pinAt(1)).pin_num_cards = "2"
+    findRow(county, COUNTY_DATASETS.characteristics.id, pinAt(2)).tieback_key_pin = pinAt(5)
+    findRow(county, COUNTY_DATASETS.characteristics.id, pinAt(3)).char_bldg_sf = "0"
+    findRow(county, COUNTY_DATASETS.characteristics.id, pinAt(4)).pin_num_cards = "3"
+
+    // pinAt(1) is what the loop refuses on; the other three are still counted.
+    await expectDiagnostics(county, "CANDIDATE_CHARACTERISTICS_AMBIGUOUS", {
+      CARDS_NOT_SINGLE: 2,
+      FOREIGN_TIEBACK: 1,
+      INVALID_REQUIRED_FEATURES: 1,
+    })
+  })
+
+  it("counts parcels beyond the missing-row short-circuit that refuses first", async () => {
+    const county = makeCounty(6)
+    dropRow(county, COUNTY_DATASETS.characteristics.id, pinAt(4))
+    findRow(county, COUNTY_DATASETS.characteristics.id, pinAt(1)).pin_num_landlines = "2"
+    await expectDiagnostics(county, "CANDIDATE_CHARACTERISTICS_INCOMPLETE", {
+      MISSING_ROWS: 1,
+      LANDLINES_NOT_SINGLE: 1,
+    })
+  })
+
+  it("counts a parcel wrong in several ways exactly once, by the refusing rule", async () => {
+    const county = makeCounty(4)
+    const row = findRow(county, COUNTY_DATASETS.characteristics.id, pinAt(1))
+    row.pin_num_cards = "2"
+    row.pin_num_landlines = "4"
+    row.tieback_key_pin = pinAt(3)
+    row.char_bldg_sf = "0"
+    await expectDiagnostics(county, "CANDIDATE_CHARACTERISTICS_AMBIGUOUS", { CARDS_NOT_SINGLE: 1 })
+  })
+
+  it("counts a whole neighbourhood the Assessor has not published improvements for", async () => {
+    const county = makeCounty(9)
+    county[COUNTY_DATASETS.characteristics.id] = []
+    await expectDiagnostics(county, "CANDIDATE_CHARACTERISTICS_INCOMPLETE", { MISSING_ROWS: 9 })
+  })
+
+  it("does not attribute a mismatched year or township to a characteristics subreason", async () => {
+    const wrongYear = makeCounty(4)
+    findRow(wrongYear, COUNTY_DATASETS.characteristics.id, pinAt(1)).year = "2025"
+    const year = await runObserved(wrongYear)
+    expect(year.result).toMatchObject({ ok: false, blocker: "COUNTY_RESPONSE_YEAR_MISMATCH" })
+    expect(year.seen).toEqual([])
+
+    const wrongTownship = makeCounty(4)
+    findRow(wrongTownship, COUNTY_DATASETS.characteristics.id, pinAt(1)).township_code = "71"
+    const township = await runObserved(wrongTownship)
+    expect(township.result).toMatchObject({ ok: false, blocker: "CANDIDATE_LOCALITY_MISMATCH" })
+    expect(township.seen).toEqual([])
+  })
+})
+
+describe("internal refusal diagnostics — what the observer never sees", () => {
+  it("is silent on success and on refusals that are not about improvements", async () => {
+    const healthy = await runObserved(makeCounty(5))
+    expect(healthy.result.ok).toBe(true)
+    expect(healthy.seen).toEqual([])
+
+    const noValue = makeCounty(5)
+    dropRow(noValue, COUNTY_DATASETS.assessedValues.id, pinAt(2))
+    const value = await runObserved(noValue)
+    expect(value.result).toMatchObject({ blocker: "CANDIDATE_ASSESSED_VALUE_INCOMPLETE" })
+    expect(value.seen).toEqual([])
+
+    const noAddress = makeCounty(5)
+    dropRow(noAddress, COUNTY_DATASETS.addresses.id, pinAt(2))
+    const address = await runObserved(noAddress)
+    expect(address.result).toMatchObject({ blocker: "CANDIDATE_ADDRESS_INCOMPLETE" })
+    expect(address.seen).toEqual([])
+
+    const outOfScope = makeCounty(5)
+    findRow(outOfScope, COUNTY_DATASETS.parcelUniverse.id, SUBJECT_PIN).class = "299"
+    const scope = await runObserved(outOfScope)
+    expect(scope.result).toMatchObject({ blocker: "SUBJECT_CLASS_OUT_OF_SCOPE" })
+    expect(scope.seen).toEqual([])
+  })
+
+  it("carries two fixed enums and integers, and no parcel, address or URL", async () => {
+    const county = makeCounty(4)
+    findRow(county, COUNTY_DATASETS.characteristics.id, pinAt(1)).pin_num_cards = "2"
+    const { seen } = await runObserved(county)
+    expect(seen).toHaveLength(1)
+    const diagnostics = seen[0]
+
+    // The payload has no field through which anything else could travel.
+    expect(Object.keys(diagnostics).sort()).toEqual(["blocker", "subreasonCounts"])
+    expect(Object.keys(diagnostics.subreasonCounts).sort()).toEqual([...ALL_SUBREASONS].sort())
+    for (const value of Object.values(diagnostics.subreasonCounts)) {
+      expect(Number.isInteger(value)).toBe(true)
+    }
+
+    const serialised = JSON.stringify(diagnostics)
+    for (const secret of [
+      SUBJECT_PIN,
+      pinAt(1),
+      "BLACKSTONE",
+      "CHICAGO",
+      NBHD_CODE,
+      "http",
+      COUNTY_DATASETS.characteristics.id,
+    ]) {
+      expect(serialised).not.toContain(secret)
+    }
+  })
+})
+
+describe("internal refusal diagnostics — cannot change the answer", () => {
+  it("leaves the public result, the refusal scope and the query sequence untouched", async () => {
+    const withoutObserver = makeCounty(6)
+    findRow(withoutObserver, COUNTY_DATASETS.characteristics.id, pinAt(2)).pin_num_cards = "2"
+    const bare = await run(withoutObserver)
+
+    const withObserver = makeCounty(6)
+    findRow(withObserver, COUNTY_DATASETS.characteristics.id, pinAt(2)).pin_num_cards = "2"
+    const observed = await runObserved(withObserver)
+
+    // The same refusal, for the whole neighbourhood: no evidence, no partial pool.
+    expect(observed.result).toEqual(bare.result)
+    expect(observed.result.ok).toBe(false)
+    expect(observed.result).not.toHaveProperty("evidence")
+    expect(Object.keys(observed.result).sort()).toEqual(["blocker", "ok", "sources"])
+
+    // Byte-identical traffic, in the same order: the counts come from rows that
+    // were already fetched, so nothing extra is requested.
+    expect(observed.sim.calls.map((call) => call.url)).toEqual(bare.sim.calls.map((c) => c.url))
+  })
+
+  it("still refuses parcels the diagnostics can describe, rather than relaxing anything", async () => {
+    // A neighbourhood whose every parcel is diagnosable is still a refusal, and
+    // one clean neighbourhood still succeeds with the observer attached.
+    const county = makeCounty(4)
+    for (const row of rowsFor(county, COUNTY_DATASETS.characteristics.id)) {
+      row.pin_is_multiland = "true"
+    }
+    await expectDiagnostics(county, "CANDIDATE_CHARACTERISTICS_AMBIGUOUS", {
+      MULTILAND_NOT_FALSE: 4,
+    })
+
+    const clean = await runObserved(makeCounty(4))
+    expect(clean.result.ok).toBe(true)
+    expect(clean.seen).toEqual([])
+  })
+
+  it("absorbs an observer that throws", async () => {
+    const county = makeCounty(5)
+    findRow(county, COUNTY_DATASETS.characteristics.id, pinAt(1)).char_bldg_sf = "0"
+    const { result, seen } = await runObserved(county, {}, () => {
+      throw new Error("diagnostics sink is down")
+    })
+    expect(result).toMatchObject({ ok: false, blocker: "CANDIDATE_CHARACTERISTICS_INCOMPLETE" })
+    expect(seen).toHaveLength(1)
+  })
+
+  it("absorbs an observer that rejects, without an unhandled rejection", async () => {
+    const unhandled: unknown[] = []
+    const capture = (reason: unknown) => unhandled.push(reason)
+    process.on("unhandledRejection", capture)
+    try {
+      const county = makeCounty(5)
+      findRow(county, COUNTY_DATASETS.characteristics.id, pinAt(1)).pin_num_cards = "2"
+      const sim = makeSim(county)
+      const result = await fetchCountyEvidence(ORDER, {
+        ...makeDeps(sim),
+        observeRefusalDiagnostics: (() =>
+          Promise.reject(new Error("sink unreachable"))) as unknown as (
+          diagnostics: CountyRefusalDiagnostics,
+        ) => void,
+      })
+      expect(result).toMatchObject({ ok: false, blocker: "CANDIDATE_CHARACTERISTICS_AMBIGUOUS" })
+      // Let any rejection that escaped reach the handler before asserting: Node
+      // reports one a turn after the microtask queue drains, not synchronously.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off("unhandledRejection", capture)
+    }
   })
 })
