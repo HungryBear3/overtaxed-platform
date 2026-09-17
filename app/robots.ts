@@ -7,7 +7,10 @@ export default function robots(): MetadataRoute.Robots {
     rules: {
       userAgent: "*",
       allow: "/",
-      disallow: ["/dashboard", "/properties", "/appeals", "/account", "/admin", "/auth"],
+      // `/packet` is a private transactional surface: a customer redeems a
+      // one-time code there. It publishes no prose worth crawling and must not
+      // appear in a search result.
+      disallow: ["/dashboard", "/properties", "/appeals", "/account", "/admin", "/auth", "/packet"],
     },
     sitemap: `${baseUrl}/sitemap.xml`,
   }

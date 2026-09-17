@@ -1,5 +1,6 @@
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import { CC_10, CC_11, CC_12 } from "@/lib/copy/canonical"
+import { NEUTRAL_REPORT_LIMITS, NEUTRAL_REPORT_NAME, NEUTRAL_REPORT_REFUND, NEUTRAL_REPORT_SUMMARY, neutralReportCopyEnabled } from "@/lib/copy/neutral-report"
 import "../ot-design.css"
 
 /**
@@ -40,6 +41,7 @@ export const metadata = {
 }
 
 export default function TermsPage() {
+  const neutralReport = neutralReportCopyEnabled()
   return (
     <div className="ot-root">
       <SiteHeader />
@@ -49,9 +51,9 @@ export default function TermsPage() {
 
         <div className="prose max-w-none space-y-8">
           <section>
-            <h2 className="text-xl font-semibold text-foreground mb-3">1. Filing Authorization</h2>
+            <h2 className="text-xl font-semibold text-foreground mb-3">{neutralReport ? "1. Report Scope" : "1. Filing Authorization"}</h2>
             <p className="text-muted-foreground mb-3">
-              Running a free check, viewing pricing, creating an account, or buying a DIY packet does not authorize OverTaxed IL to file an appeal for you.
+              Running a free check, viewing pricing, creating an account, or buying {neutralReport ? "a records report" : "a DIY packet"} does not authorize OverTaxed IL to file an appeal for you.
             </p>
             {/* The old §1 described a representation path that could be
                 unlocked by "a filing service that requires representation" —
@@ -60,25 +62,23 @@ export default function TermsPage() {
                 applies rather than reserving a path to a product that does not
                 exist. CC-11 states the Board of Review position, where
                 representation is barred to us by rule at any price. */}
-            <p className="text-muted-foreground mb-3">
-              OverTaxed IL does not act as your filing representative. We prepare appeal materials; you review, sign, and file them with Cook County yourself. If you buy the DIY Appeal Packet, you remain responsible for filing the appeal.
-            </p>
+            <p className="text-muted-foreground mb-3">{neutralReport ? `${NEUTRAL_REPORT_SUMMARY} Buying the report does not start or file an appeal and does not authorize OverTaxed IL to act for you.` : "OverTaxed IL does not act as your filing representative. We prepare appeal materials; you review, sign, and file them with Cook County yourself. If you buy the DIY Appeal Packet, you remain responsible for filing the appeal."}</p>
             <p className="text-muted-foreground">
-              {CC_11}
+              {neutralReport ? NEUTRAL_REPORT_LIMITS : CC_11}
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold text-foreground mb-3">2. Relationship to Property</h2>
             <p className="text-muted-foreground">
-              You represent that you are the property owner, or that you are authorized by the owner to request analysis or appeal support for the property. You agree to provide accurate information and to tell us if ownership or authorization changes.
+              You represent that you are the property owner, or that you are authorized by the owner to request {neutralReport ? "the report" : "analysis or appeal support"} for the property. You agree to provide accurate information and to tell us if ownership or authorization changes.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold text-foreground mb-3">3. Services and Fees</h2>
             <p className="text-muted-foreground mb-3">
-              <strong>3.1 DIY Appeal Packet — $69 one-time.</strong> We prepare comparable-property analysis, an appeal argument draft, and filing instructions. You file the appeal yourself with Cook County.
+              {neutralReport ? <><strong>3.1 {NEUTRAL_REPORT_NAME} — $69 one-time.</strong> {NEUTRAL_REPORT_SUMMARY}</> : <><strong>3.1 DIY Appeal Packet — $69 one-time.</strong> We prepare comparable-property analysis, an appeal argument draft, and filing instructions. You file the appeal yourself with Cook County.</>}
             </p>
             {/* §3.2 Done-For-You and §3.3 Contingency are removed. A Terms of
                 Service is the document a reader is most likely to treat as
@@ -86,7 +86,7 @@ export default function TermsPage() {
                 for held products here would keep offering them after every
                 other surface stopped. §3.4 is renumbered to §3.2. */}
             <p className="text-muted-foreground mb-3">
-              {CC_10}
+              {neutralReport ? NEUTRAL_REPORT_LIMITS : CC_10}
             </p>
             <p className="text-muted-foreground">
               <strong>3.2 County fees.</strong> Cook County currently does not charge homeowners a fee to file a residential assessment appeal. If a government fee or third-party fee applies in the future, we will disclose it before you authorize payment.
@@ -116,31 +116,30 @@ export default function TermsPage() {
                 recognises. "Estimates shown on the site are educational
                 projections" is dropped with the dollar estimates themselves. */}
             <p className="text-muted-foreground">
-              {CC_12} The Cook County Assessor makes the decision on an appeal filed at that stage.
+              {neutralReport ? NEUTRAL_REPORT_LIMITS : <>{CC_12} The Cook County Assessor makes the decision on an appeal filed at that stage.</>}
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold text-foreground mb-3">6. Technology Platform; Not Legal or Tax Advice</h2>
             <p className="text-muted-foreground">
-              OverTaxed IL is not a law firm, tax advisor, or licensed appraiser. We organize public records and appeal materials; we do not provide legal, tax, or appraisal advice. For legal, tax, valuation, ownership, exemption, or estate questions, consult a qualified professional.
+              OverTaxed IL is not a law firm, tax advisor, or licensed appraiser. We organize public records{neutralReport ? "" : " and appeal materials"}; we do not provide legal, tax, or appraisal advice. For legal, tax, valuation, ownership, exemption, or estate questions, consult a qualified professional.
             </p>
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground mb-3">7. Procedural Error Review and Refund Requests</h2>
+            <h2 className="text-xl font-semibold text-foreground mb-3">{neutralReport ? "7. Report Delivery and Refunds" : "7. Procedural Error Review and Refund Requests"}</h2>
             {/* The refund rule itself is unchanged. It is an owner policy term
                 (OD-5, unsigned), so only the reference to the held $97 service
                 and to submissions we make is removed — we make none. */}
             <p className="text-muted-foreground mb-3">
-              For the $69 DIY Appeal Packet, if your filing is rejected or denied solely because of an OverTaxed IL procedural error in the materials we prepared, contact us so we can review the issue and determine whether a refund of the OverTaxed IL service fee is appropriate under these Terms.
+              {neutralReport ? NEUTRAL_REPORT_REFUND : "For the $69 DIY Appeal Packet, if your filing is rejected or denied solely because of an OverTaxed IL procedural error in the materials we prepared, contact us so we can review the issue and determine whether a refund of the OverTaxed IL service fee is appropriate under these Terms."}
             </p>
-            <p className="text-muted-foreground mb-3">
-              Refund review does not apply when the county denies an appeal on the merits, when the property is not eligible, when the appeal window is closed before you provide required information or authorization, or when information you provided is inaccurate or incomplete.
-            </p>
-            <p className="text-muted-foreground">
-              To request a refund, contact support@overtaxed-il.com within 30 days of the county notice and include the notice or filing status.
-            </p>
+            {!neutralReport && <>
+              <p className="text-muted-foreground mb-3">Refund review does not apply when the county denies an appeal on the merits, when the property is not eligible, when the appeal window is closed before you provide required information or authorization, or when information you provided is inaccurate or incomplete.</p>
+              <p className="text-muted-foreground">To request a refund, contact support@overtaxed-il.com within 30 days of the county notice and include the notice or filing status.</p>
+            </>}
+            {neutralReport && <p className="text-muted-foreground">To report a missing or incomplete promised deliverable, contact support@overtaxed-il.com with your order reference. We will review the report against the deliverables stated at checkout.</p>}
           </section>
 
           <section>
@@ -149,7 +148,7 @@ export default function TermsPage() {
               To the maximum extent permitted by law, OverTaxed IL is not liable for indirect, incidental, special, consequential, or punitive damages, or for decisions made by government agencies.
             </p>
             <p className="text-muted-foreground">
-              OverTaxed IL&apos;s total liability for a claim is limited to the amount of fees you paid to OverTaxed IL for the specific property and filing at issue, except where applicable law requires otherwise.
+              OverTaxed IL&apos;s total liability for a claim is limited to the amount of fees you paid to OverTaxed IL for the specific property and {neutralReport ? "report" : "filing"} at issue, except where applicable law requires otherwise.
             </p>
           </section>
 
@@ -180,10 +179,10 @@ export default function TermsPage() {
         </div>
 
         <p className="mt-12 text-sm text-muted-foreground">
-          By purchasing a service or using OverTaxed IL, you acknowledge that you have read and understood these Terms. OverTaxed IL does not request filing authorization, because it does not file.
+          By purchasing a service or using OverTaxed IL, you acknowledge that you have read and understood these Terms. {neutralReport ? "Purchasing the report does not start an appeal or authorize representation." : "OverTaxed IL does not request filing authorization, because it does not file."}
         </p>
       </main>
-      <SiteFooter />
+      <SiteFooter neutralReport={neutralReport} />
     </div>
   )
 }
