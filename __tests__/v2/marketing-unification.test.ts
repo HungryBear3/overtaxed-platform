@@ -13,8 +13,18 @@
  */
 import fs from "fs";
 import path from "path";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import { CC_12 } from "@/lib/copy/canonical";
+import PricingPageClient from "@/components/ot-design/PricingPageClient";
+
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn() }),
+}));
+jest.mock("@/lib/marketing/preview-gate-client", () => ({
+  isClientPreviewStubMode: () => false,
+}));
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -24,9 +34,17 @@ function read(rel: string): string {
 
 // Pages required to use SiteChrome (no /townships/[slug] — that page is the
 // canonicalization redirect and intentionally has no chrome).
-const CHROME_PAGES: ReadonlyArray<{ path: string; active?: string }> = [
+const CHROME_PAGES: ReadonlyArray<{
+  path: string;
+  implementation?: string;
+  active?: string;
+}> = [
   { path: "app/page.tsx", active: "home" },
-  { path: "app/pricing/page.tsx", active: "offer" },
+  {
+    path: "app/pricing/page.tsx",
+    implementation: "components/ot-design/PricingPageClient.tsx",
+    active: "offer",
+  },
   { path: "app/check/page.tsx" },
   { path: "app/about/page.tsx" },
   { path: "app/faq/page.tsx", active: "faq" },
@@ -44,15 +62,20 @@ const CHROME_PAGES: ReadonlyArray<{ path: string; active?: string }> = [
 describe("OT v2 marketing — chrome unification", () => {
   for (const p of CHROME_PAGES) {
     describe(p.path, () => {
-      const src = read(p.path);
+      const src = [
+        read(p.path),
+        p.implementation ? read(p.implementation) : "",
+      ].join("\n");
 
       it("imports SiteChrome", () => {
-        expect(src).toMatch(/from\s+["']@\/components\/ot-design\/SiteChrome["']/);
+        expect(src).toMatch(
+          /from\s+["']@\/components\/ot-design\/SiteChrome["']/,
+        );
       });
 
       it("mounts SiteHeader and SiteFooter", () => {
         expect(src).toMatch(/<SiteHeader\b/);
-        expect(src).toMatch(/<SiteFooter\s*\/>/);
+        expect(src).toMatch(/<SiteFooter\b[^>]*\/>/);
       });
 
       it("does not import the legacy Header/Footer modules", () => {
@@ -64,13 +87,18 @@ describe("OT v2 marketing — chrome unification", () => {
         // Pages can still reference Logo from elsewhere (e.g. tests), but
         // the unified marketing chrome should never reintroduce a hand-built
         // header from the navigation/Logo module.
-        const usesNavLogoImport = /import[^;]+\bLogo\b[^;]+from\s+["']@\/components\/navigation\/Logo["']/.test(src);
+        const usesNavLogoImport =
+          /import[^;]+\bLogo\b[^;]+from\s+["']@\/components\/navigation\/Logo["']/.test(
+            src,
+          );
         expect(usesNavLogoImport).toBe(false);
       });
 
       if (p.active) {
         it(`SiteHeader uses the correct active=\"${p.active}\" prop`, () => {
-          const re = new RegExp(`<SiteHeader[^/>]*active=\\{?["']${p.active}["']`);
+          const re = new RegExp(
+            `<SiteHeader[^/>]*active=\\{?["']${p.active}["']`,
+          );
           expect(re.test(src)).toBe(true);
         });
       }
@@ -90,7 +118,9 @@ describe("OT v2 marketing — pricing consistency", () => {
   });
 
   it("public non-pricing marketing surfaces do not reference the retired Starter/Growth/Portfolio plan names", () => {
-    for (const p of CHROME_PAGES.filter((page) => page.path !== "app/pricing/page.tsx")) {
+    for (const p of CHROME_PAGES.filter(
+      (page) => page.path !== "app/pricing/page.tsx",
+    )) {
       const src = read(p.path);
       expect(src).not.toMatch(/\bStarter\b/);
       expect(src).not.toMatch(/\bGrowth\b/);
@@ -98,15 +128,16 @@ describe("OT v2 marketing — pricing consistency", () => {
     }
   });
 
-  it("homepage metadata removes the unscoped \"free if we don't reduce your bill\" promise", () => {
+  it('homepage metadata removes the unscoped "free if we don\'t reduce your bill" promise', () => {
     const src = read("app/page.tsx");
     expect(src).not.toMatch(/free if we don'?t reduce your bill/i);
   });
 
   it("/pricing keeps $69 as the visible anchor", () => {
-    const src = read("app/pricing/page.tsx");
-    expect(src).toMatch(/\$69\b/);
-    expect(src).toMatch(/\$97\b/);
+    const html = renderToStaticMarkup(React.createElement(PricingPageClient));
+    const visibleText = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+    expect(visibleText).toMatch(/\$69\b/);
+    expect(visibleText).not.toMatch(/\$97\b/);
   });
 
   it("/board-of-review does not show the stale $149 tier", () => {
@@ -132,14 +163,16 @@ describe("OT v2 marketing — funnel CTAs", () => {
     expect(src).toMatch(/href="\/check"/);
   });
 
-  it("homepage PIN hint no longer uses href=\"#\"", () => {
+  it('homepage PIN hint no longer uses href="#"', () => {
     const src = read("components/ot-design/HomePage.tsx");
     // The PIN hint block must not be a no-op link anymore, and it must point
     // at the one host the controller authorized on 2026-08-19. Both halves are
     // asserted: a real destination, and the canonical spelling of it.
     expect(src).toMatch(/cookcountyassessoril\.gov\/address-search/);
     expect(src).not.toMatch(/cookcountyassessor\.com/);
-    expect(src).not.toMatch(/href="#" onClick=\{\(e\) => e\.preventDefault\(\)\}/);
+    expect(src).not.toMatch(
+      /href="#" onClick=\{\(e\) => e\.preventDefault\(\)\}/,
+    );
   });
 });
 
@@ -175,8 +208,10 @@ describe("OT v2 marketing — legal copy disclaimers", () => {
   // requirement more strictly than before. The assertion follows the string to
   // where it is defined rather than asserting a duplicate exists.
   it("/pricing renders the canonical not-a-law-firm disclaimer", () => {
-    const src = read("app/pricing/page.tsx");
-    expect(src).toMatch(/import\s*\{[^}]*\bCC_12\b[^}]*\}\s*from\s*"@\/lib\/copy\/canonical"/);
+    const src = read("components/ot-design/PricingPageClient.tsx");
+    expect(src).toMatch(
+      /import\s*\{[^}]*\bCC_12\b[^}]*\}\s*from\s*"@\/lib\/copy\/canonical"/,
+    );
     expect(src).toContain("{CC_12}");
     expect(CC_12).toMatch(/not a law firm/i);
   });
@@ -234,7 +269,9 @@ describe("OT v2 marketing — home hero preview card", () => {
 
   it("preview card lives in the hero right column above the fold", () => {
     // Keeps the product sample beside the form above the fold, not below the narrative.
-    expect(src).toMatch(/<div className="ot-hero-r ot-hero-r-stack">\s*<HeroPreviewCard\s*\/>\s*<HeroCheckCard/);
+    expect(src).toMatch(
+      /<div className="ot-hero-r ot-hero-r-stack">\s*<HeroPreviewCard\s*\/>\s*<HeroCheckCard/,
+    );
   });
 });
 
@@ -254,10 +291,16 @@ describe("OT v2 marketing — township deadline source of truth", () => {
     for (const route of ["app/townships/page.tsx", "app/deadlines/page.tsx"]) {
       const src = read(route);
       expect(src).toMatch(/<LiveDeadlinesPage/);
-      expect(src).not.toMatch(/buildTownship2026Views|TOWNSHIP_STATUS_COUNTS|TownshipAlertForm/);
+      expect(src).not.toMatch(
+        /buildTownship2026Views|TOWNSHIP_STATUS_COUNTS|TownshipAlertForm/,
+      );
     }
-    expect(read("components/ot-design/LiveDeadlinesPage.tsx")).toMatch(/useLiveInformationalSnapshot/);
-    expect(read("components/ot-design/DeadlinesPage.tsx")).toMatch(/useInformationalCalendar/);
+    expect(read("components/ot-design/LiveDeadlinesPage.tsx")).toMatch(
+      /useLiveInformationalSnapshot/,
+    );
+    expect(read("components/ot-design/DeadlinesPage.tsx")).toMatch(
+      /useInformationalCalendar/,
+    );
   });
 
   it("the shared calendar attributes its dates or shows none", () => {
@@ -289,7 +332,9 @@ describe("OT v2 marketing — public founder/contact", () => {
     expect(surfaces).not.toMatch(/calendly\.com/);
     expect(surfaces).toMatch(/\(847\) 461-3189/);
     expect(surfaces).toMatch(/tel:\+18474613189/);
-    expect(surfaces).not.toMatch(/312\.593\.1571|312-593-1571|3125931571|tel:\+13125931571/);
+    expect(surfaces).not.toMatch(
+      /312\.593\.1571|312-593-1571|3125931571|tel:\+13125931571/,
+    );
   });
 });
 
@@ -299,7 +344,9 @@ describe("OT v2 marketing — fourth-preview polish", () => {
     expect(src).not.toMatch(/Find out in 60 seconds/);
     expect(src).toMatch(/See where your assessed value lands/);
     expect(src).toMatch(/See what the packet includes/);
-    expect(src).toMatch(/Verified Cook County outcomes will publish after 2026 Board decisions/);
+    expect(src).toMatch(
+      /Verified Cook County outcomes will publish after 2026 Board decisions/,
+    );
   });
 
   it("footer groups township links by canonical district instead of six arbitrary townships", () => {
@@ -318,7 +365,6 @@ describe("OT v2 marketing — fourth-preview polish", () => {
     expect(css).not.toMatch(/ot-risk-rail/);
   });
 });
-
 
 describe("OT v2 marketing — launch-blocker copy guards", () => {
   it("homepage avoids assertive over-assessment claims and real-looking sample PINs", () => {
@@ -392,15 +438,21 @@ describe("OT v2 marketing — launch-blocker copy guards", () => {
     expect(contingency).toContain("{CC_12}");
     expect(CC_12).toMatch(/not a law firm/i);
 
-    expect(packet).not.toMatch(/Works for all Illinois counties|County Deadline Calendar|Illinois Homeowners|⚡|🏠|🔁/);
-    expect(contingency).not.toMatch(/You only pay if\s+we win|Get My Free Assessment|placeholder="Jane Smith"|propertyPin/);
+    expect(packet).not.toMatch(
+      /Works for all Illinois counties|County Deadline Calendar|Illinois Homeowners|⚡|🏠|🔁/,
+    );
+    expect(contingency).not.toMatch(
+      /You only pay if\s+we win|Get My Free Assessment|placeholder="Jane Smith"|propertyPin/,
+    );
 
     // These two used to require the contingency terms to be *stated* on the
     // page — a sound guard while the product was offered, and exactly
     // backwards now that it is withdrawn. A page that still names the 22% and
     // the "if the Board grants a reduction" condition is still making the
     // offer, however the surrounding copy is framed.
-    expect(contingency).not.toMatch(/If the Board of Review grants a reduction/);
+    expect(contingency).not.toMatch(
+      /If the Board of Review grants a reduction/,
+    );
     expect(contingency).not.toMatch(/22% of first-year tax savings/);
   });
 

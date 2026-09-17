@@ -19,7 +19,7 @@ export class TestNeutralRepository {
   orderReserveMode: "normal" | "commit-timeout" | "unknown" | "conflict" = "normal"
   mutateRead?: (write: Write) => Write
   afterStage?: () => void
-  async reserveOrder(key: string, propertyPin: string): Promise<Outcome<string>> {
+  async reserveOrder(_orderId: string, key: string, propertyPin: string): Promise<Outcome<string>> {
     if (this.orderReserveMode === "conflict") return { outcome: "CONFLICT" }
     const current = this.orderBindings.get(key)
     if (current && current !== propertyPin) return { outcome: "CONFLICT" }
@@ -29,7 +29,7 @@ export class TestNeutralRepository {
     return { outcome: "CONFIRMED", value: propertyPin }
   }
   async readOrderBinding(key: string): Promise<string | null> { return this.orderBindings.get(key) ?? null }
-  async reserve(key: string): Promise<Outcome<Receipt | null>> {
+  async reserve(_orderId: string, key: string): Promise<Outcome<Receipt | null>> {
     return { outcome: "CONFIRMED", value: this.confirmed.get(key)?.receipt ?? null }
   }
   async stage(key: string, write: Write): Promise<Outcome> {

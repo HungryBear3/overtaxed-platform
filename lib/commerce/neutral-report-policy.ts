@@ -24,3 +24,11 @@ export type NeutralReportCommercePolicy = typeof NEUTRAL_REPORT_COMMERCE_POLICY
 export function resolveNeutralReportCommercePolicy(): NeutralReportCommercePolicy {
   return NEUTRAL_REPORT_COMMERCE_POLICY
 }
+
+export function neutralOrderReservationKey(orderId: string): string {
+  // Kept deliberately simple and shared by checkout and producer; callers may
+  // not invent a second reservation namespace or bind a request PIN into it.
+  const value = `orderId:${orderId.length}:${orderId}|policy:${NEUTRAL_REPORT_COMMERCE_POLICY.version}`
+  return `neutral-order-binding/${createHash("sha256").update(value).digest("hex")}`
+}
+import { createHash } from "node:crypto"
