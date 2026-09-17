@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import HomePage from "@/components/ot-design/HomePage";
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
 import "./ot-design.css";
+import { NEUTRAL_REPORT_LIMITS, NEUTRAL_REPORT_NAME, NEUTRAL_REPORT_PRICE, neutralReportCopyEnabled } from "@/lib/copy/neutral-report";
 
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
 
@@ -16,7 +17,7 @@ const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com
 const HOME_DESCRIPTION =
   "Free check tells you if your Cook County assessment is out of line with comparable properties. The $69 packet is a preparation service — we prepare it, you file it yourself. OverTaxed IL is not a law firm.";
 
-export const metadata: Metadata = {
+const legacyMetadata: Metadata = {
   // This title is final, not template-wrapped: `title.template` in
   // app/layout.tsx applies to child segments, and app/page.tsx shares the root
   // segment. So it must carry the brand itself, exactly once (BL-F6).
@@ -40,12 +41,25 @@ export const metadata: Metadata = {
   robots: { index: true, follow: true },
 };
 
+export function generateMetadata(): Metadata {
+  if (!neutralReportCopyEnabled()) return legacyMetadata
+  const description = `${NEUTRAL_REPORT_NAME} for ${NEUTRAL_REPORT_PRICE}. ${NEUTRAL_REPORT_LIMITS}`
+  return {
+    ...legacyMetadata,
+    title: `OverTaxed IL — ${NEUTRAL_REPORT_NAME}`,
+    description,
+    openGraph: { ...legacyMetadata.openGraph, title: `OverTaxed IL — ${NEUTRAL_REPORT_NAME}`, description },
+    twitter: { ...legacyMetadata.twitter, title: `OverTaxed IL — ${NEUTRAL_REPORT_NAME}`, description },
+  }
+}
+
 export default function Page() {
+  const neutralReport = neutralReportCopyEnabled();
   return (
     <div className="ot-root">
       <SiteHeader active="home" />
-      <HomePage />
-      <SiteFooter />
+      <HomePage neutralReport={neutralReport} />
+      <SiteFooter neutralReport={neutralReport} />
     </div>
   );
 }
