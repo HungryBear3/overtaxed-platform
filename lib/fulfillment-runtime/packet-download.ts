@@ -33,6 +33,8 @@ import {
 } from "@/lib/fulfillment/packet-download";
 import {
   prismaPacketDownloadStore,
+  neutralPacketDownloadStore,
+  authoritativeCapabilityKind,
   type PacketDownloadStore,
 } from "@/lib/fulfillment-runtime/packet-download-store";
 import { readT2ArtifactBytes } from "@/lib/fulfillment-runtime/t2-artifact-storage";
@@ -42,7 +44,8 @@ import { NEUTRAL_CUSTOMER_ZIP_FILENAME, NEUTRAL_CUSTOMER_ZIP_MEDIA_TYPE } from "
 export type PacketDownloadRefusal =
   | PacketDownloadBlocker
   | "STORAGE_READ_FAILED"
-  | "STORED_BYTES_MISMATCH";
+  | "STORED_BYTES_MISMATCH"
+  | "CAPABILITY_SPENT_REISSUE_REQUIRED";
 
 export type PacketDownloadResult =
   | {
@@ -83,10 +86,16 @@ export async function readT2PacketForCapability(
   if (capabilityHash === null)
     return { ok: false, blocker: "INVALID_CAPABILITY" };
 
-  const store = deps.store ?? prismaPacketDownloadStore;
-  const authorized = await store.authorize({ capabilityHash });
+  let store=deps.store
+  if(!store){let kind:string|null=null;try{kind=await authoritativeCapabilityKind(capabilityHash)}catch{kind=null}if(kind==="NEUTRAL_RECORDS_REPORT"&&!process.env.OT_NEUTRAL_DELIVERY_DATABASE_URL)return {ok:false,blocker:"CAPABILITY_NOT_FOUND"};store=kind==="NEUTRAL_RECORDS_REPORT"?neutralPacketDownloadStore():prismaPacketDownloadStore}
+  const authorized=await store.authorize({ capabilityHash });
   if (!authorized.ok) return { ok: false, blocker: authorized.blocker };
   const grant = authorized.grant;
+  const reissueRequired=async():Promise<PacketDownloadResult>=>{
+    const revoked=await store.revoke({fulfillmentId:grant.fulfillmentId,reasonCode:"STORAGE_FAILURE"})
+    if(!revoked.ok||revoked.revoked<1)throw new Error("CAPABILITY_STORAGE_FAILURE_REVOCATION_FAILED")
+    return {ok:false,blocker:"CAPABILITY_SPENT_REISSUE_REQUIRED"}
+  }
   const neutralZip = grant.storageLocator.startsWith("ot-neutral-customer/sha256/")
   const readBytes = deps.readBytes ?? (neutralZip
     ? ({locator}:{locator:string}) => readNeutralCustomerZip(locator)
@@ -99,7 +108,7 @@ export async function readT2PacketForCapability(
     bytes = await readBytes({ locator: grant.storageLocator });
   } catch {
     // The thrown value may carry provider or connection detail and is never read.
-    return { ok: false, blocker: "STORAGE_READ_FAILED" };
+    return reissueRequired();
   }
 
   // Hash-bound to the immutable artifact: what we serve must be exactly what was
@@ -108,7 +117,7 @@ export async function readT2PacketForCapability(
     bytes.byteLength !== grant.byteSize ||
     computeArtifactSha256(bytes) !== grant.artifactSha256
   ) {
-    return { ok: false, blocker: "STORED_BYTES_MISMATCH" };
+    return reissueRequired();
   }
 
   if (!t2PacketDownloadEnabled(env))
