@@ -534,8 +534,13 @@ describe("fulfillment library is pure — no side-effecting or dynamic imports",
     expect(files.length).toBeGreaterThan(0);
   });
 
+  it("allows only the explicitly server-only neutral producer module outside the pure set", () => {
+    const serverOnly = files.filter((file) => readFileSync(join(dir, file), "utf8").startsWith('import "server-only"'));
+    expect(serverOnly).toEqual(["neutral-report-content.ts"]);
+  });
+
   it.each(
-    readdirSync(join(ROOT, "lib/fulfillment")).filter((f) => f.endsWith(".ts")),
+    readdirSync(join(ROOT, "lib/fulfillment")).filter((f) => f.endsWith(".ts") && !readFileSync(join(dir, f), "utf8").startsWith('import "server-only"')),
   )("%s has zero AST impurities", (file) => {
     const impurities = findImpurities(readFileSync(join(dir, file), "utf8"));
     expect(impurities).toEqual([]);
