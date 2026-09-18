@@ -33,6 +33,7 @@ import {
 import {
   RecoveryExtensionSqlTransform,
   planRecoveryArchiveToc,
+  stockExtensionOwnersFromCatalog,
   type ExtensionSqlPortabilityProof,
 } from "../lib/fulfillment/neutral-production-extension-portability";
 import {
@@ -55,6 +56,129 @@ import {
 
 function sqlLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
+}
+
+function parsePostgresTextArray(value: string): string[] | undefined {
+  if (!value.startsWith("{") || !value.endsWith("}")) return undefined;
+  if (value === "{}") return [];
+  const result: string[] = [];
+  let index = 1;
+  const end = value.length - 1;
+  while (index < end) {
+    let element = "";
+    if (value[index] === '"') {
+      index += 1;
+      let closed = false;
+      while (index < end) {
+        const character = value[index++]!;
+        if (character === "\\") {
+          if (index >= end) return undefined;
+          element += value[index++]!;
+        } else if (character === '"') {
+          closed = true;
+          break;
+        } else element += character;
+      }
+      if (!closed) return undefined;
+    } else {
+      const start = index;
+      while (index < end && value[index] !== ",") {
+        if (value[index] === '"' || value[index] === "\\") return undefined;
+        index += 1;
+      }
+      element = value.slice(start, index);
+      if (!element || element === "NULL") return undefined;
+    }
+    result.push(element);
+    if (index === end) break;
+    if (value[index] !== ",") return undefined;
+    index += 1;
+    if (index === end) return undefined;
+  }
+  return index === end ? result : undefined;
+}
+
+export function alignRestoredCatalogAclOrdering(
+  source: unknown,
+  restored: unknown,
+  key = "",
+): unknown {
+  if (key === "acl" && typeof source === "string" && typeof restored === "string") {
+    const sourceItems = parsePostgresTextArray(source);
+    const restoredItems = parsePostgresTextArray(restored);
+    if (
+      sourceItems &&
+      restoredItems &&
+      canonicalJson([...sourceItems].sort()) ===
+        canonicalJson([...restoredItems].sort())
+    )
+      return source;
+    return restored;
+  }
+  if (Array.isArray(source) && Array.isArray(restored)) {
+    if (source.length !== restored.length) return restored;
+    return restored.map((value, index) =>
+      alignRestoredCatalogAclOrdering(source[index], value),
+    );
+  }
+  if (
+    source &&
+    restored &&
+    typeof source === "object" &&
+    typeof restored === "object" &&
+    !Array.isArray(source) &&
+    !Array.isArray(restored)
+  ) {
+    const sourceRecord = source as Record<string, unknown>;
+    const restoredRecord = restored as Record<string, unknown>;
+    const sourceKeys = Object.keys(sourceRecord).sort();
+    const restoredKeys = Object.keys(restoredRecord).sort();
+    if (canonicalJson(sourceKeys) !== canonicalJson(restoredKeys)) return restored;
+    return Object.fromEntries(
+      restoredKeys.map((entryKey) => [
+        entryKey,
+        alignRestoredCatalogAclOrdering(
+          sourceRecord[entryKey],
+          restoredRecord[entryKey],
+          entryKey,
+        ),
+      ]),
+    );
+  }
+  return restored;
+}
+
+export function planTemporaryPostgresOwnerPromotion(
+  sourceCatalog: unknown,
+): { promoteSql: string; restoreSql: string } {
+  if (!sourceCatalog || typeof sourceCatalog !== "object")
+    throw new Error(
+      "Recovery requires exactly one authenticated postgres owner",
+    );
+  const roles = (sourceCatalog as { roles?: unknown }).roles;
+  if (!Array.isArray(roles))
+    throw new Error(
+      "Recovery requires exactly one authenticated postgres owner",
+    );
+  const owners = roles.filter(
+    (role) =>
+      Boolean(role) &&
+      typeof role === "object" &&
+      (role as { rolname?: unknown }).rolname === "postgres",
+  );
+  if (
+    owners.length !== 1 ||
+    typeof (owners[0] as { rolsuper?: unknown }).rolsuper !== "boolean"
+  )
+    throw new Error(
+      "Recovery requires exactly one authenticated postgres owner",
+    );
+  if ((owners[0] as { rolsuper: boolean }).rolsuper)
+    return { promoteSql: "", restoreSql: "" };
+  return {
+    promoteSql: "ALTER ROLE postgres SUPERUSER;\n",
+    restoreSql: "ALTER ROLE postgres NOSUPERUSER;\n",
+  };
 }
 
 export function observeRecoveryStreamErrors(
@@ -517,6 +641,8 @@ async function decryptRestoreSingleSession(input: {
   pgRestoreCommand: TrustedExecutable;
   gpgCommand: TrustedExecutable;
   expectedDatabaseSha256: string;
+  ownerPromotion: { promoteSql: string; restoreSql: string };
+  stockExtensionOwners: ReturnType<typeof stockExtensionOwnersFromCatalog>;
 }): Promise<{
   roles: string;
   adaptedRoles: string;
@@ -696,6 +822,13 @@ $ot_recovery_guard$;
   try {
     const adaptedRoles = sha256(input.rolesSql);
     if (!psql.stdin.write(input.rolesSql))
+      await Promise.race([
+        streamDrained(psql.stdin),
+        prematurePsqlExit,
+        psqlInputFailed,
+        ...outerFailures,
+      ]);
+    if (!psql.stdin.write(input.ownerPromotion.promoteSql))
       await Promise.race([
         streamDrained(psql.stdin),
         prematurePsqlExit,
@@ -1051,7 +1184,9 @@ $ot_recovery_guard$;
       output: psql.stdin,
       endOutput: false,
     });
-    const extensionTransform = new RecoveryExtensionSqlTransform();
+    const extensionTransform = new RecoveryExtensionSqlTransform(
+      input.stockExtensionOwners,
+    );
     extensionTransform.pipe(psql.stdin, { end: false });
     await runArchive({
       args: ["--exit-on-error", "--file=-"],
@@ -1068,7 +1203,7 @@ $ot_recovery_guard$;
     archivePlan.schemas.fill(0);
     archivePlan.extensions.fill(0);
     archivePlan.remainder.fill(0);
-    psql.stdin.end("COMMIT;\n");
+    psql.stdin.end(`${input.ownerPromotion.restoreSql}COMMIT;\n`);
     const [psqlCode] = await Promise.race([
       psqlClosed,
       psqlInputFailed,
@@ -1445,6 +1580,8 @@ export async function rehearseNeutralProductionRecovery(
     const normalizedSourceCount = countNormalizedManagedMemberships(
       sourceCatalogSnapshot,
     );
+    const ownerPromotion =
+      planTemporaryPostgresOwnerPromotion(sourceCatalogSnapshot);
     const adaptedRoles = adaptManagedRoleMembershipGrantors(rolesPlaintext);
     assertManagedRoleMembershipPortabilityCounts({
       authenticatedSourceCount:
@@ -1467,6 +1604,10 @@ export async function rehearseNeutralProductionRecovery(
       pgRestoreCommand,
       gpgCommand,
       expectedDatabaseSha256: database.plaintextSha256,
+      ownerPromotion,
+      stockExtensionOwners: stockExtensionOwnersFromCatalog(
+        sourceCatalogSnapshot,
+      ),
     });
     const observed: Record<string, string> = {
       [roles.file]: restoredArtifactHashes.roles,
@@ -1492,7 +1633,11 @@ export async function rehearseNeutralProductionRecovery(
           ],
         ])
       ).rows[0]!.snapshot;
-      const restoredDigest = sha256(canonicalJson(restored));
+      const alignedRestored = alignRestoredCatalogAclOrdering(
+        sourceCatalogSnapshot,
+        restored,
+      );
+      const restoredDigest = sha256(canonicalJson(alignedRestored));
       const restoredExtensionPortability =
         recoveryExtensionPortability(restored);
       if (
@@ -1508,7 +1653,7 @@ export async function rehearseNeutralProductionRecovery(
                 ...Object.keys(
                   sourceCatalogSnapshot as Record<string, unknown>,
                 ),
-                ...Object.keys(restored as Record<string, unknown>),
+                ...Object.keys(alignedRestored as Record<string, unknown>),
               ]),
             ]
               .filter(
@@ -1516,7 +1661,9 @@ export async function rehearseNeutralProductionRecovery(
                   canonicalJson(
                     (sourceCatalogSnapshot as Record<string, unknown>)[key],
                   ) !==
-                  canonicalJson((restored as Record<string, unknown>)[key]),
+                  canonicalJson(
+                    (alignedRestored as Record<string, unknown>)[key],
+                  ),
               )
               .sort()
               .join(",") || "unknown"
