@@ -660,9 +660,9 @@ export async function prepareProductionRecoveryEvidence(input: {
 
 /**
  * The released candidate's own pins, and nothing else. There is no parameter
- * here for a caller to supply, and both entries are deliberately null until a
- * separately reviewed release commit fills them in from the exact bytes two
- * independent Darwin and Linux jobs produced.
+ * here for a caller to supply. Both entries are filled only by a separately
+ * reviewed release commit from the exact authenticated bytes independently
+ * produced by the Darwin and Linux jobs.
  */
 export function assertApprovedPlatformReceiptPins(
   nativeProof: NativeVaultProof,
