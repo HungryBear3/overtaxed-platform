@@ -1,14 +1,17 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { Client } from "pg";
 import {
   OT_PRODUCTION_REHEARSAL_SENTINEL_SCHEMA,
+  OT_PRODUCTION_RECOVERY_GPG_PATH_VAR,
   OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY,
   OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES,
+  OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
   OT_PRODUCTION_RESTORE_SCHEMA,
   OT_PRODUCTION_RECOVERY_CATALOG_SQL,
   OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
@@ -29,15 +32,26 @@ import {
 } from "../lib/fulfillment/neutral-production-recovery";
 import {
   RecoveryExtensionSqlTransform,
+  planRecoveryArchiveToc,
   type ExtensionSqlPortabilityProof,
 } from "../lib/fulfillment/neutral-production-extension-portability";
 import {
   materializePrivateCopy,
+  privateCopyReadStream,
   readProtectedFile,
+  type PrivateArtifactCopy,
 } from "./neutral-production-recovery-gate";
 import { redactProductionDiagnostic } from "../lib/fulfillment/neutral-production-verifier";
 import { resolveRecoveryTarget } from "./neutral-recovery-target";
-import { assertManagedExtensionFixtureInstalled } from "./neutral-production-extension-fixture-files";
+import {
+  assertManagedExtensionFixtureInstalled,
+  PRIVATE_RUNTIME_ROOT_VAR,
+} from "./neutral-production-extension-fixture-files";
+import {
+  resolveTrustedExecutable,
+  spawnTrusted,
+  type TrustedExecutable,
+} from "./trusted-executable";
 
 function sqlLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
@@ -46,15 +60,19 @@ function sqlLiteral(value: string): string {
 async function decryptRestoreSingleSession(input: {
   rolesSql: Buffer;
   rolesPlaintextSha256: string;
-  databaseEncrypted: string;
+  databaseEncrypted: PrivateArtifactCopy;
   passphrase: string;
   env: NodeJS.ProcessEnv;
   sentinel: RehearsalClusterSentinel;
+  psqlCommand: TrustedExecutable;
+  pgRestoreCommand: TrustedExecutable;
+  gpgCommand: TrustedExecutable;
+  expectedDatabaseSha256: string;
 }): Promise<{
   roles: string;
   adaptedRoles: string;
   database: string;
-  extensions: ExtensionSqlPortabilityProof;
+  extensions: ExtensionSqlPortabilityProof & { archiveTocSha256: string };
 }> {
   const gpgHome = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gpg-"));
   fs.chmodSync(gpgHome, 0o700);
@@ -81,7 +99,7 @@ async function decryptRestoreSingleSession(input: {
       if (child.exitCode === null) child.kill("SIGKILL");
   };
   const psql = track(
-    spawn("psql", ["--no-psqlrc", "--set=ON_ERROR_STOP=1"], {
+    spawnTrusted(input.psqlCommand, ["--no-psqlrc", "--set=ON_ERROR_STOP=1"], {
       env: input.env,
       stdio: ["pipe", "ignore", "pipe"],
       shell: false,
@@ -90,18 +108,15 @@ async function decryptRestoreSingleSession(input: {
   const psqlClosed = once(psql, "close") as Promise<
     [number | null, NodeJS.Signals | null]
   >;
-  let errors = "";
-  psql.stderr.setEncoding("utf8");
-  psql.stderr.on("data", (chunk) => (errors += chunk));
+  psql.stderr.resume();
   const psqlInputFailed = new Promise<never>((_resolve, reject) => {
     psql.stdin.once("error", (error) => {
-      errors += `\npsql stdin: ${error.message}`;
-      reject(new Error(`single-session restore input failed: ${errors}`));
+      reject(new Error("single-session restore input failed"));
     });
   });
   const prematurePsqlExit = psqlClosed.then(([code, signal]) => {
     throw new Error(
-      `single-session restore exited before commit: code=${String(code)} signal=${String(signal)} ${errors}`,
+      `single-session restore exited before commit: code=${String(code)} signal=${String(signal)}`,
     );
   });
   const guard = `BEGIN;
@@ -111,6 +126,7 @@ BEGIN
      OR encode(sha256(convert_to(current_setting('data_directory'),'UTF8')),'hex') <> ${sqlLiteral(input.sentinel.dataDirectorySha256)}
      OR current_database() <> ${sqlLiteral(input.sentinel.databaseName)}
      OR current_user <> ${sqlLiteral(input.sentinel.temporarySuperuser)}
+     OR (select setting from pg_config where name='SHAREDIR') <> ${sqlLiteral(input.sentinel.managedExtensionFixture.privateSharedDirectory)}
      OR coalesce((select shobj_description(oid,'pg_database') from pg_database where datname=current_database()),'') <> ${sqlLiteral(canonicalJson(input.sentinel))}
   THEN
     RAISE EXCEPTION 'recovery rehearsal sentinel mismatch';
@@ -121,13 +137,13 @@ $ot_recovery_guard$;
   psql.stdin.write(guard);
 
   const decryptInto = async (
-    encrypted: string,
     consumer: NodeJS.WritableStream,
     endConsumer: boolean,
   ): Promise<string> => {
+    const encrypted = privateCopyReadStream(input.databaseEncrypted);
     const gpg = track(
-      spawn(
-        "gpg",
+      spawnTrusted(
+        input.gpgCommand,
         [
           "--batch",
           "--quiet",
@@ -137,7 +153,6 @@ $ot_recovery_guard$;
           "--passphrase-fd",
           "3",
           "--decrypt",
-          encrypted,
         ],
         {
           env: {
@@ -147,18 +162,17 @@ $ot_recovery_guard$;
             LC_ALL: "C",
             GNUPGHOME: gpgHome,
           },
-          stdio: ["ignore", "pipe", "pipe", "pipe"],
-          shell: false,
+          stdio: ["pipe", "pipe", "pipe", "pipe"],
         },
       ),
     );
+    encrypted.pipe(gpg.stdin!);
     const gpgClosed = once(gpg, "close") as Promise<
       [number | null, NodeJS.Signals | null]
     >;
     const digest = createHash("sha256");
     gpg.stdout!.on("data", (chunk: Buffer) => digest.update(chunk));
-    gpg.stderr!.setEncoding("utf8");
-    gpg.stderr!.on("data", (chunk) => (errors += chunk));
+    gpg.stderr!.resume();
     gpg.stdout!.pipe(consumer, { end: endConsumer });
     (gpg.stdio[3] as NodeJS.WritableStream).end(`${input.passphrase}\n`);
     const [code] = await Promise.race([
@@ -166,7 +180,7 @@ $ot_recovery_guard$;
       prematurePsqlExit,
       psqlInputFailed,
     ]);
-    if (code !== 0) throw new Error(`gpg restore decrypt failed: ${errors}`);
+    if (code !== 0) throw new Error("gpg restore decrypt failed");
     return digest.digest("hex");
   };
   try {
@@ -177,48 +191,187 @@ $ot_recovery_guard$;
         prematurePsqlExit,
         psqlInputFailed,
       ]);
-    const restore = track(
-      spawn("pg_restore", ["--exit-on-error", "--file=-"], {
-        env: input.env,
-        stdio: ["pipe", "pipe", "pipe"],
-        shell: false,
-      }),
-    );
-    const restoreClosed = once(restore, "close") as Promise<
-      [number | null, NodeJS.Signals | null]
-    >;
-    const extensionTransform = new RecoveryExtensionSqlTransform();
-    const extensionTransformEnded = once(extensionTransform, "end");
-    restore.stderr.setEncoding("utf8");
-    restore.stderr.on("data", (chunk) => (errors += chunk));
-    const restoreInputFailed = new Promise<never>((_resolve, reject) => {
-      restore.stdin.once("error", (error) => {
-        errors += `\npg_restore stdin: ${error.message}`;
-        reject(new Error(`pg_restore input failed: ${errors}`));
+    const integritySink = new PassThrough();
+    integritySink.resume();
+    const verifiedDatabaseHash = await decryptInto(integritySink, true);
+    if (verifiedDatabaseHash !== input.expectedDatabaseSha256)
+      throw new Error(
+        "Recovery database plaintext checksum mismatch before restore",
+      );
+
+    const runArchive = async (archiveInput: {
+      args: string[];
+      toc?: Buffer;
+      output: NodeJS.WritableStream;
+      endOutput: boolean;
+    }): Promise<void> => {
+      const encrypted = privateCopyReadStream(input.databaseEncrypted);
+      const gpg = track(
+        spawnTrusted(
+          input.gpgCommand,
+          [
+            "--batch",
+            "--quiet",
+            "--no-options",
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase-fd",
+            "3",
+            "--decrypt",
+          ],
+          {
+            env: {
+              PATH: process.env.PATH,
+              NODE_ENV: "production",
+              LANG: "C",
+              LC_ALL: "C",
+              GNUPGHOME: gpgHome,
+            },
+            stdio: ["pipe", "pipe", "ignore", "pipe"],
+          },
+        ),
+      );
+      encrypted.pipe(gpg.stdin!);
+      const restore = track(
+        spawnTrusted(input.pgRestoreCommand, archiveInput.args, {
+          env: input.env,
+          stdio: archiveInput.toc
+            ? ["pipe", "pipe", "pipe", "pipe"]
+            : ["pipe", "pipe", "pipe"],
+        }),
+      );
+      const restoreClosed = once(restore, "close") as Promise<
+        [number | null, NodeJS.Signals | null]
+      >;
+      restore.stderr.resume();
+      const restoreInputFailed = new Promise<never>((_resolve, reject) => {
+        restore.stdin.once("error", (error) => {
+          if ((error as NodeJS.ErrnoException).code !== "EPIPE") {
+            reject(new Error("pg_restore input failed"));
+          }
+        });
       });
+      if (archiveInput.toc)
+        (restore.stdio[3] as NodeJS.WritableStream).end(archiveInput.toc);
+      const outputEnded = archiveInput.endOutput
+        ? once(archiveInput.output, "end")
+        : once(restore.stdout, "end");
+      restore.stdout.pipe(archiveInput.output, {
+        end: archiveInput.endOutput,
+      });
+      gpg.stdout!.pipe(restore.stdin);
+      (gpg.stdio[3] as NodeJS.WritableStream).end(`${input.passphrase}\n`);
+      const [[restoreCode]] = await Promise.race([
+        Promise.all([restoreClosed, outputEnded]),
+        prematurePsqlExit,
+        psqlInputFailed,
+        restoreInputFailed,
+      ]);
+      if (restoreCode !== 0) throw new Error("pg_restore SQL emission failed");
+      if (gpg.exitCode === null) gpg.kill("SIGTERM");
+      await Promise.race([
+        gpg.exitCode === null ? once(gpg, "close") : Promise.resolve(),
+        new Promise((resolve) => setTimeout(resolve, 2_000)),
+      ]);
+    };
+
+    const readArchiveToc = async (): Promise<Buffer> => {
+      const encrypted = privateCopyReadStream(input.databaseEncrypted);
+      const gpg = track(
+        spawnTrusted(
+          input.gpgCommand,
+          [
+            "--batch",
+            "--quiet",
+            "--no-options",
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase-fd",
+            "3",
+            "--decrypt",
+          ],
+          {
+            env: {
+              PATH: process.env.PATH,
+              NODE_ENV: "production",
+              LANG: "C",
+              LC_ALL: "C",
+              GNUPGHOME: gpgHome,
+            },
+            stdio: ["pipe", "pipe", "ignore", "pipe"],
+          },
+        ),
+      );
+      encrypted.pipe(gpg.stdin!);
+      const restore = track(
+        spawnTrusted(input.pgRestoreCommand, ["--list"], {
+          env: input.env,
+          stdio: ["pipe", "pipe", "pipe"],
+        }),
+      );
+      const chunks: Buffer[] = [];
+      restore.stdout.on("data", (chunk: Buffer) =>
+        chunks.push(Buffer.from(chunk)),
+      );
+      restore.stderr.resume();
+      restore.stdin.on("error", (error: NodeJS.ErrnoException) => {
+        if (error.code !== "EPIPE") restore.kill("SIGTERM");
+      });
+      gpg.stdout!.pipe(restore.stdin);
+      (gpg.stdio[3] as NodeJS.WritableStream).end(`${input.passphrase}\n`);
+      const [restoreCode] = (await Promise.race([
+        once(restore, "close"),
+        prematurePsqlExit,
+        psqlInputFailed,
+      ])) as [number | null];
+      if (restoreCode !== 0) throw new Error("pg_restore archive TOC failed");
+      if (gpg.exitCode === null) gpg.kill("SIGTERM");
+      await Promise.race([
+        gpg.exitCode === null ? once(gpg, "close") : Promise.resolve(),
+        new Promise((resolve) => setTimeout(resolve, 2_000)),
+      ]);
+      const toc = Buffer.concat(chunks);
+      for (const chunk of chunks) chunk.fill(0);
+      return toc;
+    };
+
+    const tocBytes = await readArchiveToc();
+    const archivePlan = planRecoveryArchiveToc(tocBytes);
+    tocBytes.fill(0);
+    await runArchive({
+      args: ["--exit-on-error", "--file=-", "--use-list=/dev/fd/3"],
+      toc: archivePlan.schemas,
+      output: psql.stdin,
+      endOutput: false,
     });
-    restore.stdout.pipe(extensionTransform).pipe(psql.stdin, { end: false });
-    const [database, [restoreCode]] = await Promise.race([
-      Promise.all([
-        decryptInto(input.databaseEncrypted, restore.stdin, true),
-        restoreClosed,
-        extensionTransformEnded,
-      ]),
-      prematurePsqlExit,
-      psqlInputFailed,
-      restoreInputFailed,
-    ]);
-    if (restoreCode !== 0)
-      throw new Error(`pg_restore SQL emission failed: ${errors}`);
+    const extensionTransform = new RecoveryExtensionSqlTransform();
+    extensionTransform.pipe(psql.stdin, { end: false });
+    await runArchive({
+      args: ["--exit-on-error", "--file=-", "--use-list=/dev/fd/3"],
+      toc: archivePlan.extensions,
+      output: extensionTransform,
+      endOutput: true,
+    });
+    await runArchive({
+      args: ["--exit-on-error", "--file=-", "--use-list=/dev/fd/3"],
+      toc: archivePlan.remainder,
+      output: psql.stdin,
+      endOutput: false,
+    });
+    archivePlan.schemas.fill(0);
+    archivePlan.extensions.fill(0);
+    archivePlan.remainder.fill(0);
     psql.stdin.end("COMMIT;\n");
     const [psqlCode] = await psqlClosed;
-    if (psqlCode !== 0)
-      throw new Error(`single-session restore failed: ${errors}`);
+    if (psqlCode !== 0) throw new Error("single-session restore failed");
     return {
       roles: input.rolesPlaintextSha256,
       adaptedRoles,
-      database,
-      extensions: extensionTransform.proof(),
+      database: verifiedDatabaseHash,
+      extensions: {
+        ...extensionTransform.proof(),
+        archiveTocSha256: archivePlan.archiveTocSha256,
+      },
     };
   } finally {
     await abortPipeline();
@@ -227,15 +380,17 @@ $ot_recovery_guard$;
 }
 
 async function decryptBuffer(
-  file: string,
+  copy: PrivateArtifactCopy,
   passphrase: string,
+  gpgCommand: TrustedExecutable,
 ): Promise<Buffer> {
   const chunks: Buffer[] = [];
   const gpgHome = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gpg-"));
   fs.chmodSync(gpgHome, 0o700);
   try {
-    const gpg = spawn(
-      "gpg",
+    const encrypted = privateCopyReadStream(copy);
+    const gpg = spawnTrusted(
+      gpgCommand,
       [
         "--batch",
         "--quiet",
@@ -245,7 +400,6 @@ async function decryptBuffer(
         "--passphrase-fd",
         "3",
         "--decrypt",
-        file,
       ],
       {
         env: {
@@ -255,17 +409,15 @@ async function decryptBuffer(
           LC_ALL: "C",
           GNUPGHOME: gpgHome,
         },
-        stdio: ["ignore", "pipe", "pipe", "pipe"],
-        shell: false,
+        stdio: ["pipe", "pipe", "pipe", "pipe"],
       },
     );
-    let errors = "";
+    encrypted.pipe(gpg.stdin!);
     gpg.stdout!.on("data", (chunk: Buffer) => chunks.push(chunk));
-    gpg.stderr!.setEncoding("utf8");
-    gpg.stderr!.on("data", (chunk) => (errors += chunk));
+    gpg.stderr!.resume();
     (gpg.stdio[3] as NodeJS.WritableStream).end(`${passphrase}\n`);
     const [code] = (await once(gpg, "close")) as [number];
-    if (code !== 0) throw new Error(`gpg decrypt failed: ${errors}`);
+    if (code !== 0) throw new Error("gpg decrypt failed");
     return Buffer.concat(chunks);
   } finally {
     fs.rmSync(gpgHome, { recursive: true, force: true });
@@ -278,18 +430,31 @@ async function main(): Promise<void> {
   const passphrase = process.env.OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE;
   const authenticationKey = process.env.OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY;
   const sentinelPath = process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL;
+  const runtimeRoot = process.env[PRIVATE_RUNTIME_ROOT_VAR];
+  const gpgPath = process.env[OT_PRODUCTION_RECOVERY_GPG_PATH_VAR];
   if (
     !receiptPath ||
     !targetUrl ||
     !passphrase ||
     !authenticationKey ||
-    !sentinelPath
+    !sentinelPath ||
+    !runtimeRoot ||
+    !gpgPath
   )
     throw new Error(
       "Receipt, target, passphrase, authentication key and cluster sentinel are required",
     );
   const resolvedTarget = await resolveRecoveryTarget(targetUrl);
-  const installedFixture = assertManagedExtensionFixtureInstalled();
+  const installedFixture = assertManagedExtensionFixtureInstalled(runtimeRoot);
+  const gpgCommand = resolveTrustedExecutable(gpgPath);
+  const psqlCommand = resolveTrustedExecutable(
+    path.join(installedFixture.privateBinaryDirectory, "psql"),
+    { allowStickyAncestors: true },
+  );
+  const pgRestoreCommand = resolveTrustedExecutable(
+    path.join(installedFixture.privateBinaryDirectory, "pg_restore"),
+    { allowStickyAncestors: true },
+  );
   const receiptBytes = readProtectedFile(receiptPath);
   const receipt = JSON.parse(
     receiptBytes.toString("utf8"),
@@ -307,7 +472,23 @@ async function main(): Promise<void> {
     sentinel.managedExtensionFixture?.policy !==
       OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY ||
     canonicalJson(sentinel.managedExtensionFixture.filesSha256) !==
-      canonicalJson(OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES)
+      canonicalJson(OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES) ||
+    sentinel.managedExtensionFixture.privateSharedDirectory !==
+      installedFixture.privateSharedDirectory ||
+    sentinel.managedExtensionFixture.postgresSha256 !==
+      installedFixture.postgresSha256 ||
+    sentinel.managedExtensionFixture.initdbSha256 !==
+      installedFixture.initdbSha256 ||
+    sentinel.managedExtensionFixture.privateBinaryTreeSha256 !==
+      installedFixture.privateBinaryTreeSha256 ||
+    sentinel.managedExtensionFixture.privateSharedTreeSha256 !==
+      installedFixture.privateSharedTreeSha256 ||
+    sentinel.managedExtensionFixture.sourcePgConfigSha256 !==
+      installedFixture.sourcePgConfigSha256 ||
+    sentinel.managedExtensionFixture.sourceBinaryTreeSha256 !==
+      installedFixture.sourceBinaryTreeSha256 ||
+    sentinel.managedExtensionFixture.sourceSharedTreeSha256 !==
+      installedFixture.sourceSharedTreeSha256
   )
     throw new Error("Rehearsal managed extension fixture proof is invalid");
 
@@ -340,6 +521,7 @@ async function main(): Promise<void> {
     const identity = (
       await target.query(`select current_user username, current_setting('server_version_num')::int version,
       (pg_control_system()).system_identifier::text system_identifier, current_setting('data_directory') data_directory,
+      (select setting from pg_config where name='SHAREDIR') shared_directory,
       coalesce(shobj_description(oid,'pg_database'),'') database_comment from pg_database where datname=current_database()`)
     ).rows[0]!;
     const major = Math.floor(Number(identity.version) / 10_000);
@@ -348,6 +530,8 @@ async function main(): Promise<void> {
     if (
       sentinel.targetServerMajor !== major ||
       installedFixture.major !== major ||
+      String(identity.shared_directory) !==
+        installedFixture.privateSharedDirectory ||
       sentinel.systemIdentifier !== String(identity.system_identifier) ||
       sentinel.dataDirectorySha256 !==
         sha256(String(identity.data_directory)) ||
@@ -392,6 +576,10 @@ async function main(): Promise<void> {
       await target.query(OT_PRODUCTION_RECOVERY_CATALOG_SQL, [
         OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
         [sentinel.temporarySuperuser],
+        [
+          ...OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
+          sentinel.temporarySuperuser,
+        ],
       ])
     ).rows[0]!.snapshot;
     pristineTargetManagedMembershipCount = countNormalizedManagedMemberships(
@@ -421,16 +609,18 @@ async function main(): Promise<void> {
     const roles = byFormat["postgres-roles-sql"]!;
     const catalog = byFormat["catalog-json"]!;
     const rolesPlaintext = await decryptBuffer(
-      privateArtifacts.get(roles.file)!.file,
+      privateArtifacts.get(roles.file)!,
       passphrase,
+      gpgCommand,
     );
     if (sha256(rolesPlaintext) !== roles.plaintextSha256)
       throw new Error(
         `Decrypted recovery artifact checksum mismatch: ${roles.file}`,
       );
     const sourceCatalog = await decryptBuffer(
-      privateArtifacts.get(catalog.file)!.file,
+      privateArtifacts.get(catalog.file)!,
       passphrase,
+      gpgCommand,
     );
     if (
       sha256(sourceCatalog) !== catalog.plaintextSha256 ||
@@ -462,14 +652,18 @@ async function main(): Promise<void> {
     });
 
     const database = byFormat["postgres-custom"]!;
-    assertManagedExtensionFixtureInstalled();
+    assertManagedExtensionFixtureInstalled(runtimeRoot);
     const restoredArtifactHashes = await decryptRestoreSingleSession({
       rolesSql: adaptedRoles.bytes,
       rolesPlaintextSha256: sha256(rolesPlaintext),
-      databaseEncrypted: privateArtifacts.get(database.file)!.file,
+      databaseEncrypted: privateArtifacts.get(database.file)!,
       passphrase,
       env: pgEnv,
       sentinel,
+      psqlCommand,
+      pgRestoreCommand,
+      gpgCommand,
+      expectedDatabaseSha256: database.plaintextSha256,
     });
     const observed: Record<string, string> = {
       [roles.file]: restoredArtifactHashes.roles,
@@ -489,6 +683,10 @@ async function main(): Promise<void> {
         await verifier.query(OT_PRODUCTION_RECOVERY_CATALOG_SQL, [
           OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
           [sentinel.temporarySuperuser],
+          [
+            ...OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
+            sentinel.temporarySuperuser,
+          ],
         ])
       ).rows[0]!.snapshot;
       const restoredDigest = sha256(canonicalJson(restored));

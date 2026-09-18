@@ -1,7 +1,11 @@
 -- Recovery-rehearsal catalog fixture for supabase/vault v0.3.1.
 --
--- Object shape follows the upstream v0.3.1 SQL at tag
--- 6e0cd916242d922a646e4d611cc215e09dd429f4. The three native crypto
+-- Object shape follows upstream commit
+-- 6e0cd916242d922a646e4d611cc215e09dd429f4: the 0.3.0 base SQL
+-- (SHA-256 c3739f80d19e1fc18d114705a07ed9fc7c8e3750762abe51f8e9999716fdaff6)
+-- plus the no-op 0.3.0--0.3.1 upgrade
+-- (SHA-256 c601f01c7d384054536fafd5ebd5d570542360bdcf2f14bfafd4876aaa5d174a).
+-- The three native crypto
 -- functions are deliberately inert: this fixture exists only in a disposable,
 -- empty restore cluster and must never be used to read or write secrets. The
 -- rehearsal proves extension identity, version, schema, member objects, table
@@ -18,6 +22,7 @@ CREATE FUNCTION vault._crypto_aead_det_encrypt(
 RETURNS bytea
 LANGUAGE sql
 IMMUTABLE
+COST 1
 AS 'SELECT NULL::bytea';
 
 CREATE FUNCTION vault._crypto_aead_det_decrypt(
@@ -30,12 +35,14 @@ CREATE FUNCTION vault._crypto_aead_det_decrypt(
 RETURNS bytea
 LANGUAGE sql
 IMMUTABLE
+COST 1
 AS 'SELECT NULL::bytea';
 
 CREATE FUNCTION vault._crypto_aead_det_noncegen()
 RETURNS bytea
 LANGUAGE sql
 IMMUTABLE
+COST 1
 AS 'SELECT decode(repeat(''00'', 24), ''hex'')';
 
 CREATE TABLE vault.secrets (

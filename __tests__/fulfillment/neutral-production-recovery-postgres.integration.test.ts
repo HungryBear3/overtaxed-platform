@@ -21,6 +21,11 @@ import {
   type RecoveryArtifact,
 } from "@/lib/fulfillment/neutral-production-recovery";
 import { assertManagedExtensionFixtureInstalled } from "@/scripts/neutral-production-extension-fixture-files";
+import { unitTestTrustedExecutablePolicy } from "@/scripts/trusted-executable";
+
+const TEST_EXECUTABLE_POLICY = unitTestTrustedExecutablePolicy(
+  process.getuid!(),
+);
 
 function available(): boolean {
   try {
@@ -31,12 +36,14 @@ function available(): boolean {
       execFileSync(bin ? path.join(bin, "initdb") : "initdb", ["--version"], {
         stdio: "ignore",
       });
-    for (const bin of [
-      process.env.OT_TEST_SOURCE_PG_BIN,
-      process.env.OT_TEST_TARGET_PG_BIN,
+    for (const runtime of [
+      process.env.OT_TEST_SOURCE_PG_RUNTIME,
+      process.env.OT_TEST_TARGET_PG_RUNTIME,
     ])
       assertManagedExtensionFixtureInstalled(
-        bin ? path.join(bin, "pg_config") : "pg_config",
+        runtime ?? "",
+        process.cwd(),
+        TEST_EXECUTABLE_POLICY,
       );
     execFileSync("gpg", ["--version"], { stdio: "ignore" });
     return true;
@@ -156,6 +163,7 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
     const catalog = (
       await sourceClient.query(OT_PRODUCTION_RECOVERY_CATALOG_SQL, [
         OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
+        OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
         OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
       ])
     ).rows[0]!.snapshot;
@@ -314,6 +322,8 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
           OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL: targetUrl,
           OT_NEUTRAL_RECOVERY_REHEARSAL_SUPERUSER: "restore_admin",
           OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL: sentinelPath,
+          OT_NEUTRAL_RECOVERY_REHEARSAL_RUNTIME_ROOT:
+            process.env.OT_TEST_TARGET_PG_RUNTIME,
           OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY: authenticationKey,
         },
       },
@@ -335,6 +345,8 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
           OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY: authenticationKey,
           OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL: sentinelPath,
           OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL: targetUrl,
+          OT_NEUTRAL_RECOVERY_REHEARSAL_RUNTIME_ROOT:
+            process.env.OT_TEST_TARGET_PG_RUNTIME,
         },
       },
     );
@@ -433,6 +445,8 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
           OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL: swapUrl,
           OT_NEUTRAL_RECOVERY_REHEARSAL_SUPERUSER: "swap_admin",
           OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL: swapSentinel,
+          OT_NEUTRAL_RECOVERY_REHEARSAL_RUNTIME_ROOT:
+            process.env.OT_TEST_TARGET_PG_RUNTIME,
           OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY: authenticationKey,
         },
       },
@@ -456,6 +470,8 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
           OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY: authenticationKey,
           OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL: swapSentinel,
           OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL: swapUrl,
+          OT_NEUTRAL_RECOVERY_REHEARSAL_RUNTIME_ROOT:
+            process.env.OT_TEST_TARGET_PG_RUNTIME,
         },
       },
     );
@@ -569,6 +585,8 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
               target.root,
               "sentinel.json",
             ),
+            OT_NEUTRAL_RECOVERY_REHEARSAL_RUNTIME_ROOT:
+              process.env.OT_TEST_TARGET_PG_RUNTIME,
             OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY: authenticationKey,
           },
         },

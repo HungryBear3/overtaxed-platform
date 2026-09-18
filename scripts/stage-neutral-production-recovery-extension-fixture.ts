@@ -1,18 +1,25 @@
 import {
   assertManagedExtensionFixtureInstalled,
-  stageManagedExtensionFixture,
+  prepareManagedExtensionRuntime,
+  PRIVATE_RUNTIME_ROOT_VAR,
 } from "./neutral-production-extension-fixture-files";
 import { redactProductionDiagnostic } from "../lib/fulfillment/neutral-production-verifier";
 
 function main(): void {
   const action = process.argv[2];
-  const pgConfig = process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG;
-  if (action !== "install" && action !== "remove" && action !== "verify")
-    throw new Error("Fixture action must be install, verify, or remove");
+  const sourcePgConfig =
+    process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG ?? "";
+  const runtimeRoot = process.env[PRIVATE_RUNTIME_ROOT_VAR] ?? "";
+  if (action !== "prepare" && action !== "verify")
+    throw new Error("Fixture action must be prepare or verify");
+  if (!runtimeRoot) throw new Error(`${PRIVATE_RUNTIME_ROOT_VAR} is required`);
   const result =
     action === "verify"
-      ? assertManagedExtensionFixtureInstalled(pgConfig)
-      : stageManagedExtensionFixture({ action, pgConfig });
+      ? assertManagedExtensionFixtureInstalled(runtimeRoot)
+      : prepareManagedExtensionRuntime({
+          runtimeRoot,
+          sourcePgConfig,
+        });
   process.stdout.write(
     `neutral-report recovery extension fixture: PASS action=${action} target_pg=${result.major}\n`,
   );

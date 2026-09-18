@@ -1,4 +1,3 @@
-import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -6,10 +5,21 @@ import os from "node:os";
 import path from "node:path";
 import {
   OT_PRODUCTION_RECOVERY_AUTH_KEY_VAR,
+  OT_PRODUCTION_RECOVERY_GPG_PATH_VAR,
+  OT_PRODUCTION_NATIVE_VAULT_PROOF_VAR,
+  OT_PRODUCTION_NATIVE_VAULT_PROOF_SCHEMA,
+  OT_PRODUCTION_NATIVE_VAULT_PLATFORM_RECEIPT_SCHEMA,
+  OT_PRODUCTION_NATIVE_VAULT_TRANSCRIPT_SCHEMA,
+  OT_PRODUCTION_NATIVE_VAULT_UPSTREAM_COMMIT,
+  OT_PRODUCTION_NATIVE_VAULT_BASE_SQL_SHA256,
+  OT_PRODUCTION_NATIVE_VAULT_UPGRADE_SQL_SHA256,
+  OT_PRODUCTION_NATIVE_VAULT_APPROVED_PLATFORM_RECEIPT_SHA256,
   OT_PRODUCTION_RECOVERY_MAX_AGE_MINUTES,
   OT_PRODUCTION_RECOVERY_PASSPHRASE_VAR,
   OT_PRODUCTION_RECOVERY_RECEIPT_VAR,
   OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY,
+  OT_PRODUCTION_RECOVERY_CANDIDATE_COMMIT_VAR,
+  OT_PRODUCTION_RECOVERY_CANDIDATE_MANIFEST_VAR,
   OT_PRODUCTION_RESTORE_SCHEMA,
   adaptManagedRoleMembershipGrantors,
   assertReceiptAuthenticator,
@@ -20,7 +30,16 @@ import {
   sha256,
   type ProductionRecoveryReceipt,
   type RestoreRehearsalReceipt,
+  type NativeVaultProof,
+  type NativeVaultPlatformReceipt,
+  type NativeVaultTranscript,
 } from "../lib/fulfillment/neutral-production-recovery";
+import {
+  resolveTrustedExecutable,
+  spawnTrusted,
+  type TrustedExecutable,
+  type TrustedExecutableOwnershipPolicy,
+} from "./trusted-executable";
 import { expectedExtensionSqlPortabilityProof } from "../lib/fulfillment/neutral-production-extension-portability";
 
 export function readProtectedFile(
@@ -67,99 +86,131 @@ export function readProtectedFile(
       throw new Error(
         `Recovery evidence ownership, type or permissions are unsafe: ${path.basename(file)}`,
       );
-    // Node does not expose openat(2). Delegate the single relative open to a
-    // tiny, non-shell Python helper while passing the already-verified parent
-    // directory descriptor as fd 3. The child is therefore resolved beneath
-    // the held directory object, not through an attacker-swappable pathname.
-    // Expected inode metadata also preserves the child swap check.
-    const helper = `
-import os, stat, sys
-name = sys.argv[1]
-expected = tuple(int(value) for value in sys.argv[2:8])
-flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-fd = os.open(name, flags, dir_fd=3)
-try:
-    observed = os.fstat(fd)
-    actual = (observed.st_dev, observed.st_ino, observed.st_uid, observed.st_mode, observed.st_size, observed.st_nlink)
-    if not stat.S_ISREG(observed.st_mode) or actual != expected or observed.st_nlink != 1:
-        raise RuntimeError("Recovery evidence identity changed while opening")
-    while True:
-        chunk = os.read(fd, 1024 * 1024)
-        if not chunk:
-            break
-        os.write(1, chunk)
-finally:
-    os.close(fd)
-`;
+    let descriptor: number | undefined;
     try {
       beforeRelativeOpen?.();
-      return execFileSync(
-        "python3",
-        [
-          "-c",
-          helper,
-          path.basename(absolute),
-          String(stat.dev),
-          String(stat.ino),
-          String(stat.uid),
-          String(stat.mode),
-          String(stat.size),
-          String(stat.nlink),
-        ],
-        {
-          stdio: ["ignore", "pipe", "pipe", directoryDescriptor],
-          maxBuffer: 1024 * 1024 * 1024,
-          env: {
-            PATH: process.env.PATH,
-            NODE_ENV: "production",
-            LANG: "C",
-            LC_ALL: "C",
-          },
-        },
+      descriptor = fs.openSync(
+        absolute,
+        fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
       );
+      const opened = fs.fstatSync(descriptor);
+      const parentAfter = fs.fstatSync(directoryDescriptor);
+      if (
+        opened.dev !== stat.dev ||
+        opened.ino !== stat.ino ||
+        opened.uid !== stat.uid ||
+        opened.mode !== stat.mode ||
+        opened.size !== stat.size ||
+        opened.nlink !== 1 ||
+        parentAfter.dev !== directoryStat.dev ||
+        parentAfter.ino !== directoryStat.ino
+      )
+        throw new Error("identity mismatch");
+      return fs.readFileSync(descriptor);
     } catch {
       throw new Error(
         `Recovery evidence identity changed while opening: ${path.basename(file)}`,
       );
+    } finally {
+      if (descriptor !== undefined) fs.closeSync(descriptor);
     }
   } finally {
     fs.closeSync(directoryDescriptor);
   }
 }
 
-export function materializePrivateCopy(bytes: Buffer): {
+export type PrivateArtifactCopy = {
   file: string;
+  descriptor: number;
+  sha256: string;
+  device: number;
+  inode: number;
+  size: number;
   cleanup: () => void;
-} {
+};
+
+export function materializePrivateCopy(bytes: Buffer): PrivateArtifactCopy {
   const directory = fs.mkdtempSync(
     path.join(os.tmpdir(), "ot-recovery-bytes-"),
   );
   fs.chmodSync(directory, 0o700);
   const file = path.join(directory, "artifact.gpg");
-  const descriptor = fs.openSync(file, "wx", 0o600);
-  try {
-    fs.writeFileSync(descriptor, bytes);
-    fs.fsyncSync(descriptor);
-  } finally {
-    fs.closeSync(descriptor);
-  }
-  fs.chmodSync(file, 0o400);
+  const descriptor = fs.openSync(file, "wx+", 0o600);
+  fs.writeFileSync(descriptor, bytes);
+  fs.fsyncSync(descriptor);
+  fs.fchmodSync(descriptor, 0o400);
+  const stat = fs.fstatSync(descriptor);
+  const digest = sha256(bytes);
   return {
     file,
-    cleanup: () => fs.rmSync(directory, { recursive: true, force: true }),
+    descriptor,
+    sha256: digest,
+    device: stat.dev,
+    inode: stat.ino,
+    size: stat.size,
+    cleanup: () => {
+      fs.closeSync(descriptor);
+      fs.rmSync(directory, { recursive: true, force: true });
+    },
   };
 }
 
+export function verifyPrivateCopy(copy: PrivateArtifactCopy): void {
+  const opened = fs.fstatSync(copy.descriptor);
+  const linked = fs.lstatSync(copy.file);
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  let position = 0;
+  for (;;) {
+    const count = fs.readSync(
+      copy.descriptor,
+      buffer,
+      0,
+      buffer.length,
+      position,
+    );
+    if (count === 0) break;
+    hash.update(buffer.subarray(0, count));
+    position += count;
+  }
+  buffer.fill(0);
+  if (
+    !opened.isFile() ||
+    opened.nlink !== 1 ||
+    opened.dev !== copy.device ||
+    opened.ino !== copy.inode ||
+    opened.size !== copy.size ||
+    linked.isSymbolicLink() ||
+    linked.dev !== copy.device ||
+    linked.ino !== copy.inode ||
+    hash.digest("hex") !== copy.sha256
+  )
+    throw new Error("Private recovery artifact identity changed");
+}
+
+export function privateCopyReadStream(
+  copy: PrivateArtifactCopy,
+): fs.ReadStream {
+  verifyPrivateCopy(copy);
+  return fs.createReadStream(copy.file, {
+    fd: copy.descriptor,
+    autoClose: false,
+    start: 0,
+  });
+}
+
 async function decryptArtifact(
-  file: string,
+  copy: PrivateArtifactCopy,
   passphrase: string,
+  gpgExecutable: TrustedExecutable,
   capturePlaintext = false,
 ): Promise<{ plaintextSha256: string; plaintext?: Buffer }> {
   const homedir = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gpg-"));
   fs.chmodSync(homedir, 0o700);
   try {
-    const child = spawn(
-      "gpg",
+    const encrypted = privateCopyReadStream(copy);
+    const child = spawnTrusted(
+      gpgExecutable,
       [
         "--batch",
         "--quiet",
@@ -169,7 +220,6 @@ async function decryptArtifact(
         "--passphrase-fd",
         "3",
         "--decrypt",
-        file,
       ],
       {
         env: {
@@ -179,26 +229,21 @@ async function decryptArtifact(
           LC_ALL: "C",
           GNUPGHOME: homedir,
         },
-        stdio: ["ignore", "pipe", "pipe", "pipe"],
-        shell: false,
+        stdio: ["pipe", "pipe", "pipe", "pipe"],
       },
     );
+    encrypted.pipe(child.stdin!);
     const hash = createHash("sha256");
     const plaintextChunks: Buffer[] = [];
-    let error = "";
     child.stdout!.on("data", (chunk: Buffer) => {
       hash.update(chunk);
       if (capturePlaintext) plaintextChunks.push(Buffer.from(chunk));
     });
-    child.stderr!.setEncoding("utf8");
-    child.stderr!.on("data", (chunk) => (error += chunk));
     (child.stdio[3] as NodeJS.WritableStream).end(`${passphrase}\n`);
     const [code] = (await once(child, "close")) as [number];
     if (code !== 0) {
       for (const chunk of plaintextChunks) chunk.fill(0);
-      throw new Error(
-        `Production recovery artifact is not decryptable: ${error.trim()}`,
-      );
+      throw new Error("Production recovery artifact is not decryptable");
     }
     const plaintextSha256 = hash.digest("hex");
     if (!capturePlaintext) return { plaintextSha256 };
@@ -210,11 +255,166 @@ async function decryptArtifact(
   }
 }
 
+const NATIVE_VAULT_EVIDENCE_BASENAME =
+  /^([a-z0-9](?:[a-z0-9_-]*[a-z0-9])?)-(darwin|linux)\.([a-z0-9](?:[a-z0-9._-]*[a-z0-9])?)$/;
+
+export function reserveNativeVaultEvidenceBasename(
+  file: string,
+  platform: "darwin" | "linux",
+  seenBasenames: Set<string>,
+): string {
+  const basename = path.basename(file);
+  // Normalize before validating the canonical spelling so a case or Unicode
+  // alias of an already-reserved name reaches the collision refusal even on a
+  // case-sensitive review host. This models the lookup behavior of default
+  // case-insensitive APFS rather than relying on the host filesystem.
+  const collisionKey = basename.normalize("NFKC").toLowerCase();
+  if (seenBasenames.has(collisionKey))
+    throw new Error("Native Vault evidence basename is colliding");
+  const match = NATIVE_VAULT_EVIDENCE_BASENAME.exec(basename);
+  if (
+    basename !== file ||
+    basename.normalize("NFC") !== basename ||
+    !match ||
+    match[2] !== platform
+  )
+    throw new Error("Native Vault evidence basename is unsafe");
+  seenBasenames.add(collisionKey);
+  return basename;
+}
+
+function readEvidenceReference(
+  directory: string,
+  reference: { file: string; sha256: string },
+  platform: "darwin" | "linux",
+  seenBasenames: Set<string>,
+): Buffer {
+  const basename = reserveNativeVaultEvidenceBasename(
+    reference.file,
+    platform,
+    seenBasenames,
+  );
+  if (!/^[0-9a-f]{64}$/.test(reference.sha256))
+    throw new Error("Native Vault evidence reference is invalid");
+  const bytes = readProtectedFile(path.join(directory, basename));
+  if (sha256(bytes) !== reference.sha256)
+    throw new Error("Native Vault evidence file changed");
+  return bytes;
+}
+
+function assertNativeVaultPlatformEvidence(input: {
+  proofDirectory: string;
+  reference: NativeVaultProof["platformReceipts"][number];
+  expectedPlatform: "darwin" | "linux";
+  authenticationKey: string;
+  backupId: string;
+  backupReceiptSha256: string;
+  candidateCommit: string;
+  candidateManifestSha256: string;
+  now: Date;
+  backupCreatedAt: string;
+  seenBasenames: Set<string>;
+}): void {
+  if (input.reference.platform !== input.expectedPlatform)
+    throw new Error("Native Vault platform receipt order is invalid");
+  const receiptBytes = readEvidenceReference(
+    input.proofDirectory,
+    input.reference,
+    input.expectedPlatform,
+    input.seenBasenames,
+  );
+  const receipt = JSON.parse(
+    receiptBytes.toString("utf8"),
+  ) as NativeVaultPlatformReceipt;
+  assertReceiptAuthenticator(receipt, input.authenticationKey);
+  const verifiedAt = Date.parse(receipt.verifiedAt);
+  if (
+    receipt.schema !== OT_PRODUCTION_NATIVE_VAULT_PLATFORM_RECEIPT_SCHEMA ||
+    receipt.platform !== input.expectedPlatform ||
+    receipt.backupId !== input.backupId ||
+    receipt.backupReceiptSha256 !== input.backupReceiptSha256 ||
+    receipt.candidateCommit !== input.candidateCommit ||
+    receipt.candidateManifestSha256 !== input.candidateManifestSha256 ||
+    receipt.upstreamCommit !== OT_PRODUCTION_NATIVE_VAULT_UPSTREAM_COMMIT ||
+    receipt.baseSqlSha256 !== OT_PRODUCTION_NATIVE_VAULT_BASE_SQL_SHA256 ||
+    receipt.upgradeSqlSha256 !==
+      OT_PRODUCTION_NATIVE_VAULT_UPGRADE_SQL_SHA256 ||
+    !/^PostgreSQL (17|18)\./.test(receipt.toolchain.postgresVersion) ||
+    !receipt.toolchain.compilerVersion ||
+    !/^[0-9a-f]{64}$/.test(receipt.toolchain.pgConfigSha256) ||
+    !/^[0-9a-f]{64}$/.test(receipt.toolchain.compilerSha256) ||
+    !/^[0-9a-f]{64}$/.test(receipt.nativeSourceCatalogSha256) ||
+    !/^[0-9a-f]{64}$/.test(receipt.functionalSecretRoundTripSha256) ||
+    !Number.isFinite(verifiedAt) ||
+    verifiedAt < Date.parse(input.backupCreatedAt) ||
+    verifiedAt > input.now.getTime()
+  )
+    throw new Error("Native Vault platform receipt is invalid");
+  const receiptDirectory = input.proofDirectory;
+  const sourceArchive = readEvidenceReference(
+    receiptDirectory,
+    receipt.evidence.sourceArchive,
+    input.expectedPlatform,
+    input.seenBasenames,
+  );
+  const nativeLibrary = readEvidenceReference(
+    receiptDirectory,
+    receipt.evidence.nativeLibrary,
+    input.expectedPlatform,
+    input.seenBasenames,
+  );
+  const transcriptBytes = readEvidenceReference(
+    receiptDirectory,
+    receipt.evidence.transcript,
+    input.expectedPlatform,
+    input.seenBasenames,
+  );
+  if (sourceArchive.length === 0 || nativeLibrary.length === 0)
+    throw new Error("Native Vault binary/source evidence is empty");
+  const transcript = JSON.parse(
+    transcriptBytes.toString("utf8"),
+  ) as NativeVaultTranscript;
+  if (
+    transcript.schema !== OT_PRODUCTION_NATIVE_VAULT_TRANSCRIPT_SCHEMA ||
+    transcript.platform !== receipt.platform ||
+    transcript.backupId !== receipt.backupId ||
+    transcript.backupReceiptSha256 !== receipt.backupReceiptSha256 ||
+    transcript.candidateCommit !== receipt.candidateCommit ||
+    transcript.candidateManifestSha256 !== receipt.candidateManifestSha256 ||
+    transcript.upstreamCommit !== receipt.upstreamCommit ||
+    transcript.sourceArchiveSha256 !== receipt.evidence.sourceArchive.sha256 ||
+    transcript.nativeLibrarySha256 !== receipt.evidence.nativeLibrary.sha256 ||
+    transcript.nativeSourceCatalogSha256 !==
+      receipt.nativeSourceCatalogSha256 ||
+    transcript.functionalSecretRoundTripSha256 !==
+      receipt.functionalSecretRoundTripSha256 ||
+    canonicalJson(transcript.operations) !==
+      canonicalJson([
+        "build",
+        "install",
+        "create_secret",
+        "read_decrypted_secret",
+        "update_secret",
+        "read_updated_secret",
+        "drop_secret",
+      ]) ||
+    transcript.result !== "PASS"
+  )
+    throw new Error("Native Vault functional transcript is invalid");
+}
+
 export async function assertProductionRecoveryGate(input: {
   env: Readonly<Record<string, string | undefined>>;
   projectRef: string;
   markerInstanceId: string;
   now?: Date;
+  testOnlyPolicy?: {
+    ownershipPolicy: TrustedExecutableOwnershipPolicy;
+    approvedPlatformReceiptSha256?: {
+      darwin: string;
+      linux: string;
+    };
+  };
 }): Promise<ProductionRecoveryReceipt> {
   const receiptPath = input.env[OT_PRODUCTION_RECOVERY_RECEIPT_VAR];
   if (!receiptPath)
@@ -223,10 +423,14 @@ export async function assertProductionRecoveryGate(input: {
     );
   const authenticationKey = input.env[OT_PRODUCTION_RECOVERY_AUTH_KEY_VAR];
   const passphrase = input.env[OT_PRODUCTION_RECOVERY_PASSPHRASE_VAR];
-  if (!authenticationKey || !passphrase)
+  const gpgPath = input.env[OT_PRODUCTION_RECOVERY_GPG_PATH_VAR];
+  if (!authenticationKey || !passphrase || !gpgPath)
     throw new Error(
       "Production recovery authentication key and passphrase are required",
     );
+  const gpgExecutable = resolveTrustedExecutable(gpgPath, {
+    ownershipPolicy: input.testOnlyPolicy?.ownershipPolicy,
+  });
   if (authenticationKey === passphrase)
     throw new Error(
       "Production recovery authentication key and passphrase must be independent",
@@ -277,8 +481,9 @@ export async function assertProductionRecoveryGate(input: {
     const privateCopy = materializePrivateCopy(bytes);
     try {
       const decrypted = await decryptArtifact(
-        privateCopy.file,
+        privateCopy,
         passphrase,
+        gpgExecutable,
         artifact.format === "postgres-roles-sql" ||
           artifact.format === "catalog-json",
       );
@@ -343,8 +548,77 @@ export async function assertProductionRecoveryGate(input: {
       "Production recovery extension portability evidence is incomplete",
     );
   const receiptDigest = sha256(receiptBytes);
+  const nativeProofPath = input.env[OT_PRODUCTION_NATIVE_VAULT_PROOF_VAR];
+  const candidateCommit =
+    input.env[OT_PRODUCTION_RECOVERY_CANDIDATE_COMMIT_VAR];
+  const candidateManifestSha256 =
+    input.env[OT_PRODUCTION_RECOVERY_CANDIDATE_MANIFEST_VAR];
+  if (
+    !nativeProofPath ||
+    !/^[0-9a-f]{40}$/.test(candidateCommit ?? "") ||
+    !/^[0-9a-f]{64}$/.test(candidateManifestSha256 ?? "")
+  )
+    throw new Error(
+      "Authenticated native Vault proof is required with released candidate identity before Production apply",
+    );
+  const proofBytes = readProtectedFile(nativeProofPath);
+  const nativeProof = JSON.parse(
+    proofBytes.toString("utf8"),
+  ) as NativeVaultProof;
+  assertReceiptAuthenticator(nativeProof, authenticationKey);
+  if (
+    nativeProof.schema !== OT_PRODUCTION_NATIVE_VAULT_PROOF_SCHEMA ||
+    nativeProof.backupId !== receipt.backupId ||
+    nativeProof.backupReceiptSha256 !== receiptDigest ||
+    nativeProof.candidateCommit !== candidateCommit ||
+    nativeProof.candidateManifestSha256 !== candidateManifestSha256 ||
+    !Array.isArray(nativeProof.platformReceipts) ||
+    nativeProof.platformReceipts.length !== 2
+  )
+    throw new Error("Authenticated native Vault proof is invalid");
+  const approvedReceiptSha256 =
+    input.testOnlyPolicy?.approvedPlatformReceiptSha256 ??
+    OT_PRODUCTION_NATIVE_VAULT_APPROVED_PLATFORM_RECEIPT_SHA256;
+  if (
+    !approvedReceiptSha256.darwin ||
+    !approvedReceiptSha256.linux ||
+    nativeProof.platformReceipts[0].sha256 !== approvedReceiptSha256.darwin ||
+    nativeProof.platformReceipts[1].sha256 !== approvedReceiptSha256.linux
+  )
+    throw new Error(
+      "Native Vault platform receipts are not pinned by the released candidate",
+    );
+  const proofDirectory = path.dirname(path.resolve(nativeProofPath));
+  const seenNativeEvidenceBasenames = new Set<string>();
+  assertNativeVaultPlatformEvidence({
+    proofDirectory,
+    reference: nativeProof.platformReceipts[0],
+    expectedPlatform: "darwin",
+    authenticationKey,
+    backupId: receipt.backupId,
+    backupReceiptSha256: receiptDigest,
+    candidateCommit: candidateCommit!,
+    candidateManifestSha256: candidateManifestSha256!,
+    now,
+    backupCreatedAt: receipt.createdAt,
+    seenBasenames: seenNativeEvidenceBasenames,
+  });
+  assertNativeVaultPlatformEvidence({
+    proofDirectory,
+    reference: nativeProof.platformReceipts[1],
+    expectedPlatform: "linux",
+    authenticationKey,
+    backupId: receipt.backupId,
+    backupReceiptSha256: receiptDigest,
+    candidateCommit: candidateCommit!,
+    candidateManifestSha256: candidateManifestSha256!,
+    now,
+    backupCreatedAt: receipt.createdAt,
+    seenBasenames: seenNativeEvidenceBasenames,
+  });
   let adaptedRolesSha256: string | undefined;
   let adaptedStatementCount: number | undefined;
+  let archiveTocSha256: string | undefined;
   const expectedExtensionSql = expectedExtensionSqlPortabilityProof();
   for (const major of [17, 18] as const) {
     const parsed = JSON.parse(
@@ -408,11 +682,15 @@ export async function assertProductionRecoveryGate(input: {
       extensionPortability.pinnedCreateExtensionStatements !==
         expectedExtensionSql.pinnedCreateExtensionStatements ||
       extensionPortability.pinnedCreateExtensionStatementsSha256 !==
-        expectedExtensionSql.pinnedCreateExtensionStatementsSha256
+        expectedExtensionSql.pinnedCreateExtensionStatementsSha256 ||
+      !/^[0-9a-f]{64}$/.test(extensionPortability.archiveTocSha256 ?? "") ||
+      (archiveTocSha256 !== undefined &&
+        extensionPortability.archiveTocSha256 !== archiveTocSha256)
     )
       throw new Error(
         `Production recovery PostgreSQL ${major} extension portability proof is invalid`,
       );
+    archiveTocSha256 = extensionPortability.archiveTocSha256;
     const restoredAt = parsed.restoredAt
       ? Date.parse(parsed.restoredAt)
       : Number.NaN;

@@ -11,7 +11,10 @@ import {
   sha256,
   type RehearsalClusterSentinel,
 } from "../lib/fulfillment/neutral-production-recovery";
-import { assertManagedExtensionFixtureInstalled } from "./neutral-production-extension-fixture-files";
+import {
+  assertManagedExtensionFixtureInstalled,
+  PRIVATE_RUNTIME_ROOT_VAR,
+} from "./neutral-production-extension-fixture-files";
 import { redactProductionDiagnostic } from "../lib/fulfillment/neutral-production-verifier";
 import { resolveRecoveryTarget } from "./neutral-recovery-target";
 
@@ -20,7 +23,8 @@ async function main(): Promise<void> {
   const superuser = process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_SUPERUSER;
   const output = process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL;
   const authenticationKey = process.env.OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY;
-  if (!targetUrl || !superuser || !output || !authenticationKey)
+  const runtimeRoot = process.env[PRIVATE_RUNTIME_ROOT_VAR];
+  if (!targetUrl || !superuser || !output || !authenticationKey || !runtimeRoot)
     throw new Error(
       "Target URL, temporary superuser, sentinel path and authentication key are required",
     );
@@ -39,14 +43,16 @@ async function main(): Promise<void> {
              current_setting('server_version_num')::int version,
              (pg_control_system()).system_identifier::text system_identifier,
              current_setting('data_directory') data_directory,
+             (select setting from pg_config where name='SHAREDIR') shared_directory,
              (select rolsuper from pg_roles where rolname=current_user) is_superuser
     `)
     ).rows[0]!;
     const major = Math.floor(Number(identity.version) / 10_000);
-    const fixture = assertManagedExtensionFixtureInstalled();
+    const fixture = assertManagedExtensionFixtureInstalled(runtimeRoot);
     if (
       (major !== 17 && major !== 18) ||
       fixture.major !== major ||
+      identity.shared_directory !== fixture.privateSharedDirectory ||
       identity.username !== superuser ||
       !identity.is_superuser
     )
@@ -117,6 +123,14 @@ async function main(): Promise<void> {
         filesSha256: {
           ...OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES,
         },
+        privateSharedDirectory: fixture.privateSharedDirectory,
+        postgresSha256: fixture.postgresSha256,
+        initdbSha256: fixture.initdbSha256,
+        privateBinaryTreeSha256: fixture.privateBinaryTreeSha256,
+        privateSharedTreeSha256: fixture.privateSharedTreeSha256,
+        sourcePgConfigSha256: fixture.sourcePgConfigSha256,
+        sourceBinaryTreeSha256: fixture.sourceBinaryTreeSha256,
+        sourceSharedTreeSha256: fixture.sourceSharedTreeSha256,
       },
       authenticator: "",
     };
