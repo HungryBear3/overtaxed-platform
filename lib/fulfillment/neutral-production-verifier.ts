@@ -184,30 +184,43 @@ where source.rolname = any($1::text[])
 order by 1, 2`;
 
 /**
- * The ledger must name every covered migration exactly once, cleanly applied,
- * alongside the migration Production had before any of this began.
+ * The ledger must name every covered migration exactly once as a clean
+ * application, alongside the migration Production had before any of this
+ * began. Prisma retains attempts after `migrate resolve --rolled-back`; those
+ * historical rows are valid only when the same migration has exactly one later
+ * clean application.
  */
 export function assertProductionLedgerExactness(
   rows: readonly ProductionLedgerRow[],
 ): void {
   const problems: string[] = [];
-  const counts = new Map<string, number>();
-  for (const row of rows)
-    counts.set(row.migration_name, (counts.get(row.migration_name) ?? 0) + 1);
-
   for (const name of [
     OT_PRODUCTION_LAST_APPLIED_MIGRATION,
     ...coveredMigrationNames(),
   ]) {
     const seen = rows.filter((row) => row.migration_name === name);
+    const clean = seen.filter(
+      (row) => Boolean(row.finished_at) && !row.rolled_back_at,
+    );
     if (seen.length === 0) problems.push(`${name} is absent from the ledger`);
-    else if (seen.length > 1) problems.push(`${name} appears ${seen.length} times`);
-    else if (!seen[0]!.finished_at || seen[0]!.rolled_back_at)
+    else if (clean.length > 1)
+      problems.push(`${name} appears ${clean.length} times as cleanly applied`);
+    else if (clean.length === 0)
       problems.push(`${name} is not recorded as cleanly applied`);
   }
-  for (const row of rows)
-    if (row.rolled_back_at)
-      problems.push(`${row.migration_name} is recorded as rolled back`);
+  for (const name of new Set(rows.map((row) => row.migration_name))) {
+    const attempts = rows.filter((row) => row.migration_name === name);
+    const clean = attempts.filter(
+      (row) => Boolean(row.finished_at) && !row.rolled_back_at,
+    );
+    const unfinished = attempts.filter(
+      (row) => !row.finished_at && !row.rolled_back_at,
+    );
+    if (unfinished.length)
+      problems.push(`${name} has ${unfinished.length} unfinished attempt(s)`);
+    if (attempts.some((row) => row.rolled_back_at) && clean.length === 0)
+      problems.push(`${name} is rolled back without a clean application`);
+  }
 
   if (problems.length)
     throw new Error(
