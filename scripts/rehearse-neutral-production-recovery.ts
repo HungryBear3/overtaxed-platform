@@ -1,6 +1,5 @@
 import type { ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -58,6 +57,162 @@ function sqlLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
+export function observeRecoveryStreamErrors(
+  stream: {
+    on(
+      event: "error",
+      listener: (error: NodeJS.ErrnoException) => void,
+    ): unknown;
+  },
+  failureMessage: string,
+  ignoredCodes: readonly string[] = [],
+  onFailure: () => void,
+): { failure: Promise<never> } {
+  const ignored = new Set(ignoredCodes);
+  let rejectFailure!: (error: Error) => void;
+  const failure = new Promise<never>((_resolve, reject) => {
+    rejectFailure = reject;
+  });
+  void failure.catch(() => undefined);
+  let failed = false;
+  stream.on("error", (error) => {
+    if (!ignored.has(error.code ?? "") && !failed) {
+      failed = true;
+      try {
+        onFailure();
+      } catch {
+        // Only the fixed diagnostic below may escape this boundary.
+      }
+      rejectFailure(new Error(failureMessage));
+    }
+  });
+  return { failure };
+}
+
+function childClose(
+  child: ChildProcess,
+  failureMessage: string,
+): Promise<[number | null, NodeJS.Signals | null]> {
+  if (child.exitCode !== null || child.signalCode !== null)
+    return Promise.resolve([child.exitCode, child.signalCode]);
+  return new Promise((resolve, reject) => {
+    child.once("error", () => reject(new Error(failureMessage)));
+    child.once("close", (code, signal) => resolve([code, signal]));
+  });
+}
+
+async function terminateChild(
+  child: ChildProcess,
+  closed: Promise<[number | null, NodeJS.Signals | null]>,
+): Promise<[number | null, NodeJS.Signals | null]> {
+  if (child.exitCode !== null || child.signalCode !== null) return closed;
+  const boundedClose = async (): Promise<
+    { status: [number | null, NodeJS.Signals | null] } | { timeout: true }
+  > => {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        closed.then((status) => ({ status })),
+        new Promise<{ timeout: true }>((resolve) => {
+          timer = setTimeout(() => resolve({ timeout: true }), 2_000);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+  child.kill("SIGTERM");
+  const term = await boundedClose();
+  if ("status" in term) return term.status;
+  child.kill("SIGKILL");
+  const killed = await boundedClose();
+  if ("status" in killed) return killed.status;
+  throw new Error("recovery child cleanup timed out");
+}
+
+function streamEnded(stream: {
+  once(event: "end", listener: () => void): unknown;
+}): Promise<void> {
+  return new Promise((resolve) => stream.once("end", resolve));
+}
+
+function streamDrained(stream: {
+  once(event: "drain", listener: () => void): unknown;
+}): Promise<void> {
+  return new Promise((resolve) => stream.once("drain", resolve));
+}
+
+function destroyRecoveryStream(
+  stream: NodeJS.ReadableStream | NodeJS.WritableStream,
+): void {
+  const destroy = (stream as { destroy?: () => void }).destroy;
+  if (typeof destroy === "function") destroy.call(stream);
+}
+
+export function assertExpectedGpgTermination(
+  status: [number | null, NodeJS.Signals | null],
+): void {
+  const [code, signal] = status;
+  if (
+    code !== 0 &&
+    signal !== "SIGTERM" &&
+    signal !== "SIGKILL" &&
+    signal !== "SIGPIPE"
+  )
+    throw new Error("gpg archive termination was unexpected");
+}
+
+export async function settleRecoveryArchivePipeline(input: {
+  producer: ChildProcess;
+  producerClosed: Promise<[number | null, NodeJS.Signals | null]>;
+  consumer: ChildProcess;
+  consumerClosed: Promise<[number | null, NodeJS.Signals | null]>;
+  consumerProgress: Promise<[number | null, NodeJS.Signals | null]>;
+  failures: readonly Promise<never>[];
+  consumerFailureMessage: string;
+  producerEarlyFailureMessage: string;
+  stop: () => void;
+  disconnect: () => void;
+}): Promise<void> {
+  const earlyProducerFailure = input.producerClosed.then((status) => {
+    if (status[0] === 0 && status[1] === null)
+      return new Promise<never>(() => undefined);
+    throw new Error(input.producerEarlyFailureMessage);
+  });
+  void earlyProducerFailure.catch(() => undefined);
+  try {
+    const [consumerCode] = await Promise.race([
+      input.consumerProgress,
+      ...input.failures,
+      earlyProducerFailure,
+    ]);
+    if (consumerCode !== 0) throw new Error(input.consumerFailureMessage);
+    input.disconnect();
+    const producerAlreadyClosed =
+      input.producer.exitCode !== null || input.producer.signalCode !== null;
+    const producerStatus = producerAlreadyClosed
+      ? await input.producerClosed
+      : await terminateChild(input.producer, input.producerClosed);
+    if (producerAlreadyClosed) {
+      if (producerStatus[0] !== 0 || producerStatus[1] !== null)
+        throw new Error(input.producerEarlyFailureMessage);
+    } else {
+      assertExpectedGpgTermination(producerStatus);
+    }
+  } catch (error) {
+    try {
+      input.stop();
+    } catch {
+      // Bounded child termination below remains authoritative for cleanup.
+    }
+    await Promise.all([
+      terminateChild(input.producer, input.producerClosed),
+      terminateChild(input.consumer, input.consumerClosed),
+    ]);
+    throw error;
+  }
+}
+
 async function decryptRestoreSingleSession(input: {
   rolesSql: Buffer;
   rolesPlaintextSha256: string;
@@ -84,20 +239,14 @@ async function decryptRestoreSingleSession(input: {
     return child;
   };
   const abortPipeline = async (): Promise<void> => {
-    for (const child of children)
-      if (child.exitCode === null) child.kill("SIGTERM");
-    await Promise.race([
-      Promise.all(
-        [...children].map((child) =>
-          child.exitCode === null
-            ? once(child, "close").catch(() => undefined)
-            : undefined,
+    await Promise.all(
+      [...children].map((child) =>
+        terminateChild(
+          child,
+          childClose(child, "recovery child cleanup failed"),
         ),
       ),
-      new Promise((resolve) => setTimeout(resolve, 2_000)),
-    ]);
-    for (const child of children)
-      if (child.exitCode === null) child.kill("SIGKILL");
+    );
   };
   const psql = track(
     spawnTrusted(input.psqlCommand, ["--no-psqlrc", "--set=ON_ERROR_STOP=1"], {
@@ -106,20 +255,33 @@ async function decryptRestoreSingleSession(input: {
       shell: false,
     }),
   );
-  const psqlClosed = once(psql, "close") as Promise<
-    [number | null, NodeJS.Signals | null]
-  >;
+  const psqlClosed = childClose(psql, "single-session restore failed");
+  const outerFailures: Promise<never>[] = [];
+  const stopPsql = () => {
+    psql.stdin.destroy();
+    if (psql.exitCode === null && psql.signalCode === null)
+      psql.kill("SIGTERM");
+  };
+  const psqlStderrErrors = observeRecoveryStreamErrors(
+    psql.stderr,
+    "single-session restore diagnostics failed",
+    ["ECONNRESET"],
+    stopPsql,
+  );
+  outerFailures.push(psqlStderrErrors.failure);
   psql.stderr.resume();
   const psqlInputFailed = new Promise<never>((_resolve, reject) => {
-    psql.stdin.once("error", (error) => {
+    psql.stdin.once("error", () => {
       reject(new Error("single-session restore input failed"));
     });
   });
+  void psqlInputFailed.catch(() => undefined);
   const prematurePsqlExit = psqlClosed.then(([code, signal]) => {
     throw new Error(
       `single-session restore exited before commit: code=${String(code)} signal=${String(signal)}`,
     );
   });
+  void prematurePsqlExit.catch(() => undefined);
   const guard = `BEGIN;
 DO $ot_recovery_guard$
 BEGIN
@@ -167,10 +329,53 @@ $ot_recovery_guard$;
         },
       ),
     );
+    const gpgClosed = childClose(gpg, "gpg restore process failed");
+    const stop = () => {
+      encrypted.unpipe(gpg.stdin!);
+      encrypted.destroy();
+      gpg.stdout!.unpipe(consumer);
+      gpg.stdin!.destroy();
+      gpg.stdout!.destroy();
+      destroyRecoveryStream(consumer);
+      if (gpg.exitCode === null && gpg.signalCode === null) gpg.kill("SIGTERM");
+    };
+    const encryptedErrors = observeRecoveryStreamErrors(
+      encrypted,
+      "encrypted recovery archive read failed",
+      [],
+      stop,
+    );
+    const gpgInputErrors = observeRecoveryStreamErrors(
+      gpg.stdin!,
+      "gpg restore input failed",
+      [],
+      stop,
+    );
+    const gpgOutputErrors = observeRecoveryStreamErrors(
+      gpg.stdout!,
+      "gpg restore output failed",
+      [],
+      stop,
+    );
+    const passphraseErrors = observeRecoveryStreamErrors(
+      gpg.stdio[3] as NodeJS.WritableStream,
+      "gpg passphrase input failed",
+      [],
+      stop,
+    );
+    const gpgStderrErrors = observeRecoveryStreamErrors(
+      gpg.stderr!,
+      "gpg restore diagnostics failed",
+      ["ECONNRESET"],
+      stop,
+    );
+    const consumerErrors = observeRecoveryStreamErrors(
+      consumer,
+      "gpg restore destination failed",
+      [],
+      stop,
+    );
     encrypted.pipe(gpg.stdin!);
-    const gpgClosed = once(gpg, "close") as Promise<
-      [number | null, NodeJS.Signals | null]
-    >;
     const digest = createHash("sha256");
     gpg.stdout!.on("data", (chunk: Buffer) => digest.update(chunk));
     gpg.stderr!.resume();
@@ -180,6 +385,13 @@ $ot_recovery_guard$;
       gpgClosed,
       prematurePsqlExit,
       psqlInputFailed,
+      ...outerFailures,
+      encryptedErrors.failure,
+      gpgInputErrors.failure,
+      gpgOutputErrors.failure,
+      passphraseErrors.failure,
+      gpgStderrErrors.failure,
+      consumerErrors.failure,
     ]);
     if (code !== 0) throw new Error("gpg restore decrypt failed");
     return digest.digest("hex");
@@ -188,9 +400,10 @@ $ot_recovery_guard$;
     const adaptedRoles = sha256(input.rolesSql);
     if (!psql.stdin.write(input.rolesSql))
       await Promise.race([
-        once(psql.stdin, "drain"),
+        streamDrained(psql.stdin),
         prematurePsqlExit,
         psqlInputFailed,
+        ...outerFailures,
       ]);
     const integritySink = new PassThrough();
     integritySink.resume();
@@ -232,7 +445,6 @@ $ot_recovery_guard$;
           },
         ),
       );
-      encrypted.pipe(gpg.stdin!);
       const restore = track(
         spawnTrusted(input.pgRestoreCommand, archiveInput.args, {
           env: input.env,
@@ -241,39 +453,126 @@ $ot_recovery_guard$;
             : ["pipe", "pipe", "pipe"],
         }),
       );
-      const restoreClosed = once(restore, "close") as Promise<
-        [number | null, NodeJS.Signals | null]
-      >;
+      const gpgClosed = childClose(gpg, "gpg archive process failed");
+      const restoreClosed = childClose(
+        restore,
+        "pg_restore SQL emission failed",
+      );
+      const stop = () => {
+        encrypted.unpipe(gpg.stdin!);
+        encrypted.destroy();
+        gpg.stdout!.unpipe(restore.stdin);
+        restore.stdout.unpipe(archiveInput.output);
+        gpg.stdin!.destroy();
+        gpg.stdout!.destroy();
+        restore.stdin.destroy();
+        restore.stdout.destroy();
+        destroyRecoveryStream(archiveInput.output);
+        if (gpg.exitCode === null && gpg.signalCode === null)
+          gpg.kill("SIGTERM");
+        if (restore.exitCode === null && restore.signalCode === null)
+          restore.kill("SIGTERM");
+      };
+      const encryptedErrors = observeRecoveryStreamErrors(
+        encrypted,
+        "encrypted recovery archive read failed",
+        [],
+        stop,
+      );
+      const gpgInputErrors = observeRecoveryStreamErrors(
+        gpg.stdin!,
+        "gpg archive input failed",
+        ["EPIPE"],
+        stop,
+      );
+      const gpgOutputErrors = observeRecoveryStreamErrors(
+        gpg.stdout!,
+        "gpg archive output failed",
+        ["EPIPE", "ECONNRESET"],
+        stop,
+      );
+      const passphraseErrors = observeRecoveryStreamErrors(
+        gpg.stdio[3] as NodeJS.WritableStream,
+        "gpg passphrase input failed",
+        ["EPIPE"],
+        stop,
+      );
+      const restoreOutputErrors = observeRecoveryStreamErrors(
+        restore.stdout,
+        "pg_restore output failed",
+        [],
+        stop,
+      );
+      const restoreStderrErrors = observeRecoveryStreamErrors(
+        restore.stderr,
+        "pg_restore diagnostics failed",
+        ["ECONNRESET"],
+        stop,
+      );
+      const outputErrors = observeRecoveryStreamErrors(
+        archiveInput.output,
+        "pg_restore destination failed",
+        [],
+        stop,
+      );
       restore.stderr.resume();
-      const restoreInputFailed = new Promise<never>((_resolve, reject) => {
-        restore.stdin.once("error", (error) => {
-          if ((error as NodeJS.ErrnoException).code !== "EPIPE") {
-            reject(new Error("pg_restore input failed"));
-          }
-        });
-      });
-      if (archiveInput.toc)
-        (restore.stdio[3] as NodeJS.WritableStream).end(archiveInput.toc);
+      const restoreInputErrors = observeRecoveryStreamErrors(
+        restore.stdin,
+        "pg_restore input failed",
+        ["EPIPE"],
+        stop,
+      );
+      const tocErrors = archiveInput.toc
+        ? observeRecoveryStreamErrors(
+            restore.stdio[3] as NodeJS.WritableStream,
+            "pg_restore TOC input failed",
+            ["EPIPE"],
+            stop,
+          )
+        : undefined;
       const outputEnded = archiveInput.endOutput
-        ? once(archiveInput.output, "end")
-        : once(restore.stdout, "end");
+        ? streamEnded(archiveInput.output)
+        : streamEnded(restore.stdout);
+      encrypted.pipe(gpg.stdin!);
       restore.stdout.pipe(archiveInput.output, {
         end: archiveInput.endOutput,
       });
       gpg.stdout!.pipe(restore.stdin);
+      if (archiveInput.toc)
+        (restore.stdio[3] as NodeJS.WritableStream).end(archiveInput.toc);
       (gpg.stdio[3] as NodeJS.WritableStream).end(`${input.passphrase}\n`);
-      const [[restoreCode]] = await Promise.race([
-        Promise.all([restoreClosed, outputEnded]),
-        prematurePsqlExit,
-        psqlInputFailed,
-        restoreInputFailed,
-      ]);
-      if (restoreCode !== 0) throw new Error("pg_restore SQL emission failed");
-      if (gpg.exitCode === null) gpg.kill("SIGTERM");
-      await Promise.race([
-        gpg.exitCode === null ? once(gpg, "close") : Promise.resolve(),
-        new Promise((resolve) => setTimeout(resolve, 2_000)),
-      ]);
+      await settleRecoveryArchivePipeline({
+        producer: gpg,
+        producerClosed: gpgClosed,
+        consumer: restore,
+        consumerClosed: restoreClosed,
+        consumerProgress: Promise.all([restoreClosed, outputEnded]).then(
+          ([status]) => status,
+        ),
+        failures: [
+          prematurePsqlExit,
+          psqlInputFailed,
+          ...outerFailures,
+          encryptedErrors.failure,
+          gpgInputErrors.failure,
+          gpgOutputErrors.failure,
+          passphraseErrors.failure,
+          restoreOutputErrors.failure,
+          restoreStderrErrors.failure,
+          outputErrors.failure,
+          restoreInputErrors.failure,
+          ...(tocErrors ? [tocErrors.failure] : []),
+        ],
+        consumerFailureMessage: "pg_restore SQL emission failed",
+        producerEarlyFailureMessage:
+          "gpg archive failed before pg_restore completed",
+        stop,
+        disconnect: () => {
+          encrypted.unpipe(gpg.stdin!);
+          encrypted.destroy();
+          gpg.stdout!.unpipe(restore.stdin);
+        },
+      });
     };
 
     const readArchiveToc = async (): Promise<Buffer> => {
@@ -303,34 +602,108 @@ $ot_recovery_guard$;
           },
         ),
       );
-      encrypted.pipe(gpg.stdin!);
       const restore = track(
         spawnTrusted(input.pgRestoreCommand, ["--list"], {
           env: input.env,
           stdio: ["pipe", "pipe", "pipe"],
         }),
       );
+      const gpgClosed = childClose(gpg, "gpg archive process failed");
+      const restoreClosed = childClose(
+        restore,
+        "pg_restore archive TOC failed",
+      );
+      const stop = () => {
+        encrypted.unpipe(gpg.stdin!);
+        encrypted.destroy();
+        gpg.stdout!.unpipe(restore.stdin);
+        gpg.stdin!.destroy();
+        gpg.stdout!.destroy();
+        restore.stdin.destroy();
+        restore.stdout.destroy();
+        if (gpg.exitCode === null && gpg.signalCode === null)
+          gpg.kill("SIGTERM");
+        if (restore.exitCode === null && restore.signalCode === null)
+          restore.kill("SIGTERM");
+      };
+      const encryptedErrors = observeRecoveryStreamErrors(
+        encrypted,
+        "encrypted recovery archive read failed",
+        [],
+        stop,
+      );
+      const gpgInputErrors = observeRecoveryStreamErrors(
+        gpg.stdin!,
+        "gpg archive input failed",
+        ["EPIPE"],
+        stop,
+      );
+      const gpgOutputErrors = observeRecoveryStreamErrors(
+        gpg.stdout!,
+        "gpg archive output failed",
+        ["EPIPE", "ECONNRESET"],
+        stop,
+      );
+      const passphraseErrors = observeRecoveryStreamErrors(
+        gpg.stdio[3] as NodeJS.WritableStream,
+        "gpg passphrase input failed",
+        ["EPIPE"],
+        stop,
+      );
       const chunks: Buffer[] = [];
+      const restoreOutputErrors = observeRecoveryStreamErrors(
+        restore.stdout,
+        "pg_restore archive TOC output failed",
+        [],
+        stop,
+      );
+      const restoreStderrErrors = observeRecoveryStreamErrors(
+        restore.stderr,
+        "pg_restore archive TOC diagnostics failed",
+        ["ECONNRESET"],
+        stop,
+      );
+      const restoreInputErrors = observeRecoveryStreamErrors(
+        restore.stdin,
+        "pg_restore archive TOC input failed",
+        ["EPIPE"],
+        stop,
+      );
       restore.stdout.on("data", (chunk: Buffer) =>
         chunks.push(Buffer.from(chunk)),
       );
       restore.stderr.resume();
-      restore.stdin.on("error", (error: NodeJS.ErrnoException) => {
-        if (error.code !== "EPIPE") restore.kill("SIGTERM");
-      });
+      encrypted.pipe(gpg.stdin!);
       gpg.stdout!.pipe(restore.stdin);
       (gpg.stdio[3] as NodeJS.WritableStream).end(`${input.passphrase}\n`);
-      const [restoreCode] = (await Promise.race([
-        once(restore, "close"),
-        prematurePsqlExit,
-        psqlInputFailed,
-      ])) as [number | null];
-      if (restoreCode !== 0) throw new Error("pg_restore archive TOC failed");
-      if (gpg.exitCode === null) gpg.kill("SIGTERM");
-      await Promise.race([
-        gpg.exitCode === null ? once(gpg, "close") : Promise.resolve(),
-        new Promise((resolve) => setTimeout(resolve, 2_000)),
-      ]);
+      await settleRecoveryArchivePipeline({
+        producer: gpg,
+        producerClosed: gpgClosed,
+        consumer: restore,
+        consumerClosed: restoreClosed,
+        consumerProgress: restoreClosed,
+        failures: [
+          prematurePsqlExit,
+          psqlInputFailed,
+          ...outerFailures,
+          encryptedErrors.failure,
+          gpgInputErrors.failure,
+          gpgOutputErrors.failure,
+          passphraseErrors.failure,
+          restoreOutputErrors.failure,
+          restoreStderrErrors.failure,
+          restoreInputErrors.failure,
+        ],
+        consumerFailureMessage: "pg_restore archive TOC failed",
+        producerEarlyFailureMessage:
+          "gpg archive failed before pg_restore completed",
+        stop,
+        disconnect: () => {
+          encrypted.unpipe(gpg.stdin!);
+          encrypted.destroy();
+          gpg.stdout!.unpipe(restore.stdin);
+        },
+      });
       const toc = Buffer.concat(chunks);
       for (const chunk of chunks) chunk.fill(0);
       return toc;
@@ -363,7 +736,11 @@ $ot_recovery_guard$;
     archivePlan.extensions.fill(0);
     archivePlan.remainder.fill(0);
     psql.stdin.end("COMMIT;\n");
-    const [psqlCode] = await psqlClosed;
+    const [psqlCode] = await Promise.race([
+      psqlClosed,
+      psqlInputFailed,
+      ...outerFailures,
+    ]);
     if (psqlCode !== 0) throw new Error("single-session restore failed");
     return {
       roles: input.rolesPlaintextSha256,
@@ -388,9 +765,12 @@ async function decryptBuffer(
   const chunks: Buffer[] = [];
   const gpgHome = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gpg-"));
   fs.chmodSync(gpgHome, 0o700);
+  let encrypted: ReturnType<typeof privateCopyReadStream> | undefined;
+  let gpg: ChildProcess | undefined;
+  let gpgClosed: Promise<[number | null, NodeJS.Signals | null]> | undefined;
   try {
-    const encrypted = privateCopyReadStream(copy);
-    const gpg = spawnTrusted(
+    encrypted = privateCopyReadStream(copy);
+    gpg = spawnTrusted(
       gpgCommand,
       [
         "--batch",
@@ -413,14 +793,66 @@ async function decryptBuffer(
         stdio: ["pipe", "pipe", "pipe", "pipe"],
       },
     );
+    gpgClosed = childClose(gpg, "gpg decrypt process failed");
+    const stop = () => {
+      encrypted!.unpipe(gpg!.stdin!);
+      encrypted!.destroy();
+      gpg!.stdin!.destroy();
+      gpg!.stdout!.destroy();
+      if (gpg!.exitCode === null && gpg!.signalCode === null)
+        gpg!.kill("SIGTERM");
+    };
+    const encryptedErrors = observeRecoveryStreamErrors(
+      encrypted,
+      "encrypted recovery artifact read failed",
+      [],
+      stop,
+    );
+    const gpgInputErrors = observeRecoveryStreamErrors(
+      gpg.stdin!,
+      "gpg decrypt input failed",
+      [],
+      stop,
+    );
+    const gpgOutputErrors = observeRecoveryStreamErrors(
+      gpg.stdout!,
+      "gpg decrypt output failed",
+      [],
+      stop,
+    );
+    const passphraseErrors = observeRecoveryStreamErrors(
+      gpg.stdio[3] as NodeJS.WritableStream,
+      "gpg passphrase input failed",
+      [],
+      stop,
+    );
+    const gpgStderrErrors = observeRecoveryStreamErrors(
+      gpg.stderr!,
+      "gpg decrypt diagnostics failed",
+      [],
+      stop,
+    );
     encrypted.pipe(gpg.stdin!);
     gpg.stdout!.on("data", (chunk: Buffer) => chunks.push(chunk));
     gpg.stderr!.resume();
     (gpg.stdio[3] as NodeJS.WritableStream).end(`${passphrase}\n`);
-    const [code] = (await once(gpg, "close")) as [number];
+    const [code] = await Promise.race([
+      gpgClosed,
+      encryptedErrors.failure,
+      gpgInputErrors.failure,
+      gpgOutputErrors.failure,
+      passphraseErrors.failure,
+      gpgStderrErrors.failure,
+    ]);
     if (code !== 0) throw new Error("gpg decrypt failed");
-    return Buffer.concat(chunks);
+    const plaintext = Buffer.concat(chunks);
+    for (const chunk of chunks) chunk.fill(0);
+    return plaintext;
   } finally {
+    encrypted?.destroy();
+    if (gpg && gpgClosed && gpg.exitCode === null && gpg.signalCode === null)
+      await terminateChild(gpg, gpgClosed);
+    for (const chunk of chunks) chunk.fill(0);
     fs.rmSync(gpgHome, { recursive: true, force: true });
   }
 }
