@@ -1,5 +1,15 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
 
@@ -88,6 +98,61 @@ describe("CI synthetic recovery fixture portability", () => {
       "Synthetic recovery fixture preparation requires runtime-root and pg-config arguments",
     );
     expect(result.stderr).not.toContain("does not provide an export named");
+  });
+
+  it("prepares a Linux-shaped synthetic runtime without following packaged dictionary links", () => {
+    const source = mkdtempSync(join(tmpdir(), "ot-ci-pg-source."));
+    const runtime = mkdtempSync(join(tmpdir(), "ot-ci-pg-runtime."));
+    chmodSync(source, 0o700);
+    chmodSync(runtime, 0o700);
+    try {
+      const bin = join(source, "bin");
+      const share = join(source, "share");
+      const dictionary = join(share, "tsearch_data");
+      mkdirSync(bin, { mode: 0o700 });
+      mkdirSync(join(share, "extension"), { recursive: true, mode: 0o700 });
+      mkdirSync(dictionary, { mode: 0o700 });
+      const external = join(source, "external-dictionary");
+      writeFileSync(external, "must-not-be-followed", { mode: 0o600 });
+      for (const name of ["en_us.affix", "en_us.dict"])
+        symlinkSync(external, join(dictionary, name));
+      const compiled = Buffer.concat([
+        Buffer.from("synthetic-binary"),
+        Buffer.from([0]),
+        Buffer.from(share),
+        Buffer.from([0]),
+        Buffer.from("tail"),
+      ]);
+      for (const name of ["postgres", "initdb"])
+        writeFileSync(join(bin, name), compiled, { mode: 0o500 });
+      writeFileSync(join(bin, "pg_ctl"), "synthetic", { mode: 0o500 });
+      const pgConfig = join(bin, "pg_config");
+      writeFileSync(
+        pgConfig,
+        `#!/bin/sh\ncase "$1" in\n  --version) printf '%s\\n' 'PostgreSQL 17.11';;\n  --sharedir) printf '%s\\n' '${share}';;\n  *) exit 1;;\nesac\n`,
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync(
+        join(root, "node_modules/.bin/tsx"),
+        [helperPath, runtime, pgConfig],
+        { cwd: root, encoding: "utf8" },
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(
+        "synthetic recovery fixture portability: PASS target_pg=17",
+      );
+      expect(
+        existsSync(join(runtime, "s", "tsearch_data", "en_us.affix")),
+      ).toBe(false);
+      expect(existsSync(join(runtime, "s", "tsearch_data", "en_us.dict"))).toBe(
+        false,
+      );
+      expect(readFileSync(external, "utf8")).toBe("must-not-be-followed");
+    } finally {
+      rmSync(source, { recursive: true, force: true });
+      rmSync(runtime, { recursive: true, force: true });
+    }
   });
 
   it("does not promote the synthetic matrix into native or Production evidence", () => {

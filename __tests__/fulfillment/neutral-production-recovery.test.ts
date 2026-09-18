@@ -1072,14 +1072,32 @@ describe("Production no-PITR recovery gate", () => {
     );
     const strictRuntime = fs.mkdtempSync(path.join("/tmp", "otpg17-strict."));
     const runtime = fs.mkdtempSync(path.join("/tmp", "otpg17."));
+    const maliciousRuntime = fs.mkdtempSync(
+      path.join("/tmp", "otpg17-malicious."),
+    );
     fs.chmodSync(strictRuntime, 0o700);
     fs.chmodSync(runtime, 0o700);
+    fs.chmodSync(maliciousRuntime, 0o700);
     try {
       const shared = path.join(root, "source-share");
       const bin = path.join(root, "source-bin");
       const extension = path.join(shared, "extension");
       fs.mkdirSync(extension, { recursive: true, mode: 0o700 });
       fs.mkdirSync(bin, { mode: 0o700 });
+      const dictionaryDirectory = path.join(shared, "tsearch_data");
+      fs.mkdirSync(dictionaryDirectory, { mode: 0o700 });
+      const externalDictionary = path.join(root, "external-en_us.affix");
+      fs.writeFileSync(externalDictionary, "must-not-be-copied", {
+        mode: 0o600,
+      });
+      fs.symlinkSync(
+        externalDictionary,
+        path.join(dictionaryDirectory, "en_us.affix"),
+      );
+      fs.symlinkSync(
+        externalDictionary,
+        path.join(dictionaryDirectory, "en_us.dict"),
+      );
       const compiledPath = Buffer.concat([
         Buffer.from("synthetic-binary"),
         Buffer.from([0]),
@@ -1112,6 +1130,15 @@ describe("Production no-PITR recovery gate", () => {
       });
       expect(prepared.privateSharedDirectory).toBe(
         path.join(fs.realpathSync(runtime), "s"),
+      );
+      expect(
+        fs.existsSync(path.join(runtime, "s", "tsearch_data", "en_us.affix")),
+      ).toBe(false);
+      expect(
+        fs.existsSync(path.join(runtime, "s", "tsearch_data", "en_us.dict")),
+      ).toBe(false);
+      expect(fs.readFileSync(externalDictionary, "utf8")).toBe(
+        "must-not-be-copied",
       );
       for (const name of [
         "supabase_vault.control",
@@ -1148,10 +1175,37 @@ describe("Production no-PITR recovery gate", () => {
           TEST_EXECUTABLE_POLICY,
         ),
       ).toThrow(/runtime tree changed|fixture is invalid/);
+
+      const unapprovedSymlink = path.join(
+        dictionaryDirectory,
+        "unapproved-link",
+      );
+      fs.symlinkSync(externalDictionary, unapprovedSymlink);
+      expect(() =>
+        prepareManagedExtensionRuntime({
+          runtimeRoot: maliciousRuntime,
+          sourcePgConfig: pgConfig,
+          testOnlyOwnershipPolicy: TEST_EXECUTABLE_POLICY,
+        }),
+      ).toThrow(/tree entry is unsafe/);
+      expect(fs.readdirSync(maliciousRuntime)).toEqual([]);
+      fs.unlinkSync(unapprovedSymlink);
+
+      fs.unlinkSync(path.join(bin, "postgres"));
+      fs.symlinkSync(externalDictionary, path.join(bin, "postgres"));
+      expect(() =>
+        prepareManagedExtensionRuntime({
+          runtimeRoot: maliciousRuntime,
+          sourcePgConfig: pgConfig,
+          testOnlyOwnershipPolicy: TEST_EXECUTABLE_POLICY,
+        }),
+      ).toThrow();
+      expect(fs.readdirSync(maliciousRuntime)).toEqual([]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(strictRuntime, { recursive: true, force: true });
       fs.rmSync(runtime, { recursive: true, force: true });
+      fs.rmSync(maliciousRuntime, { recursive: true, force: true });
     }
   });
 

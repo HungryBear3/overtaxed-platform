@@ -17,6 +17,10 @@ import {
 const FIXTURE_ROOT = path.join("fixtures", "postgresql");
 const RUNTIME_SCHEMA = "ot.neutral-recovery-postgres-runtime.v1" as const;
 const MANIFEST = "recovery-postgres-runtime.json";
+const SYNTHETIC_OMITTED_SOURCE_SHARE_SYMLINKS = new Set([
+  path.join("tsearch_data", "en_us.affix"),
+  path.join("tsearch_data", "en_us.dict"),
+]);
 
 export type RuntimeManifest = {
   schema: typeof RUNTIME_SCHEMA;
@@ -90,6 +94,7 @@ function strictTreeSha256(
   root: string,
   allowedOwners: ReadonlySet<number>,
   includeOwner = true,
+  omittedSymlinks: ReadonlySet<string> = new Set(),
 ): string {
   const rows: Array<{
     path: string;
@@ -118,6 +123,7 @@ function strictTreeSha256(
       const file = path.join(directory, name);
       const child = relative ? path.join(relative, name) : name;
       const target = fs.lstatSync(file);
+      if (target.isSymbolicLink() && omittedSymlinks.has(child)) continue;
       if (
         target.isSymbolicLink() ||
         !allowedOwners.has(target.uid) ||
@@ -354,7 +360,12 @@ function patchCompiledSharedDirectory(input: {
   return sha256(readVerifiedFile(input.file));
 }
 
-function applySourceTreeModes(source: string, destination: string): void {
+function applySourceTreeModes(
+  source: string,
+  destination: string,
+  omittedSymlinks: ReadonlySet<string> = new Set(),
+  relative = "",
+): void {
   const sourceStat = fs.lstatSync(source);
   const destinationStat = fs.lstatSync(destination);
   if (
@@ -365,7 +376,16 @@ function applySourceTreeModes(source: string, destination: string): void {
   )
     throw new Error("Recovery PostgreSQL copied tree type is unsafe");
   if (sourceStat.isDirectory()) {
-    const sourceNames = fs.readdirSync(source).sort();
+    const sourceNames = fs
+      .readdirSync(source)
+      .filter((name) => {
+        const child = relative ? path.join(relative, name) : name;
+        return (
+          !fs.lstatSync(path.join(source, name)).isSymbolicLink() ||
+          !omittedSymlinks.has(child)
+        );
+      })
+      .sort();
     const destinationNames = fs.readdirSync(destination).sort();
     if (canonicalJson(sourceNames) !== canonicalJson(destinationNames))
       throw new Error("Recovery PostgreSQL copied tree entries differ");
@@ -373,6 +393,8 @@ function applySourceTreeModes(source: string, destination: string): void {
       applySourceTreeModes(
         path.join(source, name),
         path.join(destination, name),
+        omittedSymlinks,
+        relative ? path.join(relative, name) : name,
       );
   }
   fs.chmodSync(destination, sourceStat.mode & 0o777);
@@ -402,6 +424,12 @@ export function prepareManagedExtensionRuntime(input: {
     input.testOnlyOwnershipPolicy?.allowedOwners ?? [0],
   );
   const privateOwners = new Set<number>([0, runtimeOwner]);
+  const omitSyntheticPackagedDictionarySymlinks =
+    input.testOnlyOwnershipPolicy?.name === "unit-test-explicit" &&
+    input.testOnlyOwnershipPolicy.allowUnsafeAncestors === true;
+  const omittedSourceShareSymlinks = omitSyntheticPackagedDictionarySymlinks
+    ? SYNTHETIC_OMITTED_SOURCE_SHARE_SYMLINKS
+    : new Set<string>();
   if (fs.readdirSync(runtimeRoot).length !== 0)
     throw new Error("Recovery PostgreSQL runtime root must be empty");
   const source = sourcePostgresInstallation(
@@ -418,6 +446,7 @@ export function prepareManagedExtensionRuntime(input: {
     source.share,
     sourceOwners,
     false,
+    omittedSourceShareSymlinks,
   );
   const privateBin = path.join(runtimeRoot, "b");
   const privateShare = path.join(runtimeRoot, "s");
@@ -433,18 +462,38 @@ export function prepareManagedExtensionRuntime(input: {
       dereference: false,
       errorOnExist: true,
       force: false,
+      filter: (sourcePath) => {
+        const relative = path.relative(source.share, sourcePath);
+        return (
+          !fs.lstatSync(sourcePath).isSymbolicLink() ||
+          !omittedSourceShareSymlinks.has(relative)
+        );
+      },
     });
     applySourceTreeModes(source.bin, privateBin);
-    applySourceTreeModes(source.share, privateShare);
+    applySourceTreeModes(
+      source.share,
+      privateShare,
+      omittedSourceShareSymlinks,
+    );
     if (
       strictTreeSha256(source.bin, sourceOwners, false) !==
         sourceBinaryTreeBefore ||
-      strictTreeSha256(source.share, sourceOwners, false) !==
-        sourceSharedTreeBefore ||
+      strictTreeSha256(
+        source.share,
+        sourceOwners,
+        false,
+        omittedSourceShareSymlinks,
+      ) !== sourceSharedTreeBefore ||
       strictTreeSha256(privateBin, privateOwners, false) !==
         strictTreeSha256(source.bin, sourceOwners, false) ||
       strictTreeSha256(privateShare, privateOwners, false) !==
-        strictTreeSha256(source.share, sourceOwners, false)
+        strictTreeSha256(
+          source.share,
+          sourceOwners,
+          false,
+          omittedSourceShareSymlinks,
+        )
     )
       throw new Error("Recovery PostgreSQL source changed while copying");
     const extensionDirectory = path.join(privateShare, "extension");
