@@ -31,6 +31,93 @@ export type ExtensionSqlPortabilityProof = {
   pinnedCreateExtensionStatementsSha256: string;
 };
 
+export type RecoveryArchivePlan = {
+  schemas: Buffer;
+  extensions: Buffer;
+  remainder: Buffer;
+  archiveTocSha256: string;
+};
+
+function selectedToc(input: string[], selected: Set<number>): Buffer {
+  return Buffer.from(
+    input
+      .map((line, index) =>
+        line.startsWith(";") || line.trim() === "" || selected.has(index)
+          ? line
+          : `;${line}`,
+      )
+      .join("\n"),
+    "utf8",
+  );
+}
+
+export function planRecoveryArchiveToc(tocBytes: Buffer): RecoveryArchivePlan {
+  const source = new TextDecoder("utf-8", { fatal: true }).decode(tocBytes);
+  const lines = source.split("\n");
+  const schemaRows = new Set<number>();
+  const schemaNames: string[] = [];
+  const extensionRows = new Set<number>();
+  const extensionNames: string[] = [];
+  for (const [index, line] of lines.entries()) {
+    if (line.startsWith(";") || line.trim() === "") continue;
+    if (!/^\d+; \d+ \d+ /.test(line))
+      throw new Error("Recovery archive TOC contains an unsupported row");
+    const extensionRow = /^\d+; \d+ \d+ EXTENSION - (.*)$/.exec(line);
+    if (extensionRow) {
+      const extension =
+        /^\d+; \d+ \d+ EXTENSION - ([a-z_][a-z0-9_$-]*)(?: [^ ]*)? *$/.exec(
+          line,
+        );
+      if (!extension)
+        throw new Error(
+          "Recovery archive TOC contains an unsupported extension row",
+        );
+      extensionRows.add(index);
+      extensionNames.push(extension[1]!);
+      continue;
+    }
+    const schema =
+      /^\d+; \d+ \d+ SCHEMA - ([a-z_][a-z0-9_$]*)(?: [^ ]*)? *$/.exec(line);
+    if (
+      schema &&
+      RESTORED_EXTENSIONS.some(
+        (extension) => extension.schema_name === schema[1],
+      )
+    ) {
+      schemaRows.add(index);
+      schemaNames.push(schema[1]!);
+    }
+  }
+  const expectedNames = RESTORED_EXTENSIONS.map((row) => row.extname).sort();
+  const expectedSchemaNames = [
+    ...new Set(RESTORED_EXTENSIONS.map((row) => row.schema_name)),
+  ].sort();
+  if (
+    canonicalJson(extensionNames.sort()) !== canonicalJson(expectedNames) ||
+    extensionRows.size !== expectedNames.length ||
+    canonicalJson(schemaNames.sort()) !== canonicalJson(expectedSchemaNames) ||
+    schemaRows.size !== expectedSchemaNames.length
+  )
+    throw new Error(
+      "Recovery archive TOC extension/schema prerequisites are unknown, missing, or repeated",
+    );
+  const remainderRows = new Set<number>();
+  for (const [index, line] of lines.entries())
+    if (
+      !line.startsWith(";") &&
+      line.trim() !== "" &&
+      !schemaRows.has(index) &&
+      !extensionRows.has(index)
+    )
+      remainderRows.add(index);
+  return {
+    schemas: selectedToc(lines, schemaRows),
+    extensions: selectedToc(lines, extensionRows),
+    remainder: selectedToc(lines, remainderRows),
+    archiveTocSha256: sha256(tocBytes),
+  };
+}
+
 export function expectedExtensionSqlPortabilityProof(): ExtensionSqlPortabilityProof {
   const pinned = EXPECTED_CREATE_EXTENSION_STATEMENTS.map(
     (expected) => expected.pinned,

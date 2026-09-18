@@ -253,7 +253,15 @@ The required operator-only variables are
 `OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE` (at least 24 characters) and
 `OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY` (at least 32 bytes, independently
 generated and held in Keychain), plus
-`OT_NEUTRAL_PRODUCTION_RECOVERY_OUTPUT_DIR`. `DIRECT_URL` and the marker/identity
+`OT_NEUTRAL_PRODUCTION_RECOVERY_OUTPUT_DIR`, protected absolute
+`OT_NEUTRAL_PRODUCTION_RECOVERY_GPG_PATH`,
+`OT_NEUTRAL_PRODUCTION_RECOVERY_PG_DUMP_PATH`, and
+`OT_NEUTRAL_PRODUCTION_RECOVERY_PG_DUMPALL_PATH`. Every credential-receiving
+executable and ancestor must be root-owned and group/world non-writable. There
+is no environment-controlled ownership exception. Unit tests inject an explicit
+validator policy object that neither Production entrypoint passes. Inode and SHA-256 are
+rechecked from a no-follow descriptor immediately before every spawn. There is
+no ambient-PATH fallback. `DIRECT_URL` and the marker/identity
 variables remain the exact Phase 2 values. The output directory is mode 0700.
 Encrypted artifacts and the non-secret receipt are created through held,
 exclusive mode-0600 descriptors while being written, then fsynced and sealed
@@ -261,7 +269,7 @@ read-only at mode 0400 before the command can report success. Password hashes
 are deliberately excluded from `roles.sql.gpg`; existing credentials remain in
 the secret manager and are never copied into a backup artifact.
 
-The v2 recovery receipt also binds the exact count of legacy Supabase-managed
+The v3 recovery receipt also binds the exact count of legacy Supabase-managed
 role memberships whose source grantor is `supabase_admin`. PostgreSQL 17 cannot
 replay those legacy rows with `GRANTED BY supabase_admin` when that managed
 grantor lacks the ADMIN edge now required by stock PostgreSQL. The encrypted
@@ -297,7 +305,7 @@ HMAC-authenticated mode-0600 sentinel. Set
 npm run neutral-report:production-recovery-rehearsal
 ```
 
-Exact disposable-cluster lifecycle (macOS/Homebrew; paste only after the Phase
+Exact disposable-cluster lifecycle (paste only after the Phase
 4 backup command has exported the receipt, passphrase, and authentication key):
 
 ```bash
@@ -305,34 +313,46 @@ set -euo pipefail
 : "${OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT:?set absolute backup-receipt.json path}"
 : "${OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE:?load from Keychain}"
 : "${OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY:?load independently from Keychain}"
+: "${OT_NEUTRAL_PRODUCTION_RECOVERY_GPG_PATH:?set protected absolute gpg path}"
 command -v trash >/dev/null
 
 rehearse_major() (
   set -euo pipefail
   major="$1"
   port="$2"
-  pg_bin="/opt/homebrew/opt/postgresql@${major}/bin"
-  root="$(mktemp -d "${TMPDIR:-/tmp}/ot-neutral-pg${major}.XXXXXX")"
+  case "$major" in
+    17) source_pg_config="${OT_NEUTRAL_RECOVERY_TRUSTED_PG_CONFIG_17:?set protected PG17 pg_config}" ;;
+    18) source_pg_config="${OT_NEUTRAL_RECOVERY_TRUSTED_PG_CONFIG_18:?set protected PG18 pg_config}" ;;
+    *) return 1 ;;
+  esac
+  root="$(mktemp -d "/tmp/o${major}.XXXXXX")"
+  export OT_NEUTRAL_RECOVERY_REHEARSAL_RUNTIME_ROOT="$root"
+  pg_bin="$root/b"
   data="$root/data"
   socket="$root/socket"
-  sentinel="$root/sentinel-pg${major}.json"
+  evidence="$root/evidence"
+  sentinel="$evidence/sentinel-pg${major}.json"
   database="ot_neutral_recovery_rehearsal_pg${major}"
   superuser="ot_recovery_admin_pg${major}"
   cleanup() {
-    "$pg_bin/pg_ctl" -D "$data" -m fast -w stop >/dev/null 2>&1 || true
-    if [[ "${fixture_installed:-false}" == true ]]; then
-      OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG="$pg_bin/pg_config" \
-        npm run neutral-report:production-recovery-extension-fixture -- remove >/dev/null 2>&1 || true
+    if "$pg_bin/pg_ctl" -D "$data" -m fast -w stop >/dev/null 2>&1; then
+      sudo chown "$(id -u)" "$root" >/dev/null 2>&1 || return 1
+      trash "$root"
+    else
+      printf 'recovery runtime retained after unverified shutdown: %s\n' "$root" >&2
+      return 1
     fi
-    trash "$root"
   }
   trap cleanup EXIT INT TERM
-  fixture_installed=false
-  OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG="$pg_bin/pg_config" \
-    npm run neutral-report:production-recovery-extension-fixture -- install
-  fixture_installed=true
+  OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG="$source_pg_config" \
+    npm run neutral-report:production-recovery-extension-fixture -- prepare
   mkdir -m 0700 "$socket"
+  mkdir -m 0700 "$evidence"
   "$pg_bin/initdb" -D "$data" -A trust -U "$superuser"
+  sudo chown -R root "$pg_bin" "$root/s" "$root/l"
+  sudo chmod -R go-w "$pg_bin" "$root/s" "$root/l"
+  sudo chown root "$root"
+  sudo chmod 0755 "$root"
   "$pg_bin/pg_ctl" -D "$data" -o "-F -k $socket -h 127.0.0.1 -p $port" -w start
   "$pg_bin/createdb" -h 127.0.0.1 -p "$port" -U "$superuser" "$database"
   target="postgresql://${superuser}@127.0.0.1:${port}/${database}"
@@ -350,10 +370,23 @@ rehearse_major 17 45417
 rehearse_major 18 45418
 ```
 
-Each subshell owns exactly one `mktemp` root, stops only the cluster whose data
-directory it created, and moves that root to Trash on success, refusal, or
-interrupt. Never substitute an existing data directory, shared port, remote
-host, or non-prefixed database name.
+The privileged seal is mandatory for the executable runbook, and it must cover
+all three private trees — the binary tree `b`, the shared tree `s`, and the
+library tree `l`. The restore validator re-measures every one of them under
+root-or-runtime-root ownership with no group or world write, so sealing only two
+leaves the third owned by the unprivileged operator and the rehearsal refuses
+its own runtime. Content/mode tree hashes remain stable across the ownership
+transfer, while every later strict walk independently requires root or
+runtime-root ownership and the trusted executable resolver accepts root
+ownership only.
+
+Each subshell owns exactly one short, mode-0700 `/tmp` `mktemp` root and stops
+only the cluster whose data directory it created. It moves that root to Trash
+only after `pg_ctl -w stop` verifies shutdown; a failed or ambiguous stop emits
+the retained path and leaves the runtime intact for operator reconciliation.
+The short path is required by the private, relocated PostgreSQL runtime. Never
+substitute an existing data directory, shared port, remote host, or non-prefixed
+database name.
 
 The rehearsal re-proves that exact live cluster identity and refuses a stale or
 forged sentinel, a remote or differently named target, or any newly appeared
@@ -363,9 +396,11 @@ session and one transaction, so a swapped loopback listener cannot pass a Node
 check and receive mutations on a later connection. It restores roles and
 memberships first; restores the database in that transaction; then
 proves decrypted hashes and the exact relevant role/public-schema/default-ACL
-catalog digest. Catalog comparison normalizes grantor identity only for the
+catalog digest. Membership comparison normalizes grantor identity only for the
 authenticated managed set: source `supabase_admin` and the disposable target's
-temporary superuser share one fixed sentinel label. All memberships granted by
+temporary superuser share one fixed sentinel label. Managed-extension ownership
+and ACL rows separately normalize only the expected source owner and disposable
+runtime owner set. All memberships granted by
 either normalized grantor are included even when neither endpoint is otherwise
 in the relevant-role set; all other grantor identities remain exact. The
 signed source count must equal the pristine target's pre-existing normalized
@@ -379,34 +414,137 @@ adapted digest and rechecks the count equation. It writes
 `restore-rehearsal-pg17.json` or `restore-rehearsal-pg18.json` beside the backup
 receipt.
 
-The only managed binary absent from stock PostgreSQL in the authenticated
+The only managed binary absent from the authenticated target PostgreSQL
 Production extension set is `supabase_vault` `0.3.1` in schema `vault`.
-Before each disposable cluster starts, the fixture command exclusively stages
-two hash-pinned, read-only extension files in that major's PostgreSQL shared
-extension directory and refuses an existing, unknown, writable, linked, or
-mismatched file. The signed cluster sentinel binds those exact fixture hashes;
-setup also proves the control metadata through
-`pg_available_extension_versions`. The restore stream accepts only the exact
-authenticated five-extension set (`plpgsql`, `pg_stat_statements`, `pgcrypto`,
-`supabase_vault`, and `uuid-ossp`), pins every emitted version, and rejects an
-unknown, missing, repeated, differently-versioned, or differently-schematized
-`CREATE EXTENSION` statement. Final catalog comparison covers the managed
-extension member identities, relation/column/function properties, view and
-index definitions, constraints, ACLs, and extension-config table binding. The
-fixture's native crypto functions are intentionally inert and are never called;
-this is an empty disposable restore proof, not a Supabase Vault runtime. Cleanup
-stops the owned cluster before removing only hash-matching fixture files.
+Before each disposable cluster starts, the fixture command copies that major's
+explicitly supplied PostgreSQL binaries, shared files, and standard library
+modules into the owned `mktemp` root, relocates the private `postgres` copy to
+the private shared and library directories, relocates `initdb` to the private
+shared directory it actually embeds, and
+installs two hash-pinned, read-only Vault files there. It refuses a non-empty or
+non-owner-only root, an existing source Vault fixture, a linked/mismatched
+source file, an unsupported binary layout, an unsafe `pg_config` owner/mode or
+ancestor, or a private path too long for the compiled field. Default Homebrew
+paths beneath group-writable `/opt/homebrew` do not satisfy this gate. It never
+writes a process-wide shared directory. Preparation records the exact
+root-owned `pg_config` SHA-256 and strictly walks the locally observed source
+bin/share/library trees before and after copying. Symlinks, hard links, unsafe owners,
+unsafe modes and non-file entries are refused; nothing is dereferenced. This is
+an observed local tree identity, not a package-manager or vendor authentication
+claim. Complete final private bin/share/library tree hashes are bound in the signed
+sentinel alongside the patched binary and fixture hashes. Every later setup and
+restore rehashes all three private trees. Setup proves the live backend reports
+the private `SHAREDIR` and `PKGLIBDIR` through `pg_config` and proves the control metadata through
+`pg_available_extension_versions`.
+
+The authenticated archive TOC must contain exactly the four non-bootstrap
+extensions (`pg_stat_statements`, `pgcrypto`, `supabase_vault`, and
+`uuid-ossp`) once each; `plpgsql` remains the separately authenticated bootstrap
+catalog extension. The restore runs only the authenticated `extensions` and
+`vault` schema prerequisites, those four isolated extension entries, and the
+otherwise order-preserved remainder as separate archive selections through the
+same guarded psql transaction. Unrelated schema rows stay in the remainder.
+Each list is supplied to `pg_restore` through inherited fd 3. Release remains
+blocked until explicit Darwin and Linux integration receipts both pass; a local
+macOS result alone is insufficient. Only the isolated extension selection is
+adapted, every emitted version is pinned, and an unknown, missing, repeated,
+differently-versioned, or differently-schematized statement is refused. User
+function bodies and COPY data never pass through the extension adapter.
+
+Final catalog comparison covers the managed extension and schema owner, member
+identities, relation/type/function owners and ACL state, column/default and
+argument/default properties, exact accepted native-or-inert implementation
+profiles, view and index definitions, constraints, schema/type/relation/
+function/column ACLs, and extension-config table binding. The pinned upstream
+reference is supabase/vault commit
+`6e0cd916242d922a646e4d611cc215e09dd429f4`: base `0.3.0` SQL SHA-256
+`c3739f80…daff6` plus the no-op `0.3.0--0.3.1` upgrade SHA-256
+`c601f01c…174a`. A native source profile is accepted only for
+`$libdir/supabase_vault` with the upstream `*_encrypt_by_id`,
+`*_decrypt_by_id`, and noncegen symbols; the two PL/pgSQL bodies must match an
+exact stored-body SHA-256 allowlist covering only the pinned upstream and inert
+fixture bytes. The three target crypto functions are deliberately represented
+by exact inert SQL stored-body hashes and are never called for encryption or
+decryption. The restore matrix proves bounded catalog equivalence and exact
+preservation of one deterministic nonempty encrypted `vault.secrets` config
+row across PG17→17 and PG17→18, while a NULL-decrypt negative control proves
+the inert fixture did not acquire native cryptographic capability. Native
+functional secret round-trip evidence remains a separate machine-enforced
+apply gate bound to the exact backup receipt, released candidate
+commit/manifest, and explicit Darwin/Linux evidence. Each platform
+receipt references protected source-archive, native-library, and functional
+transcript files; the gate reads and hashes those files rather than trusting
+digest fields in a bundle. In their absence apply refuses. This is a
+disposable encrypted-row restore proof, not a Supabase Vault runtime. Cleanup
+stops the owned cluster and trashes the whole private runtime; no shared
+installation cleanup is needed.
 
 **Stop gate:** both commands print `PASS ... catalog=verified
 artifacts=verified`; both receipts exist beside the backup receipt. Set
 `OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT` to that receipt for Phase 5. Do not
 proceed if either supported major cannot restore the exact set.
 
+The native Vault gate is separate from the inert restore matrix. The
+`neutral-report:production-native-vault-record` command is the authoritative
+platform recorder. The recorder must not be run as root or under sudo: `initdb`
+refuses a root cluster owner, so the recorder runs as an ordinary operator and
+requires its own private runtime root and the `b`, `s` and `l` trees beneath it
+to be owned by that operator, mode-0700 private, free of symbolic links and of
+group or world write, under ancestors owned by root or that same operator. This
+is the opposite of the restored-runtime seal above and the two must not be
+mixed: never `sudo chown root` a recorder runtime. Every Git invocation the
+recorder makes disables repository, global and system configuration and every
+optional helper — `core.fsmonitor` included — and the source archive is read
+through a recorder-owned Git directory linked to the supplied repository by
+object database alone. It accepts only a clean detached local Git repository at
+upstream commit `6e0cd916242d922a646e4d611cc215e09dd429f4`, rejects gitlinks and
+submodules, creates its own source archive, verifies both pinned SQL digests,
+and builds from a private extraction. The pinned Makefile declares
+`EXTENSION = supabase_vault` and `EXTVERSION = 0.3.1`. Build and install target
+only the verified private `PKGLIBDIR` and `SHAREDIR`; the source PostgreSQL
+installation is never modified. The recorder starts the private cluster,
+observes create/decrypt/update/decrypt/delete itself, verifies the complete
+catalog with the candidate's own catalog query, and writes only protected,
+platform-qualified evidence with exclusive creation. Caller-authored command
+results, transcripts, digest fields, or platform labels are not substitutes.
+One real Darwin run and one real Linux run must still pass before either
+receipt hash can be pinned.
+
+The existing exporter is packaging-only and cannot authorize apply. If used to
+inspect future externally produced evidence, every basename must be unique and
+platform-qualified across both sets (for example
+`vault-source-darwin.tar`, `supabase_vault-darwin.bin`,
+`native-vault-transcript-darwin.json`, and their `-linux` counterparts). Copy both
+complete protected sets into one private operator directory without renaming
+referenced files, then export the backup/candidate-bound bundle:
+
+```bash
+OT_NEUTRAL_NATIVE_VAULT_DARWIN_RECEIPT="$evidence/native-vault-platform-darwin.json" \
+OT_NEUTRAL_NATIVE_VAULT_LINUX_RECEIPT="$evidence/native-vault-platform-linux.json" \
+OT_NEUTRAL_NATIVE_VAULT_PROOF_OUTPUT="$evidence/native-vault-proof.json" \
+  npm run neutral-report:production-native-vault-proof-export
+```
+
+Both jobs and the exporter require
+`OT_NEUTRAL_PRODUCTION_RECOVERY_CANDIDATE_COMMIT` and
+`OT_NEUTRAL_PRODUCTION_RECOVERY_CANDIDATE_MANIFEST`; Phase 5 must receive the
+same values plus `OT_NEUTRAL_PRODUCTION_NATIVE_VAULT_PROOF`. A missing file,
+fabricated digest, cross-backup receipt, cross-candidate receipt, wrong
+platform, or incomplete operation transcript is a hard refusal.
+The current candidate intentionally pins neither platform receipt hash, so its
+Production apply gate remains closed even to someone holding the recovery HMAC
+key. After independent review of the real evidence, a separate release commit
+must pin both exact platform-receipt SHA-256 values in code and rerun every
+gate; exporting a bundle alone cannot authorize apply.
+
 ### Phase 5 — apply (the one irreversible step)
 
 ```
 OT_NEUTRAL_PRODUCTION_APPLY_CONFIRMATION="apply-production-baseline:<marker instance id>" \
 OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT="<absolute path>/backup-receipt.json" \
+OT_NEUTRAL_PRODUCTION_NATIVE_VAULT_PROOF="<absolute path>/native-vault-proof.json" \
+OT_NEUTRAL_PRODUCTION_RECOVERY_CANDIDATE_COMMIT="<released 40-hex commit>" \
+OT_NEUTRAL_PRODUCTION_RECOVERY_CANDIDATE_MANIFEST="<released 64-hex manifest>" \
   npm run neutral-report:production-baseline-apply
 ```
 

@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -7,6 +6,9 @@ import { once } from "node:events";
 import { Client } from "pg";
 import {
   OT_PRODUCTION_RECOVERY_SCHEMA,
+  OT_PRODUCTION_RECOVERY_GPG_PATH_VAR,
+  OT_PRODUCTION_RECOVERY_PG_DUMP_PATH_VAR,
+  OT_PRODUCTION_RECOVERY_PG_DUMPALL_PATH_VAR,
   OT_PRODUCTION_RECOVERY_CATALOG_SQL,
   OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
   OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR,
@@ -21,6 +23,11 @@ import {
   type ProductionRecoveryReceipt,
   type RecoveryArtifact,
 } from "../lib/fulfillment/neutral-production-recovery";
+import {
+  resolveTrustedExecutable,
+  spawnTrusted,
+  type TrustedExecutable,
+} from "./trusted-executable";
 import {
   readApprovedProductionDatabase,
   readNeutralProductionConnectionConfig,
@@ -68,28 +75,29 @@ function pgEnvironment(connectionString: string): NodeJS.ProcessEnv {
 }
 
 async function encryptCommand(input: {
-  command: string;
+  command: TrustedExecutable;
   args: string[];
   env: NodeJS.ProcessEnv;
   output: string;
   passphrase: string;
   format: RecoveryArtifact["format"];
+  gpgExecutable: TrustedExecutable;
 }): Promise<RecoveryArtifact> {
   const gpgHome = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gpg-"));
   fs.chmodSync(gpgHome, 0o700);
   const outputDescriptor = openPrivateRecoveryArtifact(input.output);
-  let producer: ReturnType<typeof spawn> | undefined;
-  let gpg: ReturnType<typeof spawn> | undefined;
+  let producer: ReturnType<typeof spawnTrusted> | undefined;
+  let gpg: ReturnType<typeof spawnTrusted> | undefined;
   let complete = false;
   const plaintext = createHash("sha256");
   try {
-    producer = spawn(input.command, input.args, {
+    producer = spawnTrusted(input.command, input.args, {
       env: input.env,
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
     });
-    gpg = spawn(
-      "gpg",
+    gpg = spawnTrusted(
+      input.gpgExecutable,
       [
         "--batch",
         "--yes",
@@ -120,15 +128,10 @@ async function encryptCommand(input: {
         // Stream ciphertext into our already-opened, explicitly chmod(0600)
         // descriptor. This avoids GnuPG/platform umask differences entirely.
         stdio: ["pipe", outputDescriptor, "pipe", "pipe"],
-        shell: false,
       },
     );
-    let producerError = "";
-    let gpgError = "";
-    producer.stderr!.setEncoding("utf8");
-    producer.stderr!.on("data", (chunk) => (producerError += chunk));
-    gpg.stderr!.setEncoding("utf8");
-    gpg.stderr!.on("data", (chunk) => (gpgError += chunk));
+    producer.stderr!.resume();
+    gpg.stderr!.resume();
     producer.stdout!.on("data", (chunk: Buffer) => plaintext.update(chunk));
     producer.stdout!.pipe(gpg.stdin!);
     (gpg.stdio[3] as NodeJS.WritableStream).end(`${input.passphrase}\n`);
@@ -139,9 +142,7 @@ async function encryptCommand(input: {
       once(gpg, "close") as Promise<[number]>,
     ]);
     if (producerCode !== 0 || gpgCode !== 0)
-      throw new Error(
-        `${input.command}/gpg failed: ${redactProductionDiagnostic(`${producerError}\n${gpgError}`, secrets())}`,
-      );
+      throw new Error("Recovery producer or encryption process failed");
     sealPrivateRecoveryArtifact(outputDescriptor, input.output);
     complete = true;
   } finally {
@@ -168,45 +169,64 @@ async function encryptBuffer(input: {
   output: string;
   passphrase: string;
   format: RecoveryArtifact["format"];
+  gpgExecutable: TrustedExecutable;
 }): Promise<RecoveryArtifact> {
-  const temporary = path.join(os.tmpdir(), `ot-recovery-${randomUUIDSafe()}`);
-  // A named pipe, not a regular file: catalog plaintext is never at rest.
-  const mkfifo = spawn("mkfifo", [temporary], {
-    env: {
-      PATH: process.env.PATH,
-      NODE_ENV: "production",
-      LANG: "C",
-      LC_ALL: "C",
-    },
-    stdio: "ignore",
-    shell: false,
-  });
-  const [code] = (await once(mkfifo, "close")) as [number];
-  if (code !== 0) throw new Error("Could not create recovery catalog pipe");
+  const gpgHome = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gpg-"));
+  fs.chmodSync(gpgHome, 0o700);
+  const outputDescriptor = openPrivateRecoveryArtifact(input.output);
+  let complete = false;
   try {
-    const promise = encryptCommand({
-      command: "cat",
-      args: [temporary],
-      env: {
-        PATH: process.env.PATH,
-        NODE_ENV: "production",
-        LANG: "C",
-        LC_ALL: "C",
+    const gpg = spawnTrusted(
+      input.gpgExecutable,
+      [
+        "--batch",
+        "--yes",
+        "--pinentry-mode",
+        "loopback",
+        "--passphrase-fd",
+        "3",
+        "--symmetric",
+        "--cipher-algo",
+        "AES256",
+        "--s2k-mode",
+        "3",
+        "--s2k-digest-algo",
+        "SHA512",
+        "--s2k-count",
+        "65011712",
+        "--compress-algo",
+        "none",
+      ],
+      {
+        env: {
+          PATH: "/usr/bin:/bin",
+          NODE_ENV: "production",
+          LANG: "C",
+          LC_ALL: "C",
+          GNUPGHOME: gpgHome,
+        },
+        stdio: ["pipe", outputDescriptor, "ignore", "pipe"],
       },
-      output: input.output,
-      passphrase: input.passphrase,
-      format: input.format,
-    });
-    const stream = fs.createWriteStream(temporary, { mode: 0o600 });
-    stream.end(input.bytes);
-    return await promise;
+    );
+    (gpg.stdio[3] as NodeJS.WritableStream).end(`${input.passphrase}\n`);
+    gpg.stdin!.end(input.bytes);
+    const [code] = (await once(gpg, "close")) as [number];
+    if (code !== 0) throw new Error("Recovery catalog encryption failed");
+    sealPrivateRecoveryArtifact(outputDescriptor, input.output);
+    complete = true;
   } finally {
-    fs.rmSync(temporary, { force: true });
+    fs.closeSync(outputDescriptor);
+    fs.rmSync(gpgHome, { recursive: true, force: true });
+    if (!complete) fs.rmSync(input.output, { force: true });
   }
-}
-
-function randomUUIDSafe(): string {
-  return newBackupId().replaceAll("-", "");
+  const ciphertext = fs.readFileSync(input.output);
+  return {
+    file: path.basename(input.output),
+    format: input.format,
+    plaintextSha256: sha256(input.bytes),
+    ciphertextSha256: sha256(ciphertext),
+    ciphertextBytes: ciphertext.byteLength,
+  };
 }
 
 async function main(): Promise<void> {
@@ -216,6 +236,16 @@ async function main(): Promise<void> {
   const expected = readApprovedProductionDatabase(process.env);
   const passphrase = process.env.OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE;
   const authenticationKey = process.env.OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY;
+  const gpgPath = process.env[OT_PRODUCTION_RECOVERY_GPG_PATH_VAR];
+  const pgDumpPath = process.env[OT_PRODUCTION_RECOVERY_PG_DUMP_PATH_VAR];
+  const pgDumpallPath = process.env[OT_PRODUCTION_RECOVERY_PG_DUMPALL_PATH_VAR];
+  if (!gpgPath || !pgDumpPath || !pgDumpallPath)
+    throw new Error(
+      "Protected absolute gpg, pg_dump and pg_dumpall paths are required",
+    );
+  const gpgExecutable = resolveTrustedExecutable(gpgPath);
+  const pgDumpExecutable = resolveTrustedExecutable(pgDumpPath);
+  const pgDumpallExecutable = resolveTrustedExecutable(pgDumpallPath);
   if (!passphrase || passphrase.length < 24)
     throw new Error(
       "OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE must contain at least 24 characters",
@@ -253,6 +283,7 @@ async function main(): Promise<void> {
         [
           OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
           OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
+          OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
         ],
       );
       if (beforeResult.rows.length !== 1)
@@ -283,22 +314,24 @@ async function main(): Promise<void> {
       const artifacts: RecoveryArtifact[] = [];
       artifacts.push(
         await encryptCommand({
-          command: "pg_dump",
+          command: pgDumpExecutable,
           args: ["--format=custom", "--no-password"],
           env: pgEnv,
           output: path.join(directory, "database.dump.gpg"),
           passphrase,
           format: "postgres-custom",
+          gpgExecutable,
         }),
       );
       artifacts.push(
         await encryptCommand({
-          command: "pg_dumpall",
+          command: pgDumpallExecutable,
           args: ["--roles-only", "--no-role-passwords", "--no-password"],
           env: pgEnv,
           output: path.join(directory, "roles.sql.gpg"),
           passphrase,
           format: "postgres-roles-sql",
+          gpgExecutable,
         }),
       );
       const catalogBytes = Buffer.from(canonicalJson(before));
@@ -308,12 +341,14 @@ async function main(): Promise<void> {
           output: path.join(directory, "catalog.json.gpg"),
           passphrase,
           format: "catalog-json",
+          gpgExecutable,
         }),
       );
 
       const after = (
         await client.query(OT_PRODUCTION_RECOVERY_CATALOG_SQL, [
           OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
+          OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
           OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
         ])
       ).rows[0]!.snapshot;

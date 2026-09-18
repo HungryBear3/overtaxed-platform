@@ -11,6 +11,18 @@ import {
   OT_PRODUCTION_RECOVERY_SCHEMA,
   OT_PRODUCTION_RECOVERY_SUPPORTED_EXTENSIONS,
   OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_MEMBERS,
+  OT_PRODUCTION_RECOVERY_CATALOG_SQL,
+  OT_PRODUCTION_RECOVERY_GPG_PATH_VAR,
+  OT_PRODUCTION_NATIVE_VAULT_PROOF_VAR,
+  OT_PRODUCTION_NATIVE_VAULT_PROOF_SCHEMA,
+  OT_PRODUCTION_NATIVE_VAULT_PLATFORM_RECEIPT_SCHEMA,
+  OT_PRODUCTION_NATIVE_VAULT_TRANSCRIPT_SCHEMA,
+  OT_PRODUCTION_NATIVE_VAULT_UPSTREAM_COMMIT,
+  OT_PRODUCTION_NATIVE_VAULT_BASE_SQL_SHA256,
+  OT_PRODUCTION_NATIVE_VAULT_UPGRADE_SQL_SHA256,
+  OT_PRODUCTION_NATIVE_VAULT_APPROVED_PLATFORM_RECEIPT_SHA256,
+  OT_PRODUCTION_RECOVERY_CANDIDATE_COMMIT_VAR,
+  OT_PRODUCTION_RECOVERY_CANDIDATE_MANIFEST_VAR,
   OT_PRODUCTION_RESTORE_SCHEMA,
   adaptManagedRoleMembershipGrantors,
   authenticateReceipt,
@@ -25,42 +37,88 @@ import {
 import {
   adaptRecoveryExtensionSql,
   expectedExtensionSqlPortabilityProof,
+  planRecoveryArchiveToc,
 } from "@/lib/fulfillment/neutral-production-extension-portability";
 import {
   assertManagedExtensionFixtureSource,
-  stageManagedExtensionFixture,
+  assertManagedExtensionFixtureInstalled,
+  prepareManagedExtensionRuntime,
 } from "@/scripts/neutral-production-extension-fixture-files";
 import {
-  assertProductionRecoveryGate,
+  assertApprovedPlatformReceiptPins,
+  assertProductionRecoveryGate as assertProductionRecoveryGateRaw,
   materializePrivateCopy,
+  verifyPrivateCopy,
   readProtectedFile,
 } from "@/scripts/neutral-production-recovery-gate";
+import { assertProductionRecoveryEvidenceForTests } from "@/test-support/neutral-production-recovery-gate";
 import { resolveRecoveryTarget } from "@/scripts/neutral-recovery-target";
 import { withRecoveryDirectory } from "@/lib/fulfillment/neutral-recovery-directory";
+import {
+  assertTrustedExecutable,
+  resolveTrustedExecutable,
+  unitTestTrustedExecutablePolicy,
+} from "@/scripts/trusted-executable";
 
 const PROJECT = "kdvjiijzgflumgkndxsl";
 const INSTANCE = "6a5c0f2e-3b1d-4e7a-9c88-2f4b6d0a1e33";
 const AUTH = "unit-authentication-key-at-least-thirty-two-bytes";
 const PASSPHRASE = "unit-recovery-passphrase-at-least-24";
+const CANDIDATE_COMMIT = "a".repeat(40);
+const CANDIDATE_MANIFEST = sha256("unit-candidate-manifest");
+const TEST_EXECUTABLE_POLICY = unitTestTrustedExecutablePolicy(
+  process.getuid!(),
+);
 
 function fixture() {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gate-"));
+  const directory = fs.mkdtempSync(
+    path.join(process.cwd(), ".ot-recovery-gate-"),
+  );
   fs.chmodSync(directory, 0o700);
+  const gpgSource = execFileSync("/usr/bin/which", ["gpg"], {
+    encoding: "utf8",
+  }).trim();
+  const trustedGpg = path.join(directory, "trusted-gpg");
+  fs.copyFileSync(fs.realpathSync(gpgSource), trustedGpg);
+  fs.chmodSync(trustedGpg, 0o500);
   const rolesPlaintext = Buffer.from(
     "GRANT anon TO authenticator WITH INHERIT TRUE GRANTED BY supabase_admin;\n",
   );
   const catalogSnapshot = {
     extensions: OT_PRODUCTION_RECOVERY_SUPPORTED_EXTENSIONS.map(
-      ({ portability: _ignored, ...extension }) => extension,
+      ({ portability: _ignored, ...extension }) => ({
+        ...extension,
+        owner_role:
+          extension.extname === "supabase_vault"
+            ? OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR
+            : "postgres",
+      }),
     ),
     managed_extension_members:
       OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_MEMBERS.map((row) => ({
         extname: "supabase_vault",
         ...row,
       })),
-    managed_extension_relations: [],
+    managed_extension_schema: [
+      { owner_role: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR },
+    ],
+    managed_extension_relations: [
+      { owner_role: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR },
+    ],
     managed_extension_columns: [],
-    managed_extension_functions: [],
+    managed_extension_functions: [
+      "crypto-decrypt",
+      "crypto-encrypt",
+      "crypto-noncegen",
+      "create-secret",
+      "update-secret",
+    ].map((profile) => ({
+      owner_role: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR,
+      implementation_profile: `supabase-vault-v0.3.1:${profile}`,
+    })),
+    managed_extension_types: [
+      { owner_role: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR },
+    ],
     managed_extension_indexes: [],
     managed_extension_constraints: [],
     managed_extension_config: [],
@@ -141,6 +199,115 @@ function fixture() {
   const receiptPath = path.join(directory, "backup-receipt.json");
   fs.writeFileSync(receiptPath, canonicalJson(receipt), { mode: 0o600 });
   const receiptDigest = sha256(fs.readFileSync(receiptPath));
+  const platformReceipts = (["darwin", "linux"] as const).map((platform) => {
+    const sourceArchive = Buffer.from(`vault-source-${platform}`);
+    const nativeLibrary = Buffer.from(`vault-native-library-${platform}`);
+    const sourceArchiveFile = `vault-source-${platform}.tar`;
+    const nativeLibraryFile = `supabase_vault-${platform}.bin`;
+    const transcriptFile = `native-vault-transcript-${platform}.json`;
+    fs.writeFileSync(path.join(directory, sourceArchiveFile), sourceArchive, {
+      mode: 0o600,
+    });
+    fs.writeFileSync(path.join(directory, nativeLibraryFile), nativeLibrary, {
+      mode: 0o600,
+    });
+    const transcript = {
+      schema: OT_PRODUCTION_NATIVE_VAULT_TRANSCRIPT_SCHEMA,
+      platform,
+      backupId: receipt.backupId,
+      backupReceiptSha256: receiptDigest,
+      candidateCommit: CANDIDATE_COMMIT,
+      candidateManifestSha256: CANDIDATE_MANIFEST,
+      upstreamCommit: OT_PRODUCTION_NATIVE_VAULT_UPSTREAM_COMMIT,
+      sourceArchiveSha256: sha256(sourceArchive),
+      nativeLibrarySha256: sha256(nativeLibrary),
+      nativeSourceCatalogSha256: sha256(`native-catalog-${platform}`),
+      functionalSecretRoundTripSha256: sha256(`round-trip-${platform}`),
+      operations: [
+        "build",
+        "install",
+        "create_secret",
+        "read_decrypted_secret",
+        "update_secret",
+        "read_updated_secret",
+        "drop_secret",
+      ],
+      result: "PASS",
+    };
+    fs.writeFileSync(
+      path.join(directory, transcriptFile),
+      canonicalJson(transcript),
+      { mode: 0o600 },
+    );
+    const platformReceipt = {
+      schema: OT_PRODUCTION_NATIVE_VAULT_PLATFORM_RECEIPT_SCHEMA,
+      platform,
+      backupId: receipt.backupId,
+      backupReceiptSha256: receiptDigest,
+      candidateCommit: CANDIDATE_COMMIT,
+      candidateManifestSha256: CANDIDATE_MANIFEST,
+      upstreamCommit: OT_PRODUCTION_NATIVE_VAULT_UPSTREAM_COMMIT,
+      baseSqlSha256: OT_PRODUCTION_NATIVE_VAULT_BASE_SQL_SHA256,
+      upgradeSqlSha256: OT_PRODUCTION_NATIVE_VAULT_UPGRADE_SQL_SHA256,
+      toolchain: {
+        postgresVersion: "PostgreSQL 17.6",
+        pgConfigSha256: sha256(`pg-config-${platform}`),
+        compilerVersion: "unit-compiler 1.0",
+        compilerSha256: sha256(`compiler-${platform}`),
+        pgxsTreeSha256: sha256(`pgxs-${platform}`),
+        dependencyHeaderTreeSha256: sha256(`sodium-headers-${platform}`),
+        sodiumStaticLibrarySha256: sha256(`sodium-static-${platform}`),
+      },
+      evidence: {
+        sourceArchive: {
+          file: sourceArchiveFile,
+          sha256: sha256(sourceArchive),
+        },
+        nativeLibrary: {
+          file: nativeLibraryFile,
+          sha256: sha256(nativeLibrary),
+        },
+        transcript: {
+          file: transcriptFile,
+          sha256: sha256(fs.readFileSync(path.join(directory, transcriptFile))),
+        },
+      },
+      nativeSourceCatalogSha256: transcript.nativeSourceCatalogSha256,
+      functionalSecretRoundTripSha256:
+        transcript.functionalSecretRoundTripSha256,
+      verifiedAt: "2026-09-17T18:09:00.000Z",
+      authenticator: "",
+    };
+    platformReceipt.authenticator = authenticateReceipt(platformReceipt, AUTH);
+    const file = `native-vault-platform-${platform}.json`;
+    fs.writeFileSync(
+      path.join(directory, file),
+      canonicalJson(platformReceipt),
+      {
+        mode: 0o600,
+      },
+    );
+    return {
+      platform,
+      file,
+      sha256: sha256(fs.readFileSync(path.join(directory, file))),
+    };
+  });
+  const nativeProof = {
+    schema: OT_PRODUCTION_NATIVE_VAULT_PROOF_SCHEMA,
+    backupId: receipt.backupId,
+    backupReceiptSha256: receiptDigest,
+    candidateCommit: CANDIDATE_COMMIT,
+    candidateManifestSha256: CANDIDATE_MANIFEST,
+    platformReceipts,
+    authenticator: "",
+  };
+  nativeProof.authenticator = authenticateReceipt(nativeProof, AUTH);
+  fs.writeFileSync(
+    path.join(directory, "native-vault-proof.json"),
+    canonicalJson(nativeProof),
+    { mode: 0o600 },
+  );
   for (const major of [17, 18] as const) {
     const rehearsal = {
       schema: OT_PRODUCTION_RESTORE_SCHEMA,
@@ -166,6 +333,7 @@ function fixture() {
       extensionPortability: {
         ...receipt.extensionPortability,
         ...expectedExtensionSqlPortabilityProof(),
+        archiveTocSha256: sha256("unit-archive-toc"),
       },
       verified: true as const,
       clusterSystemIdentifier: `system-${major}`,
@@ -184,9 +352,47 @@ function fixture() {
 
 const envFor = (receiptPath: string) => ({
   [OT_PRODUCTION_RECOVERY_RECEIPT_VAR]: receiptPath,
+  [OT_PRODUCTION_RECOVERY_GPG_PATH_VAR]: path.join(
+    path.dirname(receiptPath),
+    "trusted-gpg",
+  ),
+  [OT_PRODUCTION_NATIVE_VAULT_PROOF_VAR]: path.join(
+    path.dirname(receiptPath),
+    "native-vault-proof.json",
+  ),
+  [OT_PRODUCTION_RECOVERY_CANDIDATE_COMMIT_VAR]: CANDIDATE_COMMIT,
+  [OT_PRODUCTION_RECOVERY_CANDIDATE_MANIFEST_VAR]: CANDIDATE_MANIFEST,
   OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY: AUTH,
   OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE: PASSPHRASE,
 });
+
+function testOnlyPolicyFor(receiptPath: string) {
+  const proof = JSON.parse(
+    fs.readFileSync(
+      path.join(path.dirname(receiptPath), "native-vault-proof.json"),
+      "utf8",
+    ),
+  );
+  return {
+    ownershipPolicy: TEST_EXECUTABLE_POLICY,
+    approvedPlatformReceiptSha256: {
+      darwin: proof.platformReceipts[0].sha256 as string,
+      linux: proof.platformReceipts[1].sha256 as string,
+    },
+  };
+}
+
+/**
+ * The Production gate itself is closed and unreachable from a unit process: it
+ * requires a root-owned gpg binary and release pins that are deliberately null.
+ * These cases exercise the same lower-level proof validation through the
+ * test-only boundary, which can relax gpg ownership and nothing else.
+ */
+function assertProductionRecoveryGate(
+  input: Parameters<typeof assertProductionRecoveryGateRaw>[0],
+) {
+  return assertProductionRecoveryEvidenceForTests(input);
+}
 
 function rewriteAuthenticatedJson(
   file: string,
@@ -196,6 +402,25 @@ function rewriteAuthenticatedJson(
   mutate(value);
   value.authenticator = authenticateReceipt(value, AUTH);
   fs.writeFileSync(file, canonicalJson(value), { mode: 0o600 });
+}
+
+function rewritePlatformReceiptAndBundle(
+  directory: string,
+  platform: "darwin" | "linux",
+  mutate: (value: Record<string, any>) => void,
+): void {
+  const receiptFile = path.join(
+    directory,
+    `native-vault-platform-${platform}.json`,
+  );
+  rewriteAuthenticatedJson(receiptFile, mutate);
+  const proofFile = path.join(directory, "native-vault-proof.json");
+  rewriteAuthenticatedJson(proofFile, (proof) => {
+    const reference = proof.platformReceipts.find(
+      (entry: { platform: string }) => entry.platform === platform,
+    );
+    reference.sha256 = sha256(fs.readFileSync(receiptFile));
+  });
 }
 
 describe("Production no-PITR recovery gate", () => {
@@ -210,6 +435,100 @@ describe("Production no-PITR recovery gate", () => {
           now: new Date("2026-09-17T18:30:00Z"),
         }),
       ).resolves.toMatchObject({ backupId: value.receipt.backupId });
+    } finally {
+      fs.rmSync(value.directory, { recursive: true, force: true });
+    }
+  });
+
+  test("the exported Production gate ignores caller-supplied policy and keeps the release pin closed", async () => {
+    const value = fixture();
+    try {
+      // Exactly the shape the gate used to honour: a replacement ownership
+      // policy and replacement approved receipt hashes that match this
+      // fixture's own proof.
+      const smuggled = {
+        env: envFor(value.receiptPath),
+        projectRef: PROJECT,
+        markerInstanceId: INSTANCE,
+        now: new Date("2026-09-17T18:30:00Z"),
+        testOnlyPolicy: testOnlyPolicyFor(value.receiptPath),
+      };
+      await expect(
+        assertProductionRecoveryGateRaw(smuggled as never),
+      ).rejects.toThrow();
+
+      // The release pins are the only source the Production gate compares
+      // against, and they are still deliberately empty.
+      expect(
+        OT_PRODUCTION_NATIVE_VAULT_APPROVED_PLATFORM_RECEIPT_SHA256,
+      ).toEqual({ darwin: null, linux: null });
+
+      const gateSource = fs.readFileSync(
+        path.join(process.cwd(), "scripts/neutral-production-recovery-gate.ts"),
+        "utf8",
+      );
+      const gate = gateSource.slice(
+        gateSource.indexOf(
+          "export async function assertProductionRecoveryGate(",
+        ),
+      );
+      expect(gate).not.toContain("testOnly");
+      expect(gate).not.toContain("ownershipPolicy");
+      expect(gate).toContain("resolveTrustedExecutable(gpgPath)");
+
+      // No production module accepts or forwards a replacement pin or policy.
+      for (const directory of ["scripts", "lib"])
+        for (const file of fs
+          .readdirSync(path.join(process.cwd(), directory), {
+            recursive: true,
+            encoding: "utf8",
+          })
+          .filter((name) => name.endsWith(".ts"))) {
+          const body = fs.readFileSync(
+            path.join(process.cwd(), directory, file),
+            "utf8",
+          );
+          expect(body).not.toContain("testOnlyPolicy");
+          if (body.includes("approvedPlatformReceiptSha256"))
+            expect(path.join(directory, file).replace(/\\/g, "/")).toBe(
+              "scripts/neutral-production-recovery-gate.ts",
+            );
+        }
+    } finally {
+      fs.rmSync(value.directory, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps Production apply held until reviewed platform receipt hashes are pinned in code", async () => {
+    const value = fixture();
+    try {
+      // Authentic, fully authenticated evidence: the only thing missing is a
+      // reviewed release commit pinning the exact platform receipt bytes.
+      await expect(
+        assertProductionRecoveryGate({
+          env: envFor(value.receiptPath),
+          projectRef: PROJECT,
+          markerInstanceId: INSTANCE,
+          now: new Date("2026-09-17T18:30:00Z"),
+        }),
+      ).resolves.toMatchObject({ backupId: value.receipt.backupId });
+      const proof = JSON.parse(
+        fs.readFileSync(
+          path.join(value.directory, "native-vault-proof.json"),
+          "utf8",
+        ),
+      );
+      expect(() => assertApprovedPlatformReceiptPins(proof)).toThrow(
+        /not pinned by the released candidate/,
+      );
+      const entrypoint = fs.readFileSync(
+        path.join(
+          process.cwd(),
+          "scripts/neutral-production-baseline-entrypoint.ts",
+        ),
+        "utf8",
+      );
+      expect(entrypoint).not.toContain("testOnlyPolicy");
     } finally {
       fs.rmSync(value.directory, { recursive: true, force: true });
     }
@@ -333,7 +652,7 @@ describe("Production no-PITR recovery gate", () => {
             markerInstanceId: INSTANCE,
             now: new Date("2026-09-17T18:30:00Z"),
           }),
-        ).rejects.toThrow(/portability/);
+        ).rejects.toThrow(/portability|native Vault/);
       } finally {
         fs.rmSync(value.directory, { recursive: true, force: true });
       }
@@ -416,6 +735,115 @@ describe("Production no-PITR recovery gate", () => {
     );
   });
 
+  test("requires an authenticated native Vault proof before apply", async () => {
+    const value = fixture();
+    try {
+      const env: Record<string, string | undefined> = envFor(value.receiptPath);
+      delete env[OT_PRODUCTION_NATIVE_VAULT_PROOF_VAR];
+      await expect(
+        assertProductionRecoveryGate({
+          env,
+          projectRef: PROJECT,
+          markerInstanceId: INSTANCE,
+          now: new Date("2026-09-17T18:30:00Z"),
+        }),
+      ).rejects.toThrow(/native Vault proof is required/);
+    } finally {
+      fs.rmSync(value.directory, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    "missing-receipt",
+    "fabricated-artifact",
+    "cross-backup",
+    "cross-candidate",
+    "basename-collision",
+    "missing-sodium-hash",
+    "missing-pgxs-hash",
+  ] as const)("rejects %s native Vault platform evidence", async (mutation) => {
+    const value = fixture();
+    try {
+      if (mutation === "missing-receipt")
+        fs.rmSync(
+          path.join(value.directory, "native-vault-platform-linux.json"),
+        );
+      if (mutation === "fabricated-artifact")
+        fs.writeFileSync(
+          path.join(value.directory, "supabase_vault-darwin.bin"),
+          "fabricated-native-library",
+        );
+      if (mutation === "cross-backup")
+        rewritePlatformReceiptAndBundle(
+          value.directory,
+          "darwin",
+          (receipt) => {
+            receipt.backupId = "e4b321d5-bd02-4b76-8462-7aeb802f57c0";
+          },
+        );
+      if (mutation === "cross-candidate")
+        rewritePlatformReceiptAndBundle(value.directory, "linux", (receipt) => {
+          receipt.candidateCommit = "b".repeat(40);
+        });
+      if (mutation === "basename-collision")
+        rewritePlatformReceiptAndBundle(value.directory, "linux", (receipt) => {
+          receipt.evidence.nativeLibrary.file = "supabase_vault-darwin.bin";
+        });
+      if (mutation === "missing-sodium-hash")
+        rewritePlatformReceiptAndBundle(value.directory, "linux", (receipt) => {
+          delete receipt.toolchain.sodiumStaticLibrarySha256;
+        });
+      if (mutation === "missing-pgxs-hash")
+        rewritePlatformReceiptAndBundle(value.directory, "linux", (receipt) => {
+          delete receipt.toolchain.pgxsTreeSha256;
+        });
+      await expect(
+        assertProductionRecoveryGate({
+          env: envFor(value.receiptPath),
+          projectRef: PROJECT,
+          markerInstanceId: INSTANCE,
+          now: new Date("2026-09-17T18:30:00Z"),
+        }),
+      ).rejects.toThrow(/native Vault|evidence|ENOENT/i);
+    } finally {
+      fs.rmSync(value.directory, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects unprotected or changed secret-bearing executables", () => {
+    const value = fixture();
+    const unsafe = fs.mkdtempSync(path.join("/tmp", "ot-unsafe-gpg-"));
+    try {
+      expect(() =>
+        resolveTrustedExecutable(path.join(value.directory, "trusted-gpg")),
+      ).toThrow(/unsafe/);
+      expect(() =>
+        resolveTrustedExecutable(path.join(value.directory, "trusted-gpg"), {
+          ownershipPolicy: TEST_EXECUTABLE_POLICY,
+        }),
+      ).not.toThrow();
+      const executable = resolveTrustedExecutable(
+        path.join(value.directory, "trusted-gpg"),
+        { ownershipPolicy: TEST_EXECUTABLE_POLICY },
+      );
+      fs.chmodSync(executable.path, 0o700);
+      fs.appendFileSync(executable.path, "changed");
+      fs.chmodSync(executable.path, 0o500);
+      expect(() => assertTrustedExecutable(executable)).toThrow(/changed/);
+
+      const unsafeExecutable = path.join(unsafe, "gpg");
+      fs.writeFileSync(unsafeExecutable, "#!/bin/sh\nexit 0\n", {
+        mode: 0o500,
+      });
+      expect(() => resolveTrustedExecutable(unsafeExecutable)).toThrow(
+        /ancestry is unsafe/,
+      );
+    } finally {
+      fs.rmSync(value.directory, { recursive: true, force: true });
+      fs.rmSync(unsafe, { recursive: true, force: true });
+    }
+  });
+
   test("pins every exact authenticated extension statement and proves the transformed set", () => {
     const source = [
       "CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions;",
@@ -466,6 +894,82 @@ describe("Production no-PITR recovery gate", () => {
     ).toThrow(/repeats CREATE EXTENSION/);
   });
 
+  test("partitions archive TOC so only extension entries reach the strict SQL adapter", () => {
+    const toc = Buffer.from(
+      [
+        "; archive header",
+        "1; 0 0 SCHEMA - extensions postgres",
+        "2; 0 0 SCHEMA - vault supabase_admin",
+        "20; 0 0 SCHEMA - unrelated postgres",
+        "3; 0 0 EXTENSION - pg_stat_statements supabase_admin",
+        "4; 0 0 EXTENSION - pgcrypto supabase_admin",
+        "5; 0 0 EXTENSION - supabase_vault supabase_admin",
+        "6; 0 0 EXTENSION - uuid-ossp supabase_admin",
+        "7; 1255 1 FUNCTION public audit_text() postgres",
+        "8; 0 0 TABLE DATA public audit_log postgres",
+        "",
+      ].join("\n"),
+    );
+    const plan = planRecoveryArchiveToc(toc);
+    expect(plan.schemas.toString("utf8")).toContain(
+      "1; 0 0 SCHEMA - extensions postgres",
+    );
+    expect(plan.extensions.toString("utf8")).toContain(
+      "5; 0 0 EXTENSION - supabase_vault supabase_admin",
+    );
+    expect(plan.extensions.toString("utf8")).toContain(
+      ";7; 1255 1 FUNCTION public audit_text() postgres",
+    );
+    expect(plan.remainder.toString("utf8")).toContain(
+      "7; 1255 1 FUNCTION public audit_text() postgres",
+    );
+    expect(plan.schemas.toString("utf8")).toContain(
+      ";20; 0 0 SCHEMA - unrelated postgres",
+    );
+    expect(plan.remainder.toString("utf8")).toContain(
+      "20; 0 0 SCHEMA - unrelated postgres",
+    );
+    expect(plan.archiveTocSha256).toBe(sha256(toc));
+  });
+
+  test("rejects an unknown extension in the authenticated archive TOC", () => {
+    const toc = Buffer.from(
+      [
+        "10; 0 0 SCHEMA - extensions postgres",
+        "11; 0 0 SCHEMA - vault postgres",
+        "1; 0 0 EXTENSION - pg_stat_statements postgres",
+        "2; 0 0 EXTENSION - pgcrypto postgres",
+        "3; 0 0 EXTENSION - supabase_vault postgres",
+        "4; 0 0 EXTENSION - uuid-ossp postgres",
+        "5; 0 0 EXTENSION - attacker postgres",
+        "",
+      ].join("\n"),
+    );
+    expect(() => planRecoveryArchiveToc(toc)).toThrow(
+      /unknown, missing, or repeated/,
+    );
+  });
+
+  test.each([
+    '5; 0 0 EXTENSION - "supabase_vault" postgres',
+    "5; 0 0 EXTENSION - Supabase_Vault postgres",
+    '5; 0 0 EXTENSION - "attacker extension" postgres',
+    "5; 0 0 EXTENSION - attacker postgres unexpected-owner-token",
+  ])("rejects every unsupported EXTENSION TOC row: %s", (hostileRow) => {
+    const toc = Buffer.from(
+      [
+        "10; 0 0 SCHEMA - extensions postgres",
+        "11; 0 0 SCHEMA - vault postgres",
+        "1; 0 0 EXTENSION - pg_stat_statements postgres",
+        "2; 0 0 EXTENSION - pgcrypto postgres",
+        hostileRow,
+        "4; 0 0 EXTENSION - uuid-ossp postgres",
+        "",
+      ].join("\n"),
+    );
+    expect(() => planRecoveryArchiveToc(toc)).toThrow(/extension/i);
+  });
+
   test.each(["unknown", "version", "schema", "members"] as const)(
     "rejects unsupported source extension catalog state: %s",
     (mutation) => {
@@ -477,7 +981,13 @@ describe("Production no-PITR recovery gate", () => {
         expect(encryptedCatalog).toBeDefined();
         const snapshot = {
           extensions: OT_PRODUCTION_RECOVERY_SUPPORTED_EXTENSIONS.map(
-            ({ portability: _ignored, ...extension }) => ({ ...extension }),
+            ({ portability: _ignored, ...extension }) => ({
+              ...extension,
+              owner_role:
+                extension.extname === "supabase_vault"
+                  ? OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR
+                  : "postgres",
+            }),
           ) as Array<{
             extname: string;
             extversion: string;
@@ -488,9 +998,26 @@ describe("Production no-PITR recovery gate", () => {
               extname: "supabase_vault",
               ...row,
             })),
-          managed_extension_relations: [],
+          managed_extension_schema: [
+            { owner_role: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR },
+          ],
+          managed_extension_relations: [
+            { owner_role: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR },
+          ],
           managed_extension_columns: [],
-          managed_extension_functions: [],
+          managed_extension_functions: [
+            "crypto-decrypt",
+            "crypto-encrypt",
+            "crypto-noncegen",
+            "create-secret",
+            "update-secret",
+          ].map((profile) => ({
+            owner_role: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR,
+            implementation_profile: `supabase-vault-v0.3.1:${profile}`,
+          })),
+          managed_extension_types: [
+            { owner_role: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR },
+          ],
           managed_extension_indexes: [],
           managed_extension_constraints: [],
           managed_extension_config: [],
@@ -518,51 +1045,195 @@ describe("Production no-PITR recovery gate", () => {
 
   test("pins the checked-in managed extension fixture bytes", () => {
     expect(() => assertManagedExtensionFixtureSource()).not.toThrow();
-  });
-
-  test("stages only exclusive hash-pinned read-only fixture files and removes atomically", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ot-extension-stage-"));
+    const stale = fs.mkdtempSync(
+      path.join(os.tmpdir(), "ot-stale-vault-fixture-"),
+    );
     try {
-      const shared = path.join(root, "share");
-      const extension = path.join(shared, "extension");
-      fs.mkdirSync(extension, { recursive: true, mode: 0o700 });
-      const pgConfig = path.join(root, "pg_config");
-      fs.writeFileSync(
-        pgConfig,
-        `#!/bin/sh\ncase "$1" in\n  --version) printf '%s\\n' 'PostgreSQL 17.11';;\n  --sharedir) printf '%s\\n' '${shared}';;\n  *) exit 1;;\nesac\n`,
-        { mode: 0o700 },
-      );
-      stageManagedExtensionFixture({ action: "install", pgConfig });
+      const fixtureRoot = path.join(stale, "fixtures", "postgresql");
+      fs.mkdirSync(fixtureRoot, { recursive: true });
       for (const name of [
         "supabase_vault.control",
         "supabase_vault--0.3.1.sql",
       ])
-        expect(fs.statSync(path.join(extension, name)).mode & 0o777).toBe(
-          0o444,
+        fs.copyFileSync(
+          path.join(process.cwd(), "fixtures", "postgresql", name),
+          path.join(fixtureRoot, name),
         );
+      fs.appendFileSync(
+        path.join(fixtureRoot, "supabase_vault--0.3.1.sql"),
+        "\n-- stale pin\n",
+      );
+      expect(() => assertManagedExtensionFixtureSource(stale)).toThrow(
+        /fixture source changed/,
+      );
+    } finally {
+      fs.rmSync(stale, { recursive: true, force: true });
+    }
+  });
+
+  test("binds native Vault profiles to the pinned upstream 0.3.1 entry points", () => {
+    expect(OT_PRODUCTION_RECOVERY_CATALOG_SQL).toContain(
+      "p.probin='$libdir/supabase_vault' and p.prosrc='pgsodium_crypto_aead_det_encrypt_by_id'",
+    );
+    expect(OT_PRODUCTION_RECOVERY_CATALOG_SQL).toContain(
+      "p.probin='$libdir/supabase_vault' and p.prosrc='pgsodium_crypto_aead_det_decrypt_by_id'",
+    );
+    expect(OT_PRODUCTION_RECOVERY_CATALOG_SQL).toContain(
+      "p.probin='$libdir/supabase_vault' and p.prosrc='pgsodium_crypto_aead_det_noncegen'",
+    );
+    expect(OT_PRODUCTION_RECOVERY_CATALOG_SQL).not.toContain(
+      "p.probin='$libdir/vault'",
+    );
+    expect(OT_PRODUCTION_RECOVERY_CATALOG_SQL).not.toContain(
+      "p.prosrc='pgsodium_crypto_aead_det_encrypt'",
+    );
+    expect(OT_PRODUCTION_RECOVERY_CATALOG_SQL).not.toContain(
+      "p.prosrc='pgsodium_crypto_aead_det_decrypt'",
+    );
+    expect(OT_PRODUCTION_RECOVERY_CATALOG_SQL).not.toMatch(
+      /p\.proname='(?:create_secret|update_secret)'[\s\S]{0,200}\blike\b/i,
+    );
+    expect(OT_PRODUCTION_RECOVERY_CATALOG_SQL).not.toContain(
+      "regexp_replace(p.prosrc",
+    );
+    for (const digest of [
+      "4804be82df1e759cec455b5d234cd7c96dc19382be281b93fcc0b29c897bf286",
+      "54841098ee3262ffb0c449160b924623bbfb60da68f88156a760e397b71cdfcd",
+      "45c3edf8140259654aee1807a4ffe9d7afbe55d39676572cf608e79f5bb9d8ed",
+      "f4769f52bc723eed76644ed7c5a1dd224d7f2b8232d9ec998f1e9dfbfb88bac2",
+      "26037d4292c5a86ea1ef932dd3286e628aacb2473f09e349636ef92d3b1afd04",
+      "dd7be892de94e335d2e282b69b192258950df43261ed11ca42aee0931f63d5ab",
+    ])
+      expect(OT_PRODUCTION_RECOVERY_CATALOG_SQL).toContain(digest);
+  });
+
+  test("keeps restore row diagnostics opaque and verifies database bytes before COMMIT", () => {
+    const source = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "scripts/rehearse-neutral-production-recovery.ts",
+      ),
+      "utf8",
+    );
+    expect(source).not.toContain("errors +=");
+    expect(source).not.toContain("${errors}");
+    expect(source).not.toContain("pg_restore SQL emission failed:");
+    expect(source).not.toContain("single-session restore failed:");
+    const checksumGate = source.indexOf(
+      "verifiedDatabaseHash !== input.expectedDatabaseSha256",
+    );
+    const firstArchiveRestore = source.indexOf("const runArchive = async");
+    const commit = source.indexOf('psql.stdin.end("COMMIT;\\n")');
+    expect(checksumGate).toBeGreaterThan(0);
+    expect(checksumGate).toBeLessThan(firstArchiveRestore);
+    expect(firstArchiveRestore).toBeLessThan(commit);
+    const canary = "customer-row-secret@example.invalid";
+    const opaqueFailure = new Error("pg_restore SQL emission failed");
+    expect(opaqueFailure.message).not.toContain(canary);
+  });
+
+  test("streams catalog bytes directly to trusted gpg without a plaintext FIFO", () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), "scripts/create-neutral-production-recovery.ts"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/mkfifo|createWriteStream\(temporary/);
+    expect(source).toContain("gpg.stdin!.end(input.bytes)");
+  });
+
+  test("prepares a private hash-pinned PostgreSQL runtime without touching the source installation", () => {
+    const root = fs.mkdtempSync(
+      path.join(process.cwd(), ".ot-extension-source-"),
+    );
+    const runtime = fs.mkdtempSync(path.join("/tmp", "otpg17."));
+    fs.chmodSync(runtime, 0o700);
+    try {
+      const shared = path.join(root, "source-share");
+      const library = path.join(root, "source-lib");
+      const bin = path.join(root, "source-bin");
+      const extension = path.join(shared, "extension");
+      fs.mkdirSync(extension, { recursive: true, mode: 0o700 });
+      fs.mkdirSync(library, { mode: 0o700 });
+      fs.writeFileSync(
+        path.join(library, "dict_snowball.so"),
+        "standard-module",
+        {
+          mode: 0o500,
+        },
+      );
+      fs.mkdirSync(bin, { mode: 0o700 });
+      const compiledPath = Buffer.concat([
+        Buffer.from("synthetic-binary"),
+        Buffer.from([0]),
+        Buffer.from(shared),
+        Buffer.from([0]),
+        Buffer.from(library),
+        Buffer.from([0]),
+        Buffer.from("tail"),
+      ]);
+      for (const name of ["postgres", "initdb"])
+        fs.writeFileSync(path.join(bin, name), compiledPath, { mode: 0o500 });
+      fs.writeFileSync(path.join(bin, "pg_ctl"), "synthetic", {
+        mode: 0o500,
+      });
+      const pgConfig = path.join(bin, "pg_config");
+      fs.writeFileSync(
+        pgConfig,
+        `#!/bin/sh\ncase "$1" in\n  --version) printf '%s\\n' 'PostgreSQL 17.11';;\n  --sharedir) printf '%s\\n' '${shared}';;\n  --pkglibdir) printf '%s\\n' '${library}';;\n  *) exit 1;;\nesac\n`,
+        { mode: 0o700 },
+      );
+      const prepared = prepareManagedExtensionRuntime({
+        runtimeRoot: runtime,
+        sourcePgConfig: pgConfig,
+        testOnlyOwnershipPolicy: TEST_EXECUTABLE_POLICY,
+      });
+      expect(prepared.privateSharedDirectory).toBe(
+        path.join(fs.realpathSync(runtime), "s"),
+      );
+      expect(prepared.privateLibraryDirectory).toBe(
+        path.join(fs.realpathSync(runtime), "l"),
+      );
+      expect(
+        fs.readFileSync(path.join(runtime, "l", "dict_snowball.so"), "utf8"),
+      ).toBe("standard-module");
+      for (const name of [
+        "supabase_vault.control",
+        "supabase_vault--0.3.1.sql",
+      ])
+        expect(
+          fs.statSync(path.join(runtime, "s", "extension", name)).mode & 0o777,
+        ).toBe(0o444);
+      expect(fs.readdirSync(extension)).toEqual([]);
       expect(() =>
-        stageManagedExtensionFixture({ action: "install", pgConfig }),
+        prepareManagedExtensionRuntime({
+          runtimeRoot: runtime,
+          sourcePgConfig: pgConfig,
+          testOnlyOwnershipPolicy: TEST_EXECUTABLE_POLICY,
+        }),
       ).toThrow();
 
-      const changed = path.join(extension, "supabase_vault.control");
+      expect(() => assertManagedExtensionFixtureInstalled(runtime)).toThrow(
+        /runtime root is unsafe/,
+      );
+
+      const changed = path.join(
+        runtime,
+        "s",
+        "extension",
+        "supabase_vault.control",
+      );
       fs.chmodSync(changed, 0o644);
       fs.appendFileSync(changed, "# tampered\n");
       expect(() =>
-        stageManagedExtensionFixture({ action: "remove", pgConfig }),
-      ).toThrow(/Refusing to remove mismatched/);
-      expect(
-        fs.existsSync(path.join(extension, "supabase_vault--0.3.1.sql")),
-      ).toBe(true);
-
-      fs.copyFileSync(
-        path.join(process.cwd(), "fixtures/postgresql/supabase_vault.control"),
-        changed,
-      );
-      fs.chmodSync(changed, 0o444);
-      stageManagedExtensionFixture({ action: "remove", pgConfig });
-      expect(fs.readdirSync(extension)).toEqual([]);
+        assertManagedExtensionFixtureInstalled(
+          runtime,
+          process.cwd(),
+          TEST_EXECUTABLE_POLICY,
+        ),
+      ).toThrow(/runtime tree changed|fixture is invalid/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(runtime, { recursive: true, force: true });
     }
   });
 
@@ -788,6 +1459,19 @@ describe("Production no-PITR recovery gate", () => {
     }
   });
 
+  test("holds encrypted artifact identity and rejects swaps between restore passes", () => {
+    const copy = materializePrivateCopy(Buffer.from("encrypted-database"));
+    const moved = `${copy.file}.moved`;
+    try {
+      verifyPrivateCopy(copy);
+      fs.renameSync(copy.file, moved);
+      fs.writeFileSync(copy.file, "attacker", { mode: 0o400 });
+      expect(() => verifyPrivateCopy(copy)).toThrow(/identity changed/);
+    } finally {
+      copy.cleanup();
+    }
+  });
+
   test("rejects a rename swap between pre-open stat and opened-fd identity", () => {
     const directory = fs.mkdtempSync(
       path.join(os.tmpdir(), "ot-recovery-open-race-"),
@@ -808,7 +1492,7 @@ describe("Production no-PITR recovery gate", () => {
     }
   });
 
-  test("opens the child beneath the held parent across swap-to-attacker and swap-back", () => {
+  test("fails closed when the protected parent is swapped before open", () => {
     const root = fs.mkdtempSync(
       path.join(os.tmpdir(), "ot-recovery-parent-race-"),
     );
@@ -823,13 +1507,14 @@ describe("Production no-PITR recovery gate", () => {
     fs.writeFileSync(artifact, "verified", { mode: 0o600 });
     fs.writeFileSync(attackerArtifact, "attacker", { mode: 0o600 });
     try {
-      const bytes = readProtectedFile(artifact, () => {
-        fs.renameSync(directory, moved);
-        fs.renameSync(attacker, directory);
-      });
+      expect(() =>
+        readProtectedFile(artifact, () => {
+          fs.renameSync(directory, moved);
+          fs.renameSync(attacker, directory);
+        }),
+      ).toThrow(/identity changed/);
       fs.renameSync(directory, attacker);
       fs.renameSync(moved, directory);
-      expect(bytes.toString("utf8")).toBe("verified");
       expect(fs.readFileSync(artifact, "utf8")).toBe("verified");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -898,5 +1583,36 @@ describe("Production no-PITR recovery gate", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Production rollout runbook", () => {
+  const runbook = () =>
+    fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "docs/ops/ot-neutral-production-rollout-packet-2026-09-17.md",
+      ),
+      "utf8",
+    );
+
+  test("seals every private runtime tree the restore validator re-measures", () => {
+    // `assertManagedExtensionFixtureInstalled` re-measures b, s and l under
+    // root-or-runtime-root ownership with no group/world write, so a procedure
+    // that seals only two of the three cannot pass its own gate.
+    const seal =
+      /sudo chown -R root ([^\n]*)\n\s*sudo chmod -R go-w ([^\n]*)/.exec(
+        runbook(),
+      );
+    expect(seal).not.toBeNull();
+    for (const group of [seal![1]!, seal![2]!])
+      for (const tree of ['"$pg_bin"', '"$root/s"', '"$root/l"'])
+        expect(group).toContain(tree);
+  });
+
+  test("keeps the native Vault recorder's non-root policy distinct from the restored-runtime seal", () => {
+    expect(runbook()).toContain(
+      "The recorder must not be run as root or under sudo",
+    );
   });
 });

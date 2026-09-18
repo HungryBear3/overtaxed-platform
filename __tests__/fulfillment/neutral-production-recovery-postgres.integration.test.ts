@@ -7,6 +7,7 @@ import path from "node:path";
 import { Client } from "pg";
 import {
   OT_PRODUCTION_RECOVERY_CATALOG_SQL,
+  OT_PRODUCTION_RECOVERY_GPG_PATH_VAR,
   OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
   OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR,
   OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
@@ -21,6 +22,13 @@ import {
   type RecoveryArtifact,
 } from "@/lib/fulfillment/neutral-production-recovery";
 import { assertManagedExtensionFixtureInstalled } from "@/scripts/neutral-production-extension-fixture-files";
+import { setupNeutralProductionRecoveryRehearsal } from "@/scripts/setup-neutral-production-recovery-rehearsal";
+import { rehearseNeutralProductionRecovery } from "@/scripts/rehearse-neutral-production-recovery";
+import { unitTestTrustedExecutablePolicy } from "@/scripts/trusted-executable";
+
+const TEST_EXECUTABLE_POLICY = unitTestTrustedExecutablePolicy(
+  process.getuid!(),
+);
 
 function available(): boolean {
   try {
@@ -31,12 +39,14 @@ function available(): boolean {
       execFileSync(bin ? path.join(bin, "initdb") : "initdb", ["--version"], {
         stdio: "ignore",
       });
-    for (const bin of [
-      process.env.OT_TEST_SOURCE_PG_BIN,
-      process.env.OT_TEST_TARGET_PG_BIN,
+    for (const runtime of [
+      process.env.OT_TEST_SOURCE_PG_RUNTIME,
+      process.env.OT_TEST_TARGET_PG_RUNTIME,
     ])
       assertManagedExtensionFixtureInstalled(
-        bin ? path.join(bin, "pg_config") : "pg_config",
+        runtime ?? "",
+        process.cwd(),
+        TEST_EXECUTABLE_POLICY,
       );
     execFileSync("gpg", ["--version"], { stdio: "ignore" });
     return true;
@@ -51,9 +61,22 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
   const roots: Array<{ root: string; bin?: string }> = [];
   const passphrase = "synthetic-recovery-passphrase-32-chars";
   const authenticationKey = "synthetic-authentication-key-at-least-32-bytes";
+  const vaultSecretId = "11111111-2222-4333-8444-555555555555";
+  const vaultCiphertext = "ZW5jcnlwdGVkLXNlY3JldC1ieXRlcw==";
+  const vaultNonceHex = "11".repeat(24);
+  const vaultTimestamp = "2026-09-17T12:34:56Z";
 
   const binary = (bin: string | undefined, name: string) =>
     bin ? path.join(bin, name) : name;
+  const privateExecutableCopy = (name: string, root: string): string => {
+    const source = fs.realpathSync(
+      execFileSync("which", [name], { encoding: "utf8" }).trim(),
+    );
+    const destination = path.join(root, `trusted-${name}`);
+    fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
+    fs.chmodSync(destination, 0o500);
+    return destination;
+  };
   const cluster = (user: string, bin?: string, forcedPort?: number) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-pg-"));
     const data = path.join(root, "data");
@@ -145,6 +168,40 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
       grant anon to authenticated with inherit true, set false;
       grant anon to portable_admin with admin option, inherit true, set true;
     `);
+    await sourceClient.query(
+      `insert into vault.secrets(
+         id,name,description,secret,key_id,nonce,created_at,updated_at
+       ) values ($1::uuid,$2,$3,$4,null,decode($5,'hex'),$6::timestamptz,$6::timestamptz)`,
+      [
+        vaultSecretId,
+        "synthetic-config-row",
+        "encrypted fixture",
+        vaultCiphertext,
+        vaultNonceHex,
+        vaultTimestamp,
+      ],
+    );
+    const sourceVaultRows = (
+      await sourceClient.query(
+        `select id::text, name, description, secret, key_id::text,
+                encode(nonce,'hex') nonce_hex,
+                to_char(created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') created_at,
+                to_char(updated_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') updated_at
+         from vault.secrets order by id`,
+      )
+    ).rows;
+    expect(sourceVaultRows).toEqual([
+      {
+        id: vaultSecretId,
+        name: "synthetic-config-row",
+        description: "encrypted fixture",
+        secret: vaultCiphertext,
+        key_id: null,
+        nonce_hex: vaultNonceHex,
+        created_at: vaultTimestamp,
+        updated_at: vaultTimestamp,
+      },
+    ]);
     const portableSource = new Client({
       connectionString: `postgresql://portable_admin@127.0.0.1:${source.port}/postgres`,
     });
@@ -156,6 +213,7 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
     const catalog = (
       await sourceClient.query(OT_PRODUCTION_RECOVERY_CATALOG_SQL, [
         OT_PRODUCTION_RECOVERY_RELEVANT_ROLES,
+        OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
         OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
       ])
     ).rows[0]!.snapshot;
@@ -300,44 +358,41 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
     fs.writeFileSync(receiptPath, canonicalJson(receipt), { mode: 0o600 });
 
     const sentinelPath = path.join(target.root, "cluster-sentinel.json");
-    execFileSync(
-      "node_modules/.bin/tsx",
-      ["scripts/setup-neutral-production-recovery-rehearsal.ts"],
-      {
-        cwd: process.cwd(),
-        stdio: "ignore",
-        env: {
-          ...process.env,
-          PATH: targetBin
-            ? `${targetBin}:${process.env.PATH}`
-            : process.env.PATH,
-          OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL: targetUrl,
-          OT_NEUTRAL_RECOVERY_REHEARSAL_SUPERUSER: "restore_admin",
-          OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL: sentinelPath,
-          OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY: authenticationKey,
-        },
+    await setupNeutralProductionRecoveryRehearsal({
+      env: {
+        ...process.env,
+        PATH: targetBin ? `${targetBin}:${process.env.PATH}` : process.env.PATH,
+        OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL: targetUrl,
+        OT_NEUTRAL_RECOVERY_REHEARSAL_SUPERUSER: "restore_admin",
+        OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL: sentinelPath,
+        OT_NEUTRAL_RECOVERY_REHEARSAL_RUNTIME_ROOT:
+          process.env.OT_TEST_TARGET_PG_RUNTIME,
+        OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY: authenticationKey,
       },
-    );
+      testOnlyOwnershipPolicy: TEST_EXECUTABLE_POLICY,
+      writeStatus: () => undefined,
+    });
 
-    const output = execFileSync(
-      "node_modules/.bin/tsx",
-      ["scripts/rehearse-neutral-production-recovery.ts"],
-      {
-        cwd: process.cwd(),
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          PATH: targetBin
-            ? `${targetBin}:${process.env.PATH}`
-            : process.env.PATH,
-          OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT: receiptPath,
-          OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE: passphrase,
-          OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY: authenticationKey,
-          OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL: sentinelPath,
-          OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL: targetUrl,
-        },
+    const trustedGpg = privateExecutableCopy("gpg", target.root);
+    let output = "";
+    await rehearseNeutralProductionRecovery({
+      env: {
+        ...process.env,
+        PATH: targetBin ? `${targetBin}:${process.env.PATH}` : process.env.PATH,
+        OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT: receiptPath,
+        OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE: passphrase,
+        OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY: authenticationKey,
+        OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL: sentinelPath,
+        OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL: targetUrl,
+        OT_NEUTRAL_RECOVERY_REHEARSAL_RUNTIME_ROOT:
+          process.env.OT_TEST_TARGET_PG_RUNTIME,
+        [OT_PRODUCTION_RECOVERY_GPG_PATH_VAR]: trustedGpg,
       },
-    );
+      testOnlyOwnershipPolicy: TEST_EXECUTABLE_POLICY,
+      writeStatus: (message) => {
+        output += message;
+      },
+    });
     expect(output).toMatch(
       new RegExp(
         `PASS.*target_pg=${targetMajor}.*catalog=verified.*artifacts=verified`,
@@ -366,6 +421,25 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
         )
       ).rows[0]!.value,
     ).toBe("unchanged");
+    expect(
+      (
+        await restored.query(
+          `select id::text, name, description, secret, key_id::text,
+                  encode(nonce,'hex') nonce_hex,
+                  to_char(created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') created_at,
+                  to_char(updated_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') updated_at
+           from vault.secrets order by id`,
+        )
+      ).rows,
+    ).toEqual(sourceVaultRows);
+    expect(
+      (
+        await restored.query(
+          "select decrypted_secret from vault.decrypted_secrets where id=$1",
+          [vaultSecretId],
+        )
+      ).rows[0]!.decrypted_secret,
+    ).toBeNull();
     expect(
       (
         await restored.query(`
@@ -419,28 +493,25 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
     ]);
     const swapUrl = `postgresql://swap_admin@127.0.0.1:${guarded.port}/${swapDatabase}`;
     const swapSentinel = path.join(guarded.root, "swap-sentinel.json");
-    execFileSync(
-      "node_modules/.bin/tsx",
-      ["scripts/setup-neutral-production-recovery-rehearsal.ts"],
-      {
-        cwd: process.cwd(),
-        stdio: "ignore",
-        env: {
-          ...process.env,
-          PATH: targetBin
-            ? `${targetBin}:${process.env.PATH}`
-            : process.env.PATH,
-          OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL: swapUrl,
-          OT_NEUTRAL_RECOVERY_REHEARSAL_SUPERUSER: "swap_admin",
-          OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL: swapSentinel,
-          OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY: authenticationKey,
-        },
+    await setupNeutralProductionRecoveryRehearsal({
+      env: {
+        ...process.env,
+        PATH: targetBin ? `${targetBin}:${process.env.PATH}` : process.env.PATH,
+        OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL: swapUrl,
+        OT_NEUTRAL_RECOVERY_REHEARSAL_SUPERUSER: "swap_admin",
+        OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL: swapSentinel,
+        OT_NEUTRAL_RECOVERY_REHEARSAL_RUNTIME_ROOT:
+          process.env.OT_TEST_TARGET_PG_RUNTIME,
+        OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY: authenticationKey,
       },
-    );
+      testOnlyOwnershipPolicy: TEST_EXECUTABLE_POLICY,
+      writeStatus: () => undefined,
+    });
     const hook = path.join(guarded.root, "listener-swap");
+    const swapTrustedGpg = privateExecutableCopy("gpg", guarded.root);
     const rehearsal = spawn(
       "node_modules/.bin/tsx",
-      ["scripts/rehearse-neutral-production-recovery.ts"],
+      ["test-support/rehearse-neutral-production-recovery.ts"],
       {
         cwd: process.cwd(),
         stdio: ["ignore", "pipe", "pipe"],
@@ -456,6 +527,9 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
           OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY: authenticationKey,
           OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL: swapSentinel,
           OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL: swapUrl,
+          OT_NEUTRAL_RECOVERY_REHEARSAL_RUNTIME_ROOT:
+            process.env.OT_TEST_TARGET_PG_RUNTIME,
+          [OT_PRODUCTION_RECOVERY_GPG_PATH_VAR]: swapTrustedGpg,
         },
       },
     );
@@ -569,6 +643,8 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
               target.root,
               "sentinel.json",
             ),
+            OT_NEUTRAL_RECOVERY_REHEARSAL_RUNTIME_ROOT:
+              process.env.OT_TEST_TARGET_PG_RUNTIME,
             OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY: authenticationKey,
           },
         },

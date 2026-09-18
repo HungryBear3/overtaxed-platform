@@ -148,22 +148,21 @@ jobs:
           OT_TEST_TARGET_PG_BIN: /usr/lib/postgresql/${{ matrix.postgres }}/bin
         run: |
           set -euo pipefail
-          majors=(17 "${{ matrix.postgres }}")
-          installed=()
+          source_runtime="$(mktemp -d /tmp/os.XXXXXX)"
+          target_runtime="$(mktemp -d /tmp/ot.XXXXXX)"
           cleanup() {
-            for major in "${installed[@]}"; do
-              sudo env \
-                PATH="$PATH" \
-                OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG="/usr/lib/postgresql/${major}/bin/pg_config" \
-                ./node_modules/.bin/tsx scripts/stage-neutral-production-recovery-extension-fixture.ts remove || true
-            done
+            rm -rf -- "$source_runtime" "$target_runtime"
           }
           trap cleanup EXIT INT TERM
-          for major in $(printf '%s\n' "${majors[@]}" | sort -u); do
-            sudo env \
-              PATH="$PATH" \
-              OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG="/usr/lib/postgresql/${major}/bin/pg_config" \
-              ./node_modules/.bin/tsx scripts/stage-neutral-production-recovery-extension-fixture.ts install
-            installed+=("$major")
-          done
+          OT_NEUTRAL_RECOVERY_REHEARSAL_RUNTIME_ROOT="$source_runtime" \
+          OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG="/usr/lib/postgresql/17/bin/pg_config" \
+            ./node_modules/.bin/tsx scripts/stage-neutral-production-recovery-extension-fixture.ts prepare
+          OT_NEUTRAL_RECOVERY_REHEARSAL_RUNTIME_ROOT="$target_runtime" \
+          OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG="/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config" \
+            ./node_modules/.bin/tsx scripts/stage-neutral-production-recovery-extension-fixture.ts prepare
+          export OT_TEST_SOURCE_PG_BIN="$source_runtime/b"
+          export OT_TEST_SOURCE_PG_RUNTIME="$source_runtime"
+          export OT_TEST_TARGET_PG_BIN="$target_runtime/b"
+          export OT_TEST_TARGET_PG_RUNTIME="$target_runtime"
+          export OT_NEUTRAL_PRODUCTION_RECOVERY_GPG_PATH=/usr/bin/gpg
           npm test -- --ci --runInBand __tests__/fulfillment/neutral-production-recovery-postgres.integration.test.ts
