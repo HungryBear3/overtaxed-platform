@@ -143,11 +143,31 @@ jobs:
       - name: Install
         run: npm ci
       - name: Restore encrypted recovery fixture
-        env:
-          OT_TEST_SOURCE_PG_BIN: /usr/lib/postgresql/17/bin
-          OT_TEST_TARGET_PG_BIN: /usr/lib/postgresql/${{ matrix.postgres }}/bin
         run: |
           set -euo pipefail
+          trusted_root=/opt/ot-neutral-postgresql
+          seal_postgres_bin() {
+            local major="$1"
+            local source="/usr/lib/postgresql/$major/bin"
+            local destination="$trusted_root/$major/bin"
+            local share="/usr/share/postgresql/$major"
+            sudo install -d -o root -g root -m 0755 "$trusted_root" "$trusted_root/$major" "$destination"
+            sudo cp --recursive --dereference --preserve=mode,timestamps "$source/." "$destination/"
+            sudo chown --recursive root:root "$trusted_root/$major"
+            sudo chmod --recursive go-w "$trusted_root/$major"
+            test -z "$(sudo find "$trusted_root/$major" -xdev \( -type l -o ! -user root -o -perm /022 \) -print -quit)"
+            sudo chown root:root /usr/share/postgresql
+            sudo chmod go-w /usr/share/postgresql
+            sudo chown --recursive root:root "$share"
+            sudo chmod --recursive go-w "$share"
+            test -z "$(sudo find "$share" -xdev \( -type l -o ! -user root -o -perm /022 \) -print -quit)"
+          }
+          seal_postgres_bin 17
+          if [ "${{ matrix.postgres }}" != 17 ]; then
+            seal_postgres_bin "${{ matrix.postgres }}"
+          fi
+          source_pg_config="$trusted_root/17/bin/pg_config"
+          target_pg_config="$trusted_root/${{ matrix.postgres }}/bin/pg_config"
           source_runtime="$(mktemp -d /tmp/os.XXXXXX)"
           target_runtime="$(mktemp -d /tmp/ot.XXXXXX)"
           cleanup() {
@@ -155,10 +175,10 @@ jobs:
           }
           trap cleanup EXIT INT TERM
           OT_NEUTRAL_RECOVERY_REHEARSAL_RUNTIME_ROOT="$source_runtime" \
-          OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG="/usr/lib/postgresql/17/bin/pg_config" \
+          OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG="$source_pg_config" \
             ./node_modules/.bin/tsx scripts/stage-neutral-production-recovery-extension-fixture.ts prepare
           OT_NEUTRAL_RECOVERY_REHEARSAL_RUNTIME_ROOT="$target_runtime" \
-          OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG="/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config" \
+          OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG="$target_pg_config" \
             ./node_modules/.bin/tsx scripts/stage-neutral-production-recovery-extension-fixture.ts prepare
           export OT_TEST_SOURCE_PG_BIN="$source_runtime/b"
           export OT_TEST_SOURCE_PG_RUNTIME="$source_runtime"
