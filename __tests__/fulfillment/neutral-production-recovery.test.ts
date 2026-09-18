@@ -389,7 +389,7 @@ function testOnlyPolicyFor(receiptPath: string) {
 
 /**
  * The Production gate itself is closed and unreachable from a unit process: it
- * requires a root-owned gpg binary and release pins that are deliberately null.
+ * requires a root-owned gpg binary and exact released platform-receipt pins.
  * These cases exercise the same lower-level proof validation through the
  * test-only boundary, which can relax gpg ownership and nothing else.
  */
@@ -445,7 +445,7 @@ describe("Production no-PITR recovery gate", () => {
     }
   });
 
-  test("the exported Production gate ignores caller-supplied policy and keeps the release pin closed", async () => {
+  test("the exported Production gate ignores caller-supplied policy and uses only release pins", async () => {
     const value = fixture();
     try {
       // Exactly the shape the gate used to honour: a replacement ownership
@@ -463,10 +463,15 @@ describe("Production no-PITR recovery gate", () => {
       ).rejects.toThrow();
 
       // The release pins are the only source the Production gate compares
-      // against, and they are still deliberately empty.
+      // against; caller-supplied substitutes remain impossible.
       expect(
         OT_PRODUCTION_NATIVE_VAULT_APPROVED_PLATFORM_RECEIPT_SHA256,
-      ).toEqual({ darwin: null, linux: null });
+      ).toEqual({
+        darwin:
+          "284bcccb451fca0887e9a049178e8693596d5798057c405772390a988622b824",
+        linux:
+          "e0071ccbc8cd4e44763c525da67b2ed2396448a18606955ce833e86123ea9f7b",
+      });
 
       const gateSource = fs.readFileSync(
         path.join(process.cwd(), "scripts/neutral-production-recovery-gate.ts"),
@@ -504,11 +509,11 @@ describe("Production no-PITR recovery gate", () => {
     }
   });
 
-  test("keeps Production apply held until reviewed platform receipt hashes are pinned in code", async () => {
+  test("rejects authentic fixture receipts that differ from the reviewed release pins", async () => {
     const value = fixture();
     try {
-      // Authentic, fully authenticated evidence: the only thing missing is a
-      // reviewed release commit pinning the exact platform receipt bytes.
+      // Authentic, fully authenticated fixture evidence still cannot substitute
+      // for the exact separately reviewed receipt bytes pinned by the release.
       await expect(
         assertProductionRecoveryGate({
           env: envFor(value.receiptPath),
@@ -526,6 +531,21 @@ describe("Production no-PITR recovery gate", () => {
       expect(() => assertApprovedPlatformReceiptPins(proof)).toThrow(
         /not pinned by the released candidate/,
       );
+
+      const pinned = structuredClone(proof);
+      pinned.platformReceipts[0].sha256 =
+        OT_PRODUCTION_NATIVE_VAULT_APPROVED_PLATFORM_RECEIPT_SHA256.darwin;
+      pinned.platformReceipts[1].sha256 =
+        OT_PRODUCTION_NATIVE_VAULT_APPROVED_PLATFORM_RECEIPT_SHA256.linux;
+      expect(() => assertApprovedPlatformReceiptPins(pinned)).not.toThrow();
+
+      for (const index of [0, 1] as const) {
+        const wrong = structuredClone(pinned);
+        wrong.platformReceipts[index].sha256 = "0".repeat(64);
+        expect(() => assertApprovedPlatformReceiptPins(wrong)).toThrow(
+          /not pinned by the released candidate/,
+        );
+      }
       const entrypoint = fs.readFileSync(
         path.join(
           process.cwd(),

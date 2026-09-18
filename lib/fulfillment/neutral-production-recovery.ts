@@ -43,13 +43,16 @@ export const OT_PRODUCTION_NATIVE_VAULT_BASE_SQL_SHA256 =
   "c3739f80d19e1fc18d114705a07ed9fc7c8e3750762abe51f8e9999716fdaff6" as const;
 export const OT_PRODUCTION_NATIVE_VAULT_UPGRADE_SQL_SHA256 =
   "c601f01c7d384054536fafd5ebd5d570542360bdcf2f14bfafd4876aaa5d174a" as const;
-// Deliberately empty until independent Darwin/Linux jobs return their exact
-// protected receipt bytes and a separately reviewed release commit pins them.
-// HMAC possession alone cannot release the apply gate.
+// Exact authenticated receipts from the separately exercised Darwin and Linux
+// native Vault jobs. Both remain bound to the released candidate manifest and
+// encrypted Production backup; HMAC possession alone cannot change these pins.
 export const OT_PRODUCTION_NATIVE_VAULT_APPROVED_PLATFORM_RECEIPT_SHA256: {
   readonly darwin: string | null;
   readonly linux: string | null;
-} = { darwin: null, linux: null } as const;
+} = {
+  darwin: "284bcccb451fca0887e9a049178e8693596d5798057c405772390a988622b824",
+  linux: "e0071ccbc8cd4e44763c525da67b2ed2396448a18606955ce833e86123ea9f7b",
+} as const;
 export const OT_PRODUCTION_RECOVERY_MAX_AGE_MINUTES = 60;
 // Keep this singleton: normalizing multiple grantors would collapse distinct
 // pg_auth_members rows and make the catalog proof ambiguous.

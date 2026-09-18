@@ -1070,7 +1070,7 @@ describe("native Supabase Vault platform recorder", () => {
     }
   });
 
-  test("keeps the production entrypoint free of injected executors and leaves the release pin empty", async () => {
+  test("keeps the production entrypoint free of injected executors and pins both reviewed receipts", async () => {
     const source = fs.readFileSync(
       path.join(
         process.cwd(),
@@ -1088,8 +1088,10 @@ describe("native Supabase Vault platform recorder", () => {
     expect(source).not.toMatch(/OT_NEUTRAL_NATIVE_VAULT_[A-Z_]*RUNNER/);
     expect(OT_PRODUCTION_NATIVE_VAULT_APPROVED_PLATFORM_RECEIPT_SHA256).toEqual(
       {
-        darwin: null,
-        linux: null,
+        darwin:
+          "284bcccb451fca0887e9a049178e8693596d5798057c405772390a988622b824",
+        linux:
+          "e0071ccbc8cd4e44763c525da67b2ed2396448a18606955ce833e86123ea9f7b",
       },
     );
   });
