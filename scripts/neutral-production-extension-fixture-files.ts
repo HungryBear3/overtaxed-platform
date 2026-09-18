@@ -225,6 +225,9 @@ function sourcePostgresInstallation(
     }).trim(),
   );
   const bin = path.dirname(trustedPgConfig.path);
+  const allowUnsafeSourceDirectory =
+    trustedPgConfig.ownershipPolicy.name === "unit-test-explicit" &&
+    trustedPgConfig.ownershipPolicy.allowUnsafeAncestors === true;
   for (const [label, directory] of [
     ["binary", bin],
     ["shared", share],
@@ -233,8 +236,9 @@ function sourcePostgresInstallation(
     if (
       !stat.isDirectory() ||
       stat.isSymbolicLink() ||
-      !trustedPgConfig.ownershipPolicy.allowedOwners.includes(stat.uid) ||
-      (stat.mode & 0o022) !== 0
+      (!allowUnsafeSourceDirectory &&
+        (!trustedPgConfig.ownershipPolicy.allowedOwners.includes(stat.uid) ||
+          (stat.mode & 0o022) !== 0))
     )
       throw new Error(
         `Recovery source PostgreSQL ${label} directory is unsafe`,

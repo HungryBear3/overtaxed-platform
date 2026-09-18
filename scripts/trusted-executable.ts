@@ -19,10 +19,18 @@ export type TrustedExecutable = {
   ownershipPolicy: TrustedExecutableOwnershipPolicy;
 };
 
-export type TrustedExecutableOwnershipPolicy = Readonly<{
-  name: "root-only" | "unit-test-explicit" | "preparation-observed";
-  allowedOwners: readonly number[];
-}>;
+export type TrustedExecutableOwnershipPolicy = Readonly<
+  | {
+      name: "root-only" | "preparation-observed";
+      allowedOwners: readonly number[];
+      allowUnsafeAncestors?: never;
+    }
+  | {
+      name: "unit-test-explicit";
+      allowedOwners: readonly number[];
+      allowUnsafeAncestors: true;
+    }
+>;
 
 const ROOT_ONLY_POLICY: TrustedExecutableOwnershipPolicy = Object.freeze({
   name: "root-only",
@@ -37,6 +45,7 @@ export function unitTestTrustedExecutablePolicy(
   return Object.freeze({
     name: "unit-test-explicit",
     allowedOwners: Object.freeze([0, uid]),
+    allowUnsafeAncestors: true,
   });
 }
 
@@ -55,12 +64,20 @@ export function assertProtectedAncestors(
   let current = path.dirname(file);
   for (;;) {
     const stat = fs.lstatSync(current);
+    const allowUnsafeAncestor =
+      ownershipPolicy.name === "unit-test-explicit" &&
+      ownershipPolicy.allowUnsafeAncestors === true;
     if (
       !stat.isDirectory() ||
       stat.isSymbolicLink() ||
-      !allowedOwner(stat.uid, ownershipPolicy) ||
-      ((stat.mode & 0o022) !== 0 &&
-        !(allowStickyAncestors && stat.uid === 0 && (stat.mode & 0o1000) !== 0))
+      (!allowUnsafeAncestor &&
+        (!allowedOwner(stat.uid, ownershipPolicy) ||
+          ((stat.mode & 0o022) !== 0 &&
+            !(
+              allowStickyAncestors &&
+              stat.uid === 0 &&
+              (stat.mode & 0o1000) !== 0
+            ))))
     )
       throw new Error("Trusted executable ancestry is unsafe");
     const parent = path.dirname(current);

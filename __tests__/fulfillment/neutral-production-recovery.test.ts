@@ -1070,7 +1070,9 @@ describe("Production no-PITR recovery gate", () => {
     const root = fs.mkdtempSync(
       path.join(process.cwd(), ".ot-extension-source-"),
     );
+    const strictRuntime = fs.mkdtempSync(path.join("/tmp", "otpg17-strict."));
     const runtime = fs.mkdtempSync(path.join("/tmp", "otpg17."));
+    fs.chmodSync(strictRuntime, 0o700);
     fs.chmodSync(runtime, 0o700);
     try {
       const shared = path.join(root, "source-share");
@@ -1096,6 +1098,13 @@ describe("Production no-PITR recovery gate", () => {
         `#!/bin/sh\ncase "$1" in\n  --version) printf '%s\\n' 'PostgreSQL 17.11';;\n  --sharedir) printf '%s\\n' '${shared}';;\n  *) exit 1;;\nesac\n`,
         { mode: 0o700 },
       );
+      expect(() =>
+        prepareManagedExtensionRuntime({
+          runtimeRoot: strictRuntime,
+          sourcePgConfig: pgConfig,
+        }),
+      ).toThrow(/Trusted executable ancestry is unsafe/);
+      expect(fs.readdirSync(strictRuntime)).toEqual([]);
       const prepared = prepareManagedExtensionRuntime({
         runtimeRoot: runtime,
         sourcePgConfig: pgConfig,
@@ -1141,6 +1150,7 @@ describe("Production no-PITR recovery gate", () => {
       ).toThrow(/runtime tree changed|fixture is invalid/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(strictRuntime, { recursive: true, force: true });
       fs.rmSync(runtime, { recursive: true, force: true });
     }
   });

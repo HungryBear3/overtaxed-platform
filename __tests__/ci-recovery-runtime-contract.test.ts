@@ -59,6 +59,10 @@ describe("CI synthetic recovery fixture portability", () => {
     expect(helper).toContain(
       "testOnlyOwnershipPolicy: unitTestTrustedExecutablePolicy(process.getuid())",
     );
+    expect(helper).toContain("unitTestTrustedExecutablePolicy");
+    expect(
+      readFileSync(join(root, "scripts/trusted-executable.ts"), "utf8"),
+    ).toContain('ownershipPolicy.name === "unit-test-explicit"');
     expect(helper).not.toMatch(/process\.env|NODE_ENV/);
     expect(productionStage).not.toMatch(
       /unitTestTrustedExecutablePolicy|testOnlyOwnershipPolicy|prepare-neutral-recovery-ci-runtime/,
