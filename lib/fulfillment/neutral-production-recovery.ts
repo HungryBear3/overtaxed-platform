@@ -8,17 +8,48 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const OT_PRODUCTION_RECOVERY_SCHEMA =
-  "ot.neutral-production-recovery.v2" as const;
+  "ot.neutral-production-recovery.v3" as const;
 export const OT_PRODUCTION_RESTORE_SCHEMA =
-  "ot.neutral-production-restore-rehearsal.v2" as const;
+  "ot.neutral-production-restore-rehearsal.v3" as const;
 export const OT_PRODUCTION_REHEARSAL_SENTINEL_SCHEMA =
-  "ot.neutral-production-rehearsal-sentinel.v1" as const;
+  "ot.neutral-production-rehearsal-sentinel.v3" as const;
 export const OT_PRODUCTION_RECOVERY_RECEIPT_VAR =
   "OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT" as const;
 export const OT_PRODUCTION_RECOVERY_AUTH_KEY_VAR =
   "OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY" as const;
 export const OT_PRODUCTION_RECOVERY_PASSPHRASE_VAR =
   "OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE" as const;
+export const OT_PRODUCTION_RECOVERY_GPG_PATH_VAR =
+  "OT_NEUTRAL_PRODUCTION_RECOVERY_GPG_PATH" as const;
+export const OT_PRODUCTION_RECOVERY_PG_DUMP_PATH_VAR =
+  "OT_NEUTRAL_PRODUCTION_RECOVERY_PG_DUMP_PATH" as const;
+export const OT_PRODUCTION_RECOVERY_PG_DUMPALL_PATH_VAR =
+  "OT_NEUTRAL_PRODUCTION_RECOVERY_PG_DUMPALL_PATH" as const;
+export const OT_PRODUCTION_NATIVE_VAULT_PROOF_VAR =
+  "OT_NEUTRAL_PRODUCTION_NATIVE_VAULT_PROOF" as const;
+export const OT_PRODUCTION_RECOVERY_CANDIDATE_COMMIT_VAR =
+  "OT_NEUTRAL_PRODUCTION_RECOVERY_CANDIDATE_COMMIT" as const;
+export const OT_PRODUCTION_RECOVERY_CANDIDATE_MANIFEST_VAR =
+  "OT_NEUTRAL_PRODUCTION_RECOVERY_CANDIDATE_MANIFEST" as const;
+export const OT_PRODUCTION_NATIVE_VAULT_PROOF_SCHEMA =
+  "ot.neutral-production-native-vault-proof.v2" as const;
+export const OT_PRODUCTION_NATIVE_VAULT_PLATFORM_RECEIPT_SCHEMA =
+  "ot.neutral-production-native-vault-platform.v3" as const;
+export const OT_PRODUCTION_NATIVE_VAULT_TRANSCRIPT_SCHEMA =
+  "ot.neutral-production-native-vault-transcript.v1" as const;
+export const OT_PRODUCTION_NATIVE_VAULT_UPSTREAM_COMMIT =
+  "6e0cd916242d922a646e4d611cc215e09dd429f4" as const;
+export const OT_PRODUCTION_NATIVE_VAULT_BASE_SQL_SHA256 =
+  "c3739f80d19e1fc18d114705a07ed9fc7c8e3750762abe51f8e9999716fdaff6" as const;
+export const OT_PRODUCTION_NATIVE_VAULT_UPGRADE_SQL_SHA256 =
+  "c601f01c7d384054536fafd5ebd5d570542360bdcf2f14bfafd4876aaa5d174a" as const;
+// Deliberately empty until independent Darwin/Linux jobs return their exact
+// protected receipt bytes and a separately reviewed release commit pins them.
+// HMAC possession alone cannot release the apply gate.
+export const OT_PRODUCTION_NATIVE_VAULT_APPROVED_PLATFORM_RECEIPT_SHA256: {
+  readonly darwin: string | null;
+  readonly linux: string | null;
+} = { darwin: null, linux: null } as const;
 export const OT_PRODUCTION_RECOVERY_MAX_AGE_MINUTES = 60;
 // Keep this singleton: normalizing multiple grantors would collapse distinct
 // pg_auth_members rows and make the catalog proof ambiguous.
@@ -29,6 +60,121 @@ export const OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR =
   "__ot_managed_source_grantor_normalization_sentinel_not_a_postgresql_role__" as const;
 export const OT_PRODUCTION_RECOVERY_ROLE_PORTABILITY_POLICY =
   "supabase-managed-grantor-v1" as const;
+export const OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY =
+  "supabase-managed-extension-fixture-v1" as const;
+
+export const OT_PRODUCTION_RECOVERY_SUPPORTED_EXTENSIONS = [
+  {
+    extname: "pg_stat_statements",
+    extversion: "1.11",
+    schema_name: "extensions",
+    portability: "stock" as const,
+  },
+  {
+    extname: "pgcrypto",
+    extversion: "1.3",
+    schema_name: "extensions",
+    portability: "stock" as const,
+  },
+  {
+    extname: "plpgsql",
+    extversion: "1.0",
+    schema_name: "pg_catalog",
+    portability: "bootstrap" as const,
+  },
+  {
+    extname: "supabase_vault",
+    extversion: "0.3.1",
+    schema_name: "vault",
+    portability: "managed-fixture" as const,
+  },
+  {
+    extname: "uuid-ossp",
+    extversion: "1.1",
+    schema_name: "extensions",
+    portability: "stock" as const,
+  },
+] as const;
+
+export const OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_MEMBERS = [
+  {
+    type: "function",
+    schema: "vault",
+    name: "",
+    identity:
+      "vault._crypto_aead_det_decrypt(pg_catalog.bytea,pg_catalog.bytea,bigint,pg_catalog.bytea,pg_catalog.bytea)",
+  },
+  {
+    type: "function",
+    schema: "vault",
+    name: "",
+    identity:
+      "vault._crypto_aead_det_encrypt(pg_catalog.bytea,pg_catalog.bytea,bigint,pg_catalog.bytea,pg_catalog.bytea)",
+  },
+  {
+    type: "function",
+    schema: "vault",
+    name: "",
+    identity: "vault._crypto_aead_det_noncegen()",
+  },
+  {
+    type: "function",
+    schema: "vault",
+    name: "",
+    identity:
+      "vault.create_secret(pg_catalog.text,pg_catalog.text,pg_catalog.text,pg_catalog.uuid)",
+  },
+  {
+    type: "function",
+    schema: "vault",
+    name: "",
+    identity:
+      "vault.update_secret(pg_catalog.uuid,pg_catalog.text,pg_catalog.text,pg_catalog.text,pg_catalog.uuid)",
+  },
+  {
+    type: "table",
+    schema: "vault",
+    name: "secrets",
+    identity: "vault.secrets",
+  },
+  {
+    type: "type",
+    schema: "vault",
+    name: "_decrypted_secrets",
+    identity: "vault.decrypted_secrets[]",
+  },
+  {
+    type: "type",
+    schema: "vault",
+    name: "_secrets",
+    identity: "vault.secrets[]",
+  },
+  {
+    type: "type",
+    schema: "vault",
+    name: "decrypted_secrets",
+    identity: "vault.decrypted_secrets",
+  },
+  {
+    type: "type",
+    schema: "vault",
+    name: "secrets",
+    identity: "vault.secrets",
+  },
+  {
+    type: "view",
+    schema: "vault",
+    name: "decrypted_secrets",
+    identity: "vault.decrypted_secrets",
+  },
+] as const;
+
+export const OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES = {
+  "supabase_vault.control":
+    "92dce37b7096985c4f60c43726f09f383ed80c5ff7844d1557ad485085db7742",
+  "supabase_vault--0.3.1.sql":
+    "be3dfec4bba218f418793e5be3876b480935bcc1d3e71d2eddef15f91846879d",
+} as const;
 
 export const OT_PRODUCTION_RECOVERY_RELEVANT_ROLES = [
   "postgres",
@@ -51,7 +197,7 @@ with role_rows as (
   select rolname, rolsuper, rolinherit, rolcreaterole, rolcreatedb, rolcanlogin,
          rolreplication, rolbypassrls, rolconnlimit,
          coalesce(rolvaliduntil::text,'') valid_until
-  from pg_roles where rolname = any($1::text[]) order by rolname
+  from pg_roles where rolname = any($1::text[]) order by rolname collate "C"
 ), membership_rows as (
   select granted.rolname granted_role, member.rolname member_role,
          case when grantor.rolname = any($2::text[])
@@ -65,71 +211,283 @@ with role_rows as (
   where granted.rolname = any($1::text[])
      or member.rolname = any($1::text[])
      or grantor.rolname = any($2::text[])
-  order by 1,2,3,4,5,6
+  order by granted.rolname collate "C", member.rolname collate "C",
+           (case when grantor.rolname = any($2::text[])
+                 then '${OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR}'
+                 else grantor.rolname::text end) collate "C",
+           m.admin_option, m.inherit_option, m.set_option
 ), default_acl_rows as (
   select owner.rolname owner_role, coalesce(n.nspname,'') schema_name,
          d.defaclobjtype object_type, coalesce(d.defaclacl::text,'') acl
   from pg_default_acl d join pg_roles owner on owner.oid=d.defaclrole
   left join pg_namespace n on n.oid=d.defaclnamespace
-  where owner.rolname = any($1::text[]) order by 1,2,3,4
+  where owner.rolname = any($1::text[])
+  order by owner.rolname collate "C", coalesce(n.nspname,'') collate "C",
+           d.defaclobjtype, coalesce(d.defaclacl::text,'') collate "C"
 ), relation_rows as (
   select c.relname, c.relkind, pg_get_userbyid(c.relowner) owner_role,
          coalesce(c.relacl::text,'') acl, c.relrowsecurity, c.relforcerowsecurity,
          coalesce(array_to_string(c.reloptions,','),'') options
   from pg_class c join pg_namespace n on n.oid=c.relnamespace
-  where n.nspname='public' and c.relkind in ('r','p','v','m','S','f') order by 1,2
+  where n.nspname='public' and c.relkind in ('r','p','v','m','S','f')
+  order by c.relname collate "C", c.relkind
 ), column_acl_rows as (
   select c.relname, a.attname, a.attnotnull, coalesce(a.attacl::text,'') acl
   from pg_attribute a join pg_class c on c.oid=a.attrelid
   join pg_namespace n on n.oid=c.relnamespace
   where n.nspname='public' and a.attnum>0 and not a.attisdropped
-  order by 1,2
+  order by c.relname collate "C", a.attname collate "C"
 ), policy_rows as (
   select schemaname, tablename, policyname, permissive, roles, cmd,
          coalesce(qual,'') qual, coalesce(with_check,'') with_check
-  from pg_policies where schemaname='public' order by 2,3
+  from pg_policies where schemaname='public'
+  order by tablename collate "C", policyname collate "C"
 ), function_rows as (
   select p.oid::regprocedure::text identity, pg_get_userbyid(p.proowner) owner_role,
          coalesce(p.proacl::text,'') acl, p.prosecdef,
          coalesce(array_to_string(p.proconfig,','),'') config,
          pg_get_functiondef(p.oid) definition
   from pg_proc p join pg_namespace n on n.oid=p.pronamespace
-  where n.nspname='public' order by 1
+  where n.nspname='public' order by p.oid::regprocedure::text collate "C"
 ), trigger_rows as (
   select c.relname, t.tgname, pg_get_triggerdef(t.oid,true) definition,
          t.tgenabled
   from pg_trigger t join pg_class c on c.oid=t.tgrelid
   join pg_namespace n on n.oid=c.relnamespace
-  where n.nspname='public' and not t.tgisinternal order by 1,2
+  where n.nspname='public' and not t.tgisinternal
+  order by c.relname collate "C", t.tgname collate "C"
 ), constraint_rows as (
   select c.relname, x.conname, x.contype, pg_get_constraintdef(x.oid,true) definition
   from pg_constraint x join pg_class c on c.oid=x.conrelid
   join pg_namespace n on n.oid=c.relnamespace
-  where n.nspname='public' and x.contype <> 'n' order by 1,2
+  where n.nspname='public' and x.contype <> 'n'
+  order by c.relname collate "C", x.conname collate "C"
 ), type_rows as (
   select t.typname, t.typtype, pg_get_userbyid(t.typowner) owner_role,
          coalesce(t.typacl::text,'') acl,
          coalesce((select jsonb_agg(e.enumlabel order by e.enumsortorder) from pg_enum e where e.enumtypid=t.oid),'[]'::jsonb) enum_labels
   from pg_type t join pg_namespace n on n.oid=t.typnamespace
-  where n.nspname='public' and (t.typtype='e' or t.typrelid=0) order by 1
+  where n.nspname='public' and (t.typtype='e' or t.typrelid=0)
+  order by t.typname collate "C"
 ), extension_rows as (
-  select e.extname, e.extversion, n.nspname schema_name
-  from pg_extension e join pg_namespace n on n.oid=e.extnamespace order by 1
+  select e.extname, e.extversion, n.nspname schema_name,
+         case when owner.rolname = any($3::text[])
+              then '${OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR}'
+              else owner.rolname::text end owner_role
+  from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+  join pg_roles owner on owner.oid=e.extowner
+  order by e.extname collate "C"
+), managed_extension_member_rows as (
+  select e.extname, identified.type, coalesce(identified.schema,'') schema,
+         coalesce(identified.name,'') name, identified.identity
+  from pg_extension e
+  join pg_depend d on d.refclassid='pg_extension'::regclass
+   and d.refobjid=e.oid and d.deptype='e'
+  cross join lateral pg_identify_object(d.classid,d.objid,d.objsubid) identified
+  where e.extname='supabase_vault'
+  order by e.extname collate "C", identified.type collate "C",
+           coalesce(identified.schema,'') collate "C",
+           coalesce(identified.name,'') collate "C",
+           identified.identity collate "C"
+), managed_extension_schema_rows as (
+  select e.extname, n.nspname schema_name,
+         case when owner.rolname = any($3::text[])
+              then '${OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR}'
+              else owner.rolname::text end owner_role,
+         n.nspacl is null acl_is_null,
+         coalesce(cardinality(n.nspacl),0)=0 acl_is_empty
+  from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+  join pg_roles owner on owner.oid=n.nspowner
+  where e.extname='supabase_vault'
+), managed_extension_relation_rows as (
+  select e.extname, c.relname, c.relkind, c.relpersistence,
+         case when owner.rolname = any($3::text[])
+              then '${OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR}'
+              else owner.rolname::text end owner_role,
+         c.relacl is null acl_is_null,
+         coalesce(cardinality(c.relacl),0)=0 acl_is_empty,
+         c.relrowsecurity, c.relforcerowsecurity,
+         coalesce(array_to_string(c.reloptions,','),'') options,
+         case when c.relkind in ('v','m') then pg_get_viewdef(c.oid,true) else '' end definition
+  from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+  join pg_class c on c.relnamespace=n.oid
+  join pg_roles owner on owner.oid=c.relowner
+  where e.extname='supabase_vault' and c.relkind in ('r','p','v','m','S','f')
+  order by e.extname collate "C", c.relname collate "C", c.relkind
+), managed_extension_column_rows as (
+  select e.extname, c.relname, a.attname, a.attnum,
+         format_type(a.atttypid,a.atttypmod) data_type, a.attnotnull,
+         a.attidentity, a.attgenerated,
+         coalesce(pg_get_expr(ad.adbin,ad.adrelid,true),'') default_expression
+  from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+  join pg_class c on c.relnamespace=n.oid
+  join pg_attribute a on a.attrelid=c.oid and a.attnum>0 and not a.attisdropped
+  left join pg_attrdef ad on ad.adrelid=c.oid and ad.adnum=a.attnum
+  where e.extname='supabase_vault' and c.relkind in ('r','p','v','m','f')
+  order by e.extname collate "C", c.relname collate "C", a.attnum
+), managed_extension_function_rows as (
+  select e.extname, p.oid::regprocedure::text identity,
+         case when owner.rolname = any($3::text[])
+              then '${OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR}'
+              else owner.rolname::text end owner_role,
+         p.proacl is null acl_is_null,
+         coalesce(cardinality(p.proacl),0)=0 acl_is_empty,
+         pg_get_function_result(p.oid) result_type,
+         coalesce(p.proargnames::text,'') argument_names,
+         coalesce(p.proargmodes::text,'') argument_modes,
+         coalesce(pg_get_expr(p.proargdefaults,0,true),'') argument_defaults,
+         p.prokind, p.provolatile,
+         p.proisstrict, p.prosecdef, p.proleakproof, p.proparallel,
+         p.procost, p.prorows,
+         coalesce(array_to_string(p.proconfig,','),'') config,
+         case
+           when p.proname='_crypto_aead_det_encrypt'
+            and ((l.lanname='c' and p.probin='$libdir/supabase_vault' and p.prosrc='pgsodium_crypto_aead_det_encrypt_by_id')
+              or (l.lanname='sql' and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')='4804be82df1e759cec455b5d234cd7c96dc19382be281b93fcc0b29c897bf286'))
+              then 'supabase-vault-v0.3.1:crypto-encrypt'
+           when p.proname='_crypto_aead_det_decrypt'
+            and ((l.lanname='c' and p.probin='$libdir/supabase_vault' and p.prosrc='pgsodium_crypto_aead_det_decrypt_by_id')
+              or (l.lanname='sql' and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')='4804be82df1e759cec455b5d234cd7c96dc19382be281b93fcc0b29c897bf286'))
+              then 'supabase-vault-v0.3.1:crypto-decrypt'
+           when p.proname='_crypto_aead_det_noncegen'
+            and ((l.lanname='c' and p.probin='$libdir/supabase_vault' and p.prosrc='pgsodium_crypto_aead_det_noncegen')
+              or (l.lanname='sql' and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')='54841098ee3262ffb0c449160b924623bbfb60da68f88156a760e397b71cdfcd'))
+              then 'supabase-vault-v0.3.1:crypto-noncegen'
+           when p.proname='create_secret' and l.lanname='plpgsql'
+            and coalesce(p.probin,'')=''
+            and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') in ('45c3edf8140259654aee1807a4ffe9d7afbe55d39676572cf608e79f5bb9d8ed','f4769f52bc723eed76644ed7c5a1dd224d7f2b8232d9ec998f1e9dfbfb88bac2')
+              then 'supabase-vault-v0.3.1:create-secret'
+           when p.proname='update_secret' and l.lanname='plpgsql'
+            and coalesce(p.probin,'')=''
+            and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') in ('26037d4292c5a86ea1ef932dd3286e628aacb2473f09e349636ef92d3b1afd04','dd7be892de94e335d2e282b69b192258950df43261ed11ca42aee0931f63d5ab')
+              then 'supabase-vault-v0.3.1:update-secret'
+           else 'unsupported:' || l.lanname || ':' || p.probin || ':' || p.prosrc
+         end implementation_profile
+  from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+  join pg_proc p on p.pronamespace=n.oid
+  join pg_roles owner on owner.oid=p.proowner
+  join pg_language l on l.oid=p.prolang
+  where e.extname='supabase_vault'
+  order by e.extname collate "C", p.oid::regprocedure::text collate "C"
+), managed_extension_type_rows as (
+  select e.extname, t.typname, t.typtype, t.typcategory,
+         case when owner.rolname = any($3::text[])
+              then '${OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR}'
+              else owner.rolname::text end owner_role,
+         t.typacl is null acl_is_null,
+         coalesce(cardinality(t.typacl),0)=0 acl_is_empty
+  from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+  join pg_type t on t.typnamespace=n.oid
+  join pg_roles owner on owner.oid=t.typowner
+  where e.extname='supabase_vault'
+  order by e.extname collate "C", t.typname collate "C"
+), managed_extension_index_rows as (
+  select e.extname, c.relname, i.relname index_name, pg_get_indexdef(i.oid) definition
+  from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+  join pg_class c on c.relnamespace=n.oid and c.relkind in ('r','p','m')
+  join pg_index x on x.indrelid=c.oid
+  join pg_class i on i.oid=x.indexrelid
+  where e.extname='supabase_vault'
+  order by e.extname collate "C", c.relname collate "C", i.relname collate "C"
+), managed_extension_constraint_rows as (
+  select e.extname, c.relname, x.conname, x.contype,
+         pg_get_constraintdef(x.oid,true) definition
+  from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+  join pg_class c on c.relnamespace=n.oid and c.relkind in ('r','p','m')
+  join pg_constraint x on x.conrelid=c.oid
+  where e.extname='supabase_vault' and x.contype <> 'n'
+  order by e.extname collate "C", c.relname collate "C", x.conname collate "C"
+), managed_extension_config_rows as (
+  select e.extname, c.ord position, coalesce(c.relation::regclass::text,'') relation,
+         coalesce(e.extcondition[c.ord],'') condition
+  from pg_extension e
+  cross join lateral unnest(coalesce(e.extconfig,'{}'::oid[])) with ordinality c(relation,ord)
+  where e.extname='supabase_vault'
+  order by e.extname collate "C", c.ord
+), managed_extension_acl_rows as (
+  select rows.extname, rows.object_identity, rows.subobject,
+         case when rows.grantee=0 then 'PUBLIC'
+              when grantee.rolname = any($3::text[])
+              then '${OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR}'
+              else grantee.rolname end grantee_role,
+         case when grantor.rolname = any($3::text[])
+              then '${OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR}'
+              else grantor.rolname end grantor_role,
+         rows.privilege_type, rows.is_grantable
+  from (
+    select e.extname, c.oid::regclass::text object_identity, '' subobject,
+           acl.grantee, acl.grantor, acl.privilege_type, acl.is_grantable
+    from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+    join pg_class c on c.relnamespace=n.oid
+    cross join lateral aclexplode(case when cardinality(c.relacl)>0 then c.relacl end) acl
+    where e.extname='supabase_vault'
+    union all
+    select e.extname, n.oid::regnamespace::text object_identity, '' subobject,
+           acl.grantee, acl.grantor, acl.privilege_type, acl.is_grantable
+    from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+    cross join lateral aclexplode(case when cardinality(n.nspacl)>0 then n.nspacl end) acl
+    where e.extname='supabase_vault'
+    union all
+    select e.extname, t.oid::regtype::text object_identity, '' subobject,
+           acl.grantee, acl.grantor, acl.privilege_type, acl.is_grantable
+    from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+    join pg_type t on t.typnamespace=n.oid
+    cross join lateral aclexplode(case when cardinality(t.typacl)>0 then t.typacl end) acl
+    where e.extname='supabase_vault'
+    union all
+    select e.extname, p.oid::regprocedure::text object_identity, '' subobject,
+           acl.grantee, acl.grantor, acl.privilege_type, acl.is_grantable
+    from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+    join pg_proc p on p.pronamespace=n.oid
+    cross join lateral aclexplode(case when cardinality(p.proacl)>0 then p.proacl end) acl
+    where e.extname='supabase_vault'
+    union all
+    select e.extname, c.oid::regclass::text object_identity, a.attname subobject,
+           acl.grantee, acl.grantor, acl.privilege_type, acl.is_grantable
+    from pg_extension e join pg_namespace n on n.oid=e.extnamespace
+    join pg_class c on c.relnamespace=n.oid
+    join pg_attribute a on a.attrelid=c.oid and a.attnum>0 and not a.attisdropped
+    cross join lateral aclexplode(case when cardinality(a.attacl)>0 then a.attacl end) acl
+    where e.extname='supabase_vault'
+  ) rows
+  left join pg_roles grantee on grantee.oid=rows.grantee
+  join pg_roles grantor on grantor.oid=rows.grantor
+  order by rows.extname collate "C", rows.object_identity collate "C",
+           rows.subobject collate "C",
+           (case when rows.grantee=0 then 'PUBLIC'
+                 when grantee.rolname = any($3::text[])
+                 then '${OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR}'
+                 else grantee.rolname end) collate "C",
+           (case when grantor.rolname = any($3::text[])
+                 then '${OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR}'
+                 else grantor.rolname end) collate "C",
+           rows.privilege_type collate "C",
+           rows.is_grantable
 )
 select jsonb_build_object(
   'public_schema_owner', pg_get_userbyid(n.nspowner),
   'public_schema_acl', coalesce(n.nspacl::text,''),
-  'roles', coalesce((select jsonb_agg(to_jsonb(role_rows) order by rolname) from role_rows),'[]'::jsonb),
-  'memberships', coalesce((select jsonb_agg(to_jsonb(membership_rows) order by granted_role,member_role,grantor_role collate "C",admin_option,inherit_option,set_option) from membership_rows),'[]'::jsonb),
-  'default_acls', coalesce((select jsonb_agg(to_jsonb(default_acl_rows) order by owner_role,schema_name,object_type,acl) from default_acl_rows),'[]'::jsonb),
-  'relations', coalesce((select jsonb_agg(to_jsonb(relation_rows) order by relname,relkind) from relation_rows),'[]'::jsonb),
-  'column_acls', coalesce((select jsonb_agg(to_jsonb(column_acl_rows) order by relname,attname) from column_acl_rows),'[]'::jsonb),
-  'policies', coalesce((select jsonb_agg(to_jsonb(policy_rows) order by tablename,policyname) from policy_rows),'[]'::jsonb),
-  'functions', coalesce((select jsonb_agg(to_jsonb(function_rows) order by identity) from function_rows),'[]'::jsonb),
-  'triggers', coalesce((select jsonb_agg(to_jsonb(trigger_rows) order by relname,tgname) from trigger_rows),'[]'::jsonb),
-  'constraints', coalesce((select jsonb_agg(to_jsonb(constraint_rows) order by relname,conname) from constraint_rows),'[]'::jsonb),
-  'types', coalesce((select jsonb_agg(to_jsonb(type_rows) order by typname) from type_rows),'[]'::jsonb),
-  'extensions', coalesce((select jsonb_agg(to_jsonb(extension_rows) order by extname) from extension_rows),'[]'::jsonb)
+  'roles', coalesce((select jsonb_agg(to_jsonb(role_rows) order by rolname collate "C") from role_rows),'[]'::jsonb),
+  'memberships', coalesce((select jsonb_agg(to_jsonb(membership_rows) order by granted_role collate "C",member_role collate "C",grantor_role collate "C",admin_option,inherit_option,set_option) from membership_rows),'[]'::jsonb),
+  'default_acls', coalesce((select jsonb_agg(to_jsonb(default_acl_rows) order by owner_role collate "C",schema_name collate "C",object_type,acl collate "C") from default_acl_rows),'[]'::jsonb),
+  'relations', coalesce((select jsonb_agg(to_jsonb(relation_rows) order by relname collate "C",relkind) from relation_rows),'[]'::jsonb),
+  'column_acls', coalesce((select jsonb_agg(to_jsonb(column_acl_rows) order by relname collate "C",attname collate "C") from column_acl_rows),'[]'::jsonb),
+  'policies', coalesce((select jsonb_agg(to_jsonb(policy_rows) order by tablename collate "C",policyname collate "C") from policy_rows),'[]'::jsonb),
+  'functions', coalesce((select jsonb_agg(to_jsonb(function_rows) order by identity collate "C") from function_rows),'[]'::jsonb),
+  'triggers', coalesce((select jsonb_agg(to_jsonb(trigger_rows) order by relname collate "C",tgname collate "C") from trigger_rows),'[]'::jsonb),
+  'constraints', coalesce((select jsonb_agg(to_jsonb(constraint_rows) order by relname collate "C",conname collate "C") from constraint_rows),'[]'::jsonb),
+  'types', coalesce((select jsonb_agg(to_jsonb(type_rows) order by typname collate "C") from type_rows),'[]'::jsonb),
+  'extensions', coalesce((select jsonb_agg(to_jsonb(extension_rows) order by extname collate "C") from extension_rows),'[]'::jsonb),
+  'managed_extension_members', coalesce((select jsonb_agg(to_jsonb(managed_extension_member_rows) order by extname collate "C",type collate "C",schema collate "C",name collate "C",identity collate "C") from managed_extension_member_rows),'[]'::jsonb),
+  'managed_extension_schema', coalesce((select jsonb_agg(to_jsonb(managed_extension_schema_rows) order by extname collate "C",schema_name collate "C") from managed_extension_schema_rows),'[]'::jsonb),
+  'managed_extension_relations', coalesce((select jsonb_agg(to_jsonb(managed_extension_relation_rows) order by extname collate "C",relname collate "C",relkind) from managed_extension_relation_rows),'[]'::jsonb),
+  'managed_extension_columns', coalesce((select jsonb_agg(to_jsonb(managed_extension_column_rows) order by extname collate "C",relname collate "C",attnum) from managed_extension_column_rows),'[]'::jsonb),
+  'managed_extension_functions', coalesce((select jsonb_agg(to_jsonb(managed_extension_function_rows) order by extname collate "C",identity collate "C") from managed_extension_function_rows),'[]'::jsonb),
+  'managed_extension_types', coalesce((select jsonb_agg(to_jsonb(managed_extension_type_rows) order by extname collate "C",typname collate "C") from managed_extension_type_rows),'[]'::jsonb),
+  'managed_extension_indexes', coalesce((select jsonb_agg(to_jsonb(managed_extension_index_rows) order by extname collate "C",relname collate "C",index_name collate "C") from managed_extension_index_rows),'[]'::jsonb),
+  'managed_extension_constraints', coalesce((select jsonb_agg(to_jsonb(managed_extension_constraint_rows) order by extname collate "C",relname collate "C",conname collate "C") from managed_extension_constraint_rows),'[]'::jsonb),
+  'managed_extension_config', coalesce((select jsonb_agg(to_jsonb(managed_extension_config_rows) order by extname collate "C",position) from managed_extension_config_rows),'[]'::jsonb),
+  'managed_extension_acls', coalesce((select jsonb_agg(to_jsonb(managed_extension_acl_rows) order by extname collate "C",object_identity collate "C",subobject collate "C",grantee_role collate "C",grantor_role collate "C",privilege_type collate "C",is_grantable) from managed_extension_acl_rows),'[]'::jsonb)
 ) snapshot
 from pg_namespace n
 where n.nspname='public'`;
@@ -163,7 +521,21 @@ export type ProductionRecoveryReceipt = {
     normalizedGrantor: typeof OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR;
     managedMembershipCount: number;
   };
+  extensionPortability: RecoveryExtensionPortability;
   authenticator: string;
+};
+
+export type RecoveryExtensionPortability = {
+  policy: typeof OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY;
+  sourceExtensions: Array<{
+    extname: string;
+    extversion: string;
+    schema_name: string;
+    portability: "bootstrap" | "stock" | "managed-fixture";
+  }>;
+  sourceExtensionsSha256: string;
+  managedExtensionCatalogSha256: string;
+  fixtureFilesSha256: Record<string, string>;
 };
 
 export type RestoreRehearsalReceipt = {
@@ -182,6 +554,11 @@ export type RestoreRehearsalReceipt = {
     adaptedStatementCount: number;
     adaptedRolesSha256: string;
   };
+  extensionPortability: RecoveryExtensionPortability & {
+    pinnedCreateExtensionStatements: number;
+    pinnedCreateExtensionStatementsSha256: string;
+    archiveTocSha256: string;
+  };
   verified: true;
   clusterSystemIdentifier: string;
   clusterSentinelNonce: string;
@@ -197,7 +574,89 @@ export type RehearsalClusterSentinel = {
   databaseName: string;
   temporarySuperuser: string;
   targetServerMajor: 17 | 18;
+  managedExtensionFixture: {
+    policy: typeof OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY;
+    filesSha256: Record<string, string>;
+    privateSharedDirectory: string;
+    privateLibraryDirectory: string;
+    postgresSha256: string;
+    initdbSha256: string;
+    privateBinaryTreeSha256: string;
+    privateSharedTreeSha256: string;
+    privateLibraryTreeSha256: string;
+    sourcePgConfigSha256: string;
+    sourceBinaryTreeSha256: string;
+    sourceSharedTreeSha256: string;
+    sourceLibraryTreeSha256: string;
+  };
   authenticator: string;
+};
+
+export type NativeVaultProof = {
+  schema: typeof OT_PRODUCTION_NATIVE_VAULT_PROOF_SCHEMA;
+  backupId: string;
+  backupReceiptSha256: string;
+  candidateCommit: string;
+  candidateManifestSha256: string;
+  platformReceipts: [
+    { platform: "darwin"; file: string; sha256: string },
+    { platform: "linux"; file: string; sha256: string },
+  ];
+  authenticator: string;
+};
+
+export type NativeVaultPlatformReceipt = {
+  schema: typeof OT_PRODUCTION_NATIVE_VAULT_PLATFORM_RECEIPT_SCHEMA;
+  platform: "darwin" | "linux";
+  backupId: string;
+  backupReceiptSha256: string;
+  candidateCommit: string;
+  candidateManifestSha256: string;
+  upstreamCommit: typeof OT_PRODUCTION_NATIVE_VAULT_UPSTREAM_COMMIT;
+  baseSqlSha256: typeof OT_PRODUCTION_NATIVE_VAULT_BASE_SQL_SHA256;
+  upgradeSqlSha256: typeof OT_PRODUCTION_NATIVE_VAULT_UPGRADE_SQL_SHA256;
+  toolchain: {
+    postgresVersion: string;
+    pgConfigSha256: string;
+    compilerVersion: string;
+    compilerSha256: string;
+    pgxsTreeSha256: string;
+    dependencyHeaderTreeSha256: string;
+    sodiumStaticLibrarySha256: string;
+  };
+  evidence: {
+    sourceArchive: { file: string; sha256: string };
+    nativeLibrary: { file: string; sha256: string };
+    transcript: { file: string; sha256: string };
+  };
+  nativeSourceCatalogSha256: string;
+  functionalSecretRoundTripSha256: string;
+  verifiedAt: string;
+  authenticator: string;
+};
+
+export type NativeVaultTranscript = {
+  schema: typeof OT_PRODUCTION_NATIVE_VAULT_TRANSCRIPT_SCHEMA;
+  platform: "darwin" | "linux";
+  backupId: string;
+  backupReceiptSha256: string;
+  candidateCommit: string;
+  candidateManifestSha256: string;
+  upstreamCommit: typeof OT_PRODUCTION_NATIVE_VAULT_UPSTREAM_COMMIT;
+  sourceArchiveSha256: string;
+  nativeLibrarySha256: string;
+  nativeSourceCatalogSha256: string;
+  functionalSecretRoundTripSha256: string;
+  operations: [
+    "build",
+    "install",
+    "create_secret",
+    "read_decrypted_secret",
+    "update_secret",
+    "read_updated_secret",
+    "drop_secret",
+  ];
+  result: "PASS";
 };
 
 const HEX = /^[0-9a-f]{64}$/;
@@ -207,12 +666,203 @@ const SQL_IDENTIFIER = String.raw`(?:"(?:[^"]|"")*"|[a-z_][a-z0-9_$]*)`;
 const ROLE_MEMBERSHIP_GRANT = new RegExp(
   String.raw`^GRANT (?<granted>${SQL_IDENTIFIER}) TO (?<member>${SQL_IDENTIFIER})(?: WITH (?<options>(?:ADMIN OPTION|INHERIT (?:TRUE|FALSE)|SET (?:TRUE|FALSE))(?:, (?:ADMIN OPTION|INHERIT (?:TRUE|FALSE)|SET (?:TRUE|FALSE)))*))? GRANTED BY (?<grantor>${SQL_IDENTIFIER});$`,
 );
+const MANAGED_EXTENSION_CATALOG_KEYS = [
+  "managed_extension_members",
+  "managed_extension_schema",
+  "managed_extension_relations",
+  "managed_extension_columns",
+  "managed_extension_functions",
+  "managed_extension_types",
+  "managed_extension_indexes",
+  "managed_extension_constraints",
+  "managed_extension_config",
+  "managed_extension_acls",
+] as const;
 
 export const sha256 = (value: Buffer | string): string =>
   createHash("sha256").update(value).digest("hex");
 
 export const canonicalJson = (value: unknown): string =>
   `${JSON.stringify(sortJson(value), null, 2)}\n`;
+
+function requiredArray(
+  snapshot: Record<string, unknown>,
+  key: string,
+): unknown[] {
+  const value = snapshot[key];
+  if (!Array.isArray(value))
+    throw new Error(`Recovery catalog ${key} is invalid`);
+  return value;
+}
+
+export function recoveryExtensionPortability(
+  snapshot: unknown,
+): RecoveryExtensionPortability {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot))
+    throw new Error("Recovery catalog snapshot is invalid");
+  const catalog = snapshot as Record<string, unknown>;
+  const extensionRows = requiredArray(catalog, "extensions");
+  const observed = extensionRows
+    .map((row) => {
+      if (!row || typeof row !== "object" || Array.isArray(row))
+        throw new Error("Recovery catalog extension row is invalid");
+      const value = row as Record<string, unknown>;
+      return {
+        extname: String(value.extname ?? ""),
+        extversion: String(value.extversion ?? ""),
+        schema_name: String(value.schema_name ?? ""),
+      };
+    })
+    .sort((left, right) => codepointCompare(left.extname, right.extname));
+  const expected = OT_PRODUCTION_RECOVERY_SUPPORTED_EXTENSIONS.map(
+    ({ portability: _ignored, ...extension }) => extension,
+  ).sort((left, right) => codepointCompare(left.extname, right.extname));
+  if (canonicalJson(observed) !== canonicalJson(expected))
+    throw new Error(
+      "Recovery source extension set, version, or schema is unsupported",
+    );
+
+  const members = requiredArray(catalog, "managed_extension_members");
+  if (
+    canonicalJson(
+      members
+        .map((row) => {
+          if (!row || typeof row !== "object" || Array.isArray(row))
+            throw new Error("Recovery managed extension member row is invalid");
+          const value = row as Record<string, unknown>;
+          return {
+            type: String(value.type ?? ""),
+            schema: String(value.schema ?? ""),
+            name: String(value.name ?? ""),
+            identity: String(value.identity ?? ""),
+          };
+        })
+        .sort((left, right) =>
+          codepointCompare(
+            `${left.type}\u0000${left.schema}\u0000${left.name}\u0000${left.identity}`,
+            `${right.type}\u0000${right.schema}\u0000${right.name}\u0000${right.identity}`,
+          ),
+        ),
+    ) !==
+    canonicalJson(
+      [...OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_MEMBERS].sort(
+        (left, right) =>
+          codepointCompare(
+            `${left.type}\u0000${left.schema}\u0000${left.name}\u0000${left.identity}`,
+            `${right.type}\u0000${right.schema}\u0000${right.name}\u0000${right.identity}`,
+          ),
+      ),
+    )
+  )
+    throw new Error("Recovery managed extension member set is unsupported");
+
+  const expectedProfiles = [
+    "supabase-vault-v0.3.1:crypto-decrypt",
+    "supabase-vault-v0.3.1:crypto-encrypt",
+    "supabase-vault-v0.3.1:crypto-noncegen",
+    "supabase-vault-v0.3.1:create-secret",
+    "supabase-vault-v0.3.1:update-secret",
+  ];
+  const functions = requiredArray(catalog, "managed_extension_functions");
+  const observedProfiles = functions
+    .map((row) => {
+      if (!row || typeof row !== "object" || Array.isArray(row))
+        throw new Error("Recovery managed extension function row is invalid");
+      return String(
+        (row as Record<string, unknown>).implementation_profile ?? "",
+      );
+    })
+    .sort(codepointCompare);
+  if (
+    canonicalJson(observedProfiles) !==
+    canonicalJson([...expectedProfiles].sort(codepointCompare))
+  )
+    throw new Error(
+      "Recovery managed extension implementation profile is unsupported",
+    );
+
+  for (const key of [
+    "managed_extension_schema",
+    "managed_extension_relations",
+    "managed_extension_functions",
+    "managed_extension_types",
+  ])
+    for (const row of requiredArray(catalog, key)) {
+      if (!row || typeof row !== "object" || Array.isArray(row))
+        throw new Error(`Recovery catalog ${key} row is invalid`);
+      if (
+        (row as Record<string, unknown>).owner_role !==
+        OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR
+      )
+        throw new Error(`Recovery catalog ${key} owner is unsupported`);
+    }
+  const vaultExtension = extensionRows.find(
+    (row) =>
+      row &&
+      typeof row === "object" &&
+      !Array.isArray(row) &&
+      (row as Record<string, unknown>).extname === "supabase_vault",
+  ) as Record<string, unknown> | undefined;
+  if (vaultExtension?.owner_role !== OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR)
+    throw new Error("Recovery managed extension owner is unsupported");
+
+  const managedCatalog = Object.fromEntries(
+    MANAGED_EXTENSION_CATALOG_KEYS.map((key) => [
+      key,
+      requiredArray(catalog, key),
+    ]),
+  );
+  const sourceExtensions = observed.map((row) => ({
+    ...row,
+    portability: OT_PRODUCTION_RECOVERY_SUPPORTED_EXTENSIONS.find(
+      (expectedRow) => expectedRow.extname === row.extname,
+    )!.portability,
+  }));
+  return {
+    policy: OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY,
+    sourceExtensions,
+    sourceExtensionsSha256: sha256(canonicalJson(sourceExtensions)),
+    managedExtensionCatalogSha256: sha256(canonicalJson(managedCatalog)),
+    fixtureFilesSha256: {
+      ...OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES,
+    },
+  };
+}
+
+function codepointCompare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+export function assertRecoveryExtensionPortability(
+  value: unknown,
+  snapshot?: unknown,
+): asserts value is RecoveryExtensionPortability {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error(
+      "Production recovery extension portability evidence is invalid",
+    );
+  const observed = value as Partial<RecoveryExtensionPortability>;
+  const expected = snapshot
+    ? recoveryExtensionPortability(snapshot)
+    : undefined;
+  if (
+    observed.policy !== OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY ||
+    !Array.isArray(observed.sourceExtensions) ||
+    !HEX.test(observed.sourceExtensionsSha256 ?? "") ||
+    !HEX.test(observed.managedExtensionCatalogSha256 ?? "") ||
+    canonicalJson(observed.fixtureFilesSha256) !==
+      canonicalJson(OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES) ||
+    sha256(canonicalJson(observed.sourceExtensions)) !==
+      observed.sourceExtensionsSha256 ||
+    canonicalJson(observed.sourceExtensions) !==
+      canonicalJson(OT_PRODUCTION_RECOVERY_SUPPORTED_EXTENSIONS) ||
+    (expected !== undefined &&
+      canonicalJson(observed) !== canonicalJson(expected))
+  )
+    throw new Error(
+      "Production recovery extension portability evidence is invalid",
+    );
+}
 
 function sqlIdentifierValue(identifier: string): string {
   return identifier.startsWith('"')
@@ -470,6 +1120,7 @@ export function assertRecoveryReceipt(
     throw new Error(
       "Production recovery role membership portability evidence is invalid",
     );
+  assertRecoveryExtensionPortability(receipt.extensionPortability);
   if (!receipt.authenticator || !HEX.test(receipt.authenticator))
     throw new Error("Production recovery receipt authenticator is invalid");
 }

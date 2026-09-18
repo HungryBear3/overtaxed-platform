@@ -107,7 +107,7 @@ jobs:
         run: npm test -- --ci --maxWorkers=2
 
   recovery-restore-matrix:
-    name: encrypted recovery restore · PostgreSQL ${{ matrix.postgres }}
+    name: synthetic fixture portability · PostgreSQL ${{ matrix.postgres }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -142,8 +142,22 @@ jobs:
           /usr/lib/postgresql/${{ matrix.postgres }}/bin/initdb --version | grep --quiet '^initdb (PostgreSQL) ${{ matrix.postgres }}'
       - name: Install
         run: npm ci
-      - name: Restore encrypted recovery fixture
-        env:
-          OT_TEST_SOURCE_PG_BIN: /usr/lib/postgresql/17/bin
-          OT_TEST_TARGET_PG_BIN: /usr/lib/postgresql/${{ matrix.postgres }}/bin
-        run: npm test -- --ci --runInBand __tests__/fulfillment/neutral-production-recovery-postgres.integration.test.ts
+      - name: Restore synthetic encrypted recovery fixture
+        run: |
+          set -euo pipefail
+          source_runtime="$(mktemp -d /tmp/os.XXXXXX)"
+          target_runtime="$(mktemp -d /tmp/ot.XXXXXX)"
+          cleanup() {
+            rm -rf -- "$source_runtime" "$target_runtime"
+          }
+          trap cleanup EXIT INT TERM
+          ./node_modules/.bin/tsx __tests__/helpers/prepare-neutral-recovery-ci-runtime.mts \
+            "$source_runtime" /usr/lib/postgresql/17/bin/pg_config
+          ./node_modules/.bin/tsx __tests__/helpers/prepare-neutral-recovery-ci-runtime.mts \
+            "$target_runtime" /usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config
+          export OT_TEST_SOURCE_PG_BIN="$source_runtime/b"
+          export OT_TEST_SOURCE_PG_RUNTIME="$source_runtime"
+          export OT_TEST_TARGET_PG_BIN="$target_runtime/b"
+          export OT_TEST_TARGET_PG_RUNTIME="$target_runtime"
+          export OT_NEUTRAL_PRODUCTION_RECOVERY_GPG_PATH=/usr/bin/gpg
+          npm test -- --ci --runInBand __tests__/fulfillment/neutral-production-recovery-postgres.integration.test.ts
