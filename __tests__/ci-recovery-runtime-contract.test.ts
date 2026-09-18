@@ -1,49 +1,76 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { parse } from "yaml";
 
-const workflow = readFileSync(
-  join(process.cwd(), ".github/workflows/ci.yml"),
+const root = process.cwd();
+const helperPath = "__tests__/helpers/prepare-neutral-recovery-ci-runtime.mts";
+const workflow = readFileSync(join(root, ".github/workflows/ci.yml"), "utf8");
+const helper = readFileSync(join(root, helperPath), "utf8");
+const productionStage = readFileSync(
+  join(root, "scripts/stage-neutral-production-recovery-extension-fixture.ts"),
   "utf8",
 );
+const packageScripts = JSON.parse(
+  readFileSync(join(root, "package.json"), "utf8"),
+).scripts as Record<string, string>;
 
-describe("CI recovery PostgreSQL runtime", () => {
-  it("copies package binaries into a root-owned sealed path without relaxing executable trust", () => {
-    expect(workflow).toContain("trusted_root=/opt/ot-neutral-postgresql");
-    expect(workflow).toContain(
-      'sudo install -d -o root -g root -m 0755 "$trusted_root" "$trusted_root/$major" "$destination"',
+type Step = { name?: string; run?: string };
+type RecoveryJob = { name?: string; steps?: Step[] };
+
+function recoveryJob(): RecoveryJob {
+  const parsed = parse(workflow) as {
+    jobs?: { "recovery-restore-matrix"?: RecoveryJob };
+  };
+  return parsed.jobs?.["recovery-restore-matrix"] ?? {};
+}
+
+describe("CI synthetic recovery fixture portability", () => {
+  it("labels the matrix as synthetic and invokes only the test helper for preparation", () => {
+    const job = recoveryJob();
+    expect(job.name).toBe(
+      "synthetic fixture portability · PostgreSQL ${{ matrix.postgres }}",
     );
-    expect(workflow).toContain(
-      'sudo cp --recursive --dereference --preserve=mode,timestamps "$source/." "$destination/"',
+    const restore = job.steps?.find(
+      (step) => step.name === "Restore synthetic encrypted recovery fixture",
     );
-    expect(workflow).toContain(
-      'sudo chown --recursive root:root "$trusted_root/$major"',
+    expect(restore?.run).toContain(
+      "./node_modules/.bin/tsx __tests__/helpers/prepare-neutral-recovery-ci-runtime.mts",
     );
-    expect(workflow).toContain(
-      'sudo chmod --recursive go-w "$trusted_root/$major"',
+    expect(restore?.run).toContain(
+      '"$source_runtime" /usr/lib/postgresql/17/bin/pg_config',
     );
-    expect(workflow).toContain(
-      'sudo find "$trusted_root/$major" -xdev \\( -type l -o ! -user root -o -perm /022 \\) -print -quit',
+    expect(restore?.run).toContain(
+      '"$target_runtime" /usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config',
     );
-    expect(workflow).toContain('local share="/usr/share/postgresql/$major"');
-    expect(workflow).toContain("sudo chown root:root /usr/share/postgresql");
-    expect(workflow).toContain("sudo chmod go-w /usr/share/postgresql");
-    expect(workflow).toContain('sudo chown --recursive root:root "$share"');
-    expect(workflow).toContain('sudo chmod --recursive go-w "$share"');
-    expect(workflow).toContain(
-      'sudo find "$share" -xdev \\( -type l -o ! -user root -o -perm /022 \\) -print -quit',
+    expect(restore?.run).not.toMatch(/\bsudo\b|stage-neutral-production/);
+    expect(workflow).not.toMatch(/ot-neutral-postgresql|ot-neutral-pg/);
+  });
+
+  it("keeps the ownership exception explicit and structurally test-only", () => {
+    expect(existsSync(join(root, helperPath))).toBe(true);
+    expect(helperPath.startsWith("__tests__/helpers/")).toBe(true);
+    expect(helper).toContain(
+      'import { unitTestTrustedExecutablePolicy } from "../../scripts/trusted-executable"',
     );
-    expect(workflow).toContain(
-      'source_pg_config="$trusted_root/17/bin/pg_config"',
+    expect(helper).toContain(
+      "testOnlyOwnershipPolicy: unitTestTrustedExecutablePolicy(process.getuid())",
     );
-    expect(workflow).toContain(
-      'target_pg_config="$trusted_root/${{ matrix.postgres }}/bin/pg_config"',
+    expect(helper).not.toMatch(/process\.env|NODE_ENV/);
+    expect(productionStage).not.toMatch(
+      /unitTestTrustedExecutablePolicy|testOnlyOwnershipPolicy|prepare-neutral-recovery-ci-runtime/,
     );
-    expect(workflow).toContain(
-      'OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG="$source_pg_config"',
+    expect(
+      packageScripts["neutral-report:production-recovery-extension-fixture"],
+    ).toBe(
+      "tsx scripts/stage-neutral-production-recovery-extension-fixture.ts",
     );
-    expect(workflow).toContain(
-      'OT_NEUTRAL_RECOVERY_REHEARSAL_PG_CONFIG="$target_pg_config"',
+  });
+
+  it("does not promote the synthetic matrix into native or Production evidence", () => {
+    expect(helper).toContain("synthetic recovery fixture portability: PASS");
+    expect(helper).not.toMatch(/native|receipt|release|pin/i);
+    expect(JSON.stringify(recoveryJob())).not.toMatch(
+      /OT_NEUTRAL_PRODUCTION_NATIVE|DATABASE_URL|secrets\./,
     );
-    expect(workflow).not.toMatch(/NODE_ENV|unitTestTrustedExecutablePolicy/);
   });
 });
