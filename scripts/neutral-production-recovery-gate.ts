@@ -141,6 +141,8 @@ export function materializePrivateCopy(bytes: Buffer): PrivateArtifactCopy {
   fs.fchmodSync(descriptor, 0o400);
   const stat = fs.fstatSync(descriptor);
   const digest = sha256(bytes);
+  let descriptorOpen = true;
+  let directoryRemoved = false;
   return {
     file,
     descriptor,
@@ -149,8 +151,42 @@ export function materializePrivateCopy(bytes: Buffer): PrivateArtifactCopy {
     inode: stat.ino,
     size: stat.size,
     cleanup: () => {
-      fs.closeSync(descriptor);
-      fs.rmSync(directory, { recursive: true, force: true });
+      if (!descriptorOpen && directoryRemoved) return;
+      let closeFailure: unknown;
+      let removalFailure: unknown;
+      if (descriptorOpen) {
+        // POSIX close may release the descriptor and still report EIO. Give up
+        // ownership before the sole attempt so a later cleanup can never close
+        // an unrelated resource that reused the same numeric descriptor.
+        descriptorOpen = false;
+        try {
+          fs.closeSync(descriptor);
+        } catch (error) {
+          closeFailure = error;
+        }
+      }
+      if (!directoryRemoved) {
+        try {
+          fs.rmSync(directory, { recursive: true, force: true });
+          directoryRemoved = true;
+        } catch (error) {
+          removalFailure = error;
+        }
+      }
+      if (closeFailure) {
+        if (removalFailure && closeFailure instanceof Error) {
+          try {
+            Object.defineProperty(closeFailure, "cause", {
+              configurable: true,
+              value: removalFailure,
+            });
+          } catch {
+            // Preserve the descriptor-close failure as the primary error.
+          }
+        }
+        throw closeFailure;
+      }
+      if (removalFailure) throw removalFailure;
     },
   };
 }
@@ -194,8 +230,14 @@ export function privateCopyReadStream(
   verifyPrivateCopy(copy);
   return fs.createReadStream(copy.file, {
     fd: copy.descriptor,
-    autoClose: false,
+    autoClose: true,
     start: 0,
+    fs: {
+      read: fs.read,
+      // The materialized copy owns this identity descriptor across every
+      // restore pass. A stream closes only its view; cleanup closes the fd.
+      close: (_descriptor, callback) => callback(null),
+    },
   });
 }
 
