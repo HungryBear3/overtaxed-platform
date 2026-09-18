@@ -1,5 +1,10 @@
-import { prepareManagedExtensionRuntime } from "../../scripts/neutral-production-extension-fixture-files";
-import { unitTestTrustedExecutablePolicy } from "../../scripts/trusted-executable";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { prepareManagedExtensionRuntime } =
+  require("../../scripts/neutral-production-extension-fixture-files") as typeof import("../../scripts/neutral-production-extension-fixture-files");
+const { unitTestTrustedExecutablePolicy } =
+  require("../../scripts/trusted-executable") as typeof import("../../scripts/trusted-executable");
 
 function main(): void {
   const [runtimeRoot, sourcePgConfig, unexpected] = process.argv.slice(2);

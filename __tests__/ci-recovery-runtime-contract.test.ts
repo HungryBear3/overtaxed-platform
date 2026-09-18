@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
@@ -49,9 +50,12 @@ describe("CI synthetic recovery fixture portability", () => {
   it("keeps the ownership exception explicit and structurally test-only", () => {
     expect(existsSync(join(root, helperPath))).toBe(true);
     expect(helperPath.startsWith("__tests__/helpers/")).toBe(true);
+    expect(helper).toContain('import { createRequire } from "node:module"');
+    expect(helper).toContain("const require = createRequire(import.meta.url)");
     expect(helper).toContain(
-      'import { unitTestTrustedExecutablePolicy } from "../../scripts/trusted-executable"',
+      '"../../scripts/neutral-production-extension-fixture-files"',
     );
+    expect(helper).toContain('"../../scripts/trusted-executable"');
     expect(helper).toContain(
       "testOnlyOwnershipPolicy: unitTestTrustedExecutablePolicy(process.getuid())",
     );
@@ -64,6 +68,22 @@ describe("CI synthetic recovery fixture portability", () => {
     ).toBe(
       "tsx scripts/stage-neutral-production-recovery-extension-fixture.ts",
     );
+  });
+
+  it("loads through the same tsx executable before rejecting missing argv", () => {
+    const result = spawnSync(
+      join(root, "node_modules/.bin/tsx"),
+      [helperPath],
+      {
+        cwd: root,
+        encoding: "utf8",
+      },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Synthetic recovery fixture preparation requires runtime-root and pg-config arguments",
+    );
+    expect(result.stderr).not.toContain("does not provide an export named");
   });
 
   it("does not promote the synthetic matrix into native or Production evidence", () => {
