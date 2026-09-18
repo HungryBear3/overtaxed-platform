@@ -38,6 +38,7 @@ import {
   adaptRecoveryExtensionSql,
   expectedExtensionSqlPortabilityProof,
   planRecoveryArchiveToc,
+  stockExtensionOwnersFromCatalog,
 } from "@/lib/fulfillment/neutral-production-extension-portability";
 import {
   assertManagedExtensionFixtureSource,
@@ -53,6 +54,10 @@ import {
 } from "@/scripts/neutral-production-recovery-gate";
 import { assertProductionRecoveryEvidenceForTests } from "@/test-support/neutral-production-recovery-gate";
 import { resolveRecoveryTarget } from "@/scripts/neutral-recovery-target";
+import {
+  alignRestoredCatalogAclOrdering,
+  planTemporaryPostgresOwnerPromotion,
+} from "@/scripts/rehearse-neutral-production-recovery";
 import { withRecoveryDirectory } from "@/lib/fulfillment/neutral-recovery-directory";
 import {
   assertTrustedExecutable,
@@ -857,6 +862,53 @@ describe("Production no-PITR recovery gate", () => {
     }
   });
 
+  test("restores stock extensions as postgres while leaving managed extensions under the managed owner", () => {
+    const source = [
+      "CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions;",
+      "CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;",
+      "CREATE EXTENSION IF NOT EXISTS supabase_vault WITH SCHEMA vault;",
+      'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;',
+      "",
+    ].join("\n");
+    const adapted = adaptRecoveryExtensionSql(source).sql;
+    expect(adapted).toContain(
+      "SET ROLE postgres;\nCREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions VERSION '1.3';\nRESET ROLE;",
+    );
+    expect(adapted).toContain(
+      "CREATE EXTENSION IF NOT EXISTS supabase_vault WITH SCHEMA vault VERSION '0.3.1';",
+    );
+    expect(adapted).not.toContain(
+      "SET ROLE postgres;\nCREATE EXTENSION IF NOT EXISTS supabase_vault",
+    );
+  });
+
+  test("restores stock extensions under authenticated source owners", () => {
+    const owners = stockExtensionOwnersFromCatalog({
+      roles: [{ rolname: "supabase_admin" }],
+      extensions: [
+        { extname: "pg_stat_statements", extversion: "1.11", schema_name: "extensions", owner_role: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR },
+        { extname: "pgcrypto", extversion: "1.3", schema_name: "extensions", owner_role: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR },
+        { extname: "uuid-ossp", extversion: "1.1", schema_name: "extensions", owner_role: OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR },
+      ],
+    });
+    const source = [
+      "CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions;",
+      "CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;",
+      "CREATE EXTENSION IF NOT EXISTS supabase_vault WITH SCHEMA vault;",
+      'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;',
+      "",
+    ].join("\n");
+    expect(adaptRecoveryExtensionSql(source, owners).sql).toContain(
+      "SET ROLE supabase_admin;\nCREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions VERSION '1.3';\nRESET ROLE;",
+    );
+    expect(() =>
+      stockExtensionOwnersFromCatalog({
+        roles: [{ rolname: "postgres" }],
+        extensions: [],
+      }),
+    ).toThrow(/source extension ownership is invalid/);
+  });
+
   test("pins every exact authenticated extension statement and proves the transformed set", () => {
     const source = [
       "CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions;",
@@ -1120,6 +1172,59 @@ describe("Production no-PITR recovery gate", () => {
       expect(OT_PRODUCTION_RECOVERY_CATALOG_SQL).toContain(digest);
   });
 
+  test("canonicalizes only PostgreSQL ACL-array ordering drift", () => {
+    const source = {
+      default_acls: [
+        {
+          owner_role: "postgres",
+          acl: "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres}",
+        },
+      ],
+    };
+    const reordered = {
+      default_acls: [
+        {
+          owner_role: "postgres",
+          acl: "{anon=X/postgres,authenticated=X/postgres,postgres=X/postgres}",
+        },
+      ],
+    };
+    expect(alignRestoredCatalogAclOrdering(source, reordered)).toEqual(source);
+    const changed = structuredClone(reordered);
+    changed.default_acls[0]!.acl =
+      "{anon=X/postgres,authenticated=r/postgres,postgres=X/postgres}";
+    expect(alignRestoredCatalogAclOrdering(source, changed)).toEqual(changed);
+  });
+
+  test("temporarily promotes only an authenticated non-superuser postgres owner", () => {
+    expect(
+      planTemporaryPostgresOwnerPromotion({
+        roles: [{ rolname: "postgres", rolsuper: false }],
+      }),
+    ).toEqual({
+      promoteSql: "ALTER ROLE postgres SUPERUSER;\n",
+      restoreSql: "ALTER ROLE postgres NOSUPERUSER;\n",
+    });
+    expect(
+      planTemporaryPostgresOwnerPromotion({
+        roles: [{ rolname: "postgres", rolsuper: true }],
+      }),
+    ).toEqual({ promoteSql: "", restoreSql: "" });
+    for (const invalid of [
+      {},
+      { roles: [] },
+      { roles: [{ rolname: "postgres" }] },
+      { roles: [{ rolname: "postgres", rolsuper: "false" }] },
+      { roles: [{ rolname: "postgres", rolsuper: null }] },
+      { roles: [{ rolname: "postgres", rolsuper: false }, { rolname: "postgres", rolsuper: false }] },
+      { roles: [{ rolname: "postgres", rolsuper: false }, { rolname: "postgres", rolsuper: "false" }] },
+      { roles: [{ rolname: "postgres", rolsuper: true }, { rolname: "postgres" }] },
+    ])
+      expect(() => planTemporaryPostgresOwnerPromotion(invalid)).toThrow(
+        /authenticated postgres owner/,
+      );
+  });
+
   test("keeps restore row diagnostics opaque and verifies database bytes before COMMIT", () => {
     const source = fs.readFileSync(
       path.join(
@@ -1135,11 +1240,18 @@ describe("Production no-PITR recovery gate", () => {
     const checksumGate = source.indexOf(
       "verifiedDatabaseHash !== input.expectedDatabaseSha256",
     );
+    const promote = source.indexOf(
+      "psql.stdin.write(input.ownerPromotion.promoteSql)",
+    );
     const firstArchiveRestore = source.indexOf("const runArchive = async");
-    const commit = source.indexOf('psql.stdin.end("COMMIT;\\n")');
+    const restoreOwner = source.indexOf(
+      "psql.stdin.end(`${input.ownerPromotion.restoreSql}COMMIT;\\n`)",
+    );
     expect(checksumGate).toBeGreaterThan(0);
+    expect(promote).toBeGreaterThan(0);
+    expect(promote).toBeLessThan(firstArchiveRestore);
     expect(checksumGate).toBeLessThan(firstArchiveRestore);
-    expect(firstArchiveRestore).toBeLessThan(commit);
+    expect(firstArchiveRestore).toBeLessThan(restoreOwner);
     const canary = "customer-row-secret@example.invalid";
     const opaqueFailure = new Error("pg_restore SQL emission failed");
     expect(opaqueFailure.message).not.toContain(canary);

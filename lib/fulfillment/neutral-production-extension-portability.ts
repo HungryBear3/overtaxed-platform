@@ -1,12 +1,15 @@
 import { Transform, type TransformCallback } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import {
+  OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS,
+  OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR,
   OT_PRODUCTION_RECOVERY_SUPPORTED_EXTENSIONS,
   canonicalJson,
   sha256,
 } from "./neutral-production-recovery";
 
 const CREATE_EXTENSION_PREFIX = "CREATE EXTENSION ";
+const SAFE_ROLE = /^[a-z_][a-z0-9_$]*$/;
 
 function quotedIdentifier(identifier: string): string {
   return /^[a-z_][a-z0-9_$]*$/.test(identifier)
@@ -37,6 +40,54 @@ export type RecoveryArchivePlan = {
   remainder: Buffer;
   archiveTocSha256: string;
 };
+
+export type StockExtensionOwners = Readonly<Record<string, string>>;
+
+export function stockExtensionOwnersFromCatalog(
+  catalog: unknown,
+): StockExtensionOwners {
+  if (!catalog || typeof catalog !== "object")
+    throw new Error("Recovery source extension ownership is invalid");
+  const extensions = (catalog as { extensions?: unknown }).extensions;
+  const roles = (catalog as { roles?: unknown }).roles;
+  if (!Array.isArray(extensions) || !Array.isArray(roles))
+    throw new Error("Recovery source extension ownership is invalid");
+  const authenticatedRoles = new Set(
+    roles.flatMap((role) =>
+      role &&
+      typeof role === "object" &&
+      typeof (role as { rolname?: unknown }).rolname === "string"
+        ? [(role as { rolname: string }).rolname]
+        : [],
+    ),
+  );
+  const owners: Record<string, string> = {};
+  for (const expected of RESTORED_EXTENSIONS.filter(
+    (extension) => extension.portability === "stock",
+  )) {
+    const matches = extensions.filter(
+      (row) =>
+        row &&
+        typeof row === "object" &&
+        (row as { extname?: unknown }).extname === expected.extname &&
+        (row as { extversion?: unknown }).extversion === expected.extversion &&
+        (row as { schema_name?: unknown }).schema_name === expected.schema_name,
+    );
+    const catalogOwner =
+      matches.length === 1 &&
+      typeof (matches[0] as { owner_role?: unknown }).owner_role === "string"
+        ? (matches[0] as { owner_role: string }).owner_role
+        : "";
+    const owner =
+      catalogOwner === OT_PRODUCTION_RECOVERY_NORMALIZED_GRANTOR
+        ? OT_PRODUCTION_RECOVERY_MANAGED_GRANTORS[0]
+        : catalogOwner;
+    if (!SAFE_ROLE.test(owner) || !authenticatedRoles.has(owner))
+      throw new Error("Recovery source extension ownership is invalid");
+    owners[expected.extname] = owner;
+  }
+  return Object.freeze(owners);
+}
 
 function selectedToc(input: string[], selected: Set<number>): Buffer {
   return Buffer.from(
@@ -131,6 +182,8 @@ export function expectedExtensionSqlPortabilityProof(): ExtensionSqlPortabilityP
 class ExtensionStatementAdapter {
   private readonly observed = new Map<string, string>();
 
+  constructor(private readonly stockOwners: StockExtensionOwners) {}
+
   adaptLine(line: string): string {
     const newline = line.endsWith("\r\n")
       ? "\r\n"
@@ -151,6 +204,12 @@ class ExtensionStatementAdapter {
         `Recovery dump repeats CREATE EXTENSION for ${expected.extension.extname}`,
       );
     this.observed.set(expected.extension.extname, expected.pinned);
+    if (expected.extension.portability === "stock") {
+      const owner = this.stockOwners[expected.extension.extname];
+      if (!owner || !SAFE_ROLE.test(owner))
+        throw new Error("Recovery source extension ownership is invalid");
+      return `SET ROLE ${quotedIdentifier(owner)};\n${expected.pinned}${newline}RESET ROLE;${newline}`;
+    }
     return `${expected.pinned}${newline}`;
   }
 
@@ -170,11 +229,18 @@ class ExtensionStatementAdapter {
   }
 }
 
-export function adaptRecoveryExtensionSql(input: string): {
+export function adaptRecoveryExtensionSql(
+  input: string,
+  stockOwners: StockExtensionOwners = Object.fromEntries(
+    RESTORED_EXTENSIONS.filter(
+      (extension) => extension.portability === "stock",
+    ).map((extension) => [extension.extname, "postgres"]),
+  ),
+): {
   sql: string;
   proof: ExtensionSqlPortabilityProof;
 } {
-  const adapter = new ExtensionStatementAdapter();
+  const adapter = new ExtensionStatementAdapter(stockOwners);
   const sql = input
     .split(/(?<=\n)/)
     .map((line) => adapter.adaptLine(line))
@@ -185,8 +251,13 @@ export function adaptRecoveryExtensionSql(input: string): {
 export class RecoveryExtensionSqlTransform extends Transform {
   private pending = "";
   private readonly decoder = new StringDecoder("utf8");
-  private readonly adapter = new ExtensionStatementAdapter();
+  private readonly adapter: ExtensionStatementAdapter;
   private completedProof: ExtensionSqlPortabilityProof | undefined;
+
+  constructor(stockOwners: StockExtensionOwners) {
+    super();
+    this.adapter = new ExtensionStatementAdapter(stockOwners);
+  }
 
   override _transform(
     chunk: Buffer,
