@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import {
   OT_PRODUCTION_REHEARSAL_SENTINEL_SCHEMA,
@@ -424,7 +425,19 @@ async function decryptBuffer(
   }
 }
 
-async function main(): Promise<void> {
+export async function rehearseNeutralProductionRecovery(
+  dependencies: {
+    verifyInstalledFixture?: typeof assertManagedExtensionFixtureInstalled;
+    resolveRuntimeExecutable?: (file: string) => TrustedExecutable;
+  } = {},
+): Promise<void> {
+  const verifyInstalledFixture =
+    dependencies.verifyInstalledFixture ??
+    assertManagedExtensionFixtureInstalled;
+  const resolveRuntimeExecutable =
+    dependencies.resolveRuntimeExecutable ??
+    ((file: string) =>
+      resolveTrustedExecutable(file, { allowStickyAncestors: true }));
   const receiptPath = process.env.OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT;
   const targetUrl = process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL;
   const passphrase = process.env.OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE;
@@ -445,15 +458,13 @@ async function main(): Promise<void> {
       "Receipt, target, passphrase, authentication key and cluster sentinel are required",
     );
   const resolvedTarget = await resolveRecoveryTarget(targetUrl);
-  const installedFixture = assertManagedExtensionFixtureInstalled(runtimeRoot);
+  const installedFixture = verifyInstalledFixture(runtimeRoot);
   const gpgCommand = resolveTrustedExecutable(gpgPath);
-  const psqlCommand = resolveTrustedExecutable(
+  const psqlCommand = resolveRuntimeExecutable(
     path.join(installedFixture.privateBinaryDirectory, "psql"),
-    { allowStickyAncestors: true },
   );
-  const pgRestoreCommand = resolveTrustedExecutable(
+  const pgRestoreCommand = resolveRuntimeExecutable(
     path.join(installedFixture.privateBinaryDirectory, "pg_restore"),
-    { allowStickyAncestors: true },
   );
   const receiptBytes = readProtectedFile(receiptPath);
   const receipt = JSON.parse(
@@ -652,7 +663,7 @@ async function main(): Promise<void> {
     });
 
     const database = byFormat["postgres-custom"]!;
-    assertManagedExtensionFixtureInstalled(runtimeRoot);
+    verifyInstalledFixture(runtimeRoot);
     const restoredArtifactHashes = await decryptRestoreSingleSession({
       rolesSql: adaptedRoles.bytes,
       rolesPlaintextSha256: sha256(rolesPlaintext),
@@ -769,12 +780,16 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  process.stderr.write(
-    `neutral-report PRODUCTION recovery rehearsal: FAIL\n${redactProductionDiagnostic(
-      error,
-      Object.values(process.env).filter((v): v is string => Boolean(v)),
-    )}\n`,
-  );
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+)
+  rehearseNeutralProductionRecovery().catch((error: unknown) => {
+    process.stderr.write(
+      `neutral-report PRODUCTION recovery rehearsal: FAIL\n${redactProductionDiagnostic(
+        error,
+        Object.values(process.env).filter((v): v is string => Boolean(v)),
+      )}\n`,
+    );
+    process.exitCode = 1;
+  });

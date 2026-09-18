@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import {
   OT_PRODUCTION_REHEARSAL_SENTINEL_SCHEMA,
@@ -18,7 +19,14 @@ import {
 import { redactProductionDiagnostic } from "../lib/fulfillment/neutral-production-verifier";
 import { resolveRecoveryTarget } from "./neutral-recovery-target";
 
-async function main(): Promise<void> {
+export async function setupNeutralProductionRecoveryRehearsal(
+  dependencies: {
+    verifyInstalledFixture?: typeof assertManagedExtensionFixtureInstalled;
+  } = {},
+): Promise<void> {
+  const verifyInstalledFixture =
+    dependencies.verifyInstalledFixture ??
+    assertManagedExtensionFixtureInstalled;
   const targetUrl = process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL;
   const superuser = process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_SUPERUSER;
   const output = process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL;
@@ -48,7 +56,7 @@ async function main(): Promise<void> {
     `)
     ).rows[0]!;
     const major = Math.floor(Number(identity.version) / 10_000);
-    const fixture = assertManagedExtensionFixtureInstalled(runtimeRoot);
+    const fixture = verifyInstalledFixture(runtimeRoot);
     if (
       (major !== 17 && major !== 18) ||
       fixture.major !== major ||
@@ -152,12 +160,16 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  process.stderr.write(
-    `neutral-report recovery rehearsal setup: FAIL\n${redactProductionDiagnostic(
-      error,
-      Object.values(process.env).filter((v): v is string => Boolean(v)),
-    )}\n`,
-  );
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+)
+  setupNeutralProductionRecoveryRehearsal().catch((error: unknown) => {
+    process.stderr.write(
+      `neutral-report recovery rehearsal setup: FAIL\n${redactProductionDiagnostic(
+        error,
+        Object.values(process.env).filter((v): v is string => Boolean(v)),
+      )}\n`,
+    );
+    process.exitCode = 1;
+  });

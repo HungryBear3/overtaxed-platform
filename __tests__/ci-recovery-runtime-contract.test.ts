@@ -15,8 +15,11 @@ import { parse } from "yaml";
 
 const root = process.cwd();
 const helperPath = "__tests__/helpers/prepare-neutral-recovery-ci-runtime.mts";
+const commandHelperPath =
+  "__tests__/helpers/run-neutral-recovery-ci-command.mts";
 const workflow = readFileSync(join(root, ".github/workflows/ci.yml"), "utf8");
 const helper = readFileSync(join(root, helperPath), "utf8");
+const commandHelper = readFileSync(join(root, commandHelperPath), "utf8");
 const productionStage = readFileSync(
   join(root, "scripts/stage-neutral-production-recovery-extension-fixture.ts"),
   "utf8",
@@ -160,6 +163,84 @@ describe("CI synthetic recovery fixture portability", () => {
     expect(helper).not.toMatch(/native|receipt|release|pin/i);
     expect(JSON.stringify(recoveryJob())).not.toMatch(
       /OT_NEUTRAL_PRODUCTION_NATIVE|DATABASE_URL|secrets\./,
+    );
+  });
+
+  it("keeps runtime trust injection in the test-owned child wrapper", () => {
+    const integration = readFileSync(
+      join(
+        root,
+        "__tests__/fulfillment/neutral-production-recovery-postgres.integration.test.ts",
+      ),
+      "utf8",
+    );
+    const setup = readFileSync(
+      join(root, "scripts/setup-neutral-production-recovery-rehearsal.ts"),
+      "utf8",
+    );
+    const rehearse = readFileSync(
+      join(root, "scripts/rehearse-neutral-production-recovery.ts"),
+      "utf8",
+    );
+    expect(commandHelperPath.startsWith("__tests__/helpers/")).toBe(true);
+    expect(commandHelper).toContain("unitTestTrustedExecutablePolicy");
+    expect(commandHelper).toContain("verifyInstalledFixture");
+    expect(commandHelper).toContain("resolveRuntimeExecutable");
+    expect(commandHelper).not.toMatch(/process\.env|NODE_ENV/);
+    expect(integration).not.toContain(
+      '["scripts/setup-neutral-production-recovery-rehearsal.ts"]',
+    );
+    expect(integration).not.toContain(
+      '["scripts/rehearse-neutral-production-recovery.ts"]',
+    );
+    expect(integration).toContain(
+      '["__tests__/helpers/run-neutral-recovery-ci-command.mts", "setup"]',
+    );
+    expect(integration).toContain(
+      '["__tests__/helpers/run-neutral-recovery-ci-command.mts", "rehearse"]',
+    );
+    for (const production of [setup, rehearse]) {
+      expect(production).not.toMatch(
+        /unitTestTrustedExecutablePolicy|testOnlyOwnershipPolicy|run-neutral-recovery-ci-command/,
+      );
+      expect(production).toContain("fileURLToPath(import.meta.url)");
+    }
+    expect(setup).toContain("setupNeutralProductionRecoveryRehearsal().catch");
+    expect(rehearse).toContain("rehearseNeutralProductionRecovery().catch");
+  });
+
+  it("runs both Production CLIs with strict defaults and rejects malformed helper argv", () => {
+    for (const [script, failure] of [
+      [
+        "scripts/setup-neutral-production-recovery-rehearsal.ts",
+        "neutral-report recovery rehearsal setup: FAIL",
+      ],
+      [
+        "scripts/rehearse-neutral-production-recovery.ts",
+        "neutral-report PRODUCTION recovery rehearsal: FAIL",
+      ],
+    ] as const) {
+      const production = spawnSync(
+        join(root, "node_modules/.bin/tsx"),
+        [script],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: { PATH: process.env.PATH, NODE_ENV: "test" },
+        },
+      );
+      expect(production.status).toBe(1);
+      expect(production.stderr).toContain(failure);
+    }
+
+    const helperResult = spawnSync(
+      join(root, "node_modules/.bin/tsx"),
+      [commandHelperPath],
+      { cwd: root, encoding: "utf8" },
+    );
+    expect(helperResult.status).toBe(1);
+    expect(helperResult.stderr).toContain(
+      "Synthetic recovery command must be setup or rehearse",
     );
   });
 });

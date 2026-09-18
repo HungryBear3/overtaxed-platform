@@ -310,7 +310,7 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
     const sentinelPath = path.join(target.root, "cluster-sentinel.json");
     execFileSync(
       "node_modules/.bin/tsx",
-      ["scripts/setup-neutral-production-recovery-rehearsal.ts"],
+      ["__tests__/helpers/run-neutral-recovery-ci-command.mts", "setup"],
       {
         cwd: process.cwd(),
         stdio: "ignore",
@@ -331,7 +331,7 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
 
     const output = execFileSync(
       "node_modules/.bin/tsx",
-      ["scripts/rehearse-neutral-production-recovery.ts"],
+      ["__tests__/helpers/run-neutral-recovery-ci-command.mts", "rehearse"],
       {
         cwd: process.cwd(),
         encoding: "utf8",
@@ -433,7 +433,7 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
     const swapSentinel = path.join(guarded.root, "swap-sentinel.json");
     execFileSync(
       "node_modules/.bin/tsx",
-      ["scripts/setup-neutral-production-recovery-rehearsal.ts"],
+      ["__tests__/helpers/run-neutral-recovery-ci-command.mts", "setup"],
       {
         cwd: process.cwd(),
         stdio: "ignore",
@@ -454,7 +454,7 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
     const hook = path.join(guarded.root, "listener-swap");
     const rehearsal = spawn(
       "node_modules/.bin/tsx",
-      ["scripts/rehearse-neutral-production-recovery.ts"],
+      ["__tests__/helpers/run-neutral-recovery-ci-command.mts", "rehearse"],
       {
         cwd: process.cwd(),
         stdio: ["ignore", "pipe", "pipe"],
@@ -570,7 +570,7 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
     expect(() =>
       execFileSync(
         "node_modules/.bin/tsx",
-        ["scripts/setup-neutral-production-recovery-rehearsal.ts"],
+        ["__tests__/helpers/run-neutral-recovery-ci-command.mts", "setup"],
         {
           cwd: process.cwd(),
           stdio: "pipe",
