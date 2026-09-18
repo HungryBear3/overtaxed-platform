@@ -89,6 +89,25 @@ export function observeRecoveryStreamErrors(
   return { failure };
 }
 
+export function recordRecoveryEndpointErrors(stream: {
+  on(event: "error", listener: () => void): unknown;
+}): { observed: () => boolean; acceptAfterAuthority: () => boolean } {
+  let errorObserved = false;
+  stream.on("error", () => {
+    // The raw error is deliberately neither retained nor surfaced. Only the
+    // endpoint's later authoritative completion may accept this observation.
+    errorObserved = true;
+  });
+  return {
+    observed: () => errorObserved,
+    acceptAfterAuthority: () => {
+      const accepted = errorObserved;
+      errorObserved = false;
+      return accepted;
+    },
+  };
+}
+
 function childClose(
   child: ChildProcess,
   failureMessage: string,
@@ -171,6 +190,8 @@ export async function settleRecoveryArchivePipeline(input: {
   failures: readonly Promise<never>[];
   consumerFailureMessage: string;
   producerEarlyFailureMessage: string;
+  progressTimeoutMs?: number;
+  progressTimeoutMessage?: string;
   stop: () => void;
   disconnect: () => void;
 }): Promise<void> {
@@ -180,11 +201,27 @@ export async function settleRecoveryArchivePipeline(input: {
     throw new Error(input.producerEarlyFailureMessage);
   });
   void earlyProducerFailure.catch(() => undefined);
+  let progressTimer: NodeJS.Timeout | undefined;
+  const progressTimeout = input.progressTimeoutMs
+    ? new Promise<never>((_resolve, reject) => {
+        progressTimer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                input.progressTimeoutMessage ??
+                  "recovery archive consumer timed out",
+              ),
+            ),
+          input.progressTimeoutMs,
+        );
+      })
+    : undefined;
   try {
     const [consumerCode] = await Promise.race([
       input.consumerProgress,
       ...input.failures,
       earlyProducerFailure,
+      ...(progressTimeout ? [progressTimeout] : []),
     ]);
     if (consumerCode !== 0) throw new Error(input.consumerFailureMessage);
     input.disconnect();
@@ -210,6 +247,8 @@ export async function settleRecoveryArchivePipeline(input: {
       terminateChild(input.consumer, input.consumerClosed),
     ]);
     throw error;
+  } finally {
+    if (progressTimer) clearTimeout(progressTimer);
   }
 }
 
@@ -663,12 +702,8 @@ $ot_recovery_guard$;
         ["ECONNRESET"],
         stop,
       );
-      const restoreInputErrors = observeRecoveryStreamErrors(
-        restore.stdin,
-        "pg_restore archive TOC input failed",
-        ["EPIPE", "ECONNRESET"],
-        stop,
-      );
+      const restoreInputErrors = recordRecoveryEndpointErrors(restore.stdin);
+      const restoreOutputEnded = streamEnded(restore.stdout);
       restore.stdout.on("data", (chunk: Buffer) =>
         chunks.push(Buffer.from(chunk)),
       );
@@ -681,7 +716,9 @@ $ot_recovery_guard$;
         producerClosed: gpgClosed,
         consumer: restore,
         consumerClosed: restoreClosed,
-        consumerProgress: restoreClosed,
+        consumerProgress: Promise.all([restoreClosed, restoreOutputEnded]).then(
+          ([status]) => status,
+        ),
         failures: [
           prematurePsqlExit,
           psqlInputFailed,
@@ -692,11 +729,12 @@ $ot_recovery_guard$;
           passphraseErrors.failure,
           restoreOutputErrors.failure,
           restoreStderrErrors.failure,
-          restoreInputErrors.failure,
         ],
         consumerFailureMessage: "pg_restore archive TOC failed",
         producerEarlyFailureMessage:
           "gpg archive failed before pg_restore completed",
+        progressTimeoutMs: 30_000,
+        progressTimeoutMessage: "pg_restore archive TOC timed out",
         stop,
         disconnect: () => {
           encrypted.unpipe(gpg.stdin!);
@@ -704,6 +742,7 @@ $ot_recovery_guard$;
           gpg.stdout!.unpipe(restore.stdin);
         },
       });
+      restoreInputErrors.acceptAfterAuthority();
       const toc = Buffer.concat(chunks);
       for (const chunk of chunks) chunk.fill(0);
       return toc;
