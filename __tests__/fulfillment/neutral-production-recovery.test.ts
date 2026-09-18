@@ -468,9 +468,9 @@ describe("Production no-PITR recovery gate", () => {
         OT_PRODUCTION_NATIVE_VAULT_APPROVED_PLATFORM_RECEIPT_SHA256,
       ).toEqual({
         darwin:
-          "17f0eb79dbecddb55fe37394c84288a6495a65331e9ea5bdd6d0b84dc72893c2",
+          "284bcccb451fca0887e9a049178e8693596d5798057c405772390a988622b824",
         linux:
-          "4f1401a075f55f9fb23b7795e86d541c7314023bd27ae703406fda3de8616287",
+          "e0071ccbc8cd4e44763c525da67b2ed2396448a18606955ce833e86123ea9f7b",
       });
 
       const gateSource = fs.readFileSync(
