@@ -666,7 +666,7 @@ $ot_recovery_guard$;
       const restoreInputErrors = observeRecoveryStreamErrors(
         restore.stdin,
         "pg_restore archive TOC input failed",
-        ["EPIPE"],
+        ["EPIPE", "ECONNRESET"],
         stop,
       );
       restore.stdout.on("data", (chunk: Buffer) =>

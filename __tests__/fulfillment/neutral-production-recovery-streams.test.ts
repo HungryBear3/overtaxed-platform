@@ -292,6 +292,57 @@ describe("neutral recovery child-stream errors", () => {
     await expect(consumerClosed).resolves.toEqual([0, null]);
   });
 
+  test("accepts a real TOC-list stdin close only after the prefix consumer exits zero", async () => {
+    const producer = child(`
+      const chunk = Buffer.alloc(65536, 7);
+      const pump = () => { while (process.stdout.write(chunk)) {} };
+      process.stdout.on("drain", pump);
+      pump();
+      setInterval(() => undefined, 1000);
+    `);
+    const consumer = child(
+      'process.stdin.once("data", () => process.exit(0)); process.stdin.resume();',
+    );
+    const producerClosed = childClose(producer);
+    const consumerClosed = childClose(consumer);
+    const stop = () => stopPipeline(producer, consumer);
+    const transportCodes: string[] = [];
+    consumer.stdin!.on("error", (error: NodeJS.ErrnoException) => {
+      transportCodes.push(error.code ?? "");
+    });
+    const tocInputErrors = observeRecoveryStreamErrors(
+      consumer.stdin!,
+      "pg_restore archive TOC input failed",
+      ["EPIPE", "ECONNRESET"],
+      stop,
+    );
+    producer.stdout!.pipe(consumer.stdin!);
+
+    await settleRecoveryArchivePipeline({
+      producer,
+      producerClosed,
+      consumer,
+      consumerClosed,
+      consumerProgress: consumerClosed,
+      failures: [tocInputErrors.failure],
+      consumerFailureMessage: "pg_restore archive TOC failed",
+      producerEarlyFailureMessage:
+        "gpg archive failed before pg_restore completed",
+      stop,
+      disconnect: () => producer.stdout!.unpipe(consumer.stdin!),
+    });
+
+    expect(
+      transportCodes.some((code) => ["EPIPE", "ECONNRESET"].includes(code)),
+    ).toBe(true);
+    await expect(consumerClosed).resolves.toEqual([0, null]);
+    const [producerCode, producerSignal] = await producerClosed;
+    expect(
+      producerCode === 0 ||
+        ["SIGTERM", "SIGKILL", "SIGPIPE"].includes(producerSignal ?? ""),
+    ).toBe(true);
+  });
+
   test("treats a nonzero consumer as fatal and terminates the producer", async () => {
     const producer = child(
       'process.stdout.write("archive"); setInterval(() => undefined, 1000);',
@@ -299,6 +350,13 @@ describe("neutral recovery child-stream errors", () => {
     const consumer = child("process.stdin.resume(); process.exit(9);");
     const producerClosed = childClose(producer);
     const consumerClosed = childClose(consumer);
+    const stop = () => stopPipeline(producer, consumer);
+    const tocInputErrors = observeRecoveryStreamErrors(
+      consumer.stdin!,
+      "pg_restore archive TOC input failed",
+      ["EPIPE", "ECONNRESET"],
+      stop,
+    );
     producer.stdout!.pipe(consumer.stdin!);
 
     await expect(
@@ -308,10 +366,10 @@ describe("neutral recovery child-stream errors", () => {
         consumer,
         consumerClosed,
         consumerProgress: consumerClosed,
-        failures: [],
+        failures: [tocInputErrors.failure],
         consumerFailureMessage: "consumer failed",
         producerEarlyFailureMessage: "producer failed early",
-        stop: () => stopPipeline(producer, consumer),
+        stop,
         disconnect: () => producer.stdout!.unpipe(consumer.stdin!),
       }),
     ).rejects.toThrow("consumer failed");
