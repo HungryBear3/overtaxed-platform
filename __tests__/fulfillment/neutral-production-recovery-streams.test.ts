@@ -1,11 +1,21 @@
 /** @jest-environment node */
 import { spawn, type ChildProcess } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import {
+  assertRecoverySelectionAnchor,
+  assertRecoverySelectionFile,
   assertExpectedGpgTermination,
+  closeRecoverySelectionAnchor,
+  materializeRecoverySelectionFile,
   observeRecoveryStreamErrors,
-  recordRecoveryEndpointErrors,
+  openRecoverySelectionAnchor,
+  recoverySelectionChildPath,
+  removeRecoverySelectionFile,
   settleRecoveryArchivePipeline,
+  unlinkRecoverySelectionPath,
 } from "@/scripts/rehearse-neutral-production-recovery";
 
 function transportError(code: string, message: string): NodeJS.ErrnoException {
@@ -36,6 +46,14 @@ function stopPipeline(producer: ChildProcess, consumer: ChildProcess): void {
     producer.kill("SIGTERM");
   if (consumer.exitCode === null && consumer.signalCode === null)
     consumer.kill("SIGTERM");
+}
+
+function privateDirectory(): string {
+  const directory = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ot-selection-test-")),
+  );
+  fs.chmodSync(directory, 0o700);
+  return directory;
 }
 
 describe("neutral recovery child-stream errors", () => {
@@ -187,11 +205,6 @@ describe("neutral recovery child-stream errors", () => {
     );
     const producerClosed = childClose(producer);
     const consumerClosed = childClose(consumer);
-    const deferredInput = recordRecoveryEndpointErrors(consumer.stdin!);
-    consumer.stdin!.emit(
-      "error",
-      transportError("EARBITRARY", "secret early producer detail"),
-    );
     producer.stdout!.pipe(consumer.stdin!);
 
     await expect(
@@ -211,7 +224,6 @@ describe("neutral recovery child-stream errors", () => {
     await expect(producerClosed).resolves.toEqual([7, null]);
     const [, consumerSignal] = await consumerClosed;
     expect(["SIGTERM", "SIGKILL"]).toContain(consumerSignal);
-    expect(deferredInput.observed()).toBe(true);
   });
 
   test("actively tears down a real pipeline on source EIO without leaking or hanging", async () => {
@@ -299,146 +311,124 @@ describe("neutral recovery child-stream errors", () => {
     await expect(consumerClosed).resolves.toEqual([0, null]);
   });
 
-  test("defers arbitrary TOC stdin errors until complete output and zero consumer authority", async () => {
-    const producer = child(`
-      const chunk = Buffer.alloc(65536, 7);
-      const pump = () => { while (process.stdout.write(chunk)) {} };
-      process.stdout.on("drain", pump);
-      pump();
-      setInterval(() => undefined, 1000);
-    `);
-    const consumer = child(
-      'process.stdin.once("data", () => process.stdout.end("TOC COMPLETE", () => process.exit(0))); process.stdin.resume();',
-    );
-    const producerClosed = childClose(producer);
-    const consumerClosed = childClose(consumer);
-    const stop = () => stopPipeline(producer, consumer);
-    const transportCodes: string[] = [];
-    consumer.stdin!.on("error", (error: NodeJS.ErrnoException) => {
-      transportCodes.push(error.code ?? "");
-    });
-    const tocInputErrors = recordRecoveryEndpointErrors(consumer.stdin!);
-    consumer.stdin!.emit(
-      "error",
-      transportError(
-        "ETOCLATE",
-        "customer-row-secret@example.invalid arbitrary transport detail",
-      ),
-    );
-    producer.stdout!.pipe(consumer.stdin!);
-    let tocOutput = "";
-    consumer.stdout!.setEncoding("utf8");
-    consumer.stdout!.on("data", (chunk: string) => {
-      tocOutput += chunk;
-    });
-    const outputEnded = new Promise<void>((resolve) =>
-      consumer.stdout!.once("end", resolve),
-    );
-    consumer.stdout!.resume();
-
-    await settleRecoveryArchivePipeline({
-      producer,
-      producerClosed,
-      consumer,
-      consumerClosed,
-      consumerProgress: Promise.all([consumerClosed, outputEnded]).then(
-        ([status]) => status,
-      ),
-      failures: [],
-      consumerFailureMessage: "pg_restore archive TOC failed",
-      producerEarlyFailureMessage:
-        "gpg archive failed before pg_restore completed",
-      stop,
-      disconnect: () => producer.stdout!.unpipe(consumer.stdin!),
-    });
-
-    expect(
-      transportCodes.some((code) => ["EPIPE", "ECONNRESET"].includes(code)),
-    ).toBe(true);
-    expect(tocInputErrors.acceptAfterAuthority()).toBe(true);
-    expect(tocInputErrors.observed()).toBe(false);
-    expect(tocOutput).toBe("TOC COMPLETE");
-    await expect(consumerClosed).resolves.toEqual([0, null]);
-    const [producerCode, producerSignal] = await producerClosed;
-    expect(
-      producerCode === 0 ||
-        ["SIGTERM", "SIGKILL", "SIGPIPE"].includes(producerSignal ?? ""),
-    ).toBe(true);
+  test("materializes and revalidates an exact protected TOC selection", () => {
+    const directory = privateDirectory();
+    try {
+      const bytes = Buffer.from("1; 0 0 TABLE DATA public exact owner\n");
+      const selection = materializeRecoverySelectionFile(
+        directory,
+        "selection-0.list",
+        bytes,
+      );
+      expect(fs.readFileSync(selection.file)).toEqual(bytes);
+      expect(fs.statSync(selection.file).mode & 0o777).toBe(0o600);
+      expect(() => assertRecoverySelectionFile(selection)).not.toThrow();
+      const anchor = openRecoverySelectionAnchor(selection);
+      expect(() => assertRecoverySelectionAnchor(anchor)).not.toThrow();
+      closeRecoverySelectionAnchor(anchor);
+      removeRecoverySelectionFile(selection);
+      expect(fs.existsSync(selection.file)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
-  test("treats a nonzero consumer as fatal and terminates the producer", async () => {
-    const producer = child(
-      'process.stdout.write("archive"); setInterval(() => undefined, 1000);',
-    );
-    const consumer = child("process.stdin.resume(); process.exit(9);");
-    const producerClosed = childClose(producer);
-    const consumerClosed = childClose(consumer);
-    const stop = () => stopPipeline(producer, consumer);
-    const tocInputErrors = recordRecoveryEndpointErrors(consumer.stdin!);
-    consumer.stdin!.emit(
-      "error",
-      transportError("EARBITRARY", "secret nonzero consumer detail"),
-    );
-    producer.stdout!.pipe(consumer.stdin!);
+  test.each(["truncated", "mode", "hardlink", "symlink", "path-swap"])(
+    "rejects a %s TOC selection before pg_restore spawn",
+    (mutation) => {
+      const directory = privateDirectory();
+      try {
+        const bytes = Buffer.from(
+          "1; 0 0 TABLE DATA public valid_prefix owner\n2; 0 0 TABLE DATA public required owner\n",
+        );
+        const selection = materializeRecoverySelectionFile(
+          directory,
+          "selection-0.list",
+          bytes,
+        );
+        if (mutation === "truncated")
+          fs.writeFileSync(selection.file, bytes.subarray(0, 45), {
+            mode: 0o600,
+          });
+        if (mutation === "mode") fs.chmodSync(selection.file, 0o640);
+        if (mutation === "hardlink")
+          fs.linkSync(selection.file, path.join(directory, "alias.list"));
+        if (mutation === "symlink") {
+          fs.unlinkSync(selection.file);
+          fs.symlinkSync(path.join(directory, "missing.list"), selection.file);
+        }
+        if (mutation === "path-swap") {
+          const moved = path.join(directory, "moved.list");
+          fs.renameSync(selection.file, moved);
+          fs.copyFileSync(moved, selection.file);
+          fs.chmodSync(selection.file, 0o600);
+        }
+        expect(() => assertRecoverySelectionFile(selection)).toThrow();
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
-    await expect(
-      settleRecoveryArchivePipeline({
-        producer,
-        producerClosed,
-        consumer,
-        consumerClosed,
-        consumerProgress: consumerClosed,
-        failures: [],
-        consumerFailureMessage: "consumer failed",
-        producerEarlyFailureMessage: "producer failed early",
-        stop,
-        disconnect: () => producer.stdout!.unpipe(consumer.stdin!),
-      }),
-    ).rejects.toThrow("consumer failed");
-    await expect(consumerClosed).resolves.toEqual([9, null]);
-    const [, producerSignal] = await producerClosed;
-    expect(["SIGTERM", "SIGKILL"]).toContain(producerSignal);
-    expect(tocInputErrors.observed()).toBe(true);
+  test("binds the child to the unlinked validated inode despite a same-UID path replacement", async () => {
+    const directory = privateDirectory();
+    let unrelated: number | undefined;
+    try {
+      const original = Buffer.from("original validated selection\n");
+      const replacement = Buffer.from("attacker replacement selection\n");
+      const selection = materializeRecoverySelectionFile(
+        directory,
+        "selection-0.list",
+        original,
+      );
+      const anchor = openRecoverySelectionAnchor(selection);
+      unlinkRecoverySelectionPath(anchor);
+      expect(fs.existsSync(selection.file)).toBe(false);
+      const reader = spawn(
+        process.execPath,
+        ["-e", 'process.stdout.write(require("fs").readFileSync(3))'],
+        {
+          stdio: ["ignore", "pipe", "ignore", anchor.descriptor],
+        },
+      );
+      const chunks: Buffer[] = [];
+      reader.stdout!.on("data", (chunk: Buffer) =>
+        chunks.push(Buffer.from(chunk)),
+      );
+      fs.writeFileSync(selection.file, replacement, { mode: 0o600 });
+      await expect(childClose(reader)).resolves.toEqual([0, null]);
+      expect(Buffer.concat(chunks)).toEqual(original);
+      expect(() => assertRecoverySelectionAnchor(anchor)).not.toThrow();
+      expect(fs.readFileSync(selection.file)).toEqual(replacement);
+
+      closeRecoverySelectionAnchor(anchor);
+      unrelated = fs.openSync("/dev/null", fs.constants.O_RDONLY);
+      closeRecoverySelectionAnchor(anchor);
+      expect(() => fs.fstatSync(unrelated!)).not.toThrow();
+    } finally {
+      if (unrelated !== undefined) fs.closeSync(unrelated);
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
-  test("a deferred TOC stdin error cannot authorize incomplete output or leave orphans", async () => {
-    const producer = child(
-      'setInterval(() => process.stdout.write("archive"), 10);',
+  test("uses the validated inherited descriptor on Darwin and Linux", () => {
+    const source = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "scripts/rehearse-neutral-production-recovery.ts",
+      ),
+      "utf8",
     );
-    const consumer = child(
-      "process.stdin.resume(); setInterval(() => undefined, 1000);",
+    expect(recoverySelectionChildPath()).toBe("/dev/fd/3");
+    expect(source).toContain("`--use-list=${recoverySelectionChildPath()}`");
+    expect(source).toContain(
+      '["pipe", "pipe", "pipe", selectionAnchor.descriptor]',
     );
-    const producerClosed = childClose(producer);
-    const consumerClosed = childClose(consumer);
-    const stop = () => stopPipeline(producer, consumer);
-    const tocInputErrors = recordRecoveryEndpointErrors(consumer.stdin!);
-    consumer.stdin!.emit(
-      "error",
-      transportError("EARBITRARY", "secret incomplete output detail"),
-    );
-    producer.stdout!.pipe(consumer.stdin!);
-
-    await expect(
-      settleRecoveryArchivePipeline({
-        producer,
-        producerClosed,
-        consumer,
-        consumerClosed,
-        consumerProgress: new Promise(() => undefined),
-        failures: [],
-        consumerFailureMessage: "pg_restore archive TOC failed",
-        producerEarlyFailureMessage:
-          "gpg archive failed before pg_restore completed",
-        progressTimeoutMs: 50,
-        progressTimeoutMessage: "pg_restore archive TOC timed out",
-        stop,
-        disconnect: () => producer.stdout!.unpipe(consumer.stdin!),
-      }),
-    ).rejects.toThrow("pg_restore archive TOC timed out");
-    expect(tocInputErrors.observed()).toBe(true);
-    const [, producerSignal] = await producerClosed;
-    const [, consumerSignal] = await consumerClosed;
-    expect(["SIGTERM", "SIGKILL"]).toContain(producerSignal);
-    expect(["SIGTERM", "SIGKILL"]).toContain(consumerSignal);
+    expect(
+      source.indexOf("unlinkRecoverySelectionPath(selectionAnchor)"),
+    ).toBeLessThan(source.indexOf("const restore = track("));
+    expect(source).toContain('process.platform !== "darwin"');
+    expect(source).toContain('process.platform !== "linux"');
+    expect(source).not.toContain("recordRecoveryEndpointErrors");
   });
 });

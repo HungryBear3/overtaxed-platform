@@ -269,6 +269,19 @@ read-only at mode 0400 before the command can report success. Password hashes
 are deliberately excluded from `roles.sql.gpg`; existing credentials remain in
 the secret manager and are never copied into a backup artifact.
 
+The recovery process trusts its runtime UID and the already pinned executable
+identities. Each `pg_restore --use-list` selection is fully materialized,
+fsynced, hash/size/inode validated, opened read-only without following links,
+then unlinked before `pg_restore` starts. The still-open validated inode alone
+is inherited at child fd 3 and is rehashed after the child closes; recreating
+the old pathname cannot change the bytes consumed. This is pathname-race
+containment, not a claim that portable unprivileged Darwin/Linux code can
+resist a truly hostile process running as the same UID with ptrace/fd capture
+or a writable descriptor retained before unlink. A Production threat model
+that includes those capabilities requires a separately owned broker,
+container, or VM. That isolation is not present here, both native platform
+receipt pins remain intentionally null, and Production apply remains blocked.
+
 The v3 recovery receipt also binds the exact count of legacy Supabase-managed
 role memberships whose source grantor is `supabase_admin`. PostgreSQL 17 cannot
 replay those legacy rows with `GRANTED BY supabase_admin` when that managed

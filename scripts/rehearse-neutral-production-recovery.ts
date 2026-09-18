@@ -89,23 +89,277 @@ export function observeRecoveryStreamErrors(
   return { failure };
 }
 
-export function recordRecoveryEndpointErrors(stream: {
-  on(event: "error", listener: () => void): unknown;
-}): { observed: () => boolean; acceptAfterAuthority: () => boolean } {
-  let errorObserved = false;
-  stream.on("error", () => {
-    // The raw error is deliberately neither retained nor surfaced. Only the
-    // endpoint's later authoritative completion may accept this observation.
-    errorObserved = true;
-  });
-  return {
-    observed: () => errorObserved,
-    acceptAfterAuthority: () => {
-      const accepted = errorObserved;
-      errorObserved = false;
-      return accepted;
-    },
+type RecoverySelectionFile = {
+  file: string;
+  bytes: number;
+  sha256: string;
+  dev: bigint;
+  ino: bigint;
+};
+
+type RecoverySelectionAnchor = {
+  selection: RecoverySelectionFile;
+  descriptor: number;
+  closed: boolean;
+  unlinked: boolean;
+};
+
+// Trust boundary: the runtime UID and pinned executables are trusted. Holding
+// an unlinked, read-only descriptor removes ordinary pathname replacement from
+// the restore path, but portable unprivileged Darwin/Linux code cannot defend
+// against a truly hostile same-UID process with ptrace/fd capture or a writable
+// descriptor retained before unlink. Production requiring that threat model
+// needs a separately owned broker/container/VM; this disabled foundation does
+// not claim to provide that isolation.
+
+function currentUid(): number {
+  if (typeof process.getuid !== "function")
+    throw new Error("recovery selection owner is unavailable");
+  return process.getuid();
+}
+
+function assertPrivateRecoveryDirectory(directory: string): void {
+  const stat = fs.lstatSync(directory);
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    stat.uid !== currentUid() ||
+    (stat.mode & 0o777) !== 0o700 ||
+    fs.realpathSync(directory) !== directory
+  )
+    throw new Error("recovery selection directory is not private");
+}
+
+function assertSelectionStat(
+  stat: fs.BigIntStats,
+  expected: RecoverySelectionFile,
+  expectedLinkCount = BigInt(1),
+): void {
+  if (
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    stat.nlink !== expectedLinkCount ||
+    stat.uid !== BigInt(currentUid()) ||
+    (stat.mode & BigInt(0o777)) !== BigInt(0o600) ||
+    stat.size !== BigInt(expected.bytes) ||
+    stat.dev !== expected.dev ||
+    stat.ino !== expected.ino
+  )
+    throw new Error("recovery selection file identity changed");
+}
+
+export function materializeRecoverySelectionFile(
+  directory: string,
+  basename: string,
+  bytes: Buffer,
+): RecoverySelectionFile {
+  assertPrivateRecoveryDirectory(directory);
+  if (!/^selection-[0-9]+\.list$/.test(basename))
+    throw new Error("recovery selection filename is invalid");
+  const noFollow = fs.constants.O_NOFOLLOW;
+  if (typeof noFollow !== "number")
+    throw new Error("recovery selection no-follow support is unavailable");
+  const file = path.join(directory, basename);
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(
+      file,
+      fs.constants.O_WRONLY |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        noFollow,
+      0o600,
+    );
+    let offset = 0;
+    while (offset < bytes.length) {
+      const written = fs.writeSync(
+        descriptor,
+        bytes,
+        offset,
+        bytes.length - offset,
+        null,
+      );
+      if (written <= 0) throw new Error("recovery selection write stalled");
+      offset += written;
+    }
+    fs.fsyncSync(descriptor);
+    const stat = fs.fstatSync(descriptor, { bigint: true });
+    const result: RecoverySelectionFile = {
+      file,
+      bytes: bytes.length,
+      sha256: sha256(bytes),
+      dev: stat.dev,
+      ino: stat.ino,
+    };
+    assertSelectionStat(stat, result);
+    const descriptorToClose = descriptor;
+    descriptor = undefined;
+    try {
+      fs.closeSync(descriptorToClose);
+    } catch {
+      throw new Error("recovery selection close failed");
+    }
+    return result;
+  } catch {
+    if (descriptor !== undefined) {
+      const descriptorToClose = descriptor;
+      descriptor = undefined;
+      try {
+        fs.closeSync(descriptorToClose);
+      } catch {
+        // The original fixed failure remains authoritative.
+      }
+    }
+    try {
+      fs.unlinkSync(file);
+    } catch {
+      // The private directory is removed by the enclosing recovery cleanup.
+    }
+    throw new Error("recovery selection materialization failed");
+  }
+}
+
+export function assertRecoverySelectionFile(
+  selection: RecoverySelectionFile,
+): void {
+  const directory = path.dirname(selection.file);
+  assertPrivateRecoveryDirectory(directory);
+  const pathStat = fs.lstatSync(selection.file, { bigint: true });
+  assertSelectionStat(pathStat, selection);
+  if (fs.realpathSync(selection.file) !== selection.file)
+    throw new Error("recovery selection path changed");
+  const descriptor = fs.openSync(
+    selection.file,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+  );
+  let validationFailure: unknown;
+  try {
+    const descriptorStat = fs.fstatSync(descriptor, { bigint: true });
+    assertSelectionStat(descriptorStat, selection);
+    if (sha256(fs.readFileSync(descriptor)) !== selection.sha256)
+      throw new Error("recovery selection content changed");
+  } catch (error) {
+    validationFailure = error;
+    throw error;
+  } finally {
+    try {
+      fs.closeSync(descriptor);
+    } catch {
+      if (validationFailure === undefined)
+        throw new Error("recovery selection validation close failed");
+    }
+  }
+}
+
+function selectionDescriptorSha256(
+  descriptor: number,
+  expectedBytes: number,
+): string {
+  const digest = createHash("sha256");
+  const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, expectedBytes || 1));
+  let offset = 0;
+  while (offset < expectedBytes) {
+    const read = fs.readSync(
+      descriptor,
+      chunk,
+      0,
+      Math.min(chunk.length, expectedBytes - offset),
+      offset,
+    );
+    if (read <= 0) throw new Error("recovery selection descriptor truncated");
+    digest.update(chunk.subarray(0, read));
+    offset += read;
+  }
+  if (fs.readSync(descriptor, chunk, 0, 1, expectedBytes) !== 0)
+    throw new Error("recovery selection descriptor grew");
+  return digest.digest("hex");
+}
+
+export function openRecoverySelectionAnchor(
+  selection: RecoverySelectionFile,
+): RecoverySelectionAnchor {
+  assertRecoverySelectionFile(selection);
+  const descriptor = fs.openSync(
+    selection.file,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+  );
+  const anchor: RecoverySelectionAnchor = {
+    selection,
+    descriptor,
+    closed: false,
+    unlinked: false,
   };
+  try {
+    assertRecoverySelectionAnchor(anchor);
+    return anchor;
+  } catch {
+    anchor.closed = true;
+    try {
+      fs.closeSync(descriptor);
+    } catch {
+      // The fixed anchor validation failure remains authoritative.
+    }
+    throw new Error("recovery selection anchor validation failed");
+  }
+}
+
+export function assertRecoverySelectionAnchor(
+  anchor: RecoverySelectionAnchor,
+): void {
+  if (anchor.closed) throw new Error("recovery selection anchor is closed");
+  const stat = fs.fstatSync(anchor.descriptor, { bigint: true });
+  assertSelectionStat(
+    stat,
+    anchor.selection,
+    anchor.unlinked ? BigInt(0) : BigInt(1),
+  );
+  if (
+    selectionDescriptorSha256(anchor.descriptor, anchor.selection.bytes) !==
+    anchor.selection.sha256
+  )
+    throw new Error("recovery selection anchor content changed");
+}
+
+export function unlinkRecoverySelectionPath(
+  anchor: RecoverySelectionAnchor,
+): void {
+  if (anchor.closed || anchor.unlinked)
+    throw new Error("recovery selection unlink state is invalid");
+  assertRecoverySelectionFile(anchor.selection);
+  fs.unlinkSync(anchor.selection.file);
+  anchor.unlinked = true;
+  try {
+    fs.lstatSync(anchor.selection.file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw new Error("recovery selection path absence check failed");
+  }
+  throw new Error("recovery selection path still exists after unlink");
+}
+
+export function closeRecoverySelectionAnchor(
+  anchor: RecoverySelectionAnchor,
+): void {
+  if (anchor.closed) return;
+  anchor.closed = true;
+  try {
+    fs.closeSync(anchor.descriptor);
+  } catch {
+    throw new Error("recovery selection anchor close failed");
+  }
+}
+
+export function recoverySelectionChildPath(): string {
+  if (process.platform !== "darwin" && process.platform !== "linux")
+    throw new Error("recovery selection descriptor platform is unsupported");
+  return "/dev/fd/3";
+}
+
+export function removeRecoverySelectionFile(
+  selection: RecoverySelectionFile,
+): void {
+  assertRecoverySelectionFile(selection);
+  fs.unlinkSync(selection.file);
 }
 
 function childClose(
@@ -269,7 +523,9 @@ async function decryptRestoreSingleSession(input: {
   database: string;
   extensions: ExtensionSqlPortabilityProof & { archiveTocSha256: string };
 }> {
-  const gpgHome = fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gpg-"));
+  const gpgHome = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ot-recovery-gpg-")),
+  );
   fs.chmodSync(gpgHome, 0o700);
   const children = new Set<ChildProcess>();
   const track = <T extends ChildProcess>(child: T): T => {
@@ -435,6 +691,7 @@ $ot_recovery_guard$;
     if (code !== 0) throw new Error("gpg restore decrypt failed");
     return digest.digest("hex");
   };
+  let recoveryFailure: unknown;
   try {
     const adaptedRoles = sha256(input.rolesSql);
     if (!psql.stdin.write(input.rolesSql))
@@ -452,166 +709,197 @@ $ot_recovery_guard$;
         "Recovery database plaintext checksum mismatch before restore",
       );
 
+    let selectionSequence = 0;
     const runArchive = async (archiveInput: {
       args: string[];
       toc?: Buffer;
       output: NodeJS.WritableStream;
       endOutput: boolean;
     }): Promise<void> => {
-      const encrypted = privateCopyReadStream(input.databaseEncrypted);
-      const gpg = track(
-        spawnTrusted(
-          input.gpgCommand,
-          [
-            "--batch",
-            "--quiet",
-            "--no-options",
-            "--pinentry-mode",
-            "loopback",
-            "--passphrase-fd",
-            "3",
-            "--decrypt",
-          ],
-          {
-            env: {
-              PATH: process.env.PATH,
-              NODE_ENV: "production",
-              LANG: "C",
-              LC_ALL: "C",
-              GNUPGHOME: gpgHome,
-            },
-            stdio: ["pipe", "pipe", "ignore", "pipe"],
-          },
-        ),
-      );
-      const restore = track(
-        spawnTrusted(input.pgRestoreCommand, archiveInput.args, {
-          env: input.env,
-          stdio: archiveInput.toc
-            ? ["pipe", "pipe", "pipe", "pipe"]
-            : ["pipe", "pipe", "pipe"],
-        }),
-      );
-      const gpgClosed = childClose(gpg, "gpg archive process failed");
-      const restoreClosed = childClose(
-        restore,
-        "pg_restore SQL emission failed",
-      );
-      const stop = () => {
-        encrypted.unpipe(gpg.stdin!);
-        encrypted.destroy();
-        gpg.stdout!.unpipe(restore.stdin);
-        restore.stdout.unpipe(archiveInput.output);
-        gpg.stdin!.destroy();
-        gpg.stdout!.destroy();
-        restore.stdin.destroy();
-        restore.stdout.destroy();
-        destroyRecoveryStream(archiveInput.output);
-        if (gpg.exitCode === null && gpg.signalCode === null)
-          gpg.kill("SIGTERM");
-        if (restore.exitCode === null && restore.signalCode === null)
-          restore.kill("SIGTERM");
-      };
-      const encryptedErrors = observeRecoveryStreamErrors(
-        encrypted,
-        "encrypted recovery archive read failed",
-        [],
-        stop,
-      );
-      const gpgInputErrors = observeRecoveryStreamErrors(
-        gpg.stdin!,
-        "gpg archive input failed",
-        ["EPIPE"],
-        stop,
-      );
-      const gpgOutputErrors = observeRecoveryStreamErrors(
-        gpg.stdout!,
-        "gpg archive output failed",
-        ["EPIPE", "ECONNRESET"],
-        stop,
-      );
-      const passphraseErrors = observeRecoveryStreamErrors(
-        gpg.stdio[3] as NodeJS.WritableStream,
-        "gpg passphrase input failed",
-        ["EPIPE"],
-        stop,
-      );
-      const restoreOutputErrors = observeRecoveryStreamErrors(
-        restore.stdout,
-        "pg_restore output failed",
-        [],
-        stop,
-      );
-      const restoreStderrErrors = observeRecoveryStreamErrors(
-        restore.stderr,
-        "pg_restore diagnostics failed",
-        ["ECONNRESET"],
-        stop,
-      );
-      const outputErrors = observeRecoveryStreamErrors(
-        archiveInput.output,
-        "pg_restore destination failed",
-        [],
-        stop,
-      );
-      restore.stderr.resume();
-      const restoreInputErrors = observeRecoveryStreamErrors(
-        restore.stdin,
-        "pg_restore input failed",
-        ["EPIPE"],
-        stop,
-      );
-      const tocErrors = archiveInput.toc
-        ? observeRecoveryStreamErrors(
-            restore.stdio[3] as NodeJS.WritableStream,
-            "pg_restore TOC input failed",
-            ["EPIPE"],
-            stop,
+      const selection = archiveInput.toc
+        ? materializeRecoverySelectionFile(
+            gpgHome,
+            `selection-${selectionSequence++}.list`,
+            archiveInput.toc,
           )
         : undefined;
-      const outputEnded = archiveInput.endOutput
-        ? streamEnded(archiveInput.output)
-        : streamEnded(restore.stdout);
-      encrypted.pipe(gpg.stdin!);
-      restore.stdout.pipe(archiveInput.output, {
-        end: archiveInput.endOutput,
-      });
-      gpg.stdout!.pipe(restore.stdin);
-      if (archiveInput.toc)
-        (restore.stdio[3] as NodeJS.WritableStream).end(archiveInput.toc);
-      (gpg.stdio[3] as NodeJS.WritableStream).end(`${input.passphrase}\n`);
-      await settleRecoveryArchivePipeline({
-        producer: gpg,
-        producerClosed: gpgClosed,
-        consumer: restore,
-        consumerClosed: restoreClosed,
-        consumerProgress: Promise.all([restoreClosed, outputEnded]).then(
-          ([status]) => status,
-        ),
-        failures: [
-          prematurePsqlExit,
-          psqlInputFailed,
-          ...outerFailures,
-          encryptedErrors.failure,
-          gpgInputErrors.failure,
-          gpgOutputErrors.failure,
-          passphraseErrors.failure,
-          restoreOutputErrors.failure,
-          restoreStderrErrors.failure,
-          outputErrors.failure,
-          restoreInputErrors.failure,
-          ...(tocErrors ? [tocErrors.failure] : []),
-        ],
-        consumerFailureMessage: "pg_restore SQL emission failed",
-        producerEarlyFailureMessage:
-          "gpg archive failed before pg_restore completed",
-        stop,
-        disconnect: () => {
+      let selectionAnchor: RecoverySelectionAnchor | undefined;
+      let primaryFailure: unknown;
+      try {
+        const encrypted = privateCopyReadStream(input.databaseEncrypted);
+        const gpg = track(
+          spawnTrusted(
+            input.gpgCommand,
+            [
+              "--batch",
+              "--quiet",
+              "--no-options",
+              "--pinentry-mode",
+              "loopback",
+              "--passphrase-fd",
+              "3",
+              "--decrypt",
+            ],
+            {
+              env: {
+                PATH: process.env.PATH,
+                NODE_ENV: "production",
+                LANG: "C",
+                LC_ALL: "C",
+                GNUPGHOME: gpgHome,
+              },
+              stdio: ["pipe", "pipe", "ignore", "pipe"],
+            },
+          ),
+        );
+        if (selection) {
+          selectionAnchor = openRecoverySelectionAnchor(selection);
+          unlinkRecoverySelectionPath(selectionAnchor);
+        }
+        const restore = track(
+          spawnTrusted(
+            input.pgRestoreCommand,
+            selection
+              ? [
+                  ...archiveInput.args,
+                  `--use-list=${recoverySelectionChildPath()}`,
+                ]
+              : archiveInput.args,
+            {
+              env: input.env,
+              stdio: selectionAnchor
+                ? ["pipe", "pipe", "pipe", selectionAnchor.descriptor]
+                : ["pipe", "pipe", "pipe"],
+            },
+          ),
+        );
+        const gpgClosed = childClose(gpg, "gpg archive process failed");
+        const restoreClosed = childClose(
+          restore,
+          "pg_restore SQL emission failed",
+        );
+        const stop = () => {
           encrypted.unpipe(gpg.stdin!);
           encrypted.destroy();
           gpg.stdout!.unpipe(restore.stdin);
-        },
-      });
+          restore.stdout.unpipe(archiveInput.output);
+          gpg.stdin!.destroy();
+          gpg.stdout!.destroy();
+          restore.stdin.destroy();
+          restore.stdout.destroy();
+          destroyRecoveryStream(archiveInput.output);
+          if (gpg.exitCode === null && gpg.signalCode === null)
+            gpg.kill("SIGTERM");
+          if (restore.exitCode === null && restore.signalCode === null)
+            restore.kill("SIGTERM");
+        };
+        const encryptedErrors = observeRecoveryStreamErrors(
+          encrypted,
+          "encrypted recovery archive read failed",
+          [],
+          stop,
+        );
+        const gpgInputErrors = observeRecoveryStreamErrors(
+          gpg.stdin!,
+          "gpg archive input failed",
+          ["EPIPE"],
+          stop,
+        );
+        const gpgOutputErrors = observeRecoveryStreamErrors(
+          gpg.stdout!,
+          "gpg archive output failed",
+          ["EPIPE", "ECONNRESET"],
+          stop,
+        );
+        const passphraseErrors = observeRecoveryStreamErrors(
+          gpg.stdio[3] as NodeJS.WritableStream,
+          "gpg passphrase input failed",
+          ["EPIPE"],
+          stop,
+        );
+        const restoreOutputErrors = observeRecoveryStreamErrors(
+          restore.stdout,
+          "pg_restore output failed",
+          [],
+          stop,
+        );
+        const restoreStderrErrors = observeRecoveryStreamErrors(
+          restore.stderr,
+          "pg_restore diagnostics failed",
+          ["ECONNRESET"],
+          stop,
+        );
+        const outputErrors = observeRecoveryStreamErrors(
+          archiveInput.output,
+          "pg_restore destination failed",
+          [],
+          stop,
+        );
+        restore.stderr.resume();
+        const restoreInputErrors = observeRecoveryStreamErrors(
+          restore.stdin,
+          "pg_restore input failed",
+          ["EPIPE"],
+          stop,
+        );
+        const outputEnded = archiveInput.endOutput
+          ? streamEnded(archiveInput.output)
+          : streamEnded(restore.stdout);
+        encrypted.pipe(gpg.stdin!);
+        restore.stdout.pipe(archiveInput.output, {
+          end: archiveInput.endOutput,
+        });
+        gpg.stdout!.pipe(restore.stdin);
+        (gpg.stdio[3] as NodeJS.WritableStream).end(`${input.passphrase}\n`);
+        await settleRecoveryArchivePipeline({
+          producer: gpg,
+          producerClosed: gpgClosed,
+          consumer: restore,
+          consumerClosed: restoreClosed,
+          consumerProgress: Promise.all([restoreClosed, outputEnded]).then(
+            ([status]) => status,
+          ),
+          failures: [
+            prematurePsqlExit,
+            psqlInputFailed,
+            ...outerFailures,
+            encryptedErrors.failure,
+            gpgInputErrors.failure,
+            gpgOutputErrors.failure,
+            passphraseErrors.failure,
+            restoreOutputErrors.failure,
+            restoreStderrErrors.failure,
+            outputErrors.failure,
+            restoreInputErrors.failure,
+          ],
+          consumerFailureMessage: "pg_restore SQL emission failed",
+          producerEarlyFailureMessage:
+            "gpg archive failed before pg_restore completed",
+          progressTimeoutMs: 300_000,
+          progressTimeoutMessage: "pg_restore SQL emission timed out",
+          stop,
+          disconnect: () => {
+            encrypted.unpipe(gpg.stdin!);
+            encrypted.destroy();
+            gpg.stdout!.unpipe(restore.stdin);
+          },
+        });
+        if (selectionAnchor) assertRecoverySelectionAnchor(selectionAnchor);
+      } catch (error) {
+        primaryFailure = error;
+        throw error;
+      } finally {
+        let selectionCleanupFailed = false;
+        if (selectionAnchor) {
+          try {
+            closeRecoverySelectionAnchor(selectionAnchor);
+          } catch {
+            selectionCleanupFailed = true;
+          }
+        }
+        if (selectionCleanupFailed && primaryFailure === undefined)
+          throw new Error("recovery selection cleanup failed");
+      }
     };
 
     const readArchiveToc = async (): Promise<Buffer> => {
@@ -702,7 +990,12 @@ $ot_recovery_guard$;
         ["ECONNRESET"],
         stop,
       );
-      const restoreInputErrors = recordRecoveryEndpointErrors(restore.stdin);
+      const restoreInputErrors = observeRecoveryStreamErrors(
+        restore.stdin,
+        "pg_restore archive TOC input failed",
+        ["EPIPE", "ECONNRESET"],
+        stop,
+      );
       const restoreOutputEnded = streamEnded(restore.stdout);
       restore.stdout.on("data", (chunk: Buffer) =>
         chunks.push(Buffer.from(chunk)),
@@ -729,6 +1022,7 @@ $ot_recovery_guard$;
           passphraseErrors.failure,
           restoreOutputErrors.failure,
           restoreStderrErrors.failure,
+          restoreInputErrors.failure,
         ],
         consumerFailureMessage: "pg_restore archive TOC failed",
         producerEarlyFailureMessage:
@@ -742,7 +1036,6 @@ $ot_recovery_guard$;
           gpg.stdout!.unpipe(restore.stdin);
         },
       });
-      restoreInputErrors.acceptAfterAuthority();
       const toc = Buffer.concat(chunks);
       for (const chunk of chunks) chunk.fill(0);
       return toc;
@@ -752,7 +1045,7 @@ $ot_recovery_guard$;
     const archivePlan = planRecoveryArchiveToc(tocBytes);
     tocBytes.fill(0);
     await runArchive({
-      args: ["--exit-on-error", "--file=-", "--use-list=/dev/fd/3"],
+      args: ["--exit-on-error", "--file=-"],
       toc: archivePlan.schemas,
       output: psql.stdin,
       endOutput: false,
@@ -760,13 +1053,13 @@ $ot_recovery_guard$;
     const extensionTransform = new RecoveryExtensionSqlTransform();
     extensionTransform.pipe(psql.stdin, { end: false });
     await runArchive({
-      args: ["--exit-on-error", "--file=-", "--use-list=/dev/fd/3"],
+      args: ["--exit-on-error", "--file=-"],
       toc: archivePlan.extensions,
       output: extensionTransform,
       endOutput: true,
     });
     await runArchive({
-      args: ["--exit-on-error", "--file=-", "--use-list=/dev/fd/3"],
+      args: ["--exit-on-error", "--file=-"],
       toc: archivePlan.remainder,
       output: psql.stdin,
       endOutput: false,
@@ -790,9 +1083,23 @@ $ot_recovery_guard$;
         archiveTocSha256: archivePlan.archiveTocSha256,
       },
     };
+  } catch (error) {
+    recoveryFailure = error;
+    throw error;
   } finally {
-    await abortPipeline();
-    fs.rmSync(gpgHome, { recursive: true, force: true });
+    let cleanupFailed = false;
+    try {
+      await abortPipeline();
+    } catch {
+      cleanupFailed = true;
+    }
+    try {
+      fs.rmSync(gpgHome, { recursive: true, force: true });
+    } catch {
+      cleanupFailed = true;
+    }
+    if (cleanupFailed && recoveryFailure === undefined)
+      throw new Error("recovery cleanup failed");
   }
 }
 
