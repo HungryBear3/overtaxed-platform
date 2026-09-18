@@ -132,13 +132,32 @@ describe("ledger exactness", () => {
     expect(() => assertProductionLedgerExactness(ledger())).not.toThrow();
   });
 
+  test("accepts Prisma-retained rolled-back attempts followed by one clean application", () => {
+    const rows = ledger();
+    expect(() =>
+      assertProductionLedgerExactness([
+        {
+          migration_name: rows[0]!.migration_name,
+          finished_at: null,
+          rolled_back_at: new Date(),
+        },
+        {
+          migration_name: rows[0]!.migration_name,
+          finished_at: null,
+          rolled_back_at: new Date(),
+        },
+        ...rows,
+      ]),
+    ).not.toThrow();
+  });
+
   test("refuses a missing, duplicated, unfinished or rolled-back entry", () => {
     expect(() => assertProductionLedgerExactness(ledger().slice(1))).toThrow(
       /is absent from the ledger/,
     );
     expect(() =>
       assertProductionLedgerExactness([...ledger(), ledger()[3]!]),
-    ).toThrow(/appears 2 times/);
+    ).toThrow(/appears 2 times as cleanly applied/);
     expect(() =>
       assertProductionLedgerExactness(
         ledger().map((row, index) =>
