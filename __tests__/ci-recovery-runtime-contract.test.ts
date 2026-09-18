@@ -111,10 +111,15 @@ describe("CI synthetic recovery fixture portability", () => {
     try {
       const bin = join(source, "bin");
       const share = join(source, "share");
+      const library = join(source, "lib");
       const dictionary = join(share, "tsearch_data");
       mkdirSync(bin, { mode: 0o700 });
       mkdirSync(join(share, "extension"), { recursive: true, mode: 0o700 });
       mkdirSync(dictionary, { mode: 0o700 });
+      mkdirSync(library, { mode: 0o700 });
+      writeFileSync(join(library, "dict_snowball.so"), "standard-module", {
+        mode: 0o500,
+      });
       const external = join(source, "external-dictionary");
       writeFileSync(external, "must-not-be-followed", { mode: 0o600 });
       for (const name of ["en_us.affix", "en_us.dict"])
@@ -124,6 +129,8 @@ describe("CI synthetic recovery fixture portability", () => {
         Buffer.from([0]),
         Buffer.from(share),
         Buffer.from([0]),
+        Buffer.from(library),
+        Buffer.from([0]),
         Buffer.from("tail"),
       ]);
       for (const name of ["postgres", "initdb"])
@@ -132,7 +139,7 @@ describe("CI synthetic recovery fixture portability", () => {
       const pgConfig = join(bin, "pg_config");
       writeFileSync(
         pgConfig,
-        `#!/bin/sh\ncase "$1" in\n  --version) printf '%s\\n' 'PostgreSQL 17.11';;\n  --sharedir) printf '%s\\n' '${share}';;\n  *) exit 1;;\nesac\n`,
+        `#!/bin/sh\ncase "$1" in\n  --version) printf '%s\\n' 'PostgreSQL 17.11';;\n  --sharedir) printf '%s\\n' '${share}';;\n  --pkglibdir) printf '%s\\n' '${library}';;\n  *) exit 1;;\nesac\n`,
         { mode: 0o700 },
       );
 

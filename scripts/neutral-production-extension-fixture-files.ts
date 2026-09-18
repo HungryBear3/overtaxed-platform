@@ -10,12 +10,13 @@ import {
 import {
   assertProtectedAncestors,
   assertTrustedExecutable,
+  nonRootOperatorTrustedExecutablePolicy,
   resolveTrustedExecutable,
   type TrustedExecutableOwnershipPolicy,
 } from "./trusted-executable";
 
 const FIXTURE_ROOT = path.join("fixtures", "postgresql");
-const RUNTIME_SCHEMA = "ot.neutral-recovery-postgres-runtime.v1" as const;
+const RUNTIME_SCHEMA = "ot.neutral-recovery-postgres-runtime.v2" as const;
 const MANIFEST = "recovery-postgres-runtime.json";
 const SYNTHETIC_OMITTED_SOURCE_SHARE_SYMLINKS = new Set([
   path.join("tsearch_data", "en_us.affix"),
@@ -27,15 +28,19 @@ export type RuntimeManifest = {
   policy: typeof OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY;
   major: 17 | 18;
   sourceSharedDirectory: string;
+  sourceLibraryDirectory: string;
   privateSharedDirectory: string;
+  privateLibraryDirectory: string;
   privateBinaryDirectory: string;
   postgresSha256: string;
   initdbSha256: string;
   privateBinaryTreeSha256: string;
   privateSharedTreeSha256: string;
+  privateLibraryTreeSha256: string;
   sourcePgConfigSha256: string;
   sourceBinaryTreeSha256: string;
   sourceSharedTreeSha256: string;
+  sourceLibraryTreeSha256: string;
   fixtureFilesSha256: Record<string, string>;
 };
 
@@ -90,7 +95,7 @@ function readVerifiedFile(file: string, expectedSha256?: string): Buffer {
   }
 }
 
-function strictTreeSha256(
+export function strictTreeSha256(
   root: string,
   allowedOwners: ReadonlySet<number>,
   includeOwner = true,
@@ -201,6 +206,7 @@ function sourcePostgresInstallation(
   major: 17 | 18;
   bin: string;
   share: string;
+  library: string;
   pgConfigSha256: string;
 } {
   const absolutePgConfig = path.resolve(pgConfig);
@@ -230,6 +236,13 @@ function sourcePostgresInstallation(
       env: childEnv,
     }).trim(),
   );
+  assertTrustedExecutable(trustedPgConfig);
+  const library = path.resolve(
+    execFileSync(trustedPgConfig.path, ["--pkglibdir"], {
+      encoding: "utf8",
+      env: childEnv,
+    }).trim(),
+  );
   const bin = path.dirname(trustedPgConfig.path);
   const allowUnsafeSourceDirectory =
     trustedPgConfig.ownershipPolicy.name === "unit-test-explicit" &&
@@ -237,6 +250,7 @@ function sourcePostgresInstallation(
   for (const [label, directory] of [
     ["binary", bin],
     ["shared", share],
+    ["library", library],
   ] as const) {
     const stat = fs.lstatSync(directory);
     if (
@@ -258,45 +272,57 @@ function sourcePostgresInstallation(
       throw new Error(
         `Recovery source PostgreSQL unexpectedly already provides ${fixture}`,
       );
+  if (
+    fs.readdirSync(library).some((name) => /^supabase_vault(?:\.|$)/.test(name))
+  )
+    throw new Error(
+      "Recovery source PostgreSQL unexpectedly already provides the managed native library",
+    );
   return {
     major: Number(match[1]) as 17 | 18,
     bin,
     share,
+    library,
     pgConfigSha256: trustedPgConfig.sha256,
   };
 }
 
-function patchCompiledSharedDirectory(input: {
+function patchCompiledDirectories(input: {
   file: string;
-  sourceSharedDirectory: string;
-  privateSharedDirectory: string;
+  replacements: readonly {
+    label: "shared" | "library";
+    sourceDirectory: string;
+    privateDirectory: string;
+  }[];
 }): string {
   const before = fs.lstatSync(input.file);
   const bytes = readVerifiedFile(input.file);
-  const source = Buffer.from(`\u0000${input.sourceSharedDirectory}\u0000`);
-  const replacementPath = Buffer.from(input.privateSharedDirectory);
-  if (replacementPath.length > Buffer.byteLength(input.sourceSharedDirectory))
-    throw new Error(
-      "Private recovery PostgreSQL shared directory path is too long",
-    );
-  const replacement = Buffer.concat([
-    Buffer.from([0]),
-    replacementPath,
-    Buffer.alloc(
-      Buffer.byteLength(input.sourceSharedDirectory) - replacementPath.length,
-    ),
-    Buffer.from([0]),
-  ]);
-  let found = 0;
-  for (let offset = bytes.indexOf(source); offset >= 0; ) {
-    replacement.copy(bytes, offset);
-    found += 1;
-    offset = bytes.indexOf(source, offset + replacement.length);
+  for (const item of input.replacements) {
+    const source = Buffer.from(`\u0000${item.sourceDirectory}\u0000`);
+    const replacementPath = Buffer.from(item.privateDirectory);
+    if (replacementPath.length > Buffer.byteLength(item.sourceDirectory))
+      throw new Error(
+        `Private recovery PostgreSQL ${item.label} directory path is too long`,
+      );
+    const replacement = Buffer.concat([
+      Buffer.from([0]),
+      replacementPath,
+      Buffer.alloc(
+        Buffer.byteLength(item.sourceDirectory) - replacementPath.length,
+      ),
+      Buffer.from([0]),
+    ]);
+    let found = 0;
+    for (let offset = bytes.indexOf(source); offset >= 0; ) {
+      replacement.copy(bytes, offset);
+      found += 1;
+      offset = bytes.indexOf(source, offset + replacement.length);
+    }
+    if (found !== 1)
+      throw new Error(
+        `Recovery PostgreSQL binary has ${found} compiled ${item.label}-directory fields`,
+      );
   }
-  if (found !== 1)
-    throw new Error(
-      `Recovery PostgreSQL binary has ${found} compiled shared-directory fields`,
-    );
   const mode = before.mode & 0o777;
   const identityDescriptor = fs.openSync(
     input.file,
@@ -448,8 +474,14 @@ export function prepareManagedExtensionRuntime(input: {
     false,
     omittedSourceShareSymlinks,
   );
+  const sourceLibraryTreeBefore = strictTreeSha256(
+    source.library,
+    sourceOwners,
+    false,
+  );
   const privateBin = path.join(runtimeRoot, "b");
   const privateShare = path.join(runtimeRoot, "s");
+  const privateLibrary = path.join(runtimeRoot, "l");
   try {
     fs.cpSync(source.bin, privateBin, {
       recursive: true,
@@ -470,12 +502,19 @@ export function prepareManagedExtensionRuntime(input: {
         );
       },
     });
+    fs.cpSync(source.library, privateLibrary, {
+      recursive: true,
+      dereference: false,
+      errorOnExist: true,
+      force: false,
+    });
     applySourceTreeModes(source.bin, privateBin);
     applySourceTreeModes(
       source.share,
       privateShare,
       omittedSourceShareSymlinks,
     );
+    applySourceTreeModes(source.library, privateLibrary);
     if (
       strictTreeSha256(source.bin, sourceOwners, false) !==
         sourceBinaryTreeBefore ||
@@ -485,6 +524,8 @@ export function prepareManagedExtensionRuntime(input: {
         false,
         omittedSourceShareSymlinks,
       ) !== sourceSharedTreeBefore ||
+      strictTreeSha256(source.library, sourceOwners, false) !==
+        sourceLibraryTreeBefore ||
       strictTreeSha256(privateBin, privateOwners, false) !==
         strictTreeSha256(source.bin, sourceOwners, false) ||
       strictTreeSha256(privateShare, privateOwners, false) !==
@@ -493,7 +534,9 @@ export function prepareManagedExtensionRuntime(input: {
           sourceOwners,
           false,
           omittedSourceShareSymlinks,
-        )
+        ) ||
+      strictTreeSha256(privateLibrary, privateOwners, false) !==
+        strictTreeSha256(source.library, sourceOwners, false)
     )
       throw new Error("Recovery PostgreSQL source changed while copying");
     const extensionDirectory = path.join(privateShare, "extension");
@@ -514,15 +557,28 @@ export function prepareManagedExtensionRuntime(input: {
       }
     }
     fsyncDirectory(extensionDirectory);
-    const postgresSha256 = patchCompiledSharedDirectory({
+    const replacements = [
+      {
+        label: "shared" as const,
+        sourceDirectory: source.share,
+        privateDirectory: privateShare,
+      },
+      {
+        label: "library" as const,
+        sourceDirectory: source.library,
+        privateDirectory: privateLibrary,
+      },
+    ];
+    const postgresSha256 = patchCompiledDirectories({
       file: path.join(privateBin, "postgres"),
-      sourceSharedDirectory: source.share,
-      privateSharedDirectory: privateShare,
+      replacements,
     });
-    const initdbSha256 = patchCompiledSharedDirectory({
+    const initdbSha256 = patchCompiledDirectories({
       file: path.join(privateBin, "initdb"),
-      sourceSharedDirectory: source.share,
-      privateSharedDirectory: privateShare,
+      // PGDG's Linux initdb embeds SHAREDIR but not PKGLIBDIR. Only postgres
+      // loads extension libraries, so requiring a nonexistent initdb library
+      // field rejects the real PostgreSQL 17/18 package layout.
+      replacements: replacements.filter((item) => item.label === "shared"),
     });
     const privateBinaryTreeSha256 = strictTreeSha256(
       privateBin,
@@ -534,20 +590,29 @@ export function prepareManagedExtensionRuntime(input: {
       privateOwners,
       false,
     );
+    const privateLibraryTreeSha256 = strictTreeSha256(
+      privateLibrary,
+      privateOwners,
+      false,
+    );
     const manifest: RuntimeManifest = {
       schema: RUNTIME_SCHEMA,
       policy: OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY,
       major: source.major,
       sourceSharedDirectory: source.share,
+      sourceLibraryDirectory: source.library,
       privateSharedDirectory: privateShare,
+      privateLibraryDirectory: privateLibrary,
       privateBinaryDirectory: privateBin,
       postgresSha256,
       initdbSha256,
       privateBinaryTreeSha256,
       privateSharedTreeSha256,
+      privateLibraryTreeSha256,
       sourcePgConfigSha256: source.pgConfigSha256,
       sourceBinaryTreeSha256: sourceBinaryTreeBefore,
       sourceSharedTreeSha256: sourceSharedTreeBefore,
+      sourceLibraryTreeSha256: sourceLibraryTreeBefore,
       fixtureFilesSha256: {
         ...OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES,
       },
@@ -582,19 +647,17 @@ export function prepareManagedExtensionRuntime(input: {
   }
 }
 
-export function assertManagedExtensionFixtureInstalled(
-  runtimeRootInput: string,
-  cwd = process.cwd(),
-  testOnlyOwnershipPolicy?: TrustedExecutableOwnershipPolicy,
+/**
+ * The manifest-bound part of runtime verification, shared by the restored
+ * runtime and by the disposable native-Vault recorder runtime. The two differ
+ * only in who is allowed to own the trees; everything a manifest claims is
+ * re-measured here either way.
+ */
+function verifyRuntimeManifest(
+  runtimeRoot: string,
+  cwd: string,
+  treeOwners: ReadonlySet<number>,
 ): RuntimeManifest {
-  if (path.resolve(runtimeRootInput) !== runtimeRootInput)
-    throw new Error("Recovery PostgreSQL runtime root must be absolute");
-  const runtimeRoot = fs.realpathSync(runtimeRootInput);
-  assertRuntimeRoot(
-    runtimeRoot,
-    testOnlyOwnershipPolicy?.allowedOwners ?? [0],
-    testOnlyOwnershipPolicy !== undefined,
-  );
   assertManagedExtensionFixtureSource(cwd);
   const manifest = JSON.parse(
     readVerifiedFile(path.join(runtimeRoot, MANIFEST)).toString("utf8"),
@@ -604,27 +667,26 @@ export function assertManagedExtensionFixtureInstalled(
     manifest.policy !== OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY ||
     (manifest.major !== 17 && manifest.major !== 18) ||
     manifest.privateSharedDirectory !== path.join(runtimeRoot, "s") ||
+    manifest.privateLibraryDirectory !== path.join(runtimeRoot, "l") ||
     manifest.privateBinaryDirectory !== path.join(runtimeRoot, "b") ||
     !/^[0-9a-f]{64}$/.test(manifest.privateBinaryTreeSha256) ||
     !/^[0-9a-f]{64}$/.test(manifest.privateSharedTreeSha256) ||
+    !/^[0-9a-f]{64}$/.test(manifest.privateLibraryTreeSha256) ||
     !/^[0-9a-f]{64}$/.test(manifest.sourcePgConfigSha256) ||
     !/^[0-9a-f]{64}$/.test(manifest.sourceBinaryTreeSha256) ||
     !/^[0-9a-f]{64}$/.test(manifest.sourceSharedTreeSha256) ||
+    !/^[0-9a-f]{64}$/.test(manifest.sourceLibraryTreeSha256) ||
     canonicalJson(manifest.fixtureFilesSha256) !==
       canonicalJson(OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES)
   )
     throw new Error("Recovery PostgreSQL runtime manifest is invalid");
   if (
-    strictTreeSha256(
-      manifest.privateBinaryDirectory,
-      new Set([0, fs.lstatSync(runtimeRoot).uid]),
-      false,
-    ) !== manifest.privateBinaryTreeSha256 ||
-    strictTreeSha256(
-      manifest.privateSharedDirectory,
-      new Set([0, fs.lstatSync(runtimeRoot).uid]),
-      false,
-    ) !== manifest.privateSharedTreeSha256
+    strictTreeSha256(manifest.privateBinaryDirectory, treeOwners, false) !==
+      manifest.privateBinaryTreeSha256 ||
+    strictTreeSha256(manifest.privateSharedDirectory, treeOwners, false) !==
+      manifest.privateSharedTreeSha256 ||
+    strictTreeSha256(manifest.privateLibraryDirectory, treeOwners, false) !==
+      manifest.privateLibraryTreeSha256
   )
     throw new Error("Private recovery PostgreSQL runtime tree changed");
   for (const [name, expected] of Object.entries(
@@ -654,6 +716,49 @@ export function assertManagedExtensionFixtureInstalled(
       throw new Error(`Private recovery PostgreSQL ${name} changed`);
   }
   return manifest;
+}
+
+export function assertManagedExtensionFixtureInstalled(
+  runtimeRootInput: string,
+  cwd = process.cwd(),
+  testOnlyOwnershipPolicy?: TrustedExecutableOwnershipPolicy,
+): RuntimeManifest {
+  if (path.resolve(runtimeRootInput) !== runtimeRootInput)
+    throw new Error("Recovery PostgreSQL runtime root must be absolute");
+  const runtimeRoot = fs.realpathSync(runtimeRootInput);
+  assertRuntimeRoot(
+    runtimeRoot,
+    testOnlyOwnershipPolicy?.allowedOwners ?? [0],
+    testOnlyOwnershipPolicy !== undefined,
+  );
+  return verifyRuntimeManifest(
+    runtimeRoot,
+    cwd,
+    new Set([0, fs.lstatSync(runtimeRoot).uid]),
+  );
+}
+
+/**
+ * The native Vault recorder is a disposable evidence builder, not a restored
+ * runtime: `initdb` refuses to run as root, so the operator is an ordinary user
+ * and the whole private runtime belongs to that user. The closed rule is
+ * therefore the mirror image of the restored-runtime seal — every tree is owned
+ * by the current effective uid, private, free of symbolic links and of
+ * group/world write, sitting under ancestors owned by root or that same user —
+ * and uid 0 is refused outright. No caller supplies any part of it.
+ */
+export function assertNativeVaultRecorderRuntime(
+  runtimeRootInput: string,
+  cwd = process.cwd(),
+): RuntimeManifest {
+  const policy = nonRootOperatorTrustedExecutablePolicy();
+  const uid = process.getuid!();
+  if (path.resolve(runtimeRootInput) !== runtimeRootInput)
+    throw new Error("Native Vault recorder runtime root must be absolute");
+  const runtimeRoot = fs.realpathSync(runtimeRootInput);
+  assertRuntimeRoot(runtimeRoot, [uid], true);
+  assertProtectedAncestors(runtimeRoot, true, policy);
+  return verifyRuntimeManifest(runtimeRoot, cwd, new Set([uid]));
 }
 
 export const PRIVATE_RUNTIME_ROOT_VAR =

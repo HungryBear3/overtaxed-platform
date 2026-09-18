@@ -12,7 +12,7 @@ export const OT_PRODUCTION_RECOVERY_SCHEMA =
 export const OT_PRODUCTION_RESTORE_SCHEMA =
   "ot.neutral-production-restore-rehearsal.v3" as const;
 export const OT_PRODUCTION_REHEARSAL_SENTINEL_SCHEMA =
-  "ot.neutral-production-rehearsal-sentinel.v2" as const;
+  "ot.neutral-production-rehearsal-sentinel.v3" as const;
 export const OT_PRODUCTION_RECOVERY_RECEIPT_VAR =
   "OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT" as const;
 export const OT_PRODUCTION_RECOVERY_AUTH_KEY_VAR =
@@ -34,7 +34,7 @@ export const OT_PRODUCTION_RECOVERY_CANDIDATE_MANIFEST_VAR =
 export const OT_PRODUCTION_NATIVE_VAULT_PROOF_SCHEMA =
   "ot.neutral-production-native-vault-proof.v2" as const;
 export const OT_PRODUCTION_NATIVE_VAULT_PLATFORM_RECEIPT_SCHEMA =
-  "ot.neutral-production-native-vault-platform.v1" as const;
+  "ot.neutral-production-native-vault-platform.v3" as const;
 export const OT_PRODUCTION_NATIVE_VAULT_TRANSCRIPT_SCHEMA =
   "ot.neutral-production-native-vault-transcript.v1" as const;
 export const OT_PRODUCTION_NATIVE_VAULT_UPSTREAM_COMMIT =
@@ -343,24 +343,24 @@ with role_rows as (
          case
            when p.proname='_crypto_aead_det_encrypt'
             and ((l.lanname='c' and p.probin='$libdir/supabase_vault' and p.prosrc='pgsodium_crypto_aead_det_encrypt_by_id')
-              or (l.lanname='sql' and regexp_replace(p.prosrc,'[[:space:]]+','','g')='SELECTNULL::bytea'))
-             then 'supabase-vault-v0.3.1:crypto-encrypt'
+              or (l.lanname='sql' and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')='4804be82df1e759cec455b5d234cd7c96dc19382be281b93fcc0b29c897bf286'))
+              then 'supabase-vault-v0.3.1:crypto-encrypt'
            when p.proname='_crypto_aead_det_decrypt'
             and ((l.lanname='c' and p.probin='$libdir/supabase_vault' and p.prosrc='pgsodium_crypto_aead_det_decrypt_by_id')
-              or (l.lanname='sql' and regexp_replace(p.prosrc,'[[:space:]]+','','g')='SELECTNULL::bytea'))
-             then 'supabase-vault-v0.3.1:crypto-decrypt'
+              or (l.lanname='sql' and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')='4804be82df1e759cec455b5d234cd7c96dc19382be281b93fcc0b29c897bf286'))
+              then 'supabase-vault-v0.3.1:crypto-decrypt'
            when p.proname='_crypto_aead_det_noncegen'
             and ((l.lanname='c' and p.probin='$libdir/supabase_vault' and p.prosrc='pgsodium_crypto_aead_det_noncegen')
-              or (l.lanname='sql' and regexp_replace(p.prosrc,'[[:space:]]+','','g')='SELECTdecode(repeat(''00'',24),''hex'')'))
-             then 'supabase-vault-v0.3.1:crypto-noncegen'
+              or (l.lanname='sql' and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')='54841098ee3262ffb0c449160b924623bbfb60da68f88156a760e397b71cdfcd'))
+              then 'supabase-vault-v0.3.1:crypto-noncegen'
            when p.proname='create_secret' and l.lanname='plpgsql'
             and coalesce(p.probin,'')=''
-            and regexp_replace(p.prosrc,'[[:space:]]+','','g') = 'DECLARErecrecord;BEGININSERTINTOvault.secrets(secret,name,description)VALUES(new_secret,new_name,new_description)RETURNING*INTOrec;UPDATEvault.secretssSETsecret=encode(vault._crypto_aead_det_encrypt(message:=convert_to(rec.secret,''utf8''),additional:=convert_to(s.id::text,''utf8''),key_id:=0,context:=''pgsodium''::bytea,nonce:=rec.nonce),''base64'')WHEREid=rec.id;RETURNrec.id;END'
-             then 'supabase-vault-v0.3.1:create-secret'
+            and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') in ('45c3edf8140259654aee1807a4ffe9d7afbe55d39676572cf608e79f5bb9d8ed','f4769f52bc723eed76644ed7c5a1dd224d7f2b8232d9ec998f1e9dfbfb88bac2')
+              then 'supabase-vault-v0.3.1:create-secret'
            when p.proname='update_secret' and l.lanname='plpgsql'
             and coalesce(p.probin,'')=''
-            and regexp_replace(p.prosrc,'[[:space:]]+','','g') = 'DECLAREdecrypted_secrettext:=(SELECTdecrypted_secretFROMvault.decrypted_secretsWHEREid=secret_id);BEGINUPDATEvault.secretssSETsecret=CASEWHENnew_secretISNULLTHENs.secretELSEencode(vault._crypto_aead_det_encrypt(message:=convert_to(new_secret,''utf8''),additional:=convert_to(s.id::text,''utf8''),key_id:=0,context:=''pgsodium''::bytea,nonce:=s.nonce),''base64'')END,name=coalesce(new_name,s.name),description=coalesce(new_description,s.description),updated_at=now()WHEREs.id=secret_id;END'
-             then 'supabase-vault-v0.3.1:update-secret'
+            and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') in ('26037d4292c5a86ea1ef932dd3286e628aacb2473f09e349636ef92d3b1afd04','dd7be892de94e335d2e282b69b192258950df43261ed11ca42aee0931f63d5ab')
+              then 'supabase-vault-v0.3.1:update-secret'
            else 'unsupported:' || l.lanname || ':' || p.probin || ':' || p.prosrc
          end implementation_profile
   from pg_extension e join pg_namespace n on n.oid=e.extnamespace
@@ -578,13 +578,16 @@ export type RehearsalClusterSentinel = {
     policy: typeof OT_PRODUCTION_RECOVERY_EXTENSION_PORTABILITY_POLICY;
     filesSha256: Record<string, string>;
     privateSharedDirectory: string;
+    privateLibraryDirectory: string;
     postgresSha256: string;
     initdbSha256: string;
     privateBinaryTreeSha256: string;
     privateSharedTreeSha256: string;
+    privateLibraryTreeSha256: string;
     sourcePgConfigSha256: string;
     sourceBinaryTreeSha256: string;
     sourceSharedTreeSha256: string;
+    sourceLibraryTreeSha256: string;
   };
   authenticator: string;
 };
@@ -617,6 +620,9 @@ export type NativeVaultPlatformReceipt = {
     pgConfigSha256: string;
     compilerVersion: string;
     compilerSha256: string;
+    pgxsTreeSha256: string;
+    dependencyHeaderTreeSha256: string;
+    sodiumStaticLibrarySha256: string;
   };
   evidence: {
     sourceArchive: { file: string; sha256: string };

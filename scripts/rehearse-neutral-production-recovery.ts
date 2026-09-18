@@ -585,6 +585,7 @@ BEGIN
      OR current_database() <> ${sqlLiteral(input.sentinel.databaseName)}
      OR current_user <> ${sqlLiteral(input.sentinel.temporarySuperuser)}
      OR (select setting from pg_config where name='SHAREDIR') <> ${sqlLiteral(input.sentinel.managedExtensionFixture.privateSharedDirectory)}
+     OR (select setting from pg_config where name='PKGLIBDIR') <> ${sqlLiteral(input.sentinel.managedExtensionFixture.privateLibraryDirectory)}
      OR coalesce((select shobj_description(oid,'pg_database') from pg_database where datname=current_database()),'') <> ${sqlLiteral(canonicalJson(input.sentinel))}
   THEN
     RAISE EXCEPTION 'recovery rehearsal sentinel mismatch';
@@ -1204,25 +1205,27 @@ async function decryptBuffer(
 }
 
 export async function rehearseNeutralProductionRecovery(
-  dependencies: {
+  input: {
+    env?: NodeJS.ProcessEnv;
+    writeStatus?: (message: string) => void;
     verifyInstalledFixture?: typeof assertManagedExtensionFixtureInstalled;
     resolveRuntimeExecutable?: (file: string) => TrustedExecutable;
   } = {},
 ): Promise<void> {
+  const env = input.env ?? process.env;
   const verifyInstalledFixture =
-    dependencies.verifyInstalledFixture ??
-    assertManagedExtensionFixtureInstalled;
+    input.verifyInstalledFixture ?? assertManagedExtensionFixtureInstalled;
   const resolveRuntimeExecutable =
-    dependencies.resolveRuntimeExecutable ??
+    input.resolveRuntimeExecutable ??
     ((file: string) =>
       resolveTrustedExecutable(file, { allowStickyAncestors: true }));
-  const receiptPath = process.env.OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT;
-  const targetUrl = process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL;
-  const passphrase = process.env.OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE;
-  const authenticationKey = process.env.OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY;
-  const sentinelPath = process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL;
-  const runtimeRoot = process.env[PRIVATE_RUNTIME_ROOT_VAR];
-  const gpgPath = process.env[OT_PRODUCTION_RECOVERY_GPG_PATH_VAR];
+  const receiptPath = env.OT_NEUTRAL_PRODUCTION_RECOVERY_RECEIPT;
+  const targetUrl = env.OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL;
+  const passphrase = env.OT_NEUTRAL_PRODUCTION_RECOVERY_PASSPHRASE;
+  const authenticationKey = env.OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY;
+  const sentinelPath = env.OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL;
+  const runtimeRoot = env[PRIVATE_RUNTIME_ROOT_VAR];
+  const gpgPath = env[OT_PRODUCTION_RECOVERY_GPG_PATH_VAR];
   if (
     !receiptPath ||
     !targetUrl ||
@@ -1237,7 +1240,9 @@ export async function rehearseNeutralProductionRecovery(
     );
   const resolvedTarget = await resolveRecoveryTarget(targetUrl);
   const installedFixture = verifyInstalledFixture(runtimeRoot);
-  const gpgCommand = resolveTrustedExecutable(gpgPath);
+  const gpgCommand = resolveTrustedExecutable(gpgPath, {
+    allowStickyAncestors: true,
+  });
   const psqlCommand = resolveRuntimeExecutable(
     path.join(installedFixture.privateBinaryDirectory, "psql"),
   );
@@ -1264,6 +1269,8 @@ export async function rehearseNeutralProductionRecovery(
       canonicalJson(OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES) ||
     sentinel.managedExtensionFixture.privateSharedDirectory !==
       installedFixture.privateSharedDirectory ||
+    sentinel.managedExtensionFixture.privateLibraryDirectory !==
+      installedFixture.privateLibraryDirectory ||
     sentinel.managedExtensionFixture.postgresSha256 !==
       installedFixture.postgresSha256 ||
     sentinel.managedExtensionFixture.initdbSha256 !==
@@ -1272,12 +1279,16 @@ export async function rehearseNeutralProductionRecovery(
       installedFixture.privateBinaryTreeSha256 ||
     sentinel.managedExtensionFixture.privateSharedTreeSha256 !==
       installedFixture.privateSharedTreeSha256 ||
+    sentinel.managedExtensionFixture.privateLibraryTreeSha256 !==
+      installedFixture.privateLibraryTreeSha256 ||
     sentinel.managedExtensionFixture.sourcePgConfigSha256 !==
       installedFixture.sourcePgConfigSha256 ||
     sentinel.managedExtensionFixture.sourceBinaryTreeSha256 !==
       installedFixture.sourceBinaryTreeSha256 ||
     sentinel.managedExtensionFixture.sourceSharedTreeSha256 !==
-      installedFixture.sourceSharedTreeSha256
+      installedFixture.sourceSharedTreeSha256 ||
+    sentinel.managedExtensionFixture.sourceLibraryTreeSha256 !==
+      installedFixture.sourceLibraryTreeSha256
   )
     throw new Error("Rehearsal managed extension fixture proof is invalid");
 
@@ -1311,6 +1322,7 @@ export async function rehearseNeutralProductionRecovery(
       await target.query(`select current_user username, current_setting('server_version_num')::int version,
       (pg_control_system()).system_identifier::text system_identifier, current_setting('data_directory') data_directory,
       (select setting from pg_config where name='SHAREDIR') shared_directory,
+      (select setting from pg_config where name='PKGLIBDIR') library_directory,
       coalesce(shobj_description(oid,'pg_database'),'') database_comment from pg_database where datname=current_database()`)
     ).rows[0]!;
     const major = Math.floor(Number(identity.version) / 10_000);
@@ -1321,6 +1333,8 @@ export async function rehearseNeutralProductionRecovery(
       installedFixture.major !== major ||
       String(identity.shared_directory) !==
         installedFixture.privateSharedDirectory ||
+      String(identity.library_directory) !==
+        installedFixture.privateLibraryDirectory ||
       sentinel.systemIdentifier !== String(identity.system_identifier) ||
       sentinel.dataDirectorySha256 !==
         sha256(String(identity.data_directory)) ||
@@ -1381,8 +1395,8 @@ export async function rehearseNeutralProductionRecovery(
     // operator/Production process. It lets the suite replace a loopback
     // listener after the preliminary Node inspection and prove the psql guard
     // refuses that replacement before consuming restore SQL.
-    const testHook = process.env.OT_TEST_RECOVERY_AFTER_NODE_VALIDATION_HOOK;
-    if (process.env.NODE_ENV === "test" && testHook) {
+    const testHook = env.OT_TEST_RECOVERY_AFTER_NODE_VALIDATION_HOOK;
+    if (env.NODE_ENV === "test" && testHook) {
       fs.writeFileSync(`${testHook}.ready`, "ready", {
         flag: "wx",
         mode: 0o600,
@@ -1546,7 +1560,7 @@ export async function rehearseNeutralProductionRecovery(
       const descriptor = fs.openSync(output, "r");
       fs.fsyncSync(descriptor);
       fs.closeSync(descriptor);
-      process.stdout.write(
+      (input.writeStatus ?? ((message) => process.stdout.write(message)))(
         `neutral-report PRODUCTION recovery rehearsal: PASS backup_id=${receipt.backupId} target_pg=${major} catalog=verified artifacts=verified\n`,
       );
     } finally {
@@ -1560,7 +1574,7 @@ export async function rehearseNeutralProductionRecovery(
 
 if (
   process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
 )
   rehearseNeutralProductionRecovery().catch((error: unknown) => {
     process.stderr.write(

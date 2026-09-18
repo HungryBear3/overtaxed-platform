@@ -20,6 +20,7 @@ import {
   OT_PRODUCTION_NATIVE_VAULT_UPSTREAM_COMMIT,
   OT_PRODUCTION_NATIVE_VAULT_BASE_SQL_SHA256,
   OT_PRODUCTION_NATIVE_VAULT_UPGRADE_SQL_SHA256,
+  OT_PRODUCTION_NATIVE_VAULT_APPROVED_PLATFORM_RECEIPT_SHA256,
   OT_PRODUCTION_RECOVERY_CANDIDATE_COMMIT_VAR,
   OT_PRODUCTION_RECOVERY_CANDIDATE_MANIFEST_VAR,
   OT_PRODUCTION_RESTORE_SCHEMA,
@@ -44,11 +45,13 @@ import {
   prepareManagedExtensionRuntime,
 } from "@/scripts/neutral-production-extension-fixture-files";
 import {
+  assertApprovedPlatformReceiptPins,
   assertProductionRecoveryGate as assertProductionRecoveryGateRaw,
   materializePrivateCopy,
   verifyPrivateCopy,
   readProtectedFile,
 } from "@/scripts/neutral-production-recovery-gate";
+import { assertProductionRecoveryEvidenceForTests } from "@/test-support/neutral-production-recovery-gate";
 import { resolveRecoveryTarget } from "@/scripts/neutral-recovery-target";
 import { withRecoveryDirectory } from "@/lib/fulfillment/neutral-recovery-directory";
 import {
@@ -251,6 +254,9 @@ function fixture() {
         pgConfigSha256: sha256(`pg-config-${platform}`),
         compilerVersion: "unit-compiler 1.0",
         compilerSha256: sha256(`compiler-${platform}`),
+        pgxsTreeSha256: sha256(`pgxs-${platform}`),
+        dependencyHeaderTreeSha256: sha256(`sodium-headers-${platform}`),
+        sodiumStaticLibrarySha256: sha256(`sodium-static-${platform}`),
       },
       evidence: {
         sourceArchive: {
@@ -376,25 +382,16 @@ function testOnlyPolicyFor(receiptPath: string) {
   };
 }
 
+/**
+ * The Production gate itself is closed and unreachable from a unit process: it
+ * requires a root-owned gpg binary and release pins that are deliberately null.
+ * These cases exercise the same lower-level proof validation through the
+ * test-only boundary, which can relax gpg ownership and nothing else.
+ */
 function assertProductionRecoveryGate(
-  input: Parameters<typeof assertProductionRecoveryGateRaw>[0] & {
-    testOnlyEnforceReleasePins?: boolean;
-  },
+  input: Parameters<typeof assertProductionRecoveryGateRaw>[0],
 ) {
-  const { testOnlyEnforceReleasePins, ...gateInput } = input;
-  const receiptPath = gateInput.env[OT_PRODUCTION_RECOVERY_RECEIPT_VAR];
-  return assertProductionRecoveryGateRaw({
-    ...gateInput,
-    testOnlyPolicy: {
-      ownershipPolicy: TEST_EXECUTABLE_POLICY,
-      ...(testOnlyEnforceReleasePins || !receiptPath
-        ? {}
-        : {
-            approvedPlatformReceiptSha256:
-              testOnlyPolicyFor(receiptPath).approvedPlatformReceiptSha256,
-          }),
-    },
-  });
+  return assertProductionRecoveryEvidenceForTests(input);
 }
 
 function rewriteAuthenticatedJson(
@@ -443,18 +440,87 @@ describe("Production no-PITR recovery gate", () => {
     }
   });
 
+  test("the exported Production gate ignores caller-supplied policy and keeps the release pin closed", async () => {
+    const value = fixture();
+    try {
+      // Exactly the shape the gate used to honour: a replacement ownership
+      // policy and replacement approved receipt hashes that match this
+      // fixture's own proof.
+      const smuggled = {
+        env: envFor(value.receiptPath),
+        projectRef: PROJECT,
+        markerInstanceId: INSTANCE,
+        now: new Date("2026-09-17T18:30:00Z"),
+        testOnlyPolicy: testOnlyPolicyFor(value.receiptPath),
+      };
+      await expect(
+        assertProductionRecoveryGateRaw(smuggled as never),
+      ).rejects.toThrow();
+
+      // The release pins are the only source the Production gate compares
+      // against, and they are still deliberately empty.
+      expect(
+        OT_PRODUCTION_NATIVE_VAULT_APPROVED_PLATFORM_RECEIPT_SHA256,
+      ).toEqual({ darwin: null, linux: null });
+
+      const gateSource = fs.readFileSync(
+        path.join(process.cwd(), "scripts/neutral-production-recovery-gate.ts"),
+        "utf8",
+      );
+      const gate = gateSource.slice(
+        gateSource.indexOf(
+          "export async function assertProductionRecoveryGate(",
+        ),
+      );
+      expect(gate).not.toContain("testOnly");
+      expect(gate).not.toContain("ownershipPolicy");
+      expect(gate).toContain("resolveTrustedExecutable(gpgPath)");
+
+      // No production module accepts or forwards a replacement pin or policy.
+      for (const directory of ["scripts", "lib"])
+        for (const file of fs
+          .readdirSync(path.join(process.cwd(), directory), {
+            recursive: true,
+            encoding: "utf8",
+          })
+          .filter((name) => name.endsWith(".ts"))) {
+          const body = fs.readFileSync(
+            path.join(process.cwd(), directory, file),
+            "utf8",
+          );
+          expect(body).not.toContain("testOnlyPolicy");
+          if (body.includes("approvedPlatformReceiptSha256"))
+            expect(path.join(directory, file).replace(/\\/g, "/")).toBe(
+              "scripts/neutral-production-recovery-gate.ts",
+            );
+        }
+    } finally {
+      fs.rmSync(value.directory, { recursive: true, force: true });
+    }
+  });
+
   test("keeps Production apply held until reviewed platform receipt hashes are pinned in code", async () => {
     const value = fixture();
     try {
+      // Authentic, fully authenticated evidence: the only thing missing is a
+      // reviewed release commit pinning the exact platform receipt bytes.
       await expect(
         assertProductionRecoveryGate({
           env: envFor(value.receiptPath),
           projectRef: PROJECT,
           markerInstanceId: INSTANCE,
           now: new Date("2026-09-17T18:30:00Z"),
-          testOnlyEnforceReleasePins: true,
         }),
-      ).rejects.toThrow(/not pinned by the released candidate/);
+      ).resolves.toMatchObject({ backupId: value.receipt.backupId });
+      const proof = JSON.parse(
+        fs.readFileSync(
+          path.join(value.directory, "native-vault-proof.json"),
+          "utf8",
+        ),
+      );
+      expect(() => assertApprovedPlatformReceiptPins(proof)).toThrow(
+        /not pinned by the released candidate/,
+      );
       const entrypoint = fs.readFileSync(
         path.join(
           process.cwd(),
@@ -694,6 +760,8 @@ describe("Production no-PITR recovery gate", () => {
     "cross-candidate",
     "basename-collision",
     "case-variant-alias",
+    "missing-sodium-hash",
+    "missing-pgxs-hash",
   ] as const)("rejects %s native Vault platform evidence", async (mutation) => {
     const value = fixture();
     try {
@@ -730,6 +798,14 @@ describe("Production no-PITR recovery gate", () => {
             receipt.evidence.nativeLibrary.file = "VAULT-SOURCE-DARWIN.TAR";
           },
         );
+      if (mutation === "missing-sodium-hash")
+        rewritePlatformReceiptAndBundle(value.directory, "linux", (receipt) => {
+          delete receipt.toolchain.sodiumStaticLibrarySha256;
+        });
+      if (mutation === "missing-pgxs-hash")
+        rewritePlatformReceiptAndBundle(value.directory, "linux", (receipt) => {
+          delete receipt.toolchain.pgxsTreeSha256;
+        });
       await expect(
         assertProductionRecoveryGate({
           env: envFor(value.receiptPath),
@@ -1030,6 +1106,18 @@ describe("Production no-PITR recovery gate", () => {
     expect(OT_PRODUCTION_RECOVERY_CATALOG_SQL).not.toMatch(
       /p\.proname='(?:create_secret|update_secret)'[\s\S]{0,200}\blike\b/i,
     );
+    expect(OT_PRODUCTION_RECOVERY_CATALOG_SQL).not.toContain(
+      "regexp_replace(p.prosrc",
+    );
+    for (const digest of [
+      "4804be82df1e759cec455b5d234cd7c96dc19382be281b93fcc0b29c897bf286",
+      "54841098ee3262ffb0c449160b924623bbfb60da68f88156a760e397b71cdfcd",
+      "45c3edf8140259654aee1807a4ffe9d7afbe55d39676572cf608e79f5bb9d8ed",
+      "f4769f52bc723eed76644ed7c5a1dd224d7f2b8232d9ec998f1e9dfbfb88bac2",
+      "26037d4292c5a86ea1ef932dd3286e628aacb2473f09e349636ef92d3b1afd04",
+      "dd7be892de94e335d2e282b69b192258950df43261ed11ca42aee0931f63d5ab",
+    ])
+      expect(OT_PRODUCTION_RECOVERY_CATALOG_SQL).toContain(digest);
   });
 
   test("keeps restore row diagnostics opaque and verifies database bytes before COMMIT", () => {
@@ -1080,9 +1168,18 @@ describe("Production no-PITR recovery gate", () => {
     fs.chmodSync(maliciousRuntime, 0o700);
     try {
       const shared = path.join(root, "source-share");
+      const library = path.join(root, "source-lib");
       const bin = path.join(root, "source-bin");
       const extension = path.join(shared, "extension");
       fs.mkdirSync(extension, { recursive: true, mode: 0o700 });
+      fs.mkdirSync(library, { mode: 0o700 });
+      fs.writeFileSync(
+        path.join(library, "dict_snowball.so"),
+        "standard-module",
+        {
+          mode: 0o500,
+        },
+      );
       fs.mkdirSync(bin, { mode: 0o700 });
       const dictionaryDirectory = path.join(shared, "tsearch_data");
       fs.mkdirSync(dictionaryDirectory, { mode: 0o700 });
@@ -1103,6 +1200,8 @@ describe("Production no-PITR recovery gate", () => {
         Buffer.from([0]),
         Buffer.from(shared),
         Buffer.from([0]),
+        Buffer.from(library),
+        Buffer.from([0]),
         Buffer.from("tail"),
       ]);
       for (const name of ["postgres", "initdb"])
@@ -1113,7 +1212,7 @@ describe("Production no-PITR recovery gate", () => {
       const pgConfig = path.join(bin, "pg_config");
       fs.writeFileSync(
         pgConfig,
-        `#!/bin/sh\ncase "$1" in\n  --version) printf '%s\\n' 'PostgreSQL 17.11';;\n  --sharedir) printf '%s\\n' '${shared}';;\n  *) exit 1;;\nesac\n`,
+        `#!/bin/sh\ncase "$1" in\n  --version) printf '%s\\n' 'PostgreSQL 17.11';;\n  --sharedir) printf '%s\\n' '${shared}';;\n  --pkglibdir) printf '%s\\n' '${library}';;\n  *) exit 1;;\nesac\n`,
         { mode: 0o700 },
       );
       expect(() =>
@@ -1140,6 +1239,12 @@ describe("Production no-PITR recovery gate", () => {
       expect(fs.readFileSync(externalDictionary, "utf8")).toBe(
         "must-not-be-copied",
       );
+      expect(prepared.privateLibraryDirectory).toBe(
+        path.join(fs.realpathSync(runtime), "l"),
+      );
+      expect(
+        fs.readFileSync(path.join(runtime, "l", "dict_snowball.so"), "utf8"),
+      ).toBe("standard-module");
       for (const name of [
         "supabase_vault.control",
         "supabase_vault--0.3.1.sql",
@@ -1555,5 +1660,36 @@ describe("Production no-PITR recovery gate", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Production rollout runbook", () => {
+  const runbook = () =>
+    fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "docs/ops/ot-neutral-production-rollout-packet-2026-09-17.md",
+      ),
+      "utf8",
+    );
+
+  test("seals every private runtime tree the restore validator re-measures", () => {
+    // `assertManagedExtensionFixtureInstalled` re-measures b, s and l under
+    // root-or-runtime-root ownership with no group/world write, so a procedure
+    // that seals only two of the three cannot pass its own gate.
+    const seal =
+      /sudo chown -R root ([^\n]*)\n\s*sudo chmod -R go-w ([^\n]*)/.exec(
+        runbook(),
+      );
+    expect(seal).not.toBeNull();
+    for (const group of [seal![1]!, seal![2]!])
+      for (const tree of ['"$pg_bin"', '"$root/s"', '"$root/l"'])
+        expect(group).toContain(tree);
+  });
+
+  test("keeps the native Vault recorder's non-root policy distinct from the restored-runtime seal", () => {
+    expect(runbook()).toContain(
+      "The recorder must not be run as root or under sudo",
+    );
   });
 });

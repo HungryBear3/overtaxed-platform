@@ -20,18 +20,20 @@ import { redactProductionDiagnostic } from "../lib/fulfillment/neutral-productio
 import { resolveRecoveryTarget } from "./neutral-recovery-target";
 
 export async function setupNeutralProductionRecoveryRehearsal(
-  dependencies: {
+  input: {
+    env?: NodeJS.ProcessEnv;
+    writeStatus?: (message: string) => void;
     verifyInstalledFixture?: typeof assertManagedExtensionFixtureInstalled;
   } = {},
 ): Promise<void> {
+  const env = input.env ?? process.env;
   const verifyInstalledFixture =
-    dependencies.verifyInstalledFixture ??
-    assertManagedExtensionFixtureInstalled;
-  const targetUrl = process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL;
-  const superuser = process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_SUPERUSER;
-  const output = process.env.OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL;
-  const authenticationKey = process.env.OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY;
-  const runtimeRoot = process.env[PRIVATE_RUNTIME_ROOT_VAR];
+    input.verifyInstalledFixture ?? assertManagedExtensionFixtureInstalled;
+  const targetUrl = env.OT_NEUTRAL_RECOVERY_REHEARSAL_DATABASE_URL;
+  const superuser = env.OT_NEUTRAL_RECOVERY_REHEARSAL_SUPERUSER;
+  const output = env.OT_NEUTRAL_RECOVERY_REHEARSAL_SENTINEL;
+  const authenticationKey = env.OT_NEUTRAL_PRODUCTION_RECOVERY_AUTH_KEY;
+  const runtimeRoot = env[PRIVATE_RUNTIME_ROOT_VAR];
   if (!targetUrl || !superuser || !output || !authenticationKey || !runtimeRoot)
     throw new Error(
       "Target URL, temporary superuser, sentinel path and authentication key are required",
@@ -52,6 +54,7 @@ export async function setupNeutralProductionRecoveryRehearsal(
              (pg_control_system()).system_identifier::text system_identifier,
              current_setting('data_directory') data_directory,
              (select setting from pg_config where name='SHAREDIR') shared_directory,
+             (select setting from pg_config where name='PKGLIBDIR') library_directory,
              (select rolsuper from pg_roles where rolname=current_user) is_superuser
     `)
     ).rows[0]!;
@@ -61,6 +64,7 @@ export async function setupNeutralProductionRecoveryRehearsal(
       (major !== 17 && major !== 18) ||
       fixture.major !== major ||
       identity.shared_directory !== fixture.privateSharedDirectory ||
+      identity.library_directory !== fixture.privateLibraryDirectory ||
       identity.username !== superuser ||
       !identity.is_superuser
     )
@@ -132,13 +136,16 @@ export async function setupNeutralProductionRecoveryRehearsal(
           ...OT_PRODUCTION_RECOVERY_MANAGED_EXTENSION_FIXTURE_FILES,
         },
         privateSharedDirectory: fixture.privateSharedDirectory,
+        privateLibraryDirectory: fixture.privateLibraryDirectory,
         postgresSha256: fixture.postgresSha256,
         initdbSha256: fixture.initdbSha256,
         privateBinaryTreeSha256: fixture.privateBinaryTreeSha256,
         privateSharedTreeSha256: fixture.privateSharedTreeSha256,
+        privateLibraryTreeSha256: fixture.privateLibraryTreeSha256,
         sourcePgConfigSha256: fixture.sourcePgConfigSha256,
         sourceBinaryTreeSha256: fixture.sourceBinaryTreeSha256,
         sourceSharedTreeSha256: fixture.sourceSharedTreeSha256,
+        sourceLibraryTreeSha256: fixture.sourceLibraryTreeSha256,
       },
       authenticator: "",
     };
@@ -152,7 +159,7 @@ export async function setupNeutralProductionRecoveryRehearsal(
       mode: 0o600,
       flag: "wx",
     });
-    process.stdout.write(
+    (input.writeStatus ?? ((message) => process.stdout.write(message)))(
       `neutral-report recovery rehearsal setup: PASS target_pg=${major} sentinel=${sentinel.nonce}\n`,
     );
   } finally {
@@ -162,7 +169,7 @@ export async function setupNeutralProductionRecoveryRehearsal(
 
 if (
   process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
 )
   setupNeutralProductionRecoveryRehearsal().catch((error: unknown) => {
     process.stderr.write(

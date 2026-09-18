@@ -58,6 +58,10 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
   const roots: Array<{ root: string; bin?: string }> = [];
   const passphrase = "synthetic-recovery-passphrase-32-chars";
   const authenticationKey = "synthetic-authentication-key-at-least-32-bytes";
+  const vaultSecretId = "11111111-2222-4333-8444-555555555555";
+  const vaultCiphertext = "ZW5jcnlwdGVkLXNlY3JldC1ieXRlcw==";
+  const vaultNonceHex = "11".repeat(24);
+  const vaultTimestamp = "2026-09-17T12:34:56Z";
 
   const binary = (bin: string | undefined, name: string) =>
     bin ? path.join(bin, name) : name;
@@ -152,6 +156,40 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
       grant anon to authenticated with inherit true, set false;
       grant anon to portable_admin with admin option, inherit true, set true;
     `);
+    await sourceClient.query(
+      `insert into vault.secrets(
+         id,name,description,secret,key_id,nonce,created_at,updated_at
+       ) values ($1::uuid,$2,$3,$4,null,decode($5,'hex'),$6::timestamptz,$6::timestamptz)`,
+      [
+        vaultSecretId,
+        "synthetic-config-row",
+        "encrypted fixture",
+        vaultCiphertext,
+        vaultNonceHex,
+        vaultTimestamp,
+      ],
+    );
+    const sourceVaultRows = (
+      await sourceClient.query(
+        `select id::text, name, description, secret, key_id::text,
+                encode(nonce,'hex') nonce_hex,
+                to_char(created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') created_at,
+                to_char(updated_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') updated_at
+         from vault.secrets order by id`,
+      )
+    ).rows;
+    expect(sourceVaultRows).toEqual([
+      {
+        id: vaultSecretId,
+        name: "synthetic-config-row",
+        description: "encrypted fixture",
+        secret: vaultCiphertext,
+        key_id: null,
+        nonce_hex: vaultNonceHex,
+        created_at: vaultTimestamp,
+        updated_at: vaultTimestamp,
+      },
+    ]);
     const portableSource = new Client({
       connectionString: `postgresql://portable_admin@127.0.0.1:${source.port}/postgres`,
     });
@@ -378,6 +416,25 @@ suite("no-PITR encrypted recovery on disposable PostgreSQL", () => {
         )
       ).rows[0]!.value,
     ).toBe("unchanged");
+    expect(
+      (
+        await restored.query(
+          `select id::text, name, description, secret, key_id::text,
+                  encode(nonce,'hex') nonce_hex,
+                  to_char(created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') created_at,
+                  to_char(updated_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') updated_at
+           from vault.secrets order by id`,
+        )
+      ).rows,
+    ).toEqual(sourceVaultRows);
+    expect(
+      (
+        await restored.query(
+          "select decrypted_secret from vault.decrypted_secrets where id=$1",
+          [vaultSecretId],
+        )
+      ).rows[0]!.decrypted_secret,
+    ).toBeNull();
     expect(
       (
         await restored.query(`

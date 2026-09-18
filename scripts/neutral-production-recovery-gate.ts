@@ -38,7 +38,6 @@ import {
   resolveTrustedExecutable,
   spawnTrusted,
   type TrustedExecutable,
-  type TrustedExecutableOwnershipPolicy,
 } from "./trusted-executable";
 import { expectedExtensionSqlPortabilityProof } from "../lib/fulfillment/neutral-production-extension-portability";
 
@@ -306,10 +305,6 @@ export function reserveNativeVaultEvidenceBasename(
   seenBasenames: Set<string>,
 ): string {
   const basename = path.basename(file);
-  // Normalize before validating the canonical spelling so a case or Unicode
-  // alias of an already-reserved name reaches the collision refusal even on a
-  // case-sensitive review host. This models the lookup behavior of default
-  // case-insensitive APFS rather than relying on the host filesystem.
   const collisionKey = basename.normalize("NFKC").toLowerCase();
   if (seenBasenames.has(collisionKey))
     throw new Error("Native Vault evidence basename is colliding");
@@ -385,6 +380,9 @@ function assertNativeVaultPlatformEvidence(input: {
     !receipt.toolchain.compilerVersion ||
     !/^[0-9a-f]{64}$/.test(receipt.toolchain.pgConfigSha256) ||
     !/^[0-9a-f]{64}$/.test(receipt.toolchain.compilerSha256) ||
+    !/^[0-9a-f]{64}$/.test(receipt.toolchain.pgxsTreeSha256) ||
+    !/^[0-9a-f]{64}$/.test(receipt.toolchain.dependencyHeaderTreeSha256) ||
+    !/^[0-9a-f]{64}$/.test(receipt.toolchain.sodiumStaticLibrarySha256) ||
     !/^[0-9a-f]{64}$/.test(receipt.nativeSourceCatalogSha256) ||
     !/^[0-9a-f]{64}$/.test(receipt.functionalSecretRoundTripSha256) ||
     !Number.isFinite(verifiedAt) ||
@@ -445,34 +443,60 @@ function assertNativeVaultPlatformEvidence(input: {
     throw new Error("Native Vault functional transcript is invalid");
 }
 
-export async function assertProductionRecoveryGate(input: {
-  env: Readonly<Record<string, string | undefined>>;
-  projectRef: string;
-  markerInstanceId: string;
-  now?: Date;
-  testOnlyPolicy?: {
-    ownershipPolicy: TrustedExecutableOwnershipPolicy;
-    approvedPlatformReceiptSha256?: {
-      darwin: string;
-      linux: string;
-    };
-  };
-}): Promise<ProductionRecoveryReceipt> {
-  const receiptPath = input.env[OT_PRODUCTION_RECOVERY_RECEIPT_VAR];
+/**
+ * Everything the Production gate proves about recovery evidence except the two
+ * things only a reviewed release may decide: which gpg binary is trusted and
+ * which platform receipt hashes are approved. Those stay in
+ * {@link assertProductionRecoveryGate}, which takes no input for either.
+ */
+export type PreparedProductionRecoveryEvidence = {
+  receipt: ProductionRecoveryReceipt;
+  receiptDigest: string;
+  directory: string;
+  now: Date;
+  authenticationKey: string;
+  nativeProof: NativeVaultProof;
+  proofDirectory: string;
+  candidateCommit: string;
+  candidateManifestSha256: string;
+  independentlyAdaptedRolesSha256: string;
+  independentlyAdaptedStatementCount: number;
+  independentlyVerifiedExtensionPortability: ProductionRecoveryReceipt["extensionPortability"];
+};
+
+export function assertProductionRecoveryEnvironmentPresent(
+  env: Readonly<Record<string, string | undefined>>,
+): {
+  receiptPath: string;
+  authenticationKey: string;
+  passphrase: string;
+  gpgPath: string;
+} {
+  const receiptPath = env[OT_PRODUCTION_RECOVERY_RECEIPT_VAR];
   if (!receiptPath)
     throw new Error(
       `${OT_PRODUCTION_RECOVERY_RECEIPT_VAR} is required before Production apply`,
     );
-  const authenticationKey = input.env[OT_PRODUCTION_RECOVERY_AUTH_KEY_VAR];
-  const passphrase = input.env[OT_PRODUCTION_RECOVERY_PASSPHRASE_VAR];
-  const gpgPath = input.env[OT_PRODUCTION_RECOVERY_GPG_PATH_VAR];
+  const authenticationKey = env[OT_PRODUCTION_RECOVERY_AUTH_KEY_VAR];
+  const passphrase = env[OT_PRODUCTION_RECOVERY_PASSPHRASE_VAR];
+  const gpgPath = env[OT_PRODUCTION_RECOVERY_GPG_PATH_VAR];
   if (!authenticationKey || !passphrase || !gpgPath)
     throw new Error(
       "Production recovery authentication key and passphrase are required",
     );
-  const gpgExecutable = resolveTrustedExecutable(gpgPath, {
-    ownershipPolicy: input.testOnlyPolicy?.ownershipPolicy,
-  });
+  return { receiptPath, authenticationKey, passphrase, gpgPath };
+}
+
+export async function prepareProductionRecoveryEvidence(input: {
+  env: Readonly<Record<string, string | undefined>>;
+  projectRef: string;
+  markerInstanceId: string;
+  now?: Date;
+  gpgExecutable: TrustedExecutable;
+}): Promise<PreparedProductionRecoveryEvidence> {
+  const { receiptPath, authenticationKey, passphrase } =
+    assertProductionRecoveryEnvironmentPresent(input.env);
+  const gpgExecutable = input.gpgExecutable;
   if (authenticationKey === passphrase)
     throw new Error(
       "Production recovery authentication key and passphrase must be independent",
@@ -618,46 +642,71 @@ export async function assertProductionRecoveryGate(input: {
     nativeProof.platformReceipts.length !== 2
   )
     throw new Error("Authenticated native Vault proof is invalid");
-  const approvedReceiptSha256 =
-    input.testOnlyPolicy?.approvedPlatformReceiptSha256 ??
-    OT_PRODUCTION_NATIVE_VAULT_APPROVED_PLATFORM_RECEIPT_SHA256;
+  return {
+    receipt,
+    receiptDigest,
+    directory,
+    now,
+    authenticationKey,
+    nativeProof,
+    proofDirectory: path.dirname(path.resolve(nativeProofPath)),
+    candidateCommit: candidateCommit!,
+    candidateManifestSha256: candidateManifestSha256!,
+    independentlyAdaptedRolesSha256,
+    independentlyAdaptedStatementCount,
+    independentlyVerifiedExtensionPortability,
+  };
+}
+
+/**
+ * The released candidate's own pins, and nothing else. There is no parameter
+ * here for a caller to supply, and both entries are deliberately null until a
+ * separately reviewed release commit fills them in from the exact bytes two
+ * independent Darwin and Linux jobs produced.
+ */
+export function assertApprovedPlatformReceiptPins(
+  nativeProof: NativeVaultProof,
+): void {
+  const approved = OT_PRODUCTION_NATIVE_VAULT_APPROVED_PLATFORM_RECEIPT_SHA256;
   if (
-    !approvedReceiptSha256.darwin ||
-    !approvedReceiptSha256.linux ||
-    nativeProof.platformReceipts[0].sha256 !== approvedReceiptSha256.darwin ||
-    nativeProof.platformReceipts[1].sha256 !== approvedReceiptSha256.linux
+    !approved.darwin ||
+    !approved.linux ||
+    nativeProof.platformReceipts[0].sha256 !== approved.darwin ||
+    nativeProof.platformReceipts[1].sha256 !== approved.linux
   )
     throw new Error(
       "Native Vault platform receipts are not pinned by the released candidate",
     );
-  const proofDirectory = path.dirname(path.resolve(nativeProofPath));
+}
+
+export function assertNativeVaultPlatformEvidenceBundle(
+  prepared: PreparedProductionRecoveryEvidence,
+): void {
   const seenNativeEvidenceBasenames = new Set<string>();
-  assertNativeVaultPlatformEvidence({
-    proofDirectory,
-    reference: nativeProof.platformReceipts[0],
-    expectedPlatform: "darwin",
-    authenticationKey,
-    backupId: receipt.backupId,
-    backupReceiptSha256: receiptDigest,
-    candidateCommit: candidateCommit!,
-    candidateManifestSha256: candidateManifestSha256!,
-    now,
-    backupCreatedAt: receipt.createdAt,
-    seenBasenames: seenNativeEvidenceBasenames,
-  });
-  assertNativeVaultPlatformEvidence({
-    proofDirectory,
-    reference: nativeProof.platformReceipts[1],
-    expectedPlatform: "linux",
-    authenticationKey,
-    backupId: receipt.backupId,
-    backupReceiptSha256: receiptDigest,
-    candidateCommit: candidateCommit!,
-    candidateManifestSha256: candidateManifestSha256!,
-    now,
-    backupCreatedAt: receipt.createdAt,
-    seenBasenames: seenNativeEvidenceBasenames,
-  });
+  for (const [index, expectedPlatform] of [
+    [0, "darwin"],
+    [1, "linux"],
+  ] as const)
+    assertNativeVaultPlatformEvidence({
+      proofDirectory: prepared.proofDirectory,
+      reference: prepared.nativeProof.platformReceipts[index],
+      expectedPlatform,
+      authenticationKey: prepared.authenticationKey,
+      backupId: prepared.receipt.backupId,
+      backupReceiptSha256: prepared.receiptDigest,
+      candidateCommit: prepared.candidateCommit,
+      candidateManifestSha256: prepared.candidateManifestSha256,
+      now: prepared.now,
+      backupCreatedAt: prepared.receipt.createdAt,
+      seenBasenames: seenNativeEvidenceBasenames,
+    });
+}
+
+export function assertRestoreRehearsalEvidence(
+  prepared: PreparedProductionRecoveryEvidence,
+): void {
+  const { receipt, receiptDigest, directory, now, authenticationKey } =
+    prepared;
   let adaptedRolesSha256: string | undefined;
   let adaptedStatementCount: number | undefined;
   let archiveTocSha256: string | undefined;
@@ -697,9 +746,10 @@ export async function assertProductionRecoveryGate(input: {
       portability.pristineTargetCount + portability.adaptedStatementCount !==
         portability.authenticatedSourceCount ||
       !/^[0-9a-f]{64}$/.test(portability.adaptedRolesSha256) ||
-      portability.adaptedRolesSha256 !== independentlyAdaptedRolesSha256 ||
+      portability.adaptedRolesSha256 !==
+        prepared.independentlyAdaptedRolesSha256 ||
       portability.adaptedStatementCount !==
-        independentlyAdaptedStatementCount ||
+        prepared.independentlyAdaptedStatementCount ||
       (adaptedRolesSha256 !== undefined &&
         portability.adaptedRolesSha256 !== adaptedRolesSha256) ||
       (adaptedStatementCount !== undefined &&
@@ -720,7 +770,8 @@ export async function assertProductionRecoveryGate(input: {
         managedExtensionCatalogSha256:
           extensionPortability.managedExtensionCatalogSha256,
         fixtureFilesSha256: extensionPortability.fixtureFilesSha256,
-      }) !== canonicalJson(independentlyVerifiedExtensionPortability) ||
+      }) !==
+        canonicalJson(prepared.independentlyVerifiedExtensionPortability) ||
       extensionPortability.pinnedCreateExtensionStatements !==
         expectedExtensionSql.pinnedCreateExtensionStatements ||
       extensionPortability.pinnedCreateExtensionStatementsSha256 !==
@@ -753,5 +804,31 @@ export async function assertProductionRecoveryGate(input: {
           `Production recovery PostgreSQL ${major} artifact proof is incomplete`,
         );
   }
-  return receipt;
+}
+
+/**
+ * The Production apply gate. It takes no policy of any kind: the gpg binary is
+ * resolved under the default root-only ownership rule and the approved platform
+ * receipt hashes come from the compile-time release pins. A caller that passes
+ * extra properties changes nothing, because nothing here reads them.
+ */
+export async function assertProductionRecoveryGate(input: {
+  env: Readonly<Record<string, string | undefined>>;
+  projectRef: string;
+  markerInstanceId: string;
+  now?: Date;
+}): Promise<ProductionRecoveryReceipt> {
+  const { gpgPath } = assertProductionRecoveryEnvironmentPresent(input.env);
+  const gpgExecutable = resolveTrustedExecutable(gpgPath);
+  const prepared = await prepareProductionRecoveryEvidence({
+    env: input.env,
+    projectRef: input.projectRef,
+    markerInstanceId: input.markerInstanceId,
+    ...(input.now === undefined ? {} : { now: input.now }),
+    gpgExecutable,
+  });
+  assertApprovedPlatformReceiptPins(prepared.nativeProof);
+  assertNativeVaultPlatformEvidenceBundle(prepared);
+  assertRestoreRehearsalEvidence(prepared);
+  return prepared.receipt;
 }

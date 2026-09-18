@@ -21,7 +21,7 @@ export type TrustedExecutable = {
 
 export type TrustedExecutableOwnershipPolicy = Readonly<
   | {
-      name: "root-only" | "preparation-observed";
+      name: "root-only" | "preparation-observed" | "non-root-operator";
       allowedOwners: readonly number[];
       allowUnsafeAncestors?: never;
     }
@@ -46,6 +46,28 @@ export function unitTestTrustedExecutablePolicy(
     name: "unit-test-explicit",
     allowedOwners: Object.freeze([0, uid]),
     allowUnsafeAncestors: true,
+  });
+}
+
+/**
+ * The policy for tooling a disposable, non-root evidence builder runs. It is
+ * derived from the effective uid at the point of use and can never be supplied
+ * by a caller, so there is nothing here for a caller to widen. Root is refused
+ * outright: `initdb` will not run as root, so a root recorder cannot be a real
+ * execution path, only a way to smuggle a weaker ownership rule in.
+ */
+export function nonRootOperatorTrustedExecutablePolicy(): TrustedExecutableOwnershipPolicy {
+  const uid =
+    typeof process.getuid === "function" ? process.getuid() : undefined;
+  if (uid === undefined)
+    throw new Error("Trusted executable policy requires a POSIX user");
+  if (uid === 0)
+    throw new Error(
+      "Disposable evidence tooling must not run as root; initdb refuses it",
+    );
+  return Object.freeze({
+    name: "non-root-operator",
+    allowedOwners: Object.freeze([0, uid]),
   });
 }
 
