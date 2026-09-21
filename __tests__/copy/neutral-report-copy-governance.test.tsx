@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import CheckoutPage from "@/components/ot-design/CheckoutPage"
 import PricingPageClient from "@/components/ot-design/PricingPageClient"
 import HomePage from "@/components/ot-design/HomePage"
-import TermsPage from "@/app/terms/page"
+import TermsPage, { metadata as termsMetadata } from "@/app/terms/page"
 import {
   NEUTRAL_REPORT_LIMITS,
   NEUTRAL_REPORT_NAME,
@@ -22,6 +22,13 @@ jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }))
 jest.mock("@/lib/marketing/preview-gate-client", () => ({ isClientPreviewStubMode: () => false }))
 
 describe("neutral report copy governance", () => {
+  it("keeps Terms metadata accurate in both commerce postures", () => {
+    expect(termsMetadata.description).toBe(
+      "Terms of Service for OverTaxed IL products and services, including fees, delivery, refunds, customer responsibilities, and service limitations.",
+    )
+    expect(termsMetadata.description).not.toMatch(/DIY Appeal Packet|neutral report|appeal outcome/i)
+  })
+
   it("is default-off and requires the exact server commerce flag", () => {
     expect(neutralReportCopyEnabled({})).toBe(false)
     expect(neutralReportCopyEnabled({ OT_NEUTRAL_REPORT_CHECKOUT_ENABLED: "1" })).toBe(false)
