@@ -98,6 +98,11 @@ export const ADDITIVE_PAGE_ROUTES = [
   "/legalkitsusa",
   "/legalkitsusa/privacy",
   "/privacy",
+  // `/refunds` is a policy page that 404'd while every surface linked a refund
+  // term. It enters the layer the way this comment requires: it renders clean
+  // under every rule below, and it restates the approved refund contract by
+  // importing it rather than re-typing it.
+  "/refunds",
 ].sort()
 
 /* ── Sweep rules ──────────────────────────────────────────────────────────── */

@@ -8,6 +8,13 @@ import {
   NEUTRAL_REPORT_LIMITS,
   NEUTRAL_REPORT_NAME,
   NEUTRAL_REPORT_REFUND,
+  NEUTRAL_REPORT_REFUND_COMPLETE_REPORT,
+  NEUTRAL_REPORT_REFUND_CURE,
+  NEUTRAL_REPORT_REFUND_EXCLUSIONS,
+  NEUTRAL_REPORT_REFUND_INTERRUPTION,
+  NEUTRAL_REPORT_REFUND_NONWAIVER,
+  NEUTRAL_REPORT_REFUND_REQUEST,
+  NEUTRAL_REPORT_REFUND_VOLUNTARY,
   neutralReportCopyEnabled,
 } from "@/lib/copy/neutral-report"
 
@@ -39,6 +46,58 @@ describe("neutral report copy governance", () => {
     expect(NEUTRAL_REPORT_LIMITS).toMatch(/not an appraisal.*eligibility decision.*savings estimate.*outcome prediction.*recommendation to appeal/i)
     expect(NEUTRAL_REPORT_REFUND).toMatch(/cannot produce the complete report.*refund.*in full/i)
     expect(NEUTRAL_REPORT_REFUND).toMatch(/outcome does not create a refund right/i)
+  })
+
+  it("defines completeness by the checkout promise rather than customer satisfaction", () => {
+    expect(NEUTRAL_REPORT_REFUND_COMPLETE_REPORT).toMatch(/sections.*source information.*downloadable files.*checkout/i)
+    expect(NEUTRAL_REPORT_REFUND_COMPLETE_REPORT).toMatch(/official records reasonably available.*preparation/i)
+    expect(NEUTRAL_REPORT_REFUND_COMPLETE_REPORT).toMatch(/may.*few or no matching properties.*complete/i)
+    expect(NEUTRAL_REPORT_REFUND_COMPLETE_REPORT).not.toMatch(/satisfaction|sole discretion|any file/i)
+  })
+
+  it("provides a bounded correction-first process without weakening the full-refund floor", () => {
+    expect(NEUTRAL_REPORT_REFUND_REQUEST).toMatch(/please contact.*within 30 days of delivery.*order reference.*missing/i)
+    expect(NEUTRAL_REPORT_REFUND_REQUEST).toMatch(/later request.*review/i)
+    expect(NEUTRAL_REPORT_REFUND_CURE).toMatch(/investigate.*correct.*re-deliver/i)
+    expect(NEUTRAL_REPORT_REFUND_CURE).toMatch(/five business days after.*request.*refund the \$69 report fee in full/i)
+    expect(NEUTRAL_REPORT_REFUND_CURE).toMatch(/extend.*only with your agreement/i)
+    expect(NEUTRAL_REPORT_REFUND_CURE).toMatch(/does not replace.*full-refund promise/i)
+  })
+
+  it("separates delivery failure from outcome, data, and change-of-mind dissatisfaction", () => {
+    expect(NEUTRAL_REPORT_REFUND_EXCLUSIONS).toMatch(/few or no matching properties/i)
+    expect(NEUTRAL_REPORT_REFUND_EXCLUSIONS).toMatch(/change of mind/i)
+    expect(NEUTRAL_REPORT_REFUND_EXCLUSIONS).toMatch(/official records.*disagree/i)
+    expect(NEUTRAL_REPORT_REFUND_EXCLUSIONS).toMatch(/assessment.*appeal.*tax.*savings outcome/i)
+    expect(NEUTRAL_REPORT_REFUND_EXCLUSIONS).toMatch(/records change after.*retrieval date/i)
+  })
+
+  it("allows a pause, revised date, or full cancellation when inputs or sources block completion", () => {
+    expect(NEUTRAL_REPORT_REFUND_INTERRUPTION).toMatch(/request clarification.*revised delivery date/i)
+    expect(NEUTRAL_REPORT_REFUND_INTERRUPTION).toMatch(/accept.*revised date.*cancel.*refund/i)
+    expect(NEUTRAL_REPORT_REFUND_INTERRUPTION).toMatch(/materially different product.*agreement/i)
+  })
+
+  it("reserves voluntary remedies without replacing nonwaivable rights", () => {
+    expect(NEUTRAL_REPORT_REFUND_VOLUNTARY).toMatch(/correction.*replacement.*partial refund.*credit.*full refund/i)
+    expect(NEUTRAL_REPORT_REFUND_VOLUNTARY).toMatch(/does not modify this policy/i)
+    expect(NEUTRAL_REPORT_REFUND_NONWAIVER).toMatch(/does not limit.*right.*cannot.*waived/i)
+    const all = [NEUTRAL_REPORT_REFUND, NEUTRAL_REPORT_REFUND_COMPLETE_REPORT, NEUTRAL_REPORT_REFUND_REQUEST, NEUTRAL_REPORT_REFUND_CURE, NEUTRAL_REPORT_REFUND_EXCLUSIONS, NEUTRAL_REPORT_REFUND_INTERRUPTION, NEUTRAL_REPORT_REFUND_VOLUNTARY, NEUTRAL_REPORT_REFUND_NONWAIVER].join(" ")
+    expect(all).not.toMatch(/all sales (?:are )?final|sole discretion|waive.*chargeback|retroactive/i)
+  })
+
+  it("renders the complete policy in Terms when the neutral gate is on", () => {
+    const prior = process.env.OT_NEUTRAL_REPORT_CHECKOUT_ENABLED
+    process.env.OT_NEUTRAL_REPORT_CHECKOUT_ENABLED = "true"
+    try {
+      const html = renderToStaticMarkup(<TermsPage />)
+      for (const paragraph of [NEUTRAL_REPORT_REFUND, NEUTRAL_REPORT_REFUND_COMPLETE_REPORT, NEUTRAL_REPORT_REFUND_REQUEST, NEUTRAL_REPORT_REFUND_CURE, NEUTRAL_REPORT_REFUND_EXCLUSIONS, NEUTRAL_REPORT_REFUND_INTERRUPTION, NEUTRAL_REPORT_REFUND_VOLUNTARY, NEUTRAL_REPORT_REFUND_NONWAIVER]) {
+        expect(html).toContain(paragraph.replaceAll("'", "&#x27;"))
+      }
+    } finally {
+      if (prior === undefined) delete process.env.OT_NEUTRAL_REPORT_CHECKOUT_ENABLED
+      else process.env.OT_NEUTRAL_REPORT_CHECKOUT_ENABLED = prior
+    }
   })
 
   it("preserves the legacy product when the neutral gate is off", () => {

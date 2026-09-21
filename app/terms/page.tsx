@@ -1,6 +1,19 @@
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import { CC_10, CC_11, CC_12 } from "@/lib/copy/canonical"
-import { NEUTRAL_REPORT_LIMITS, NEUTRAL_REPORT_NAME, NEUTRAL_REPORT_REFUND, NEUTRAL_REPORT_SUMMARY, neutralReportCopyEnabled } from "@/lib/copy/neutral-report"
+import {
+  NEUTRAL_REPORT_LIMITS,
+  NEUTRAL_REPORT_NAME,
+  NEUTRAL_REPORT_REFUND,
+  NEUTRAL_REPORT_REFUND_COMPLETE_REPORT,
+  NEUTRAL_REPORT_REFUND_CURE,
+  NEUTRAL_REPORT_REFUND_EXCLUSIONS,
+  NEUTRAL_REPORT_REFUND_INTERRUPTION,
+  NEUTRAL_REPORT_REFUND_REQUEST,
+  NEUTRAL_REPORT_REFUND_NONWAIVER,
+  NEUTRAL_REPORT_REFUND_VOLUNTARY,
+  NEUTRAL_REPORT_SUMMARY,
+  neutralReportCopyEnabled,
+} from "@/lib/copy/neutral-report"
 import "../ot-design.css"
 
 /**
@@ -47,7 +60,7 @@ export default function TermsPage() {
       <SiteHeader />
       <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12 bg-white">
         <h1 className="text-3xl font-bold text-foreground mb-2">Terms of Service</h1>
-        <p className="text-muted-foreground text-sm mb-8">Last updated: May 2026</p>
+        <p className="text-muted-foreground text-sm mb-8">Last updated: September 2026</p>
 
         <div className="prose max-w-none space-y-8">
           <section>
@@ -128,18 +141,21 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-foreground mb-3">{neutralReport ? "7. Report Delivery and Refunds" : "7. Procedural Error Review and Refund Requests"}</h2>
-            {/* The refund rule itself is unchanged. It is an owner policy term
-                (OD-5, unsigned), so only the reference to the held $97 service
-                and to submissions we make is removed — we make none. */}
-            <p className="text-muted-foreground mb-3">
-              {neutralReport ? NEUTRAL_REPORT_REFUND : "For the $69 DIY Appeal Packet, if your filing is rejected or denied solely because of an OverTaxed IL procedural error in the materials we prepared, contact us so we can review the issue and determine whether a refund of the OverTaxed IL service fee is appropriate under these Terms."}
-            </p>
-            {!neutralReport && <>
+            <h2 className="text-xl font-semibold text-foreground mb-3">{neutralReport ? "7. Report Delivery, Corrections, and Refunds" : "7. Procedural Error Review and Refund Requests"}</h2>
+            {neutralReport ? <>
+              <p className="text-muted-foreground mb-3">{NEUTRAL_REPORT_REFUND_COMPLETE_REPORT}</p>
+              <p className="text-muted-foreground mb-3">{NEUTRAL_REPORT_REFUND_INTERRUPTION}</p>
+              <p className="text-muted-foreground mb-3">{NEUTRAL_REPORT_REFUND}</p>
+              <p className="text-muted-foreground mb-3">{NEUTRAL_REPORT_REFUND_REQUEST}</p>
+              <p className="text-muted-foreground mb-3">{NEUTRAL_REPORT_REFUND_CURE}</p>
+              <p className="text-muted-foreground mb-3">{NEUTRAL_REPORT_REFUND_EXCLUSIONS}</p>
+              <p className="text-muted-foreground mb-3">{NEUTRAL_REPORT_REFUND_VOLUNTARY}</p>
+              <p className="text-muted-foreground">{NEUTRAL_REPORT_REFUND_NONWAIVER}</p>
+            </> : <>
+              <p className="text-muted-foreground mb-3">For the $69 DIY Appeal Packet, if your filing is rejected or denied solely because of an OverTaxed IL procedural error in the materials we prepared, contact us so we can review the issue and determine whether a refund of the OverTaxed IL service fee is appropriate under these Terms.</p>
               <p className="text-muted-foreground mb-3">Refund review does not apply when the county denies an appeal on the merits, when the property is not eligible, when the appeal window is closed before you provide required information or authorization, or when information you provided is inaccurate or incomplete.</p>
               <p className="text-muted-foreground">To request a refund, contact support@overtaxed-il.com within 30 days of the county notice and include the notice or filing status.</p>
             </>}
-            {neutralReport && <p className="text-muted-foreground">To report a missing or incomplete promised deliverable, contact support@overtaxed-il.com with your order reference. We will review the report against the deliverables stated at checkout.</p>}
           </section>
 
           <section>
