@@ -151,7 +151,12 @@ describe("the route set is derived from what Next serves", () => {
       // session-authenticated, because an OT order is anonymous and there is no
       // account to authenticate. What authorizes it is the pasted capability,
       // checked by `/api/ot/packet/download`, not a session.
-    }).toEqual({ all: 59, dynamic: 11, authenticated: 21, crawlable: 27 })
+      //
+      // 59 → 60 and 27 → 28: `/refunds` was added as a public policy page. The
+      // URL was already being linked as a refund policy and served a 404; it is
+      // indexable like `/terms` and `/privacy`, so it lands in the crawlable
+      // bucket and is swept by every rule in this file.
+    }).toEqual({ all: 60, dynamic: 11, authenticated: 21, crawlable: 28 })
   })
 
   it("classifies a route handler as not a page", () => {
@@ -215,7 +220,7 @@ describe("every crawlable page route is governed exactly once", () => {
       crawlable: CRAWLABLE.length,
       controller: controllerCrawlable.length,
       additive: ADDITIVE_PAGE_ROUTES.length,
-    }).toEqual({ crawlable: 27, controller: 14, additive: 13 })
+    }).toEqual({ crawlable: 28, controller: 14, additive: 14 })
   })
 
   it("places every crawlable route in exactly one bucket", () => {

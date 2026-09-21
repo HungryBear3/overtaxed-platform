@@ -173,7 +173,7 @@ export function SiteFooter({ neutralReport = false }: { neutralReport?: boolean 
         <div className="ot-footer-bottom">
           <div className="ot-footer-copy">© 2026 OverTaxed IL · Chicago, IL</div>
           <div className="ot-footer-meta">
-            <Link href="/privacy">Privacy</Link> · <Link href="/terms">Terms</Link> · {neutralReport ? "Official-record compilation, not advice" : "Public-record estimates, not legal advice"}
+            <Link href="/privacy">Privacy</Link> · <Link href="/terms">Terms</Link> · <Link href="/refunds">Refunds</Link> · {neutralReport ? "Official-record compilation, not advice" : "Public-record estimates, not legal advice"}
           </div>
         </div>
       </div>
