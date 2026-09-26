@@ -2,7 +2,11 @@ import type { Metadata } from "next";
 import CheckoutPage from "@/components/ot-design/CheckoutPage";
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
 import "../ot-design.css";
-import { neutralReportCopyEnabled } from "@/lib/copy/neutral-report";
+import {
+  NEUTRAL_REPORT_NAME,
+  NEUTRAL_REPORT_SUMMARY,
+  neutralReportCopyEnabled,
+} from "@/lib/copy/neutral-report";
 
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
 
@@ -13,25 +17,32 @@ const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com
 const CHECKOUT_DESCRIPTION =
   "Start with the $69 DIY Appeal Packet. We prepare it; you review it, sign it, and file it with the county yourself. Eligibility is confirmed before payment.";
 
-export const metadata: Metadata = {
-  title: "Checkout",
-  description: CHECKOUT_DESCRIPTION,
-  alternates: { canonical: siteUrl + "/checkout" },
-  openGraph: {
-    type: "website",
-    url: siteUrl + "/checkout",
-    title: "Start your Cook County property tax appeal",
-    description: CHECKOUT_DESCRIPTION,
-    siteName: "OverTaxed IL",
-    // Checkout inherits og:image from app/opengraph-image.tsx (home OG)
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "Start your Cook County property tax appeal",
-    description: CHECKOUT_DESCRIPTION,
-  },
-  robots: { index: true, follow: true },
-};
+export function generateMetadata(): Metadata {
+  const neutralReport = neutralReportCopyEnabled();
+  const title = neutralReport ? `Checkout — ${NEUTRAL_REPORT_NAME}` : "Checkout";
+  const description = neutralReport ? NEUTRAL_REPORT_SUMMARY : CHECKOUT_DESCRIPTION;
+
+  return {
+    title: title,
+    description: description,
+    alternates: { canonical: siteUrl + "/checkout" },
+    openGraph: {
+      type: "website",
+      url: siteUrl + "/checkout",
+      title,
+      description,
+      siteName: "OverTaxed IL",
+      images: [{ url: "/opengraph-image", alt: "OverTaxed IL" }],
+    },
+    twitter: {
+      card: "summary",
+      title,
+      description,
+      images: ["/opengraph-image"],
+    },
+    robots: { index: false, follow: true },
+  };
+}
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ plan?: string }> }) {
   const { plan } = await searchParams;

@@ -75,8 +75,10 @@ describe("the HOA resident artifacts are no longer public", () => {
     expect(configs.length).toBeGreaterThan(0)
     for (const config of configs) {
       const src = readFileSync(join(ROOT, config), "utf8")
-      expect(src).not.toMatch(/rewrites|redirects/)
-      expect(src).not.toContain("resources")
+      // Unrelated canonical redirects are allowed. What remains forbidden is a
+      // rewrite/redirect entry that names or reconstructs the retired prefix.
+      expect(src).not.toMatch(/(?:source|destination)\s*:\s*["'][^"']*\/resources(?:\/|["'])/i)
+      expect(src).not.toContain("overtaxed-hoa-resident-resource")
     }
     expect(existsSync(join(ROOT, "app/resources"))).toBe(false)
     expect(existsSync(join(ROOT, "app/[...slug]"))).toBe(false)

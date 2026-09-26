@@ -6,10 +6,16 @@ import { Button } from "@/components/ui/button"
 import { OT_PUBLIC_CONTACT, SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import "../ot-design.css"
 
+const CONTACT_TITLE = "Contact"
+const CONTACT_DESCRIPTION = "Contact OverTaxed IL for questions about assessment records, matching-property reports, billing, or support."
+const CONTACT_URL = "https://www.overtaxed-il.com/contact"
+
 export const metadata = {
-  title: "Contact Us",
-  description: "Contact OverTaxed IL for support, questions about property tax appeals, or billing.",
-  alternates: { canonical: "https://www.overtaxed-il.com/contact" },
+  title: CONTACT_TITLE,
+  description: CONTACT_DESCRIPTION,
+  alternates: { canonical: CONTACT_URL },
+  openGraph: { title: CONTACT_TITLE, description: CONTACT_DESCRIPTION, url: CONTACT_URL, siteName: "OverTaxed IL", type: "website", images: [{ url: "/opengraph-image", alt: "OverTaxed IL" }] },
+  twitter: { card: "summary", title: CONTACT_TITLE, description: CONTACT_DESCRIPTION, images: ["/opengraph-image"] },
 }
 
 export default function ContactPage() {

@@ -5,10 +5,16 @@ import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import { CC_01, CC_10, CC_11, CC_12 } from "@/lib/copy/canonical"
 import "../ot-design.css"
 
+const FAQ_TITLE = "Frequently Asked Questions"
+const FAQ_DESCRIPTION = "Frequently asked questions about Cook County assessment records, matching-property reports, deadlines, refunds, and OverTaxed IL services."
+const FAQ_URL = "https://www.overtaxed-il.com/faq"
+
 export const metadata = {
-  title: "FAQ",
-  description: "Frequently asked questions about Cook County property tax appeals, DIY comp packets, and OverTaxed IL services.",
-  alternates: { canonical: "https://www.overtaxed-il.com/faq" },
+  title: FAQ_TITLE,
+  description: FAQ_DESCRIPTION,
+  alternates: { canonical: FAQ_URL },
+  openGraph: { title: FAQ_TITLE, description: FAQ_DESCRIPTION, url: FAQ_URL, siteName: "OverTaxed IL", type: "website", images: [{ url: "/opengraph-image", alt: "OverTaxed IL" }] },
+  twitter: { card: "summary", title: FAQ_TITLE, description: FAQ_DESCRIPTION, images: ["/opengraph-image"] },
 }
 
 const faqs = [

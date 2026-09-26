@@ -2,15 +2,16 @@ import { FreeCheckFormWrapper } from "@/components/check/FreeCheckFormWrapper"
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome"
 import "../ot-design.css"
 
+const CHECK_TITLE = "Free Cook County Property Check"
+const CHECK_DESCRIPTION = "See how your Cook County assessed value compares with comparable properties on the public record. Free check — no signup. Built around Cook County Assessor public records."
+const CHECK_URL = "https://www.overtaxed-il.com/check"
+
 export const metadata = {
-  title: "Free Property Tax Assessment Check",
-  // The Board of Review is dropped from the description rather than disclosed
-  // there. BL-F5 requires CC-11 wherever the Board is named, and a meta
-  // description is truncated by every consumer that displays it — so it cannot
-  // carry a disclosure, only the claim that would need one.
-  description:
-    "See how your Cook County assessed value compares with comparable properties on the public record. Free check — no signup. Built around Cook County Assessor public records.",
-  alternates: { canonical: "https://www.overtaxed-il.com/check" },
+  title: CHECK_TITLE,
+  description: CHECK_DESCRIPTION,
+  alternates: { canonical: CHECK_URL },
+  openGraph: { title: CHECK_TITLE, description: CHECK_DESCRIPTION, url: CHECK_URL, siteName: "OverTaxed IL", type: "website", images: [{ url: "/opengraph-image", alt: "OverTaxed IL" }] },
+  twitter: { card: "summary", title: CHECK_TITLE, description: CHECK_DESCRIPTION, images: ["/opengraph-image"] },
 }
 
 export default function CheckPage() {

@@ -119,6 +119,10 @@ describe("neutral report copy governance", () => {
     const html = renderToStaticMarkup(<HomePage neutralReport />)
     expect(html).toContain(NEUTRAL_REPORT_NAME.replace("&", "&amp;"))
     expect(html).not.toMatch(/DIY Appeal Packet|appeal argument|Cook County-ready appeal packet|we tell you whether your number is out of line|support closer review/i)
+    expect(html).toMatch(/href="\/#method"[^>]*>See the report method/)
+    expect(html).not.toMatch(/href="\/appeal-packet"[^>]*>See the report method/)
+    expect(html.indexOf("Start your free check")).toBeLessThan(html.indexOf("What your check returns"))
+    expect(html).toContain("Avg of 3 matching properties on record")
   })
 
   it("does not negate the objective neutral refund in Terms", () => {
