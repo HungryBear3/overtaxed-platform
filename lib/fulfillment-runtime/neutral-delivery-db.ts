@@ -3,17 +3,15 @@ import {Pool} from "pg"
 import {PrismaPg} from "@prisma/adapter-pg"
 import {PrismaClient} from "@prisma/client"
 import {Prisma} from "@prisma/client"
+import {buildNeutralPoolConfig} from "@/lib/fulfillment-runtime/neutral-db-tls"
 
 let client:PrismaClient|undefined
 
 export function neutralDeliveryPrisma():PrismaClient{
   const url=process.env.OT_NEUTRAL_DELIVERY_DATABASE_URL?.trim()
   if(!url)throw new Error("NEUTRAL_DELIVERY_DATABASE_DISABLED")
-  const parsed=new URL(url)
-  const local=["localhost","127.0.0.1","::1"].includes(parsed.hostname)
-  const sslmode=parsed.searchParams.get("sslmode")
-  if(!local&&!['require','verify-ca','verify-full'].includes(sslmode??''))throw new Error("NEUTRAL_DELIVERY_DATABASE_TLS_REQUIRED")
-  if(!client)client=new PrismaClient({adapter:new PrismaPg(new Pool({connectionString:url,max:2,connectionTimeoutMillis:5000}))})
+  const pool=buildNeutralPoolConfig(url,process.env.OT_NEUTRAL_DATABASE_CA_PEM)
+  if(!client)client=new PrismaClient({adapter:new PrismaPg(new Pool({...pool,max:2,connectionTimeoutMillis:5000}))})
   return client
 }
 
