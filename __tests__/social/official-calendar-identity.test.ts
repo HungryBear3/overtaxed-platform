@@ -189,6 +189,28 @@ describe("checkStageAuthority", () => {
     );
   });
 
+  const ASSESSOR_ON_BOR_HOST = provenance({
+    sourceUrl: BOR_URL,
+    finalUrl: BOR_URL,
+  });
+  const BOR_ON_ASSESSOR_HOST = provenance({
+    authority: "cook_county_board_of_review",
+  });
+  const REDIRECTED_TO_BOR = provenance({ finalUrl: BOR_URL });
+
+  // Every pairing below is official on its own; only the stage makes it wrong.
+  it.each([
+    ["assessor", "Board of Review provenance", BOR_PROVENANCE],
+    ["assessor", "Assessor authority on the BOR host", ASSESSOR_ON_BOR_HOST],
+    ["assessor", "a redirect onto the BOR host", REDIRECTED_TO_BOR],
+    ["bor", "Assessor provenance", provenance()],
+    ["bor", "Assessor authority on the BOR host", ASSESSOR_ON_BOR_HOST],
+    ["bor", "BOR authority on the Assessor host", BOR_ON_ASSESSOR_HOST],
+  ] as const)("refuses the %s stage from %s", (stage, _label, source) => {
+    const snap = snapshot({ assessor: source, bor: source });
+    expect(checkStageAuthority(snap, stage)?.reason).toBe("source_unofficial");
+  });
+
   it("binds the claim to the reviewed bytes", () => {
     expect(checkStageAuthority(SNAP, "assessor", ASSESSOR_SHA)).toBeNull();
     expect(checkStageAuthority(SNAP, "assessor", BOR_SHA)?.reason).toBe(

@@ -19,7 +19,6 @@ import {
   type SourceAuthority,
 } from "@/lib/deadlines/official-source-state";
 import { townshipKeyFromName } from "@/lib/deadlines/township-resolution";
-import { isOfficialSourceUrl } from "@/lib/social/ot-deadline-approval";
 import { TOWNSHIPS_BY_SLUG } from "@/lib/townships";
 
 /** The authorities whose own publications may support a deadline claim. */
@@ -159,6 +158,41 @@ export function resolveCandidateTownship(
   };
 }
 
+type StagePublisher = {
+  authority: SourceAuthority;
+  hosts: ReadonlySet<string>;
+};
+
+/**
+ * Each stage has one publisher, and a publisher speaks only from its own
+ * hosts. Being official is not enough: Board of Review bytes filed under the
+ * Assessor stage are an official publication of the wrong calendar.
+ */
+const STAGE_PUBLISHERS: Record<DeadlineStage, StagePublisher> = {
+  assessor: {
+    authority: "cook_county_assessor",
+    hosts: new Set([
+      "www.cookcountyassessoril.gov",
+      "cookcountyassessoril.gov",
+    ]),
+  },
+  bor: {
+    authority: "cook_county_board_of_review",
+    hosts: new Set([
+      "www.cookcountyboardofreview.com",
+      "cookcountyboardofreview.com",
+    ]),
+  },
+};
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
 /**
  * The two provenance questions the canonical evaluator does not ask. Who
  * published it — that evaluator checks a retrieval succeeded, parsed and is
@@ -178,14 +212,18 @@ export function checkStageAuthority(
       detail: `the snapshot carries no ${stage} provenance`,
     };
   }
+  const publisher = Object.hasOwn(STAGE_PUBLISHERS, stage)
+    ? STAGE_PUBLISHERS[stage]
+    : undefined;
   if (
-    !OFFICIAL_AUTHORITIES.has(source.authority) ||
-    !isOfficialSourceUrl(source.sourceUrl) ||
-    !isOfficialSourceUrl(source.finalUrl)
+    !publisher ||
+    source.authority !== publisher.authority ||
+    !publisher.hosts.has(hostOf(source.sourceUrl)) ||
+    !publisher.hosts.has(hostOf(source.finalUrl))
   ) {
     return {
       reason: "source_unofficial",
-      detail: `${stage} provenance is not an official Cook County publication: ${source.authority} via ${source.finalUrl}`,
+      detail: `${stage} provenance is not that stage's official Cook County publication: ${source.authority} via ${source.finalUrl}`,
     };
   }
   if (expectedSha256 && expectedSha256 !== source.contentSha256) {
