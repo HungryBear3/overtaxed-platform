@@ -3,6 +3,10 @@
  * its approval are evidence of the past, never current authority: each draft
  * rebuilds the candidate ([[lib/social/official-calendar-candidates]]) and asks
  * [[projectDeadline]] what the draft instant permits. No I/O, clock or posting.
+ *
+ * Pre-runtime condition: an allowed intent is a wording class, not checked copy.
+ * Nothing here classifies draft text; before any runtime use, drafts must come
+ * from controlled templates keyed by these intents.
  */
 
 import {
@@ -12,6 +16,7 @@ import {
   SAME_DAY_REQUIRED_WITHIN_DAYS,
   type OfficialDeadlineSnapshot,
   type PendingReason,
+  type WindowStatus,
 } from "@/lib/deadlines/official-source-state";
 import {
   informationalTownship,
@@ -35,10 +40,13 @@ export const DRAFT_INTENTS = [
 ] as const;
 export type DraftIntent = (typeof DRAFT_INTENTS)[number];
 
-/** A human's sign-off, bound to exact candidate content and a county day. */
+/** A human's sign-off, bound to exact candidate content, status and county day. */
 export type CandidateApproval = {
   candidateId: string;
   contentHash: string;
+  /** The status the reviewer read; compared only to a fresh rebuild. */
+  approvedStatus: WindowStatus;
+  /** ISO 8601 with Z or an explicit offset; anything else authorizes nothing. */
   approvedAt: string;
   approvedIntents: readonly DraftIntent[];
 };
@@ -70,7 +78,8 @@ export type DraftBlockReason =
   | "approval_scope";
 
 export type DraftGateResult = {
-  candidateId: string;
+  /** ID of the candidate rebuilt at draft time; null when it could not be. */
+  candidateId: string | null;
   /** Hash of the candidate rebuilt at draft time; null when it could not be. */
   currentContentHash: string | null;
   verdict: "blocked" | "date_only" | "permitted";
@@ -85,21 +94,38 @@ export type DraftGateResult = {
   postAllowed: false;
 };
 
+const ZONED_INSTANT =
+  /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(?:Z|[+-](\d{2}):(\d{2}))$/;
+
+/**
+ * Epoch ms of an ISO 8601 instant carrying Z or an explicit offset, else NaN.
+ * Date.parse alone reads zone-less input in host time and rolls 02-30 forward.
+ */
+function zonedInstantMs(value: unknown): number {
+  const m = typeof value === "string" ? ZONED_INSTANT.exec(value) : null;
+  if (!m) return NaN;
+  const [, day, hh, mm, ss = "0", oh = "0", om = "0"] = m;
+  const inRange = +hh <= 23 && +mm <= 59 && +ss <= 59 && +oh <= 23 && +om <= 59;
+  const realDay =
+    new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) === day;
+  return inRange && realDay ? Date.parse(value as string) : NaN;
+}
+
 function approvalProblem(
   approval: CandidateApproval | null,
   fresh: OfficialCalendarCandidate,
-  reviewed: OfficialCalendarCandidate,
   draftedAt: string,
 ): DraftBlockReason | null {
   if (!approval) return "approval_missing";
   const changed =
     approval.candidateId !== fresh.candidateId ||
     approval.contentHash !== fresh.contentHash ||
-    // Status is clock-derived and outside the hash: re-read, never inherited.
-    reviewed.status !== fresh.status;
+    // Status is clock-derived and outside the hash: the approval's own record
+    // of it is compared to the rebuild; the caller's candidate is never read.
+    approval.approvedStatus !== fresh.status;
   if (changed) return "approval_changed";
-  const approvedMs = Date.parse(approval.approvedAt);
-  const draftedMs = Date.parse(draftedAt);
+  const approvedMs = zonedInstantMs(approval.approvedAt);
+  const draftedMs = zonedInstantMs(draftedAt);
   // NaN compares false, so an unparseable approval instant is stale too.
   if (!(approvedMs <= draftedMs)) return "approval_stale";
   const sameDay =
@@ -133,7 +159,7 @@ export function gateOfficialCalendarDraft(
     });
     const allowed = decisions.filter((d) => d.allowed).map((d) => d.intent);
     return {
-      candidateId: candidate.candidateId,
+      candidateId: fresh?.candidateId ?? null,
       currentContentHash: fresh?.contentHash ?? null,
       verdict: allowed.some((k) => k !== "plain_date")
         ? "permitted"
@@ -151,10 +177,16 @@ export function gateOfficialCalendarDraft(
   };
   const blockAll = (reason: DraftBlockReason) => result(() => reason);
 
+  if (Number.isNaN(zonedInstantMs(evaluatedAt))) {
+    return blockAll("date_invalid");
+  }
   if (!fresh) {
     return blockAll(rebuilt.rejections[0]?.reason ?? "source_unavailable");
   }
-  if (fresh.contentHash !== candidate.contentHash) {
+  const same =
+    fresh.contentHash === candidate.contentHash &&
+    fresh.candidateId === candidate.candidateId;
+  if (!same) {
     return blockAll("canonical_changed");
   }
   if (identity && identity.townshipKey !== fresh.snapshotKey) {
@@ -170,7 +202,7 @@ export function gateOfficialCalendarDraft(
   );
   if (!projection.available) return blockAll(projection.reason);
 
-  const unapproved = approvalProblem(approval, fresh, candidate, evaluatedAt);
+  const unapproved = approvalProblem(approval, fresh, evaluatedAt);
   const windowReason = (need: boolean): DraftBlockReason | null => {
     if (need) return null;
     if (projection.status === "closed") return "window_closed";

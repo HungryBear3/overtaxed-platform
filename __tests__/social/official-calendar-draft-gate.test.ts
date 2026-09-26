@@ -76,7 +76,13 @@ const approve = (
   c: Input["candidate"],
   approvedAt: string,
   intents = [...ALL],
-) => ({ ...c, approvedAt, approvedIntents: intents });
+): CandidateApproval => ({
+  candidateId: c.candidateId,
+  contentHash: c.contentHash,
+  approvedStatus: c.status,
+  approvedAt,
+  approvedIntents: intents,
+});
 
 /** "seen ok at": reviewed, approved for everything, drafted (2026, UTC). */
 const timeline = (label: string, times: string, snap = SNAP): Input => {
@@ -148,6 +154,100 @@ it("invalidates missing, stale, future, changed and out-of-scope approvals", () 
   expect(cta).toEqual(["cta:approval_changed"]);
 });
 
+it("binds approval to the status the reviewer saw, never the caller's candidate", () => {
+  const cta = { requestedIntents: ["cta"] as const };
+  // Approved while upcoming; replayed on the day Calumet opened.
+  const t = timeline("Calumet", "08-19T16:00 08-20T15:00 08-20T16:00");
+  expect(t.approval?.approvedStatus).toBe("upcoming");
+  // Tamper: the caller relabels its reviewed record with the current status.
+  const relabeled = { ...t.candidate, status: "open" as const };
+  expect(why({ ...t, ...cta, candidate: relabeled })).toEqual([
+    "cta:approval_changed",
+  ]);
+  // The same transition-day draft with an approval of what is now true passes,
+  // whatever status the caller's record carries.
+  const current = approve(relabeled, "2026-08-20T15:30Z");
+  for (const status of ["upcoming", "open", "closed"] as const) {
+    const candidate = { ...t.candidate, status };
+    expect(why({ ...t, ...cta, candidate, approval: current })).toEqual([
+      "cta:ok",
+    ]);
+  }
+  // Open -> closed: an approval of "open" replayed after close authorizes nothing.
+  const c = timeline("Lemont", "09-29T16:00 09-30T14:00 09-30T16:00");
+  expect(c.approval?.approvedStatus).toBe("open");
+  expect(why({ ...c, ...cta })).toEqual(["cta:window_closed"]);
+  // A forged approval status never matches a fresh rebuild it did not see.
+  const forged = {
+    ...approve(candidateOf("Calumet"), T0),
+    approvedStatus: "closed",
+  };
+  expect(why({ ...cta, approval: forged as CandidateApproval })).toEqual([
+    "cta:approval_changed",
+  ]);
+});
+
+it("refuses a forged candidate ID and emits only the canonical one", () => {
+  const real = candidateOf("Calumet");
+  expect(run().candidateId).toBe(real.candidateId);
+  const candidate = { ...real, candidateId: "occ_forged" };
+  const cases: Partial<Input>[] = [
+    { candidate },
+    // An approval signed for the forged ID does not launder it.
+    { candidate, approval: approve(candidate, T0) },
+  ];
+  for (const over of cases) {
+    expectAllBlocked(over, "canonical_changed");
+    expect(run(over).candidateId).toBe(real.candidateId);
+  }
+  // A forged ID on the approval alone is an approval problem, not an ID leak.
+  const approval = { ...approve(real, T0), candidateId: "occ_forged" };
+  expect(run({ approval }).candidateId).toBe(real.candidateId);
+  expect(why({ approval, requestedIntents: ["cta"] })).toEqual([
+    "cta:approval_changed",
+  ]);
+});
+
+it.each([
+  ["zone-less", "2026-08-27T16:10"],
+  ["zone-less seconds", "2026-08-27T16:10:00.000"],
+  ["date only", "2026-08-27"],
+  ["space separator", "2026-08-27 16:10Z"],
+  ["unpadded", "2026-8-27T16:10Z"],
+  ["basic offset", "2026-08-27T11:10-0500"],
+  ["RFC 2822", "Thu, 27 Aug 2026 16:10:00 GMT"],
+  ["rolled day", "2026-02-30T16:10Z"],
+  ["hour 24", "2026-08-27T24:00Z"],
+  ["minute 60", "2026-08-27T16:60Z"],
+  ["second 60", "2026-08-27T16:10:60Z"],
+  ["offset hour 24", "2026-08-27T16:10+24:00"],
+  ["empty", ""],
+  ["future by offset", "2026-08-27T12:00-05:00"], // 17:00Z, after the draft
+  ["prior county day by offset", "2026-08-27T02:00+00:00"], // 08-26 in Chicago
+])("rejects a %s approval timestamp", (_, approvedAt) => {
+  const approval = approve(candidateOf("Calumet"), approvedAt);
+  expect(why({ approval, requestedIntents: ["cta"] })).toEqual([
+    "cta:approval_stale",
+  ]);
+});
+
+it("accepts Z and explicit-offset approval timestamps on the drafting day", () => {
+  const c = candidateOf("Calumet");
+  for (const approvedAt of [
+    "2026-08-27T16:10Z",
+    "2026-08-27T16:10:05.5Z",
+    "2026-08-27T11:10-05:00", // 16:10Z
+    "2026-08-27T00:30-05:00", // county midnight half-hour
+  ]) {
+    const approval = approve(c, approvedAt);
+    expect(why({ approval, requestedIntents: ["cta"] })).toEqual(["cta:ok"]);
+  }
+  const nonString = { ...approve(c, T0), approvedAt: 0 as never };
+  expect(why({ approval: nonString, requestedIntents: ["cta"] })).toEqual([
+    "cta:approval_stale",
+  ]);
+});
+
 it("blocks everything when canonical state no longer matches the review", () => {
   const moved = fetchedAt(T0, calumet({ lastFileDate: "2026-10-09" }));
   expectAllBlocked({ snapshot: moved }, "canonical_changed");
@@ -179,6 +279,7 @@ it.each<[string, () => Partial<Input>]>([
   ["source_stale", () => at("2026-08-29T16:00Z")],
   ["source_stale", () => at("2026-08-28T12:00Z")], // prior-day fetch, open window
   ["date_invalid", () => at("not a time")],
+  ["date_invalid", () => at("2026-08-27T16:30")], // zone-less draft instant
   ["synthetic_source", () => ({ snapshot: { ...SNAP, synthetic: true } })],
   ["source_unavailable", () => src(null)],
   ["source_unofficial", () => src({ finalUrl: "https://api.realie.ai/x" })],
