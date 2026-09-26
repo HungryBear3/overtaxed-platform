@@ -102,7 +102,7 @@ const ZONED_INSTANT =
  * Date.parse alone reads zone-less input in host time and rolls 02-30 forward.
  * Never throws: month 00/13 or day 00/32 parse to NaN, not an Invalid Date.
  */
-function zonedInstantMs(value: unknown): number {
+export function zonedInstantMs(value: unknown): number {
   const m = typeof value === "string" ? ZONED_INSTANT.exec(value) : null;
   if (!m) return NaN;
   const [, day, hh, mm, ss = "0", oh = "0", om = "0"] = m;

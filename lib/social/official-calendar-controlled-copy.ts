@@ -4,53 +4,27 @@ import { countyCalendarDay } from "@/lib/deadlines/official-source-state";
 import {
   DRAFT_INTENTS,
   gateOfficialCalendarDraft,
-  type DraftBlockReason,
+  zonedInstantMs,
   type DraftGateInput,
   type DraftIntent,
 } from "@/lib/social/official-calendar-draft-gate";
 
-const TEMPLATES = Object.freeze({
-  official_dates_v1: Object.freeze({
-    version: 1,
-    intents: Object.freeze(["plain_date", "cta"] as const),
-  }),
-  open_window_deadline_v1: Object.freeze({
-    version: 1,
-    intents: Object.freeze(["plain_date", "urgency", "cta"] as const),
-  }),
-});
-export const CONTROLLED_COPY_TEMPLATES = TEMPLATES;
+export type ControlledCopyTemplateId =
+  | "official_dates_v1"
+  | "open_window_deadline_v1";
 
-export type ControlledCopyTemplateId = keyof typeof CONTROLLED_COPY_TEMPLATES;
-
-export type ControlledCopyInput = Omit<DraftGateInput, "requestedIntents"> & {
-  templateId: ControlledCopyTemplateId | (string & {});
+export type ControlledCopyApproval = NonNullable<DraftGateInput["approval"]> & {
+  templateId: ControlledCopyTemplateId;
+  templateVersion: number;
+  templateDefinitionHash: string;
 };
 
-export type ControlledCopyBlockReason =
-  | DraftBlockReason
-  | "template_unknown"
-  | "approval_missing"
-  | "template_not_approved"
-  | "input_invalid"
-  | "render_evidence_missing";
-
-export type ControlledCopyResult = {
-  verdict: "blocked" | "rendered";
-  reason: ControlledCopyBlockReason | null;
-  renderedText: string | null;
-  binding: {
-    candidateId: string;
-    candidateContentHash: string;
-    approvalHash: string;
-    sourceContentSha256: string;
-    templateId: ControlledCopyTemplateId;
-    templateVersion: number;
-    countyDay: string;
-    renderedSha256: string;
-  } | null;
-  reviewOnly: true;
-  postAllowed: false;
+export type ControlledCopyInput = Omit<
+  DraftGateInput,
+  "approval" | "requestedIntents"
+> & {
+  approval: ControlledCopyApproval | null;
+  templateId: ControlledCopyTemplateId | (string & {});
 };
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
@@ -65,29 +39,71 @@ const canonical = (value: unknown): string => {
     .map((key) => `${JSON.stringify(key)}:${canonical(object[key])}`)
     .join(",")}}`;
 };
+const RENDER_SCHEMA = Object.freeze({
+  version: 1,
+  labels: Object.freeze({
+    notice_date: "Notice date",
+    window_opens: "Filing window opens",
+    last_file_date: "Last day to file",
+  }),
+  labelValueSeparator: ": ",
+  claimSeparator: ". ",
+  tokenSeparator: " ",
+  final: ".",
+});
+export const templateDefinitionHash = (definition: unknown) =>
+  hash(canonical({ definition, renderSchema: RENDER_SCHEMA }));
 
-const labels = {
-  notice_date: "Notice date",
-  window_opens: "Filing window opens",
-  last_file_date: "Last day to file",
-} as const;
+function template<
+  const I extends readonly DraftIntent[],
+  const C extends readonly string[],
+>(version: number, intents: I, copy: C) {
+  const definition = { version, intents, copy };
+  return Object.freeze({
+    ...definition,
+    intents: Object.freeze(intents),
+    copy: Object.freeze(copy),
+    definitionHash: templateDefinitionHash(definition),
+  });
+}
+const TEMPLATES = Object.freeze({
+  official_dates_v1: template(
+    1,
+    ["plain_date"],
+    ["Official Cook County dates.", "claims"],
+  ),
+  open_window_deadline_v1: template(
+    1,
+    ["plain_date", "urgency", "cta"],
+    [
+      "The official filing window is open. Last day to file:",
+      "Review your filing options before the deadline.",
+    ],
+  ),
+});
+export const CONTROLLED_COPY_TEMPLATES = TEMPLATES;
 
 function render(
   templateId: ControlledCopyTemplateId,
-  claims: { kind: keyof typeof labels; date: string }[],
+  claims: { kind: keyof typeof RENDER_SCHEMA.labels; date: string }[],
 ): string | null {
   if (!claims.length) return null;
-  const dates = claims.map(({ kind, date }) => `${labels[kind]}: ${date}`);
+  const dates = claims.map(
+    ({ kind, date }) =>
+      `${RENDER_SCHEMA.labels[kind]}${RENDER_SCHEMA.labelValueSeparator}${date}`,
+  );
   if (templateId === "official_dates_v1") {
-    return `Official Cook County dates. ${dates.join(". ")}.`;
+    return `${TEMPLATES[templateId].copy[0]}${RENDER_SCHEMA.tokenSeparator}${dates.join(RENDER_SCHEMA.claimSeparator)}${RENDER_SCHEMA.final}`;
   }
   const deadline = claims.find((claim) => claim.kind === "last_file_date");
   if (!deadline) return null;
-  return `The official filing window is open. Last day to file: ${deadline.date}. Review your filing options before the deadline.`;
+  const [before, after] = TEMPLATES[templateId].copy;
+  const { tokenSeparator: s, final } = RENDER_SCHEMA;
+  return `${before}${s}${deadline.date}${final}${s}${after}`;
 }
 
-const blocked = (reason: ControlledCopyBlockReason): ControlledCopyResult => ({
-  verdict: "blocked",
+const blocked = (reason: string) => ({
+  verdict: "blocked" as const,
   reason,
   renderedText: null,
   binding: null,
@@ -95,9 +111,7 @@ const blocked = (reason: ControlledCopyBlockReason): ControlledCopyResult => ({
   postAllowed: false,
 });
 
-export function renderOfficialCalendarCopy(
-  input: ControlledCopyInput,
-): ControlledCopyResult {
+function renderSafe(input: ControlledCopyInput) {
   if (
     !input ||
     typeof input !== "object" ||
@@ -125,6 +139,20 @@ export function renderOfficialCalendarCopy(
   }
   const required = template.intents as readonly DraftIntent[];
   if (
+    input.approval.templateId !== templateId ||
+    input.approval.templateVersion !== template.version ||
+    input.approval.templateDefinitionHash !== template.definitionHash
+  ) {
+    return blocked("template_approval_mismatch");
+  }
+  const approvedMs = zonedInstantMs(input.approval.approvedAt);
+  const draftedMs = zonedInstantMs(input.draftedAt);
+  if (
+    !(approvedMs <= draftedMs) ||
+    countyCalendarDay(approvedMs) !== countyCalendarDay(draftedMs)
+  )
+    return blocked("approval_stale");
+  if (
     !required.every((intent) =>
       input.approval!.approvedIntents.includes(intent),
     )
@@ -132,12 +160,10 @@ export function renderOfficialCalendarCopy(
     return blocked("template_not_approved");
   }
 
-  let gated: ReturnType<typeof gateOfficialCalendarDraft>;
-  try {
-    gated = gateOfficialCalendarDraft({ ...input, requestedIntents: required });
-  } catch {
-    return blocked("input_invalid");
-  }
+  const gated = gateOfficialCalendarDraft({
+    ...input,
+    requestedIntents: required,
+  });
   const denied = gated.decisions.find((decision) => !decision.allowed);
   if (denied) return blocked(denied.reason ?? "approval_scope");
   if (
@@ -155,10 +181,13 @@ export function renderOfficialCalendarCopy(
   const approvalHash = hash(
     canonical({
       approvedAt: approved.approvedAt,
-      approvedIntents: [...approved.approvedIntents],
+      approvedIntents: [...approved.approvedIntents].sort(),
       approvedStatus: approved.approvedStatus,
       candidateId: approved.candidateId,
       contentHash: approved.contentHash,
+      templateDefinitionHash: approved.templateDefinitionHash,
+      templateId: approved.templateId,
+      templateVersion: approved.templateVersion,
     }),
   );
   const countyDay = countyCalendarDay(Date.parse(input.draftedAt));
@@ -191,4 +220,12 @@ export function renderOfficialCalendarCopy(
     reviewOnly: true,
     postAllowed: false,
   };
+}
+
+export function renderOfficialCalendarCopy(input: ControlledCopyInput) {
+  try {
+    return renderSafe(input);
+  } catch {
+    return blocked("input_invalid");
+  }
 }

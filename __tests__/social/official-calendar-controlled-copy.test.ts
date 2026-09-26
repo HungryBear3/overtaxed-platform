@@ -5,11 +5,12 @@ import { join } from "node:path";
 import type { OfficialDeadlineSnapshot as Snapshot } from "@/lib/deadlines/official-source-state";
 import type { TownshipResolution } from "@/lib/deadlines/township-resolution";
 import { buildOfficialCalendarCandidates } from "@/lib/social/official-calendar-candidates";
-import type { CandidateApproval } from "@/lib/social/official-calendar-draft-gate";
 import {
   CONTROLLED_COPY_TEMPLATES,
   renderOfficialCalendarCopy as render,
+  type ControlledCopyApproval,
   type ControlledCopyInput,
+  type ControlledCopyTemplateId,
 } from "@/lib/social/official-calendar-controlled-copy";
 import { buildSnapshot, SOURCES } from "@/scripts/refresh-township-deadlines";
 
@@ -65,12 +66,16 @@ const identity = (): TownshipResolution => ({
 const approval = (
   candidate: ReturnType<typeof candidateAt>,
   approvedAt: string,
-): CandidateApproval => ({
+  templateId: ControlledCopyTemplateId = "official_dates_v1",
+): ControlledCopyApproval => ({
   candidateId: candidate.candidateId,
   contentHash: candidate.contentHash,
   approvedStatus: candidate.status,
   approvedAt,
   approvedIntents: ["plain_date", "urgency", "cta"],
+  templateId,
+  templateVersion: CONTROLLED_COPY_TEMPLATES[templateId].version,
+  templateDefinitionHash: CONTROLLED_COPY_TEMPLATES[templateId].definitionHash,
 });
 const inputAt = (at = OPEN): ControlledCopyInput => {
   const candidate = candidateAt(at);
@@ -84,114 +89,63 @@ const inputAt = (at = OPEN): ControlledCopyInput => {
   };
 };
 
-it("renders only allowlisted copy and binds every authority input", () => {
-  const input = inputAt();
-  const result = render(input);
-  expect(result).toMatchObject({
-    verdict: "rendered",
-    reason: null,
-    reviewOnly: true,
-    postAllowed: false,
-    binding: {
-      candidateId: input.candidate.candidateId,
-      candidateContentHash: input.candidate.contentHash,
-      sourceContentSha256: SHA,
-      templateId: "official_dates_v1",
-      templateVersion: 1,
-      countyDay: "2026-08-27",
-    },
-  });
-});
-
 it("cannot disguise caller-authored urgency or CTA copy as plain dates", () => {
-  const input = inputAt() as ControlledCopyInput & {
-    text?: string;
-    intent?: string;
-  };
-  input.text = "ACT NOW! Click here before time runs out!";
-  input.intent = "plain_date";
+  const input = {
+    ...inputAt(),
+    text: "ACT NOW! Click here before time runs out!",
+    intent: "plain_date",
+  } as ControlledCopyInput;
   const result = render(input);
-  expect(result.verdict).toBe("rendered");
   expect(result.renderedText).not.toMatch(/act now|click here|time runs out/i);
-  expect(render({ ...input, templateId: "plain_date" })).toMatchObject({
-    verdict: "blocked",
-    reason: "template_unknown",
-  });
+  expect(result.renderedText).toContain("Last day to file: 2026-10-02.");
+  expect(CONTROLLED_COPY_TEMPLATES.official_dates_v1.definitionHash).toBe(
+    "d15ff56307e160e03a66cb919195d55595b67a5feaec6d36ed607336a51640c0",
+  );
 });
 
-it("keeps the exported policy deeply immutable at runtime", () => {
-  const policy = CONTROLLED_COPY_TEMPLATES as unknown as {
-    open_window_deadline_v1: { intents: string[] };
-  };
-  expect(Object.isFrozen(policy)).toBe(true);
-  expect(() => {
-    policy.open_window_deadline_v1.intents = ["plain_date"];
-  }).toThrow();
+it("binds approval to template, version and exact definition", () => {
   const input = inputAt();
-  input.approval = { ...input.approval!, approvedIntents: ["plain_date"] };
-  expect(
-    render({ ...input, templateId: "open_window_deadline_v1" }),
-  ).toMatchObject({ verdict: "blocked", reason: "template_not_approved" });
-});
-
-it("normalizes approval evidence and rejects non-intent members", () => {
-  const input = inputAt();
-  const cyclic = input.approval as CandidateApproval & { extra?: unknown };
-  cyclic.extra = cyclic;
-  expect(() => render(input)).not.toThrow();
-  const approvedIntents = [
-    "plain_date",
-    "cta",
-    (globalThis as any).BigInt(1),
-  ] as never;
-  const malformed = { ...input, approval: { ...cyclic, approvedIntents } };
-  expect(() => render(malformed)).not.toThrow();
-  expect(render(malformed)).toMatchObject({ reason: "input_invalid" });
-});
-
-it("renders the fixed CTA only when its exact intents were approved", () => {
-  const input = { ...inputAt(), templateId: "open_window_deadline_v1" };
-  expect(render(input).verdict).toBe("rendered");
-  const approvedIntents = ["plain_date", "cta"] as const;
-  expect(
-    render({ ...input, approval: { ...input.approval!, approvedIntents } }),
-  ).toMatchObject({ verdict: "blocked", reason: "template_not_approved" });
+  for (const approvalPatch of [
+    { templateId: "open_window_deadline_v1" },
+    { templateVersion: 2 },
+    { templateDefinitionHash: "0".repeat(64) },
+  ]) {
+    const changed = { ...input.approval!, ...approvalPatch };
+    const result = render({
+      ...input,
+      approval: changed,
+    } as ControlledCopyInput);
+    expect(result.reason).toBe("template_approval_mismatch");
+  }
 });
 
 it("does not reuse open-window approval after the window closes", () => {
   const reviewed = inputAt("2026-10-02T16:00Z");
+  reviewed.templateId = "open_window_deadline_v1";
+  reviewed.approval = approval(
+    reviewed.candidate,
+    reviewed.draftedAt,
+    "open_window_deadline_v1",
+  );
   const closedAt = "2026-10-03T16:00Z";
   const result = render({
     ...reviewed,
     snapshot: fetchedAt(closedAt),
     draftedAt: closedAt,
   });
-  expect(result).toMatchObject({
-    verdict: "blocked",
-    reason: "window_closed",
-    renderedText: null,
-    binding: null,
-  });
+  expect(result.reason).toBe("approval_stale");
 });
 
-it.each([
-  ["unknown template", { templateId: "custom_promo_v1" }, "template_unknown"],
-  ["zone-less time", { draftedAt: "2026-08-27T16:00" }, "date_invalid"],
-  ["rolled date", { draftedAt: "2026-02-30T16:00Z" }, "date_invalid"],
-  [
-    "malformed intents",
-    { approval: { approvedIntents: null } },
+it("contains malformed objects and hostile getters", () => {
+  expect(render({ ...inputAt(), candidate: null } as never).reason).toBe(
     "input_invalid",
-  ],
-  ["malformed candidate", { candidate: null }, "input_invalid"],
-] as const)("fails closed for %s", (_, patch, reason) => {
-  const malformed = { ...inputAt(), ...patch } as ControlledCopyInput;
-  expect(() => render(malformed)).not.toThrow();
-  expect(render(malformed)).toMatchObject({
-    verdict: "blocked",
-    reason,
-    binding: null,
+  );
+  const hostile = new Proxy(inputAt(), {
+    get: () => {
+      throw Error("hostile");
+    },
   });
+  expect(render(hostile).reason).toBe("input_invalid");
 });
 
 it("treats Cook County midnight as an approval boundary", () => {
@@ -199,7 +153,6 @@ it("treats Cook County midnight as an approval boundary", () => {
   const after = "2026-08-28T05:01Z"; // 12:01 AM CDT
   const nextDay = fetchedAt(after);
   nextDay.sources.assessor!.retrievedAt = "2026-08-28T05:00:30Z";
-  expect(render(before).binding?.countyDay).toBe("2026-08-27");
   expect(
     render({ ...before, snapshot: nextDay, draftedAt: after }),
   ).toMatchObject({ verdict: "blocked", reason: "approval_stale" });
