@@ -17,10 +17,20 @@ import {
 import { sanitizeAnonymousGaIdentifiers } from "@/lib/analytics/ga4"
 import { sendGaPurchaseEvent } from "@/lib/analytics/ga4-measurement"
 import { scheduleT2ArtifactOrchestration } from "@/lib/fulfillment-runtime/t2-artifact-scheduling"
+import { enqueueAndScheduleNeutralReportProduction } from "@/lib/fulfillment-runtime/neutral-generation-scheduling"
+import { NEUTRAL_GENERATION_INVOCATION_BUDGET_MS } from "@/lib/fulfillment-runtime/neutral-generation-worker"
+import { NEUTRAL_REPORT_COMMERCE_POLICY } from "@/lib/commerce/neutral-report-policy"
 
 import { bindPayment, providerId, recordReversal, reversalTypes } from "@/lib/checkout/ot-reversal"
 
+// The neutral report production scheduled by this route runs in `after()`,
+// which still counts against the function's duration. Declared explicitly and
+// kept in step with NEUTRAL_GENERATION_MAX_DURATION_SECONDS; Next.js route
+// segment config must be a static literal, so it cannot be imported.
+export const maxDuration = 60
+
 export async function POST(request: NextRequest) {
+  const neutralGenerationDeadline = Date.now() + NEUTRAL_GENERATION_INVOCATION_BUDGET_MS
   console.log("[webhook] Received webhook request")
   
   if (!stripe) {
@@ -90,15 +100,37 @@ export async function POST(request: NextRequest) {
         event.type === "checkout.session.completed" &&
         metadata.tier === "T2" &&
         Boolean(metadata.orderId) &&
-        t2FulfillmentEvidenceWritesEnabled()
+        (t2FulfillmentEvidenceWritesEnabled() ||
+          process.env.OT_NEUTRAL_REPORT_PRODUCTION_ENABLED === "true")
 
       if (duplicateMayNeedT2Evidence) {
         try {
           const settledOrder = await prisma.oTOrder.findUnique({
             where: { id: metadata.orderId },
-            select: { status: true, tier: true },
+            select: {
+              status: true,
+              tier: true,
+              settledAmountCents: true,
+              settledCurrency: true,
+              eligibilitySnapshot: true,
+            },
           })
-          if (settledOrder?.status === "PAID" && settledOrder.tier === "T2") {
+          const neutralPolicy =
+            settledOrder?.eligibilitySnapshot &&
+            typeof settledOrder.eligibilitySnapshot === "object" &&
+            !Array.isArray(settledOrder.eligibilitySnapshot) &&
+            (settledOrder.eligibilitySnapshot as Record<string, unknown>).policyVersion ===
+              NEUTRAL_REPORT_COMMERCE_POLICY.version
+          const neutralRetry =
+            process.env.OT_NEUTRAL_REPORT_PRODUCTION_ENABLED === "true" &&
+            settledOrder?.settledAmountCents === 6900 &&
+            settledOrder.settledCurrency?.toLowerCase() === "usd" &&
+            neutralPolicy
+          if (
+            settledOrder?.status === "PAID" &&
+            settledOrder.tier === "T2" &&
+            (t2FulfillmentEvidenceWritesEnabled() || neutralRetry)
+          ) {
             console.log(
               `[webhook] Duplicate paid T2 event ${event.id} — retrying idempotent evidence persistence`,
             )
@@ -435,6 +467,25 @@ export async function POST(request: NextRequest) {
         }
 
         if (persistedOrder.tier === "T2") {
+          const neutralPolicy =
+            persistedOrder.eligibilitySnapshot &&
+            typeof persistedOrder.eligibilitySnapshot === "object" &&
+            !Array.isArray(persistedOrder.eligibilitySnapshot) &&
+            (persistedOrder.eligibilitySnapshot as Record<string, unknown>).policyVersion ===
+              NEUTRAL_REPORT_COMMERCE_POLICY.version
+          if (
+            persistedOrder.checkoutAmountCents === 6900 &&
+            persistedOrder.checkoutCurrency?.toLowerCase() === "usd" &&
+            neutralPolicy
+          ) {
+            try {
+              await enqueueAndScheduleNeutralReportProduction(persistedOrder.id, { deadline: neutralGenerationDeadline })
+            } catch {
+              console.error("[ot-neutral-generation-scheduling] outcome=THREW")
+              await releaseEventClaim()
+              return NextResponse.json({ error: "Neutral production scheduling error" }, { status: 500 })
+            }
+          }
           try {
             const kickoff = await kickOffT2FulfillmentEvidence({
               id: persistedOrder.id,

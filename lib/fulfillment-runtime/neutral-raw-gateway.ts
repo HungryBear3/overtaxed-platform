@@ -43,7 +43,7 @@ export type NeutralRawEvidence = Readonly<{
 
 type RawResponse = { ok: boolean; status: number; redirected?: boolean; url: string; headers: { get(name: string): string | null }; body?: CountyBody | null; text(): Promise<string> }
 type RawFetch = (url: string, init: { method: "GET"; headers: Record<string, string>; cache: "no-store"; redirect: "error"; credentials: "omit"; signal: AbortSignal }) => Promise<RawResponse>
-type NeutralRawDeps = { fetch: RawFetch; now: () => Date }
+type NeutralRawDeps = { fetch: RawFetch; now: () => Date; deadline?: number }
 
 type Row = Record<string, unknown>
 type Dataset = { id: string; title: string; select: string }
@@ -119,7 +119,9 @@ class Reader {
   }
   async one(dataset: Dataset, url: string, roles: Role[], maxRows: number): Promise<Row[]> {
     if (++this.requests > MAX_REQUESTS || !url.startsWith(`${ORIGIN}/resource/${dataset.id}.json?`)) throw new Refusal("NEUTRAL_RAW_SOURCE_UNAVAILABLE")
-    const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 15_000)
+    const remaining = this.deps.deadline == null ? 15_000 : this.deps.deadline - this.tickRaw()
+    if (remaining <= 0) throw new Refusal("NEUTRAL_RAW_SOURCE_UNAVAILABLE")
+    const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), Math.min(15_000, remaining))
     let response: RawResponse; let bytes: Buffer
     try {
       this.tick()
@@ -208,9 +210,10 @@ async function readNeutralOfficialBytes(input: { propertyPin: string }, deps: Ne
 }
 
 /** Production reader: transport and clock are owned here, never caller injected. */
-export async function readNeutralOfficialBytesRuntime(input: { propertyPin: string }): Promise<{ ok: true; evidence: NeutralRawEvidence } | { ok: false; blocker: NeutralRawBlocker }> {
+export async function readNeutralOfficialBytesRuntime(input: { propertyPin: string; deadline?: number }): Promise<{ ok: true; evidence: NeutralRawEvidence } | { ok: false; blocker: NeutralRawBlocker }> {
   return readNeutralOfficialBytes(input, {
     now: () => new Date(),
+    deadline: input.deadline,
     fetch: async (url, init) => {
       const response = await globalThis.fetch(url, init as RequestInit)
       return { ok: response.ok, status: response.status, redirected: response.redirected, url: response.url, headers: response.headers, body: response.body as CountyBody | null, text: () => response.text() }

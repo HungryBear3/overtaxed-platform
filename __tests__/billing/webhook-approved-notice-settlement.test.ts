@@ -26,6 +26,7 @@ const sendPaidOrderRecoveryAlertMock = jest.fn(async (_args?: unknown) => true)
 const sendPaymentRecoveryAcknowledgmentMock = jest.fn(async (_args?: unknown) => true)
 const sendBillingPaymentRecoveryAlertMock = jest.fn(async (_args?: unknown) => true)
 const kickOffT2FulfillmentEvidenceMock = jest.fn(async (_order?: unknown): Promise<T2FulfillmentKickoffResult> => ({ outcome: "DISABLED" }))
+const neutralEnsureMock = jest.fn(async (_orderId?: string) => ({ workId: "neutral_work_1" }))
 const fetchMock = jest.fn()
 let forceOtOrderUpdateMiss = false
 let forceStripeEventDeleteFailure = false
@@ -153,6 +154,10 @@ jest.mock("@/lib/fulfillment-runtime/kickoff", () => ({
     process.env.OT_T2_FULFILLMENT_EVIDENCE_ENABLED === "true",
 }))
 
+jest.mock("@/lib/fulfillment-runtime/neutral-generation-store", () => ({
+  prismaNeutralGenerationStore: { ensure: (orderId: string) => neutralEnsureMock(orderId) },
+}))
+
 const listLineItemsMock = jest.fn()
 
 jest.mock("@/lib/stripe/client", () => ({
@@ -178,6 +183,7 @@ beforeEach(() => {
   forceStripeEventDeleteFailure = false
   delete process.env.OT_T2_FULFILLMENT_EVIDENCE_ENABLED
   delete process.env.OT_T2_ARTIFACT_ORCHESTRATION_ENABLED
+  delete process.env.OT_NEUTRAL_REPORT_PRODUCTION_ENABLED
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test"
   process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID = "G-TEST123"
   process.env.GA4_API_SECRET = "ga4_secret"
@@ -567,6 +573,45 @@ describe("billing webhook approved notice settlement", () => {
     )
     expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
     expect(afterMock).toHaveBeenCalledTimes(flag === 'true' ? 1 : 0)
+  })
+
+  it("uses the real webhook/scheduler boundary to durably enqueue one neutral work identity on duplicate $69 settlement", async () => {
+    process.env.OT_NEUTRAL_REPORT_PRODUCTION_ENABLED = "true"
+    seedOrder({
+      tier: "T2", checkoutAmountCents: 6900, checkoutPriceId: "price_neutral_69", checkoutProductId: "prod_neutral",
+      eligibilitySnapshot: { policyVersion: "ot-neutral-records-report/2026-09-15" },
+      analysisAcknowledgedAt: new Date("2026-07-24T12:00:00.000Z"), acknowledgmentVersion: "analysis_ack_v1",
+      acknowledgmentEvidence: { acknowledged: true, version: "analysis_ack_v1" }, noticeReviewStatus: null,
+      noticeReviewActionAt: null, noticeReviewActionBy: null, noticeEvidence: null,
+    })
+    listLineItemsMock.mockResolvedValue({ data: [{ quantity: 1, amount_total: 6900, price: { id: "price_neutral_69", unit_amount: 6900, currency: "usd", product: { id: "prod_neutral" } } }] })
+    const first = await POST(request("evt_neutral_paid", "ord_notice", { tier: "T2", amountTotal: 6900 }))
+    const duplicate = await POST(request("evt_neutral_paid", "ord_notice", { tier: "T2", amountTotal: 6900 }))
+    expect(first.status).toBe(200); expect(duplicate.status).toBe(200)
+    expect(neutralEnsureMock).toHaveBeenCalledTimes(2)
+    expect(neutralEnsureMock).toHaveBeenNthCalledWith(1, "ord_notice")
+    expect(neutralEnsureMock).toHaveBeenNthCalledWith(2, "ord_notice")
+    expect(await Promise.all(neutralEnsureMock.mock.results.map(result => result.value))).toEqual([{ workId: "neutral_work_1" }, { workId: "neutral_work_1" }])
+    expect(afterMock).toHaveBeenCalledTimes(2)
+  })
+
+  it("propagates neutral after registration failure through webhook claim release", async () => {
+    process.env.OT_NEUTRAL_REPORT_PRODUCTION_ENABLED = "true"
+    afterMock.mockImplementationOnce(() => { throw new Error("registration failed") })
+    seedOrder({ tier: "T2", checkoutAmountCents: 6900, checkoutPriceId: "price_neutral_69", checkoutProductId: "prod_neutral", eligibilitySnapshot: { policyVersion: "ot-neutral-records-report/2026-09-15" }, analysisAcknowledgedAt: new Date("2026-07-24T12:00:00.000Z"), acknowledgmentVersion: "analysis_ack_v1", acknowledgmentEvidence: { acknowledged: true, version: "analysis_ack_v1" }, noticeEvidence: null })
+    listLineItemsMock.mockResolvedValueOnce({ data: [{ quantity: 1, amount_total: 6900, price: { id: "price_neutral_69", unit_amount: 6900, currency: "usd", product: { id: "prod_neutral" } } }] })
+    const response = await POST(request("evt_neutral_after_failure", "ord_notice", { tier: "T2", amountTotal: 6900 }))
+    expect(response.status).toBe(500)
+    expect(dbState.stripeEvents.has("evt_neutral_after_failure")).toBe(false)
+  })
+
+  it("leaves a non-neutral T2 settlement path unchanged with zero neutral scheduling calls", async () => {
+    process.env.OT_NEUTRAL_REPORT_PRODUCTION_ENABLED = "true"
+    seedOrder({ tier: "T2", analysisAcknowledgedAt: new Date("2026-07-24T12:00:00.000Z"), acknowledgmentVersion: "analysis_ack_v1", acknowledgmentEvidence: { acknowledged: true, version: "analysis_ack_v1" }, noticeEvidence: null })
+    listLineItemsMock.mockResolvedValueOnce({ data: [{ quantity: 1, amount_total: 9700, price: { id: "price_t3", unit_amount: 9700, currency: "usd", product: { id: "prod_t3" } } }] })
+    const response = await POST(request("evt_non_neutral_t2", "ord_notice", { tier: "T2" }))
+    expect(response.status).toBe(200)
+    expect(neutralEnsureMock).not.toHaveBeenCalled()
   })
 
   it("reaches evidence persistence on a paid retry before the already-paid early return", async () => {

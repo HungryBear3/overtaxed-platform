@@ -65,8 +65,10 @@ async function boundedCalendarBytes(response: Response, signal: AbortSignal): Pr
 }
 
 /** Production calendar transport: exact URL, global fetch/clock, bounded bytes. */
-export async function loadNeutralOfficialCalendarRuntime(input: { subjectPin: string; subjectTownship: string }): Promise<{ ok: true; evidence: NeutralDeadlineRawEvidence; evaluatedAt: string } | { ok: false; blocker: "NEUTRAL_DEADLINE_UNAVAILABLE" }> {
-  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 15_000)
+export async function loadNeutralOfficialCalendarRuntime(input: { subjectPin: string; subjectTownship: string; deadline?: number }): Promise<{ ok: true; evidence: NeutralDeadlineRawEvidence; evaluatedAt: string } | { ok: false; blocker: "NEUTRAL_DEADLINE_UNAVAILABLE" }> {
+  const remaining = input.deadline == null ? 15_000 : input.deadline - Date.now()
+  if (remaining <= 0) return { ok: false, blocker: "NEUTRAL_DEADLINE_UNAVAILABLE" }
+  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), Math.min(15_000, remaining))
   try {
     const response = await globalThis.fetch(NEUTRAL_CALENDAR_URL, { method: "GET", headers: { Accept: "text/html" }, cache: "no-store", redirect: "error", credentials: "omit", signal: controller.signal })
     if (!response.ok || response.status !== 200 || response.redirected || response.url !== NEUTRAL_CALENDAR_URL || !/^text\/html(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "")) throw new Error()
