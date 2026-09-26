@@ -1,0 +1,443 @@
+/** @jest-environment node */
+// Slice A3. Pinned 2026-08-27 captures, built in memory as in A2; no fetch.
+
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import type { OfficialDeadlineSnapshot as Snapshot } from "@/lib/deadlines/official-source-state";
+import type { TownshipResolution } from "@/lib/deadlines/township-resolution";
+import { buildOfficialCalendarCandidates } from "@/lib/social/official-calendar-candidates";
+import {
+  DRAFT_INTENTS as ALL,
+  gateOfficialCalendarDraft as gate,
+  type CandidateApproval,
+  type DraftGateInput as Input,
+} from "@/lib/social/official-calendar-draft-gate";
+import { buildSnapshot, SOURCES } from "@/scripts/refresh-township-deadlines";
+
+// Counts rebuilds so a rejected draft instant can be shown never to reach A2.
+jest.mock("@/lib/social/official-calendar-candidates", () => {
+  const actual = jest.requireActual(
+    "@/lib/social/official-calendar-candidates",
+  );
+  return {
+    ...actual,
+    buildOfficialCalendarCandidates: jest.fn(
+      actual.buildOfficialCalendarCandidates,
+    ),
+  };
+});
+const rebuilds = buildOfficialCalendarCandidates as jest.Mock;
+
+const A_SHA =
+  "bb3b7a8747ae39140c8c8b09d508f9dc65ab5321b5be3a356caa136caa0248ca";
+const T0 = "2026-08-27T16:00Z";
+const FILES: Record<string, string> = {
+  [SOURCES.assessor.url]: "assessor-calendar-20260827.html",
+  [SOURCES.bor.url]: "bor-township-open-close-20260827.pdf",
+};
+let SNAP: Snapshot;
+
+beforeAll(async () => {
+  const dir = join(process.cwd(), "__tests__/fixtures/deadlines");
+  const built = await buildSnapshot({
+    fetchSource: async (url) => ({
+      status: 200,
+      finalUrl: url,
+      body: new Uint8Array(readFileSync(join(dir, FILES[url]))),
+    }),
+    now: "2026-08-27T15:00:00.000Z",
+    synthetic: false,
+    expectedSha256: { assessor: A_SHA },
+  });
+  if (!built.ok) throw new Error("pinned fixtures no longer build");
+  SNAP = built.snapshot;
+});
+
+/** The same bytes, re-retrieved an hour before `at`. */
+const fetchedAt = (at: string, snap = SNAP): Snapshot => {
+  const retrievedAt = new Date(Date.parse(at) - 3_600_000).toISOString();
+  const assessor = { ...snap.sources.assessor!, retrievedAt };
+  return { ...snap, sources: { ...snap.sources, assessor } };
+};
+/** SNAP with Calumet's Assessor window replaced field by field. */
+const calumet = (w: object): Snapshot => {
+  const assessor = { ...SNAP.townships.calumet.stages.assessor!, ...w };
+  const calumet = { townshipName: "Calumet", stages: { assessor } };
+  return { ...SNAP, townships: { ...SNAP.townships, calumet } };
+};
+const candidateOf = (label: string, at = T0, snap = SNAP) => {
+  const [c] = buildOfficialCalendarCandidates({
+    snapshot: fetchedAt(at, snap),
+    evaluatedAt: at,
+    townshipLabels: [label],
+    stages: ["assessor"],
+    expectedSha256: { assessor: A_SHA },
+  }).candidates;
+  if (!c) throw new Error(`no candidate for ${label} at ${at}`);
+  return c;
+};
+const record = (townshipKey: string): TownshipResolution => ({
+  inputKind: "pin",
+  normalizedPin: "16011230040000",
+  normalizedAddress: null,
+  townshipKey,
+  townshipName: townshipKey,
+  resolutionSource: "official_property_record",
+  resolvedAt: T0,
+});
+const approve = (
+  c: Input["candidate"],
+  approvedAt: string,
+  intents = [...ALL],
+): CandidateApproval => ({
+  candidateId: c.candidateId,
+  contentHash: c.contentHash,
+  approvedStatus: c.status,
+  approvedAt,
+  approvedIntents: intents,
+});
+
+/** "seen ok at": reviewed, approved for everything, drafted (2026, UTC). */
+const timeline = (label: string, times: string, snap = SNAP): Input => {
+  const [seen, ok, at] = times.split(" ").map((x) => `2026-${x}Z`);
+  const candidate = candidateOf(label, seen, snap);
+  return {
+    candidate,
+    approval: approve(candidate, ok),
+    snapshot: fetchedAt(at, snap),
+    draftedAt: at,
+    requestedIntents: ALL,
+    identity: record(candidate.snapshotKey),
+  };
+};
+const DAY = "08-27T16:00 08-27T16:10 08-27T16:30";
+const run = (over: Partial<Input> = {}) =>
+  gate({ ...timeline("Calumet", DAY), ...over });
+const why = (over: Partial<Input> = {}) =>
+  run(over).decisions.map((d) => `${d.intent}:${d.reason ?? "ok"}`);
+const expectAllBlocked = (over: Partial<Input>, reason: string) => {
+  const r = run(over);
+  expect(r.verdict).toBe("blocked");
+  expect(r.dateEvidence).toEqual([]);
+  expect(new Set(r.decisions.map((d) => d.reason))).toEqual(new Set([reason]));
+};
+const dateOnly = (reason: string) =>
+  ["plain_date:ok"].concat(ALL.slice(1).map((k) => `${k}:${reason}`));
+
+it("permits reminder, urgency and CTA for a fresh, approved, eligible open window", () => {
+  const r = run();
+  expect(r).toMatchObject({ verdict: "permitted", postAllowed: false });
+  expect(r.dateEvidence).toEqual(candidateOf("Calumet").claims);
+  expect(why().filter((l) => !l.endsWith(":ok"))).toEqual([
+    "deadline_near:deadline_not_near", // closes in 36 days
+  ]);
+  // Lemont closes 2026-09-29; nine days out, deadline-near wording is allowed.
+  const near = timeline("Lemont", "09-20T15:00 09-20T15:45 09-20T16:00");
+  expect(why(near)).toEqual(ALL.map((k) => `${k}:ok`));
+});
+
+it("keeps plain dates but nothing more for a page-slug township", () => {
+  const slug = { identity: undefined };
+  expect(run(slug).verdict).toBe("date_only");
+  expect(run(slug).dateEvidence).toEqual(candidateOf("Calumet").claims);
+  expect(why(slug)).toEqual(dateOnly("identity_not_eligible"));
+});
+
+it("invalidates missing, stale, future, changed and out-of-scope approvals", () => {
+  const c = candidateOf("Calumet");
+  const cases: [CandidateApproval | null, string][] = [
+    [null, "approval_missing"],
+    [approve(c, "2026-08-26T20:00Z"), "approval_stale"], // prior county day
+    [approve(c, "2026-08-27T17:00Z"), "approval_stale"], // after the draft
+    [approve(c, "not a time"), "approval_stale"],
+    [approve({ ...c, contentHash: "0".repeat(64) }, T0), "approval_changed"],
+    [approve({ ...c, candidateId: "occ_other" }, T0), "approval_changed"],
+    [approve(c, T0, ["plain_date"]), "approval_scope"],
+  ];
+  const requestedIntents = ["cta", "plain_date"] as const;
+  for (const [approval, reason] of cases) {
+    const got = why({ approval, requestedIntents });
+    expect(got).toEqual(["plain_date:ok", `cta:${reason}`]);
+  }
+  // Reviewed while upcoming, approved and drafted the day Calumet opened:
+  // same hash, same day, but not the status the reviewer read.
+  const t = timeline("Calumet", "08-19T16:00 08-20T15:00 08-20T16:00");
+  expect(t.candidate.status).toBe("upcoming");
+  const cta = why({ ...t, requestedIntents: ["cta"] });
+  expect(cta).toEqual(["cta:approval_changed"]);
+});
+
+it("binds approval to the status the reviewer saw, never the caller's candidate", () => {
+  const cta = { requestedIntents: ["cta"] as const };
+  // Approved while upcoming; replayed on the day Calumet opened.
+  const t = timeline("Calumet", "08-19T16:00 08-20T15:00 08-20T16:00");
+  expect(t.approval?.approvedStatus).toBe("upcoming");
+  // Tamper: the caller relabels its reviewed record with the current status.
+  const relabeled = { ...t.candidate, status: "open" as const };
+  expect(why({ ...t, ...cta, candidate: relabeled })).toEqual([
+    "cta:approval_changed",
+  ]);
+  // The same transition-day draft with an approval of what is now true passes,
+  // whatever status the caller's record carries.
+  const current = approve(relabeled, "2026-08-20T15:30Z");
+  for (const status of ["upcoming", "open", "closed"] as const) {
+    const candidate = { ...t.candidate, status };
+    expect(why({ ...t, ...cta, candidate, approval: current })).toEqual([
+      "cta:ok",
+    ]);
+  }
+  // Open -> closed: an approval of "open" replayed after close authorizes nothing.
+  const c = timeline("Lemont", "09-29T16:00 09-30T14:00 09-30T16:00");
+  expect(c.approval?.approvedStatus).toBe("open");
+  expect(why({ ...c, ...cta })).toEqual(["cta:window_closed"]);
+  // A forged approval status never matches a fresh rebuild it did not see.
+  const forged = {
+    ...approve(candidateOf("Calumet"), T0),
+    approvedStatus: "closed",
+  };
+  expect(why({ ...cta, approval: forged as CandidateApproval })).toEqual([
+    "cta:approval_changed",
+  ]);
+});
+
+it("refuses a forged candidate ID and emits only the canonical one", () => {
+  const real = candidateOf("Calumet");
+  expect(run().candidateId).toBe(real.candidateId);
+  const candidate = { ...real, candidateId: "occ_forged" };
+  const cases: Partial<Input>[] = [
+    { candidate },
+    // An approval signed for the forged ID does not launder it.
+    { candidate, approval: approve(candidate, T0) },
+  ];
+  for (const over of cases) {
+    expectAllBlocked(over, "canonical_changed");
+    expect(run(over).candidateId).toBe(real.candidateId);
+  }
+  // A forged ID on the approval alone is an approval problem, not an ID leak.
+  const approval = { ...approve(real, T0), candidateId: "occ_forged" };
+  expect(run({ approval }).candidateId).toBe(real.candidateId);
+  expect(why({ approval, requestedIntents: ["cta"] })).toEqual([
+    "cta:approval_changed",
+  ]);
+});
+
+it.each([
+  ["zone-less", "2026-08-27T16:10"],
+  ["zone-less seconds", "2026-08-27T16:10:00.000"],
+  ["date only", "2026-08-27"],
+  ["space separator", "2026-08-27 16:10Z"],
+  ["unpadded", "2026-8-27T16:10Z"],
+  ["basic offset", "2026-08-27T11:10-0500"],
+  ["RFC 2822", "Thu, 27 Aug 2026 16:10:00 GMT"],
+  ["rolled day", "2026-02-30T16:10Z"],
+  ["hour 24", "2026-08-27T24:00Z"],
+  ["minute 60", "2026-08-27T16:60Z"],
+  ["second 60", "2026-08-27T16:10:60Z"],
+  ["offset hour 24", "2026-08-27T16:10+24:00"],
+  ["month 13", "2026-13-27T16:10Z"],
+  ["month 00", "2026-00-27T16:10Z"],
+  ["empty", ""],
+  ["future by offset", "2026-08-27T12:00-05:00"], // 17:00Z, after the draft
+  ["prior county day by offset", "2026-08-27T02:00+00:00"], // 08-26 in Chicago
+])("rejects a %s approval timestamp", (_, approvedAt) => {
+  const approval = approve(candidateOf("Calumet"), approvedAt);
+  expect(why({ approval, requestedIntents: ["cta"] })).toEqual([
+    "cta:approval_stale",
+  ]);
+});
+
+it("accepts Z and explicit-offset approval timestamps on the drafting day", () => {
+  const c = candidateOf("Calumet");
+  for (const approvedAt of [
+    "2026-08-27T16:10Z",
+    "2026-08-27T16:10:05.5Z",
+    "2026-08-27T11:10-05:00", // 16:10Z
+    "2026-08-27T00:30-05:00", // county midnight half-hour
+  ]) {
+    const approval = approve(c, approvedAt);
+    expect(why({ approval, requestedIntents: ["cta"] })).toEqual(["cta:ok"]);
+  }
+  const nonString = { ...approve(c, T0), approvedAt: 0 as never };
+  expect(why({ approval: nonString, requestedIntents: ["cta"] })).toEqual([
+    "cta:approval_stale",
+  ]);
+});
+
+it("blocks everything when canonical state no longer matches the review", () => {
+  const moved = fetchedAt(T0, calumet({ lastFileDate: "2026-10-09" }));
+  expectAllBlocked({ snapshot: moved }, "canonical_changed");
+  const { currentContentHash } = run({ snapshot: moved });
+  expect(currentContentHash).not.toBe(candidateOf("Calumet").contentHash);
+});
+
+it("keeps a closed window as evidence while its old approval authorizes nothing", () => {
+  const t = timeline("Lemont", "09-29T16:00 09-30T14:00 09-30T16:00");
+  expect(why(t)).toEqual(dateOnly("window_closed"));
+  expect(t.candidate.status).toBe("open"); // the record is untouched evidence
+
+  const later = calumet({ openDate: "2026-10-05", lastFileDate: "2026-11-05" });
+  expect(why(timeline("Calumet", DAY, later)).join(" ")).toBe(
+    "plain_date:ok countdown:ok deadline_near:window_not_open reminder:ok urgency:window_not_open cta:window_not_open",
+  );
+});
+
+const at = (draftedAt: string) => ({ draftedAt, snapshot: SNAP });
+const src = (o: object | null) => {
+  const { sources, ...s } = fetchedAt(T0);
+  const assessor = o && { ...sources.assessor!, ...o };
+  return { snapshot: { ...s, sources: { ...sources, assessor } } };
+};
+const lakeview = () => ({
+  candidate: { ...candidateOf("Calumet"), snapshotKey: "lakeview" },
+});
+it.each<[string, () => Partial<Input>]>([
+  ["source_stale", () => at("2026-08-29T16:00Z")],
+  ["source_stale", () => at("2026-08-28T12:00Z")], // prior-day fetch, open window
+  ["date_invalid", () => at("not a time")],
+  ["date_invalid", () => at("2026-08-27T16:30")], // zone-less draft instant
+  ["date_invalid", () => at("2026-13-27T16:30Z")],
+  ["date_invalid", () => at("2026-00-27T16:30Z")],
+  ["synthetic_source", () => ({ snapshot: { ...SNAP, synthetic: true } })],
+  ["source_unavailable", () => src(null)],
+  ["source_unofficial", () => src({ finalUrl: "https://api.realie.ai/x" })],
+  ["source_hash_changed", () => src({ contentSha256: "a".repeat(64) })],
+  ["parse_failed", () => src({ parseStatus: "parse_error" })],
+  ["township_alias_ambiguous", lakeview],
+  ["identity_mismatch", () => ({ identity: record("lemont") })],
+  ["intent_unknown", () => ({ requestedIntents: ["cta", "hype"] as never })],
+])("fails closed with %s", (reason, over) => {
+  expectAllBlocked(over(), reason);
+});
+
+/** Shaped like a zoned instant, but no such calendar moment exists. */
+const MALFORMED = [
+  "2026-00-27T16:10Z",
+  "2026-13-27T16:10Z",
+  "2026-99-27T16:10Z",
+  "2026-08-00T16:10Z",
+  "2026-08-32T16:10Z",
+  "2026-08-99T16:10Z",
+  "2026-02-29T16:10Z", // not a leap year
+  "2026-02-30T16:10Z",
+  "2026-04-31T16:10Z",
+  "2026-00-00T00:00Z",
+  "2026-08-27T24:00Z",
+  "2026-08-27T99:10Z",
+  "2026-08-27T16:60Z",
+  "2026-08-27T16:99Z",
+  "2026-08-27T16:10:60Z",
+  "2026-08-27T16:10:99.999Z",
+  "2026-08-27T16:10+24:00",
+  "2026-08-27T16:10-99:00",
+  "2026-08-27T16:10+05:60",
+  "2026-08-27T16:10-05:99",
+  "2026-13-00T24:60:60+24:60",
+];
+
+describe.each(MALFORMED)("malformed instant %s", (bad) => {
+  it("is a stale approval, never a throw", () => {
+    const approval = approve(candidateOf("Calumet"), bad);
+    expect(() => run({ approval })).not.toThrow();
+    expect(why({ approval, requestedIntents: ["cta", "plain_date"] })).toEqual([
+      "plain_date:ok",
+      "cta:approval_stale",
+    ]);
+  });
+
+  it("blocks the draft without rebuilding the candidate", () => {
+    const input = { ...timeline("Calumet", DAY), draftedAt: bad };
+    rebuilds.mockClear();
+    let r: ReturnType<typeof run> | undefined;
+    expect(() => (r = gate(input))).not.toThrow();
+    expect(rebuilds).not.toHaveBeenCalled();
+    expect(r).toMatchObject({ candidateId: null, currentContentHash: null });
+    expectAllBlocked({ draftedAt: bad }, "date_invalid");
+  });
+});
+
+it("never rebuilds from a zone-less or unparseable draft instant", () => {
+  const gated = (draftedAt: string) => {
+    const input = { ...timeline("Calumet", DAY), draftedAt };
+    rebuilds.mockClear();
+    return gate(input);
+  };
+  for (const draftedAt of ["2026-08-27T16:30", "2026-08-27", "not a time"]) {
+    expect(gated(draftedAt)).toMatchObject({
+      candidateId: null,
+      currentContentHash: null,
+    });
+    expect(rebuilds).not.toHaveBeenCalled();
+  }
+  gated("2026-08-27T16:30Z");
+  expect(rebuilds).toHaveBeenCalledTimes(1);
+});
+
+// V8 reads TZ once per process and Jest sandboxes process.env, so each host
+// zone is a child Jest running only the probe below, which writes its results.
+const TZ_PROBE = "host time zone probe";
+it(TZ_PROBE, () => {
+  const cases: Partial<Input>[] = [
+    {},
+    { identity: undefined },
+    { draftedAt: "2026-08-27T16:30" }, // zone-less: host time if parsed
+    { draftedAt: "2026-08-27T11:30-05:00" },
+    { draftedAt: "2026-13-27T16:30Z" },
+    { approval: approve(candidateOf("Calumet"), "2026-08-27T16:10") },
+    { approval: approve(candidateOf("Calumet"), "2026-00-27T16:10Z") },
+  ];
+  const results = cases.map((over) => run(over));
+  const out = process.env.A32_TZ_PROBE_OUT;
+  if (out) {
+    const offset = new Date(2026, 7, 27).getTimezoneOffset();
+    writeFileSync(out, JSON.stringify({ offset, results }));
+  }
+  expect(results[0].verdict).toBe("permitted");
+});
+
+it("returns the same result in every host time zone", () => {
+  const dir = mkdtempSync(join(tmpdir(), "a32-tz-"));
+  try {
+    const runs = [
+      "UTC",
+      "America/Chicago",
+      "Asia/Kolkata",
+      "Pacific/Kiritimati",
+    ].map((tz) => {
+      const out = join(dir, `${tz.replace("/", "_")}.json`);
+      const child = spawnSync(
+        process.execPath,
+        [
+          join(process.cwd(), "node_modules/jest/bin/jest.js"),
+          "--ci",
+          "--runInBand",
+          "--watchman=false",
+          "--coverage=false",
+          __filename,
+          "-t",
+          TZ_PROBE,
+        ],
+        { env: { ...process.env, TZ: tz, A32_TZ_PROBE_OUT: out } },
+      );
+      expect(child.status).toBe(0);
+      return JSON.parse(readFileSync(out, "utf8"));
+    });
+    // The host zone really differed; the gate's output did not.
+    expect(new Set(runs.map((r) => r.offset)).size).toBe(4);
+    const results = new Set(runs.map((r) => JSON.stringify(r.results)));
+    expect(results.size).toBe(1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it("is deterministic, order-insensitive and does not mutate its inputs", () => {
+  const base = timeline("Calumet", DAY);
+  const frozen = JSON.stringify(base);
+  const requestedIntents = [...ALL].reverse().concat(ALL);
+  expect(gate({ ...base, requestedIntents })).toEqual(gate(base));
+  expect(JSON.stringify(gate(base))).toBe(JSON.stringify(run()));
+  expect(JSON.stringify(base)).toBe(frozen);
+});
