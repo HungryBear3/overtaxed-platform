@@ -26,6 +26,8 @@ export const PRISMA_MIGRATE_DEPLOY_COMMAND: MigrationCommand = {
 
 export const NEUTRAL_RUNTIME_FEATURE_ACTIVATORS = [
   ["OT_NEUTRAL_REPORT_CHECKOUT_ENABLED", "true"],
+  ["OT_NEUTRAL_REPORT_PRODUCTION_ENABLED", "true"],
+  ["OT_NEUTRAL_REPORT_RECOVERY_ENABLED", "true"],
   ["OT_NEUTRAL_QA_ENABLED", "true"],
   ["OT_NEUTRAL_DELIVERY_ENABLED", "true"],
   ["OT_NEUTRAL_REPORT_PRIVATE_STORAGE_ENABLED", "true"],
@@ -35,6 +37,11 @@ export const NEUTRAL_RUNTIME_FEATURE_ACTIVATORS = [
   ["OT_NEUTRAL_CUSTOMER_ZIP_PROMOTION_ENABLED", "true"],
   ["OT_NEUTRAL_CHECKOUT_RECONCILIATION_ENABLED", "1"],
   ["OT_NEUTRAL_REPORT_ACTIVE", "1"],
+  // Slice 1 operator ledgers. Registered here so the migration entrypoint, the
+  // Production baseline, and the rehearsal all refuse while any of them is on.
+  ["OT_NEUTRAL_OPERATOR_QUEUE_ENABLED", "true"],
+  ["OT_NEUTRAL_OPERATOR_READ_ENABLED", "true"],
+  ["OT_NEUTRAL_MANUAL_DELIVERY_ENABLED", "true"],
 ] as const;
 
 function succeeded(result: MigrationCommandResult): boolean {

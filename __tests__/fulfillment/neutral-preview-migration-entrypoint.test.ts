@@ -120,3 +120,20 @@ describe("neutral Preview migration entrypoint", () => {
     ]);
   });
 });
+
+describe("Slice 1 operator ledger flags block the migration entrypoint (T-12)", () => {
+  const { runNeutralPreviewMigrationEntrypoint: run } =
+    require("@/lib/fulfillment/neutral-preview-migration-entrypoint") as typeof import("@/lib/fulfillment/neutral-preview-migration-entrypoint");
+
+  test.each([
+    "OT_NEUTRAL_OPERATOR_QUEUE_ENABLED",
+    "OT_NEUTRAL_OPERATOR_READ_ENABLED",
+    "OT_NEUTRAL_MANUAL_DELIVERY_ENABLED",
+  ])("refuses to migrate while %s is true", (flag) => {
+    const runner = jest.fn(() => ({ status: 0 }));
+    expect(() =>
+      run({ VERCEL_ENV: "preview", [flag]: "true" }, runner),
+    ).toThrow(/requires disabled features/);
+    expect(runner).not.toHaveBeenCalled();
+  });
+});

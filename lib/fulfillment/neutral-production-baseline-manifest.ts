@@ -195,7 +195,10 @@ export const OT_NEUTRAL_PRODUCTION_RESOLVE_MANIFEST: readonly ResolveManifestEnt
  * manifest can ever be something the resolve plan skips.
  */
 export const OT_NEUTRAL_PRODUCTION_DEPLOYABLE_AFTER_BASELINE: readonly string[] =
-  [];
+  [
+    "20260921120000_add_ot_neutral_generation_work",
+    "20260922120000_add_ot_neutral_operator_ledgers",
+  ];
 
 export const OT_NEUTRAL_PRODUCTION_BASELINE_ARTIFACTS = [
   "prisma/production-baseline/01_preflight.sql",

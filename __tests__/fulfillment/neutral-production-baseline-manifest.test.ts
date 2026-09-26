@@ -39,10 +39,10 @@ describe("Production resolve manifest", () => {
       .sort();
     const pending = onDisk.filter((name) => name > applied);
 
-    expect(coveredMigrationNames()).toEqual(pending);
-    expect(new Set(coveredMigrationNames()).size).toBe(pending.length);
+    expect([...coveredMigrationNames(), ...OT_NEUTRAL_PRODUCTION_DEPLOYABLE_AFTER_BASELINE]).toEqual(pending);
+    expect(new Set([...coveredMigrationNames(), ...OT_NEUTRAL_PRODUCTION_DEPLOYABLE_AFTER_BASELINE]).size).toBe(pending.length);
     expect(OT_NEUTRAL_PRODUCTION_RESOLVE_MANIFEST.map((e) => e.order)).toEqual(
-      pending.map((_, index) => index + 1),
+      coveredMigrationNames().map((_, index) => index + 1),
     );
   });
 
@@ -77,8 +77,20 @@ describe("Production resolve manifest", () => {
     }
   });
 
-  test("declares the deployable-after-baseline list explicitly, and it is empty", () => {
-    expect(OT_NEUTRAL_PRODUCTION_DEPLOYABLE_AFTER_BASELINE).toEqual([]);
+  test("declares the independently deployable additive migrations after the baseline", () => {
+    // Slice 1 appends the operator-ledger migration. The list stays an exact,
+    // ordered enumeration — the assertion is not loosened to `toContain` — so a
+    // migration can still never join it silently, and the order is asserted
+    // because these deploy in sequence after the baseline.
+    expect(OT_NEUTRAL_PRODUCTION_DEPLOYABLE_AFTER_BASELINE).toEqual([
+      "20260921120000_add_ot_neutral_generation_work",
+      "20260922120000_add_ot_neutral_operator_ledgers",
+    ]);
+    // Every declared entry must be a migration that actually exists on disk.
+    for (const migration of OT_NEUTRAL_PRODUCTION_DEPLOYABLE_AFTER_BASELINE)
+      expect(
+        fs.existsSync(path.join(root, "prisma/migrations", migration, "migration.sql")),
+      ).toBe(true);
   });
 
   /**

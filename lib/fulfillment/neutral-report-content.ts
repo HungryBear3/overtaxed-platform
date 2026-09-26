@@ -347,7 +347,7 @@ async function reconcile(repo: Repository, key: string, receipt: Receipt, staged
 }
 
 /** Only trusted neutral-report constructor. Returns a durable immutable receipt. */
-export async function produceNeutralReport(input: { orderId: string; propertyPin: string }, trustedRuntime?: { active: boolean; repository: NeutralReportRepository }): Promise<{ ok: true; receipt: Receipt } | { ok: false; blocker: string }> {
+export async function produceNeutralReport(input: { orderId: string; propertyPin: string; deadline?: number }, trustedRuntime?: { active: boolean; repository: NeutralReportRepository }): Promise<{ ok: true; receipt: Receipt } | { ok: false; blocker: string }> {
   const resolveRuntime = () => trustedRuntime ?? runtime()
   const first = resolveRuntime()
   if (!first.active) return { ok: false, blocker: "NEUTRAL_REPORT_INACTIVE" }
@@ -377,8 +377,8 @@ export async function produceNeutralReport(input: { orderId: string; propertyPin
     } catch { /* bounded below */ }
     await first.repository.quarantine(key).catch(() => {}); return { ok: false, blocker: "NEUTRAL_REPLAY_CONFLICT" }
   }
-  const raw = await readNeutralOfficialBytesRuntime({ propertyPin: input.propertyPin }); if (!raw.ok) return raw
-  const calendar = await loadNeutralOfficialCalendarRuntime({ subjectPin: raw.evidence.subject.pin, subjectTownship: raw.evidence.subject.township }); if (!calendar.ok) return calendar
+  const raw = await readNeutralOfficialBytesRuntime({ propertyPin: input.propertyPin, deadline: input.deadline }); if (!raw.ok) return raw
+  const calendar = await loadNeutralOfficialCalendarRuntime({ subjectPin: raw.evidence.subject.pin, subjectTownship: raw.evidence.subject.township, deadline: input.deadline }); if (!calendar.ok) return calendar
   const pages = verifyAndCopyNeutralEvidence(raw.evidence), calendarBytes = verifyAndCopyNeutralDeadlineEvidence(calendar.evidence)
   if (!pages || !calendarBytes) return { ok: false, blocker: "NEUTRAL_EVIDENCE_MUTATED" }
   const formatted = formatNeutralReportContent({ orderId: input.orderId, orderPropertyPin: input.propertyPin, subject: raw.evidence.subject, subjectProration: raw.evidence.subjectProration, candidatePool: raw.evidence.candidatePool, assessedValues: raw.evidence.assessedValues, addresses: raw.evidence.addresses, deadline: calendar.evidence.deadline, sources: raw.evidence.sources, generatedAt: calendar.evaluatedAt, dataEvidenceSha256: raw.evidence.dataEvidenceSha256, deadlineEvidenceSha256: calendar.evidence.deadlineEvidenceSha256, dataEvidenceVersion: "ot-neutral-data-evidence/v1", deadlineEvidenceVersion: "ot-neutral-deadline-evidence/v1" })

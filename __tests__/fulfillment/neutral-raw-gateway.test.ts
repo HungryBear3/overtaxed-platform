@@ -84,6 +84,19 @@ test("county body stall aborts and cancels the reader", async () => {
   try { const pending = readNeutralOfficialBytesRuntime({ propertyPin: subjectPin }); await jest.advanceTimersByTimeAsync(15_001); await expect(pending).resolves.toEqual({ ok: false, blocker: "NEUTRAL_RAW_SOURCE_UNAVAILABLE" }); expect(cancel).toHaveBeenCalled() } finally { (globalThis as any).fetch = prior; jest.useRealTimers() }
 })
 
+test("runtime fetch is aborted by the propagated absolute route deadline", async () => {
+  jest.useFakeTimers(); jest.setSystemTime(new Date("2026-09-15T15:00:00Z"))
+  const prior = globalThis.fetch
+  ;(globalThis as any).fetch = async (_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+    init.signal!.addEventListener("abort", () => reject(new Error("deadline")), { once: true })
+  })
+  try {
+    const pending = readNeutralOfficialBytesRuntime({ propertyPin: subjectPin, deadline: Date.now() + 1_000 })
+    await jest.advanceTimersByTimeAsync(1_001)
+    await expect(pending).resolves.toEqual({ ok: false, blocker: "NEUTRAL_RAW_SOURCE_UNAVAILABLE" })
+  } finally { (globalThis as any).fetch = prior; jest.useRealTimers() }
+})
+
 test("whole retrieval refuses a monotonic read exceeding 120 seconds", async () => {
   jest.useFakeTimers(); jest.setSystemTime(new Date("2026-09-15T15:00:00Z")); let calls = 0
   const prior = globalThis.fetch; (globalThis as any).fetch = async (url: string, init: any) => { calls += 1; if (calls === 2) jest.setSystemTime(new Date("2026-09-15T15:02:01Z")); return runtimeFetch()(url, init) }

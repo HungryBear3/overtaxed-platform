@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client"
 import { neutralPrisma } from "@/lib/fulfillment-runtime/neutral-db"
 import { NEUTRAL_REPORT_COMMERCE_POLICY } from "@/lib/commerce/neutral-report-policy"
 import { decideNeutralQa, type NeutralQaDecision } from "@/lib/fulfillment/neutral-qa"
+import { neutralQaApprovalReadSatisfied } from "@/lib/fulfillment/neutral-operator-read"
 import { inNeutralTransaction, type NeutralDbExecutor } from "@/lib/fulfillment-runtime/neutral-db-executor"
 
 type Db = NeutralDbExecutor
@@ -117,6 +118,20 @@ export async function decideNeutralQaReview(input:{orderId:string;reviewerKey:st
     }
     const decision=decideNeutralQa({decision:input.decision,minutesSpent:timing.minutes,reasonCode:input.reasonCode,reservationStatus:row.reservationStatus,currentStatus:row.reviewStatus,weeklyDecisions:counts[0]?.n??0})
     if (!decision.ok) return decision
+    // An approval must be about bytes this reviewer was SERVED, not about a hash
+    // they typed. The audit row is written only after a digest-verifying storage
+    // read succeeded, so requiring one here is what makes "approved for exactly
+    // this artifact" a fact rather than a claim (architecture 4.4 / I-3).
+    //
+    // The SQL narrows; the pure predicate decides. A read of superseded bytes,
+    // another reviewer's read, a pre-open read, and a read taken for delivery
+    // all fail to authorize, because each is excluded by the predicate rather
+    // than merely absent from this WHERE clause.
+    if(decision.status==="APPROVED"){
+      const reads=await tx.$queryRaw<Array<{actorKey:string;purpose:string;artifactKind:string;reservationBundleSha256:string;servedAt:Date}>>(Prisma.sql`SELECT "actor_key" "actorKey","purpose","artifact_kind" "artifactKind","reservation_bundle_sha256" "reservationBundleSha256","served_at" "servedAt" FROM "ot_neutral_operator_artifact_read" WHERE "reservation_id"=${row.reservationId} AND "actor_key"=${input.reviewerKey} AND "purpose"='QA_REVIEW'`)
+      if(!neutralQaApprovalReadSatisfied({reads,reviewerKey:input.reviewerKey,bundleSha256:row.bundleSha256,startedAt:row.reviewStartedAt}))
+        return {ok:false as const,blocker:"QA_READ_AUDIT_REQUIRED"}
+    }
     const changed=decision.status==="APPROVED"
       ? await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_qa_review" q SET "status"='APPROVED',"minutes_spent"=${timing.minutes},"reason_code"=${input.reasonCode},"decided_at"=clock_timestamp(),"updated_at"=clock_timestamp() WHERE q."id"=${row.reviewId} AND q."reviewer_key"=${input.reviewerKey} AND q."status" IN ('PENDING','IN_REVIEW') AND EXISTS (SELECT 1 FROM "ot_neutral_runtime_order" o JOIN "ot_neutral_runtime_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId" WHERE o."id"=q."order_id" AND o."status"='PAID' AND o."tier"='T2' AND NOT EXISTS (SELECT 1 FROM "ot_neutral_runtime_settlement_reversal" x WHERE x."payment_intent"=b."payment_intent"))`)
       : await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_qa_review" SET "status"=${decision.status}::"OTNeutralQaStatus","minutes_spent"=${timing.minutes},"reason_code"=${input.reasonCode},"decided_at"=clock_timestamp(),"updated_at"=clock_timestamp() WHERE "id"=${row.reviewId} AND "reviewer_key"=${input.reviewerKey} AND "status" IN ('PENDING','IN_REVIEW')`)

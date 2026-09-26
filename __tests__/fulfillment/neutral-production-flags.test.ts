@@ -67,3 +67,38 @@ describe("neutral Production feature flags", () => {
     expect(source).not.toMatch(/\benable\w*\s*\(/i);
   });
 });
+
+/**
+ * T-12: the three Slice 1 flags are registered activators, so the migration
+ * entrypoint, the Production baseline, and the rehearsal all refuse while any
+ * of them is on — and all three are absent by default.
+ */
+describe("Slice 1 operator ledger flags", () => {
+  const SLICE_1_FLAGS = [
+    "OT_NEUTRAL_OPERATOR_QUEUE_ENABLED",
+    "OT_NEUTRAL_OPERATOR_READ_ENABLED",
+    "OT_NEUTRAL_MANUAL_DELIVERY_ENABLED",
+  ] as const;
+
+  test.each(SLICE_1_FLAGS)("%s is a registered runtime activator", (flag) => {
+    expect(
+      NEUTRAL_RUNTIME_FEATURE_ACTIVATORS.map(([name]) => name),
+    ).toContain(flag);
+    expect(NEUTRAL_PRODUCTION_FEATURE_FLAG_NAMES).toContain(flag);
+  });
+
+  test.each(SLICE_1_FLAGS)("%s activates only on the exact string true", (flag) => {
+    expect(findActiveNeutralFeatureFlag({ [flag]: "true" })).toBe(flag);
+    for (const value of ["1", "TRUE", "True", "true ", " true", "yes", ""])
+      expect(findActiveNeutralFeatureFlag({ [flag]: value })).toBeNull();
+  });
+
+  test.each(SLICE_1_FLAGS)("assertNeutralFeatureFlagsOff throws on %s", (flag) => {
+    expect(() => assertNeutralFeatureFlagsOff({ [flag]: "true" })).toThrow(flag);
+  });
+
+  test("all three are absent in this process", () => {
+    for (const flag of SLICE_1_FLAGS) expect(process.env[flag]).toBeUndefined();
+    expect(findActiveNeutralFeatureFlag(process.env)).toBeNull();
+  });
+});

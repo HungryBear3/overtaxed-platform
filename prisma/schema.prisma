@@ -860,8 +860,15 @@ model OTOrder {
   // Virtual only — the foreign key lives on ot_fulfillment; ot_order is unchanged.
   fulfillments             OTFulfillment[]
   neutralReportReservation OTNeutralReportReservation?
+  neutralGenerationWork    OTNeutralGenerationWork?
   neutralRefundWork        OTNeutralRefundWork?
   neutralQaReview          OTNeutralQaReview?
+
+  // Slice 1 operator ledgers. Virtual only — every foreign key lives on the new
+  // neutral-owned tables and ot_order is physically unchanged.
+  neutralClassification    OTNeutralOrderClassification?
+  operatorArtifactReads    OTNeutralOperatorArtifactRead[]
+  manualDeliveries         OTNeutralManualDelivery[]
 
   @@index([email])
   @@index([stripeSessionId])
@@ -886,6 +893,16 @@ enum OTNeutralBlobAttemptStatus {
   WRITE_CONFIRMED
   WRITE_UNKNOWN
   QUARANTINED
+}
+
+enum OTNeutralGenerationStatus {
+  PENDING
+  CLAIMED
+  PRODUCING
+  COMPLETE
+  RETRY_REQUIRED
+  RECONCILIATION_REQUIRED
+  FAILED
 }
 
 /// One durable neutral-report identity per authoritative order. This table is
@@ -942,10 +959,40 @@ model OTNeutralReportReservation {
   checkoutAttempts    OTNeutralCheckoutAttempt[]
   qaReview            OTNeutralQaReview?
   customerZipAttempts OTNeutralCustomerZipAttempt[]
+  generationWork      OTNeutralGenerationWork?
+  operatorArtifactReads OTNeutralOperatorArtifactRead[]
+  manualDeliveries      OTNeutralManualDelivery[]
 
   @@index([status, updatedAt])
   @@index([bundleSha256])
   @@map("ot_neutral_report_reservation")
+}
+
+/// Dedicated server-only production work. It stores only opaque identities,
+/// fenced lease metadata, state, and a closed non-PII reason code.
+model OTNeutralGenerationWork {
+  id                  String                    @id
+  orderId             String                    @unique @map("order_id")
+  reservationId       String                    @unique @map("reservation_id")
+  status              OTNeutralGenerationStatus @default(PENDING)
+  statusRevision      Int                       @default(0) @map("status_revision")
+  attemptCount        Int                       @default(0) @map("attempt_count")
+  leaseOwner          String?                   @map("lease_owner")
+  leaseToken          String?                   @map("lease_token")
+  leaseExpiresAt      DateTime?                 @map("lease_expires_at") @db.Timestamptz(3)
+  reasonCode          String?                   @map("reason_code")
+  claimedAt           DateTime?                 @map("claimed_at") @db.Timestamptz(3)
+  productionStartedAt DateTime?                 @map("production_started_at") @db.Timestamptz(3)
+  completedAt         DateTime?                 @map("completed_at") @db.Timestamptz(3)
+  createdAt           DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  order       OTOrder                    @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reservation OTNeutralReportReservation @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([status, updatedAt])
+  @@index([leaseExpiresAt])
+  @@map("ot_neutral_generation_work")
 }
 
 model OTNeutralCustomerZipAttempt {
@@ -991,6 +1038,7 @@ model OTNeutralQaReview {
   order       OTOrder                    @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   fulfillment OTFulfillment?             @relation(fields: [fulfillmentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   refundWork  OTNeutralRefundWork?
+  manualDeliveries OTNeutralManualDelivery[]
 
   @@index([reviewerKey, reviewerWeekStart, status])
   @@index([status, updatedAt])
@@ -1031,6 +1079,95 @@ model OTNeutralRefundWork {
 
   @@index([status, createdAt])
   @@map("ot_neutral_refund_work")
+}
+
+enum OTNeutralManualDeliveryStatus {
+  PREPARED
+  RECORDED
+  CONFIRMED
+  VOIDED
+}
+
+/// Durable, insert-only operator classification of one order. It exists so an
+/// owner test can never be counted as a served customer. Closed class and note
+/// codes only; no clear text and no PII.
+model OTNeutralOrderClassification {
+  orderId      String   @id @map("order_id")
+  class        String
+  actorKey     String   @map("actor_key")
+  noteCode     String?  @map("note_code")
+  classifiedAt DateTime @default(now()) @map("classified_at") @db.Timestamptz(3)
+
+  order OTOrder @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("ot_neutral_order_classification")
+}
+
+/// Append-only audit of operator artifact reads. `sha256` is the digest of the
+/// bytes actually served, written only after the storage helper verified them;
+/// `reservationBundleSha256` pins the reservation identity in force when they
+/// were served, which is what binds a QA approval to non-stale bytes.
+model OTNeutralOperatorArtifactRead {
+  id                      String   @id
+  reservationId           String   @map("reservation_id")
+  orderId                 String   @map("order_id")
+  actorKey                String   @map("actor_key")
+  purpose                 String
+  artifactKind            String   @map("artifact_kind")
+  sha256                  String
+  reservationBundleSha256 String   @map("reservation_bundle_sha256")
+  byteSize                Int      @map("byte_size")
+  servedAt                DateTime @default(now()) @map("served_at") @db.Timestamptz(3)
+
+  reservation OTNeutralReportReservation @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  order       OTOrder                    @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([reservationId, actorKey, purpose, servedAt])
+  @@map("ot_neutral_operator_artifact_read")
+}
+
+/// Human attestation ledger for a manual send. Defined in Slice 1 so the Slice 2
+/// transition store is code-only; Slice 1 grants the runtime role no write path
+/// to it. RECORDED means an operator states they sent these exact bytes;
+/// CONFIRMED means they state they hold confirmation evidence. Neither is
+/// inferred, and neither is a provider fact.
+model OTNeutralManualDelivery {
+  id                         String                        @id
+  reservationId              String                        @map("reservation_id")
+  orderId                    String                        @map("order_id")
+  qaReviewId                 String                        @map("qa_review_id")
+  fulfillmentId              String                        @map("fulfillment_id")
+  customerArtifactSha256     String                        @map("customer_artifact_sha256")
+  policyVersion              String                        @map("policy_version")
+  propertyBindingFingerprint String                        @map("property_binding_fingerprint")
+  paymentBindingSha256       String                        @map("payment_binding_sha256")
+  status                     OTNeutralManualDeliveryStatus @default(PREPARED)
+  statusRevision             Int                           @default(0) @map("status_revision")
+  preparedBy                 String                        @map("prepared_by")
+  preparedAt                 DateTime                      @default(now()) @map("prepared_at") @db.Timestamptz(3)
+  prepareExpiresAt           DateTime                      @map("prepare_expires_at") @db.Timestamptz(3)
+  recordedBy                 String?                       @map("recorded_by")
+  recordedAt                 DateTime?                     @map("recorded_at") @db.Timestamptz(3)
+  channelCode                String?                       @map("channel_code")
+  externalReferenceSha256    String?                       @map("external_reference_sha256")
+  recipientBindingSha256     String?                       @map("recipient_binding_sha256")
+  confirmedBy                String?                       @map("confirmed_by")
+  confirmedAt                DateTime?                     @map("confirmed_at") @db.Timestamptz(3)
+  confirmationCode           String?                       @map("confirmation_code")
+  voidedBy                   String?                       @map("voided_by")
+  voidedAt                   DateTime?                     @map("voided_at") @db.Timestamptz(3)
+  voidReasonCode             String?                       @map("void_reason_code")
+  createdAt                  DateTime                      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                  DateTime                      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  reservation OTNeutralReportReservation @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  order       OTOrder                    @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  qaReview    OTNeutralQaReview          @relation(fields: [qaReviewId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  fulfillment OTFulfillment              @relation(fields: [fulfillmentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  artifact    OTFulfillmentArtifact      @relation(fields: [fulfillmentId, customerArtifactSha256], references: [fulfillmentId, artifactSha256], onDelete: NoAction, onUpdate: NoAction, map: "ot_neutral_manual_delivery_artifact_fkey")
+
+  @@index([status, updatedAt])
+  @@map("ot_neutral_manual_delivery")
 }
 
 model OTNeutralCheckoutAttempt {
@@ -1427,6 +1564,7 @@ model OTFulfillment {
   adminEvents          OTFulfillmentAdminEvent[]
   downloadCapabilities OTPacketDownloadCapability[]
   neutralQaReview      OTNeutralQaReview?
+  manualDeliveries     OTNeutralManualDelivery[]
 
   @@unique([orderId, kind])
   @@index([status])
@@ -1486,6 +1624,8 @@ model OTFulfillmentArtifact {
   attempts             OTDeliveryAttempt[]
   // Download capabilities bound to THIS immutable artifact version.
   downloadCapabilities OTPacketDownloadCapability[]
+  // Manual delivery evidence bound to THIS immutable artifact version (I-1).
+  manualDeliveries     OTNeutralManualDelivery[]
 
   @@unique([fulfillmentId, version])
   @@unique([fulfillmentId, artifactSha256])
