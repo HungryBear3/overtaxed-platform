@@ -82,6 +82,7 @@ export type DraftGateResult = {
   candidateId: string | null;
   /** Hash of the candidate rebuilt at draft time; null when it could not be. */
   currentContentHash: string | null;
+  currentStatus: WindowStatus | null;
   verdict: "blocked" | "date_only" | "permitted";
   decisions: {
     intent: DraftIntent;
@@ -168,6 +169,7 @@ export function gateOfficialCalendarDraft(
     return {
       candidateId: fresh?.candidateId ?? null,
       currentContentHash: fresh?.contentHash ?? null,
+      currentStatus: fresh?.status ?? null,
       verdict: allowed.some((k) => k !== "plain_date")
         ? "permitted"
         : allowed.length

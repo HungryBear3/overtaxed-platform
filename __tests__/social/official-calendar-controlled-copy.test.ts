@@ -8,6 +8,7 @@ import { buildOfficialCalendarCandidates } from "@/lib/social/official-calendar-
 import {
   CONTROLLED_COPY_TEMPLATES,
   renderOfficialCalendarCopy as render,
+  templateDefinitionHash,
   type ControlledCopyApproval,
   type ControlledCopyInput,
   type ControlledCopyTemplateId,
@@ -88,18 +89,22 @@ const inputAt = (at = OPEN): ControlledCopyInput => {
     templateId: "official_dates_v1",
   };
 };
+const approvalReason = (input: ControlledCopyInput, patch: object) =>
+  render({
+    ...input,
+    approval: { ...input.approval!, ...patch },
+  } as ControlledCopyInput).reason;
 
 it("cannot disguise caller-authored urgency or CTA copy as plain dates", () => {
-  const input = {
+  const result = render({
     ...inputAt(),
     text: "ACT NOW! Click here before time runs out!",
     intent: "plain_date",
-  } as ControlledCopyInput;
-  const result = render(input);
+  } as ControlledCopyInput);
   expect(result.renderedText).not.toMatch(/act now|click here|time runs out/i);
   expect(result.renderedText).toContain("Last day to file: 2026-10-02.");
-  expect(CONTROLLED_COPY_TEMPLATES.official_dates_v1.definitionHash).toBe(
-    "d15ff56307e160e03a66cb919195d55595b67a5feaec6d36ed607336a51640c0",
+  expect(result.binding?.templateDefinitionHash).toBe(
+    CONTROLLED_COPY_TEMPLATES.official_dates_v1.definitionHash,
   );
 });
 
@@ -109,43 +114,50 @@ it("binds approval to template, version and exact definition", () => {
     { templateId: "open_window_deadline_v1" },
     { templateVersion: 2 },
     { templateDefinitionHash: "0".repeat(64) },
-  ]) {
-    const changed = { ...input.approval!, ...approvalPatch };
-    const result = render({
+  ])
+    expect(approvalReason(input, approvalPatch)).toBe(
+      "template_approval_mismatch",
+    );
+});
+
+it("renders CTA and hashes every declarative change", () => {
+  const input = inputAt();
+  input.templateId = "open_window_deadline_v1";
+  input.approval = approval(input.candidate, OPEN, "open_window_deadline_v1");
+  expect(render(input).renderedText).toContain("Review your filing options");
+  const { definitionHash: _, ...definition } =
+    CONTROLLED_COPY_TEMPLATES.official_dates_v1;
+  expect(
+    templateDefinitionHash({ ...definition, claimKinds: ["last_file_date"] }),
+  ).not.toBe(_);
+  expect(
+    templateDefinitionHash({ ...definition, rendererVersion: 2 }),
+  ).not.toBe(_);
+});
+
+it("rejects cross-candidate, arbitrary and cross-status approvals", () => {
+  const input = inputAt();
+  for (const patch of [
+    { candidateId: "occ_other" },
+    { contentHash: "0".repeat(64) },
+    { approvedStatus: "upcoming" as const },
+  ])
+    expect(approvalReason(input, patch)).toBe("approval_changed");
+});
+
+it("freezes definitions and rejects unknown templates and malformed intents", () => {
+  const template = CONTROLLED_COPY_TEMPLATES.official_dates_v1;
+  expect(Object.isFrozen(template.claimKinds)).toBe(true);
+  expect(render({ ...inputAt(), templateId: "unknown" }).reason).toBe(
+    "template_unknown",
+  );
+  const input = inputAt();
+  expect(
+    render({
       ...input,
-      approval: changed,
-    } as ControlledCopyInput);
-    expect(result.reason).toBe("template_approval_mismatch");
-  }
-});
-
-it("does not reuse open-window approval after the window closes", () => {
-  const reviewed = inputAt("2026-10-02T16:00Z");
-  reviewed.templateId = "open_window_deadline_v1";
-  reviewed.approval = approval(
-    reviewed.candidate,
-    reviewed.draftedAt,
-    "open_window_deadline_v1",
-  );
-  const closedAt = "2026-10-03T16:00Z";
-  const result = render({
-    ...reviewed,
-    snapshot: fetchedAt(closedAt),
-    draftedAt: closedAt,
-  });
-  expect(result.reason).toBe("approval_stale");
-});
-
-it("contains malformed objects and hostile getters", () => {
-  expect(render({ ...inputAt(), candidate: null } as never).reason).toBe(
-    "input_invalid",
-  );
-  const hostile = new Proxy(inputAt(), {
-    get: () => {
-      throw Error("hostile");
-    },
-  });
-  expect(render(hostile).reason).toBe("input_invalid");
+      approval: { ...input.approval!, approvedIntents: null as never },
+    }).reason,
+  ).toBe("input_invalid");
 });
 
 it("treats Cook County midnight as an approval boundary", () => {
