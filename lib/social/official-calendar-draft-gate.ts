@@ -100,14 +100,17 @@ const ZONED_INSTANT =
 /**
  * Epoch ms of an ISO 8601 instant carrying Z or an explicit offset, else NaN.
  * Date.parse alone reads zone-less input in host time and rolls 02-30 forward.
+ * Never throws: month 00/13 or day 00/32 parse to NaN, not an Invalid Date.
  */
 function zonedInstantMs(value: unknown): number {
   const m = typeof value === "string" ? ZONED_INSTANT.exec(value) : null;
   if (!m) return NaN;
   const [, day, hh, mm, ss = "0", oh = "0", om = "0"] = m;
   const inRange = +hh <= 23 && +mm <= 59 && +ss <= 59 && +oh <= 23 && +om <= 59;
+  const midnight = Date.parse(`${day}T00:00:00Z`);
   const realDay =
-    new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) === day;
+    !Number.isNaN(midnight) &&
+    new Date(midnight).toISOString().slice(0, 10) === day;
   return inRange && realDay ? Date.parse(value as string) : NaN;
 }
 
@@ -141,15 +144,19 @@ export function gateOfficialCalendarDraft(
   // Fixed order, duplicates collapsed; one unknown intent refuses the request.
   const requested = DRAFT_INTENTS.filter((k) => asked.includes(k));
   const unknown = asked.some((k) => !requested.includes(k));
-  // Rebuild from the snapshot as it is now, pinned to the digest reviewed.
-  const rebuilt = buildOfficialCalendarCandidates({
-    snapshot,
-    evaluatedAt,
-    townshipLabels: [candidate.snapshotKey],
-    stages: [candidate.stage],
-    expectedSha256: { [candidate.stage]: candidate.receipt.contentSha256 },
-  });
-  const fresh = rebuilt.candidates[0];
+  // Rebuild from the snapshot as it is now, pinned to the digest reviewed. A
+  // draft instant that is not strictly zoned never reaches A2, whose parse
+  // would read it in host time and yield host-dependent IDs, hashes, status.
+  const rebuilt = Number.isNaN(zonedInstantMs(evaluatedAt))
+    ? null
+    : buildOfficialCalendarCandidates({
+        snapshot,
+        evaluatedAt,
+        townshipLabels: [candidate.snapshotKey],
+        stages: [candidate.stage],
+        expectedSha256: { [candidate.stage]: candidate.receipt.contentSha256 },
+      });
+  const fresh = rebuilt?.candidates[0];
   const result = (
     decide: (intent: DraftIntent) => DraftBlockReason | null,
   ): DraftGateResult => {
@@ -177,9 +184,7 @@ export function gateOfficialCalendarDraft(
   };
   const blockAll = (reason: DraftBlockReason) => result(() => reason);
 
-  if (Number.isNaN(zonedInstantMs(evaluatedAt))) {
-    return blockAll("date_invalid");
-  }
+  if (!rebuilt) return blockAll("date_invalid");
   if (!fresh) {
     return blockAll(rebuilt.rejections[0]?.reason ?? "source_unavailable");
   }

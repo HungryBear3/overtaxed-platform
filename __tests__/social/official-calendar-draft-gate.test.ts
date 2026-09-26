@@ -1,7 +1,9 @@
 /** @jest-environment node */
 // Slice A3. Pinned 2026-08-27 captures, built in memory as in A2; no fetch.
 
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { OfficialDeadlineSnapshot as Snapshot } from "@/lib/deadlines/official-source-state";
@@ -14,6 +16,20 @@ import {
   type DraftGateInput as Input,
 } from "@/lib/social/official-calendar-draft-gate";
 import { buildSnapshot, SOURCES } from "@/scripts/refresh-township-deadlines";
+
+// Counts rebuilds so a rejected draft instant can be shown never to reach A2.
+jest.mock("@/lib/social/official-calendar-candidates", () => {
+  const actual = jest.requireActual(
+    "@/lib/social/official-calendar-candidates",
+  );
+  return {
+    ...actual,
+    buildOfficialCalendarCandidates: jest.fn(
+      actual.buildOfficialCalendarCandidates,
+    ),
+  };
+});
+const rebuilds = buildOfficialCalendarCandidates as jest.Mock;
 
 const A_SHA =
   "bb3b7a8747ae39140c8c8b09d508f9dc65ab5321b5be3a356caa136caa0248ca";
@@ -221,6 +237,8 @@ it.each([
   ["minute 60", "2026-08-27T16:60Z"],
   ["second 60", "2026-08-27T16:10:60Z"],
   ["offset hour 24", "2026-08-27T16:10+24:00"],
+  ["month 13", "2026-13-27T16:10Z"],
+  ["month 00", "2026-00-27T16:10Z"],
   ["empty", ""],
   ["future by offset", "2026-08-27T12:00-05:00"], // 17:00Z, after the draft
   ["prior county day by offset", "2026-08-27T02:00+00:00"], // 08-26 in Chicago
@@ -280,6 +298,8 @@ it.each<[string, () => Partial<Input>]>([
   ["source_stale", () => at("2026-08-28T12:00Z")], // prior-day fetch, open window
   ["date_invalid", () => at("not a time")],
   ["date_invalid", () => at("2026-08-27T16:30")], // zone-less draft instant
+  ["date_invalid", () => at("2026-13-27T16:30Z")],
+  ["date_invalid", () => at("2026-00-27T16:30Z")],
   ["synthetic_source", () => ({ snapshot: { ...SNAP, synthetic: true } })],
   ["source_unavailable", () => src(null)],
   ["source_unofficial", () => src({ finalUrl: "https://api.realie.ai/x" })],
@@ -291,6 +311,127 @@ it.each<[string, () => Partial<Input>]>([
 ])("fails closed with %s", (reason, over) => {
   expectAllBlocked(over(), reason);
 });
+
+/** Shaped like a zoned instant, but no such calendar moment exists. */
+const MALFORMED = [
+  "2026-00-27T16:10Z",
+  "2026-13-27T16:10Z",
+  "2026-99-27T16:10Z",
+  "2026-08-00T16:10Z",
+  "2026-08-32T16:10Z",
+  "2026-08-99T16:10Z",
+  "2026-02-29T16:10Z", // not a leap year
+  "2026-02-30T16:10Z",
+  "2026-04-31T16:10Z",
+  "2026-00-00T00:00Z",
+  "2026-08-27T24:00Z",
+  "2026-08-27T99:10Z",
+  "2026-08-27T16:60Z",
+  "2026-08-27T16:99Z",
+  "2026-08-27T16:10:60Z",
+  "2026-08-27T16:10:99.999Z",
+  "2026-08-27T16:10+24:00",
+  "2026-08-27T16:10-99:00",
+  "2026-08-27T16:10+05:60",
+  "2026-08-27T16:10-05:99",
+  "2026-13-00T24:60:60+24:60",
+];
+
+describe.each(MALFORMED)("malformed instant %s", (bad) => {
+  it("is a stale approval, never a throw", () => {
+    const approval = approve(candidateOf("Calumet"), bad);
+    expect(() => run({ approval })).not.toThrow();
+    expect(why({ approval, requestedIntents: ["cta", "plain_date"] })).toEqual([
+      "plain_date:ok",
+      "cta:approval_stale",
+    ]);
+  });
+
+  it("blocks the draft without rebuilding the candidate", () => {
+    const input = { ...timeline("Calumet", DAY), draftedAt: bad };
+    rebuilds.mockClear();
+    let r: ReturnType<typeof run> | undefined;
+    expect(() => (r = gate(input))).not.toThrow();
+    expect(rebuilds).not.toHaveBeenCalled();
+    expect(r).toMatchObject({ candidateId: null, currentContentHash: null });
+    expectAllBlocked({ draftedAt: bad }, "date_invalid");
+  });
+});
+
+it("never rebuilds from a zone-less or unparseable draft instant", () => {
+  const gated = (draftedAt: string) => {
+    const input = { ...timeline("Calumet", DAY), draftedAt };
+    rebuilds.mockClear();
+    return gate(input);
+  };
+  for (const draftedAt of ["2026-08-27T16:30", "2026-08-27", "not a time"]) {
+    expect(gated(draftedAt)).toMatchObject({
+      candidateId: null,
+      currentContentHash: null,
+    });
+    expect(rebuilds).not.toHaveBeenCalled();
+  }
+  gated("2026-08-27T16:30Z");
+  expect(rebuilds).toHaveBeenCalledTimes(1);
+});
+
+// V8 reads TZ once per process and Jest sandboxes process.env, so each host
+// zone is a child Jest running only the probe below, which writes its results.
+const TZ_PROBE = "host time zone probe";
+it(TZ_PROBE, () => {
+  const cases: Partial<Input>[] = [
+    {},
+    { identity: undefined },
+    { draftedAt: "2026-08-27T16:30" }, // zone-less: host time if parsed
+    { draftedAt: "2026-08-27T11:30-05:00" },
+    { draftedAt: "2026-13-27T16:30Z" },
+    { approval: approve(candidateOf("Calumet"), "2026-08-27T16:10") },
+    { approval: approve(candidateOf("Calumet"), "2026-00-27T16:10Z") },
+  ];
+  const results = cases.map((over) => run(over));
+  const out = process.env.A32_TZ_PROBE_OUT;
+  if (out) {
+    const offset = new Date(2026, 7, 27).getTimezoneOffset();
+    writeFileSync(out, JSON.stringify({ offset, results }));
+  }
+  expect(results[0].verdict).toBe("permitted");
+});
+
+it("returns the same result in every host time zone", () => {
+  const dir = mkdtempSync(join(tmpdir(), "a32-tz-"));
+  try {
+    const runs = [
+      "UTC",
+      "America/Chicago",
+      "Asia/Kolkata",
+      "Pacific/Kiritimati",
+    ].map((tz) => {
+      const out = join(dir, `${tz.replace("/", "_")}.json`);
+      const child = spawnSync(
+        process.execPath,
+        [
+          join(process.cwd(), "node_modules/jest/bin/jest.js"),
+          "--ci",
+          "--runInBand",
+          "--watchman=false",
+          "--coverage=false",
+          __filename,
+          "-t",
+          TZ_PROBE,
+        ],
+        { env: { ...process.env, TZ: tz, A32_TZ_PROBE_OUT: out } },
+      );
+      expect(child.status).toBe(0);
+      return JSON.parse(readFileSync(out, "utf8"));
+    });
+    // The host zone really differed; the gate's output did not.
+    expect(new Set(runs.map((r) => r.offset)).size).toBe(4);
+    const results = new Set(runs.map((r) => JSON.stringify(r.results)));
+    expect(results.size).toBe(1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 120_000);
 
 it("is deterministic, order-insensitive and does not mutate its inputs", () => {
   const base = timeline("Calumet", DAY);
