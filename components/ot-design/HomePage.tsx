@@ -1160,7 +1160,7 @@ function Testimonials({ neutralReport = false }: { neutralReport?: boolean }) {
             </p>
           </div>
           <div className="ot-testimonials-actions">
-            <a href="/appeal-packet" className="ot-cta ot-cta-sm">
+            <a href={neutralReport ? "/#method" : "/appeal-packet"} className="ot-cta ot-cta-sm">
               {neutralReport ? "See the report method" : "See what the packet includes"} <span className="ot-cta-arrow">→</span>
             </a>
             <a href="/#sample-report" className="ot-link-muted">
@@ -1573,7 +1573,7 @@ function HeroPreviewCard() {
           it. The rows below are the ones a real check does return. */}
       <div style={{ marginTop: 14, display: "grid", gap: 0 }}>
         <Row label="Your assessed value" value="$42,500" />
-        <Row label="Avg of 3 comparables on record" value="$35,100" />
+        <Row label="Avg of 3 matching properties on record" value="$35,100" />
         <Row label="Difference in assessed value" value="+$7,400 (21%)" emph />
         <Row label="Assessment level" value="12.1% vs. 10% residential target" />
       </div>
@@ -1624,8 +1624,8 @@ export default function HomePage({ neutralReport = false }: { neutralReport?: bo
             <HeroNarrative neutralReport={neutralReport} />
           </div>
           <div className="ot-hero-r ot-hero-r-stack">
-            <HeroPreviewCard />
             <HeroCheckCard result={result} error={checkError} onResult={setResult} onError={setCheckError} neutralReport={neutralReport} />
+            <HeroPreviewCard />
           </div>
         </div>
       </section>

@@ -6,6 +6,10 @@ import CheckoutPage from "@/components/ot-design/CheckoutPage"
 const push = jest.fn()
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push }) }))
 jest.mock("@/lib/marketing/preview-gate-client", () => ({ isClientPreviewStubMode: () => false }))
+jest.mock("@/lib/analytics/events", () => ({
+  analytics: { checkoutStarted: jest.fn() },
+}))
+const mockCheckoutStarted = jest.requireMock("@/lib/analytics/events").analytics.checkoutStarted as jest.Mock
 
 function response(status: number, body: Record<string, unknown>) {
   return { ok: status >= 200 && status < 300, status, json: async () => body }
@@ -109,5 +113,32 @@ describe("OT checkout filing-window UI", () => {
     expect(screen.getAllByRole("radio", { name: /123 MAIN ST UNIT/ })).toHaveLength(2)
     expect(screen.queryByRole("button", { name: /continue to payment/i })).toBeNull()
     expect((screen.getByRole("button", { name: /use this property/i }) as HTMLButtonElement).disabled).toBe(true)
+    expect(mockCheckoutStarted).not.toHaveBeenCalled()
+  })
+
+  it("records begin_checkout once only after the server returns a Stripe checkout URL", async () => {
+    global.fetch = jest.fn().mockResolvedValue(response(200, {
+      url: "https://checkout.stripe.com/c/pay/cs_test_redacted",
+    })) as jest.Mock
+
+    render(<CheckoutPage />)
+    fillDetails()
+    fireEvent.click(screen.getByRole("button", { name: /continue to payment/i }))
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("https://checkout.stripe.com/c/pay/cs_test_redacted"))
+    expect(mockCheckoutStarted).toHaveBeenCalledTimes(1)
+    expect(mockCheckoutStarted).toHaveBeenCalledWith("T2", 69)
+  })
+
+  it("records no begin_checkout when checkout creation fails", async () => {
+    global.fetch = jest.fn().mockResolvedValue(response(500, { error: "provider unavailable" })) as jest.Mock
+
+    render(<CheckoutPage />)
+    fillDetails()
+    fireEvent.click(screen.getByRole("button", { name: /continue to payment/i }))
+
+    expect(await screen.findByText("provider unavailable")).toBeTruthy()
+    expect(mockCheckoutStarted).not.toHaveBeenCalled()
+    expect(push).not.toHaveBeenCalled()
   })
 })

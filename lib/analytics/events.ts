@@ -72,6 +72,26 @@ function trackFreeCheckEvent(eventName: string, params: Record<string, unknown>)
 }
 
 /**
+ * Checkout intent is high-sensitivity funnel data. Do not route it through the
+ * generic emitter: even origin + pathname can contain a name, street address,
+ * parcel number, order identifier, or other free text. Explicit empty page
+ * context also prevents gtag from falling back to the browser's current URL or
+ * referrer for this app-supplied event.
+ */
+function trackCheckoutStartedEvent(plan: string, value?: number): void {
+  if (typeof window === "undefined" || !window.gtag) return
+  window.gtag("event", "begin_checkout", sanitizeGaEventParams({
+    plan,
+    value,
+    page_location: "",
+    page_referrer: "",
+  }))
+  if (process.env.NODE_ENV === "development") {
+    console.log("[Analytics]", "begin_checkout", { plan, value })
+  }
+}
+
+/**
  * Pre-configured analytics events for OverTaxed
  */
 export const analytics = {
@@ -105,8 +125,10 @@ export const analytics = {
   },
 
   checkoutStarted: (plan: string, value?: number) => {
-    trackEvent("begin_checkout", { plan, value })
-    trackMetaEvent("InitiateCheckout", { content_name: plan, value })
+    safely(() => {
+      trackCheckoutStartedEvent(plan, value)
+      trackMetaEvent("InitiateCheckout", { content_name: plan, value })
+    })
   },
 
   pdfDownload: (appealId: string) => {

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
+import { generateMetadata as generateCheckoutMetadata } from "@/app/checkout/page";
 
 const repoRoot = process.cwd();
 
@@ -59,17 +60,32 @@ function propertyByName(
   );
 }
 
-function stringValue(expression: ts.Expression): string | undefined {
-  return ts.isStringLiteral(expression) ||
+function stringValue(expression: ts.Expression, source?: ts.SourceFile): string | undefined {
+  if (
+    ts.isStringLiteral(expression) ||
     ts.isNoSubstitutionTemplateLiteral(expression)
-    ? expression.text
-    : undefined;
+  ) return expression.text;
+  if (!source || !ts.isIdentifier(expression)) return undefined;
+
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (
+        declaration.name.getText(source) === expression.text &&
+        declaration.initializer &&
+        (ts.isStringLiteral(declaration.initializer) ||
+          ts.isNoSubstitutionTemplateLiteral(declaration.initializer))
+      ) return declaration.initializer.text;
+    }
+  }
+  return undefined;
 }
 
 function metadataTitleValue(
   expression: ts.Expression,
+  source?: ts.SourceFile,
 ): MetadataTitle | undefined {
-  const literal = stringValue(expression);
+  const literal = stringValue(expression, source);
   if (literal) return literal;
   if (!ts.isObjectLiteralExpression(expression)) return undefined;
 
@@ -77,10 +93,10 @@ function metadataTitleValue(
   const templateProperty = propertyByName(expression, "template");
   return {
     default: defaultProperty
-      ? stringValue(defaultProperty.initializer)
+      ? stringValue(defaultProperty.initializer, source)
       : undefined,
     template: templateProperty
-      ? stringValue(templateProperty.initializer)
+      ? stringValue(templateProperty.initializer, source)
       : undefined,
   };
 }
@@ -104,7 +120,7 @@ function exportedMetadataTitle(
       if (!ts.isObjectLiteralExpression(declaration.initializer))
         return undefined;
       const title = propertyByName(declaration.initializer, "title");
-      return title ? metadataTitleValue(title.initializer) : undefined;
+      return title ? metadataTitleValue(title.initializer, source) : undefined;
     }
   }
   return undefined;
@@ -124,7 +140,7 @@ function namedMetadataTitle(
         !ts.isObjectLiteralExpression(declaration.initializer)
       ) continue;
       const title = propertyByName(declaration.initializer, "title");
-      return title ? metadataTitleValue(title.initializer) : undefined;
+      return title ? metadataTitleValue(title.initializer, source) : undefined;
     }
   }
   return undefined;
@@ -185,6 +201,12 @@ function resolvedStaticRouteTitle(route: string, metadataFile: string): string {
     );
   }
 
+  if (route === "/checkout") {
+    const title = generateCheckoutMetadata().title;
+    expect(typeof title).toBe("string");
+    return effectiveTitle(rootTitleTemplate(), title as string);
+  }
+
   expect(typeof title).toBe("string");
   return effectiveTitle(rootTitleTemplate(), title as string);
 }
@@ -220,6 +242,23 @@ function generatedTitleExpressions(relativePath: string): string[] {
 }
 
 describe("root-template metadata titles", () => {
+  it.each([
+    [undefined, "Checkout"],
+    ["true", "Checkout — Cook County Assessment Records & Matching Property Report"],
+  ])("resolves checkout runtime metadata for neutral flag %s", (flag, expected) => {
+    const prior = process.env.OT_NEUTRAL_REPORT_CHECKOUT_ENABLED;
+    try {
+      if (flag === undefined) delete process.env.OT_NEUTRAL_REPORT_CHECKOUT_ENABLED;
+      else process.env.OT_NEUTRAL_REPORT_CHECKOUT_ENABLED = flag;
+      const metadata = generateCheckoutMetadata();
+      expect(metadata.title).toBe(expected);
+      expect(metadata.alternates?.canonical).toBe("https://www.overtaxed-il.com/checkout");
+    } finally {
+      if (prior === undefined) delete process.env.OT_NEUTRAL_REPORT_CHECKOUT_ENABLED;
+      else process.env.OT_NEUTRAL_REPORT_CHECKOUT_ENABLED = prior;
+    }
+  });
+
   it("brands the root page exactly once without applying its same-segment layout template", () => {
     const title = resolvedStaticRouteTitle("/", "app/page.tsx");
     // ", from $69" is gone with the tiers it was counting from: one price is
@@ -280,6 +319,7 @@ describe("root-template metadata titles", () => {
     const generatedRoutes = [
       "app/appeal-deadline/[slug]/page.tsx",
       "app/blog/[slug]/page.tsx",
+      "app/checkout/page.tsx",
       "app/partner/[code]/page.tsx",
       "app/township/[slug]/page.tsx",
     ];

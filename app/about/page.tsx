@@ -6,9 +6,16 @@ import { OT_PUBLIC_CONTACT, SiteHeader, SiteFooter } from "@/components/ot-desig
 import { CalendarDays, DollarSign, Phone, Search, FileText, Bell } from "lucide-react"
 import "../ot-design.css"
 
+const ABOUT_TITLE = "About"
+const ABOUT_DESCRIPTION = "Learn how OverTaxed IL compiles official Cook County assessment records and matching-property reports, and understand the limits of the service."
+const ABOUT_URL = "https://www.overtaxed-il.com/about"
+
 export const metadata: Metadata = {
-  title: "About | Cook County Property Tax Appeals",
-  description: "OverTaxed IL helps Illinois homeowners and HOA/condo associations check their Cook County property tax assessment and prepare appeal materials. Not a law firm.",
+  title: ABOUT_TITLE,
+  description: ABOUT_DESCRIPTION,
+  alternates: { canonical: ABOUT_URL },
+  openGraph: { title: ABOUT_TITLE, description: ABOUT_DESCRIPTION, url: ABOUT_URL, siteName: "OverTaxed IL", type: "website", images: [{ url: "/opengraph-image", alt: "OverTaxed IL" }] },
+  twitter: { card: "summary", title: ABOUT_TITLE, description: ABOUT_DESCRIPTION, images: ["/opengraph-image"] },
 }
 
 const howItWorks = [

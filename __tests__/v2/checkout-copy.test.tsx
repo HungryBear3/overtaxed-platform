@@ -4,7 +4,7 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
 import CheckoutPage from "@/components/ot-design/CheckoutPage";
-import { metadata } from "@/app/checkout/page";
+import { generateMetadata } from "@/app/checkout/page";
 
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
 jest.mock("@/lib/marketing/preview-gate-client", () => ({ isClientPreviewStubMode: () => false }));
@@ -24,7 +24,7 @@ describe("OT checkout copy", () => {
   });
 
   it("keeps checkout metadata aligned with current pricing and conditional window safeguards", () => {
-    const serialized = JSON.stringify(metadata);
+    const serialized = JSON.stringify(generateMetadata());
     expect(serialized).toContain("$69 DIY Appeal Packet");
     expect(serialized).toContain("Eligibility is confirmed before payment");
     expect(serialized).not.toContain("$149");

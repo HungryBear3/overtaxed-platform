@@ -267,10 +267,9 @@ describe("OT v2 marketing — home hero preview card", () => {
     expect(src).toMatch(/do not guarantee/i);
   });
 
-  it("preview card lives in the hero right column above the fold", () => {
-    // Keeps the product sample beside the form above the fold, not below the narrative.
+  it("keeps the conversion form first in the hero right column and the labeled sample beside it above the fold", () => {
     expect(src).toMatch(
-      /<div className="ot-hero-r ot-hero-r-stack">\s*<HeroPreviewCard\s*\/>\s*<HeroCheckCard/,
+      /<div className="ot-hero-r ot-hero-r-stack">\s*<HeroCheckCard[^>]*\/>\s*<HeroPreviewCard\s*\/>/,
     );
   });
 });

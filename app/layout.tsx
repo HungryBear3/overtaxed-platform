@@ -26,13 +26,14 @@ const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com
 //
 // The replacement describes what the free check does, which is verifiable
 // without a claim about the county's decision.
+const DEFAULT_TITLE = "OverTaxed IL — Cook County Assessment Records";
 const DEFAULT_DESCRIPTION =
-  "Check whether your Cook County assessment is out of line with comparable properties, and see your township's current official appeal window. OverTaxed IL is not a law firm and does not guarantee a reduction.";
+  "Explore official Cook County assessment records and start a free property check. OverTaxed IL provides records and matching-property reports, not legal or tax advice.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(baseUrl),
   title: {
-    default: "OverTaxed IL - Cook County Property Tax Appeals",
+    default: DEFAULT_TITLE,
     template: "%s | OverTaxed IL",
   },
   description: DEFAULT_DESCRIPTION,
@@ -43,18 +44,16 @@ export const metadata: Metadata = {
   keywords: ["Cook County property tax appeal", "property tax appeal Illinois", "Cook County Assessor appeal", "property tax assessment appeal"],
   authors: [{ name: "OverTaxed IL" }],
   openGraph: {
-    title: "OverTaxed IL - Cook County Property Tax Appeals",
+    title: DEFAULT_TITLE,
     description: DEFAULT_DESCRIPTION,
     url: baseUrl,
     siteName: "OverTaxed IL",
     type: "website",
-    images: [`${baseUrl}/og-image.png`],
   },
   twitter: {
-    card: "summary_large_image",
-    title: "OverTaxed IL - Cook County Property Tax Appeals",
+    card: "summary",
+    title: DEFAULT_TITLE,
     description: DEFAULT_DESCRIPTION,
-    images: [`${baseUrl}/twitter-image.png`],
   },
   alternates: {
     types: { "application/rss+xml": `${baseUrl}/rss.xml` },

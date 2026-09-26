@@ -3,6 +3,7 @@ import Link from "next/link"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { getAnonymousGaIdentifiersForRequest } from "@/lib/analytics/ga4"
+import { analytics } from "@/lib/analytics/events"
 import { getApprovedAttributionCodesForRequest } from "@/lib/attribution/client-codes"
 import { isClientPreviewStubMode } from "@/lib/marketing/preview-gate-client"
 import { NEUTRAL_REPORT_LIMITS, NEUTRAL_REPORT_NAME, NEUTRAL_REPORT_PRICE, NEUTRAL_REPORT_QA, NEUTRAL_REPORT_REFUND, NEUTRAL_REPORT_SUMMARY, NEUTRAL_REPORT_TURNAROUND } from "@/lib/copy/neutral-report"
@@ -143,6 +144,8 @@ export default function CheckoutPage({ initialPlan = "diy", neutralReport = fals
         throw new Error(data.error || "Checkout failed")
       }
       if (!data.url) throw new Error("Checkout failed")
+      const checkoutValue = Number.parseFloat(plan.price.replace(/[^0-9.]/g, ""))
+      analytics.checkoutStarted(tier, Number.isFinite(checkoutValue) ? checkoutValue : undefined)
       router.push(data.url)
     } catch (caught: unknown) {
       setError(caught instanceof Error ? caught.message : "Something went wrong")

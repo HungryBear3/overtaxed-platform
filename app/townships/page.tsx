@@ -3,11 +3,17 @@ import LiveDeadlinesPage from "@/components/ot-design/LiveDeadlinesPage";
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
 import "../ot-design.css";
 
+const TOWNSHIPS_TITLE = "Cook County Township Appeal Deadlines";
+const TOWNSHIPS_DESCRIPTION =
+  "The filing window for each of the 38 Cook County townships, as published by the Cook County Assessor. Unverified or expired source data shows no date.";
+const TOWNSHIPS_URL = "https://www.overtaxed-il.com/townships";
+
 export const metadata: Metadata = {
-  title: "Cook County Township Appeal Deadlines",
-  description:
-    "The filing window for each of the 38 Cook County townships, as published by the Cook County Assessor. Unverified or expired source data shows no date.",
-  alternates: { canonical: "https://www.overtaxed-il.com/townships" },
+  title: TOWNSHIPS_TITLE,
+  description: TOWNSHIPS_DESCRIPTION,
+  alternates: { canonical: TOWNSHIPS_URL },
+  openGraph: { title: TOWNSHIPS_TITLE, description: TOWNSHIPS_DESCRIPTION, url: TOWNSHIPS_URL, siteName: "OverTaxed IL", type: "website", images: [{ url: "/opengraph-image", alt: "OverTaxed IL" }] },
+  twitter: { card: "summary", title: TOWNSHIPS_TITLE, description: TOWNSHIPS_DESCRIPTION, images: ["/opengraph-image"] },
 };
 
 // The two informational calendar routes share the same live feed and lifecycle.
