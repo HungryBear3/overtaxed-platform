@@ -8,7 +8,6 @@ import {
   type DraftIntent,
 } from "@/lib/social/official-calendar-draft-gate";
 import type { CandidateClaimKind } from "@/lib/social/official-calendar-candidates";
-
 export type ControlledCopyTemplateId =
   | "official_dates_v1"
   | "open_window_deadline_v1";
@@ -24,7 +23,6 @@ export type ControlledCopyInput = Omit<
   approval: ControlledCopyApproval | null;
   templateId: ControlledCopyTemplateId | (string & {});
 };
-
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 const canonical = (value: unknown): string => {
@@ -50,6 +48,7 @@ type Definition = {
   version: number;
   intents: readonly DraftIntent[];
   claimKinds: readonly CandidateClaimKind[];
+  requiredClaimKinds: readonly CandidateClaimKind[];
   labels: Partial<Record<CandidateClaimKind, string>>;
   prefix: string;
   item: readonly ("$label" | "$date" | string)[];
@@ -67,6 +66,7 @@ const TEMPLATES = deepFreeze({
     version: 1,
     intents: ["plain_date"],
     claimKinds: ["notice_date", "window_opens", "last_file_date"],
+    requiredClaimKinds: ["window_opens", "last_file_date"],
     labels: {
       notice_date: "Notice date",
       window_opens: "Filing window opens",
@@ -82,6 +82,7 @@ const TEMPLATES = deepFreeze({
     version: 1,
     intents: ["plain_date", "urgency", "cta"],
     claimKinds: ["last_file_date"],
+    requiredClaimKinds: ["last_file_date"],
     labels: {},
     prefix: "The official filing window is open. Last day to file: ",
     item: ["$date"],
@@ -90,21 +91,23 @@ const TEMPLATES = deepFreeze({
   }),
 });
 export const CONTROLLED_COPY_TEMPLATES = TEMPLATES;
-
 function render(
   definition: Definition,
   claims: readonly { kind: CandidateClaimKind; date: string }[],
 ) {
   const byKind = new Map(claims.map((claim) => [claim.kind, claim]));
-  const selected = definition.claimKinds.map((kind) => byKind.get(kind));
-  if (selected.some((claim) => !claim)) return null;
-  const items = selected.map((claim, index) =>
+  const selected = definition.claimKinds.flatMap(
+    (kind) => byKind.get(kind) ?? [],
+  );
+  if (definition.requiredClaimKinds.some((kind) => !byKind.has(kind)))
+    return null;
+  const items = selected.map((claim) =>
     definition.item
       .map((token) =>
         token === "$label"
-          ? definition.labels[definition.claimKinds[index]]
+          ? definition.labels[claim.kind]
           : token === "$date"
-            ? claim!.date
+            ? claim.date
             : token,
       )
       .join(""),
@@ -119,7 +122,6 @@ const blocked = (reason: string) => ({
   reviewOnly: true as const,
   postAllowed: false as const,
 });
-
 function renderSafe(input: ControlledCopyInput) {
   if (
     typeof input.templateId !== "string" ||

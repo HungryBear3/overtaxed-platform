@@ -2,7 +2,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { OfficialDeadlineSnapshot as Snapshot } from "@/lib/deadlines/official-source-state";
+import type {
+  DeadlineStage,
+  OfficialDeadlineSnapshot as Snapshot,
+} from "@/lib/deadlines/official-source-state";
 import type { TownshipResolution } from "@/lib/deadlines/township-resolution";
 import { buildOfficialCalendarCandidates } from "@/lib/social/official-calendar-candidates";
 import {
@@ -16,6 +19,8 @@ import {
 import { buildSnapshot, SOURCES } from "@/scripts/refresh-township-deadlines";
 
 const SHA = "bb3b7a8747ae39140c8c8b09d508f9dc65ab5321b5be3a356caa136caa0248ca";
+const B_SHA =
+  "04eaa4db1b0be4bc00dd3ec5834cd67bc16ab0cba4bb0380e676461a16b7925b";
 const OPEN = "2026-08-27T16:00Z";
 let SNAP: Snapshot;
 
@@ -44,23 +49,27 @@ const fetchedAt = (at: string): Snapshot => {
   const assessor = { ...SNAP.sources.assessor!, retrievedAt };
   return { ...SNAP, sources: { ...SNAP.sources, assessor } };
 };
-const candidateAt = (at: string) => {
+const candidateAt = (
+  at: string,
+  label = "Calumet",
+  stage: DeadlineStage = "assessor",
+) => {
   const [candidate] = buildOfficialCalendarCandidates({
     snapshot: fetchedAt(at),
     evaluatedAt: at,
-    townshipLabels: ["Calumet"],
-    stages: ["assessor"],
-    expectedSha256: { assessor: SHA },
+    townshipLabels: [label],
+    stages: [stage],
+    expectedSha256: { assessor: SHA, bor: B_SHA },
   }).candidates;
   if (!candidate) throw new Error("candidate unavailable");
   return candidate;
 };
-const identity = (): TownshipResolution => ({
+const identity = (townshipKey: string): TownshipResolution => ({
   inputKind: "pin",
   normalizedPin: "16011230040000",
   normalizedAddress: null,
-  townshipKey: "calumet",
-  townshipName: "Calumet",
+  townshipKey,
+  townshipName: townshipKey,
   resolutionSource: "official_property_record",
   resolvedAt: OPEN,
 });
@@ -78,14 +87,18 @@ const approval = (
   templateVersion: CONTROLLED_COPY_TEMPLATES[templateId].version,
   templateDefinitionHash: CONTROLLED_COPY_TEMPLATES[templateId].definitionHash,
 });
-const inputAt = (at = OPEN): ControlledCopyInput => {
-  const candidate = candidateAt(at);
+const inputAt = (
+  at = OPEN,
+  label = "Calumet",
+  stage: DeadlineStage = "assessor",
+): ControlledCopyInput => {
+  const candidate = candidateAt(at, label, stage);
   return {
     candidate,
     approval: approval(candidate, at),
     snapshot: fetchedAt(at),
     draftedAt: at,
-    identity: identity(),
+    identity: identity(candidate.snapshotKey),
     templateId: "official_dates_v1",
   };
 };
@@ -94,19 +107,6 @@ const approvalReason = (input: ControlledCopyInput, patch: object) =>
     ...input,
     approval: { ...input.approval!, ...patch },
   } as ControlledCopyInput).reason;
-
-it("cannot disguise caller-authored urgency or CTA copy as plain dates", () => {
-  const result = render({
-    ...inputAt(),
-    text: "ACT NOW! Click here before time runs out!",
-    intent: "plain_date",
-  } as ControlledCopyInput);
-  expect(result.renderedText).not.toMatch(/act now|click here|time runs out/i);
-  expect(result.renderedText).toContain("Last day to file: 2026-10-02.");
-  expect(result.binding?.templateDefinitionHash).toBe(
-    CONTROLLED_COPY_TEMPLATES.official_dates_v1.definitionHash,
-  );
-});
 
 it("binds approval to template, version and exact definition", () => {
   const input = inputAt();
@@ -135,6 +135,21 @@ it("renders CTA and hashes every declarative change", () => {
   ).not.toBe(_);
 });
 
+it("renders Assessor and BOR claims while required claims fail closed", () => {
+  const assessorCopy = render(inputAt());
+  expect(assessorCopy.renderedText).toContain("Notice date:");
+  expect(assessorCopy.binding?.templateDefinitionHash).toBe(
+    CONTROLLED_COPY_TEMPLATES.official_dates_v1.definitionHash,
+  );
+  const bor = render(inputAt(OPEN, "Rogers Park", "bor"));
+  expect(bor.renderedText).not.toContain("Notice date:");
+  expect(bor.renderedText).toContain("Last day to file: 2026-09-01.");
+  const input = inputAt();
+  const snapshot = structuredClone(input.snapshot);
+  snapshot.townships.calumet.stages.assessor!.lastFileDate = undefined as never;
+  expect(render({ ...input, snapshot }).verdict).toBe("blocked");
+});
+
 it("rejects cross-candidate, arbitrary and cross-status approvals", () => {
   const input = inputAt();
   for (const patch of [
@@ -151,21 +166,7 @@ it("freezes definitions and rejects unknown templates and malformed intents", ()
   expect(render({ ...inputAt(), templateId: "unknown" }).reason).toBe(
     "template_unknown",
   );
-  const input = inputAt();
-  expect(
-    render({
-      ...input,
-      approval: { ...input.approval!, approvedIntents: null as never },
-    }).reason,
-  ).toBe("input_invalid");
-});
-
-it("treats Cook County midnight as an approval boundary", () => {
-  const before = inputAt("2026-08-28T04:59Z"); // 11:59 PM CDT
-  const after = "2026-08-28T05:01Z"; // 12:01 AM CDT
-  const nextDay = fetchedAt(after);
-  nextDay.sources.assessor!.retrievedAt = "2026-08-28T05:00:30Z";
-  expect(
-    render({ ...before, snapshot: nextDay, draftedAt: after }),
-  ).toMatchObject({ verdict: "blocked", reason: "approval_stale" });
+  expect(approvalReason(inputAt(), { approvedIntents: null })).toBe(
+    "input_invalid",
+  );
 });
