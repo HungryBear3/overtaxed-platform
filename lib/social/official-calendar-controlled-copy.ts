@@ -122,6 +122,13 @@ const blocked = (reason: string) => ({
   reviewOnly: true as const,
   postAllowed: false as const,
 });
+const renderEvidence = (
+  definition: Definition,
+  claims: readonly { kind: CandidateClaimKind; date: string }[],
+) => {
+  const renderedText = render(definition, claims);
+  return renderedText ? { renderedText } : blocked("render_evidence_missing");
+};
 function renderSafe(input: ControlledCopyInput) {
   if (
     typeof input.templateId !== "string" ||
@@ -153,7 +160,6 @@ function renderSafe(input: ControlledCopyInput) {
     )
   )
     return blocked("template_not_approved");
-
   const gated = gateOfficialCalendarDraft({
     ...input,
     requestedIntents: template.intents,
@@ -176,8 +182,9 @@ function renderSafe(input: ControlledCopyInput) {
     countyCalendarDay(approvedMs) !== countyCalendarDay(draftedMs)
   )
     return blocked("approval_stale");
-  const renderedText = render(template, gated.dateEvidence);
-  if (!renderedText) return blocked("render_evidence_missing");
+  const evidence = renderEvidence(template, gated.dateEvidence);
+  if ("verdict" in evidence) return evidence;
+  const { renderedText } = evidence;
   const approvalHash = hash(
     canonical({
       approvedAt: approval.approvedAt,
@@ -213,7 +220,6 @@ function renderSafe(input: ControlledCopyInput) {
     postAllowed: false as const,
   };
 }
-
 export function renderOfficialCalendarCopy(input: ControlledCopyInput) {
   try {
     return renderSafe(input);
