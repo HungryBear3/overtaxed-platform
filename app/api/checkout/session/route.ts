@@ -45,6 +45,7 @@ import { isHeldProduct } from "@/lib/products/held"
 import { heldProductResponse } from "@/lib/products/held-response"
 import { sanitizeAnonymousGaIdentifiers } from "@/lib/analytics/ga4"
 import { resolveAttributionCodes, shippedAttributionRegistry } from "@/lib/attribution/registry"
+import { revalidateCheckoutAttribution, touchesToStripeMetadata } from "@/lib/attribution/touch-contract"
 import { authorizeNeutralSnapshot, evaluateNeutralCheckout, NEUTRAL_CHECKOUT_FLAG } from "@/lib/commerce/neutral-checkout-gate"
 import {
   type AttributionBindingFailureReason,
@@ -196,6 +197,10 @@ const CheckoutInput = z.object({
   // here for a client to put one in.
   attributionCampaignCode: z.string().trim().max(64).optional(),
   attributionCreativeCode: z.string().trim().max(64).optional(),
+  // The browser's first and last non-direct campaign touches. Opaque here and
+  // revalidated against lib/attribution/touch-contract below; a malformed value
+  // degrades to "no attribution" and never refuses the checkout.
+  attribution: z.unknown().optional(),
 })
 
 type AddressCandidate = {
@@ -517,6 +522,10 @@ export async function POST(req: NextRequest) {
   }
 
   const gaIdentifiers = sanitizeAnonymousGaIdentifiers(input)
+  // Only revalidated touches reach Stripe: the five bounded UTM values, an
+  // allowlisted landing value and a second-precision instant per touch. Never
+  // the raw query, a referrer or anything else the request carried.
+  const touchMetadata = touchesToStripeMetadata(revalidateCheckoutAttribution(input.attribution, Date.now()))
   const normalizedEmail = normalizeEmail(input.email)
   const priceId = PRICE_MAP[input.tier]
   if (!priceId) {
@@ -1187,6 +1196,7 @@ export async function POST(req: NextRequest) {
         // the two differ, and the durable one is the one that is true.
         ...attributionMetadata(attributionRow),
         ...gaIdentifiers,
+        ...touchMetadata,
       },
     }, { idempotencyKey: providerIdempotencyKey })
 
