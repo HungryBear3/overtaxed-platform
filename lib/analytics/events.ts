@@ -71,6 +71,28 @@ function trackFreeCheckEvent(eventName: string, params: Record<string, unknown>)
   }
 }
 
+/** Checkout tier codes: the only values `plan` may carry. */
+const BEGIN_CHECKOUT_PLANS: ReadonlySet<string> = new Set(["T2", "T3"])
+
+/** No offered checkout approaches this; a larger number is not a price. */
+const MAX_BEGIN_CHECKOUT_VALUE = 10_000
+
+/**
+ * The closed begin_checkout property set. A caller cannot widen it: an unknown
+ * plan or an implausible value is dropped, and the checkout start is still
+ * recorded without it.
+ */
+function beginCheckoutParams(plan: unknown, value: unknown): Record<string, unknown> {
+  const boundedValue =
+    typeof value === "number" && Number.isFinite(value) && value > 0 && value <= MAX_BEGIN_CHECKOUT_VALUE
+  return {
+    ...(typeof plan === "string" && BEGIN_CHECKOUT_PLANS.has(plan) ? { plan } : {}),
+    ...(boundedValue ? { value } : {}),
+    page_location: "",
+    page_referrer: "",
+  }
+}
+
 /**
  * Checkout intent is high-sensitivity funnel data. Do not route it through the
  * generic emitter: even origin + pathname can contain a name, street address,
@@ -80,12 +102,7 @@ function trackFreeCheckEvent(eventName: string, params: Record<string, unknown>)
  */
 function trackCheckoutStartedEvent(plan: string, value?: number): void {
   if (typeof window === "undefined" || !window.gtag) return
-  window.gtag("event", "begin_checkout", sanitizeGaEventParams({
-    plan,
-    value,
-    page_location: "",
-    page_referrer: "",
-  }))
+  window.gtag("event", "begin_checkout", sanitizeGaEventParams(beginCheckoutParams(plan, value)))
   if (process.env.NODE_ENV === "development") {
     console.log("[Analytics]", "begin_checkout", { plan, value })
   }
