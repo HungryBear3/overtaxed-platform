@@ -253,6 +253,15 @@ describe("lib/db/prisma.ts source contract", () => {
     expect(source).toMatch(/isServerless\s*\?\s*1\s*:\s*5/);
   });
 
+  test("verifies pooler TLS by default and relaxes it only behind the explicit escape hatch", () => {
+    expect(source).toContain("rejectUnauthorized: !insecureTls");
+    expect(source).toContain("if (hasCaCert && !insecureTls)");
+    expect(source).toContain(
+      "const insecureTls = process.env.DATABASE_INSECURE_TLS === '1'",
+    );
+    expect(source).not.toMatch(/isUsingPooler[^\n]*\?[^\n]*false/);
+  });
+
   /**
    * The comment at the top of this file has claimed "pooler detection is
    * HOSTNAME-based" since the rewrite rule moved into the shared module — while

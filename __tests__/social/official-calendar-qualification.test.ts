@@ -240,6 +240,11 @@ const hostedEnv = (overrides: Record<string, string | undefined> = {}) => ({
   SUPABASE_CA_PEM: CA,
   ...overrides,
 });
+const poolerEnv = (overrides: Record<string, string | undefined> = {}) => ({
+  ...hostedEnv(),
+  OT_CALENDAR_PREVIEW_DATABASE_URL: `postgresql://postgres.${REF}:${PASSWORD}@aws-0-us-east-2.pooler.supabase.com:5432/postgres`,
+  ...overrides,
+});
 const rehearsalEnv = (overrides: Record<string, string | undefined> = {}) => ({
   OT_CALENDAR_PREVIEW_DATABASE_URL: `postgresql://ot_rehearsal:${PASSWORD}@127.0.0.1:55432/ot_calendar_rehearsal_a`,
   OT_CALENDAR_PREVIEW_MARKER_INSTANCE_ID: MARKER_ID,
@@ -502,9 +507,25 @@ describe("Production and ambiguous targets are refused before connecting", () =>
       "target_not_isolated_preview",
     ],
     [
-      "pooler instead of direct host",
-      hostedEnv({
-        OT_CALENDAR_PREVIEW_DATABASE_URL: `postgresql://postgres.${REF}:${PASSWORD}@aws-0-us-east-2.pooler.supabase.com:5432/postgres`,
+      "transaction pooler port",
+      poolerEnv({
+        OT_CALENDAR_PREVIEW_DATABASE_URL: `postgresql://postgres.${REF}:${PASSWORD}@aws-0-us-east-2.pooler.supabase.com:6543/postgres`,
+      }),
+      "isolated-preview",
+      "target_not_isolated_preview",
+    ],
+    [
+      "pooler from another region",
+      poolerEnv({
+        OT_CALENDAR_PREVIEW_DATABASE_URL: `postgresql://postgres.${REF}:${PASSWORD}@aws-0-us-west-1.pooler.supabase.com:5432/postgres`,
+      }),
+      "isolated-preview",
+      "target_not_isolated_preview",
+    ],
+    [
+      "pooler identity missing project ref",
+      poolerEnv({
+        OT_CALENDAR_PREVIEW_DATABASE_URL: `postgresql://postgres:${PASSWORD}@aws-0-us-east-2.pooler.supabase.com:5432/postgres`,
       }),
       "isolated-preview",
       "target_not_isolated_preview",
@@ -558,6 +579,18 @@ describe("Production and ambiguous targets are refused before connecting", () =>
       resolveQualificationTarget(rehearsalEnv(), "local-rehearsal").target
         .fingerprint,
     ).not.toBe(a.target.fingerprint);
+  });
+
+  test("the approved Free-tier session pooler is accepted and bound to the project ref", () => {
+    const resolved = resolveQualificationTarget(poolerEnv(), "isolated-preview");
+    expect(resolved.target).toMatchObject({
+      host: "aws-0-us-east-2.pooler.supabase.com",
+      port: 5432,
+      database: "postgres",
+      user: `postgres.${REF}`,
+      projectRef: REF,
+    });
+    expect(resolved.caPem).toBe(CA);
   });
 });
 

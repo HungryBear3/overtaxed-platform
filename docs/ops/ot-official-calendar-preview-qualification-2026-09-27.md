@@ -59,11 +59,15 @@ Production target is refused before connecting and why cleanup is mandatory.
    `"ot-neutral-report"` or `"ot-official-calendar-preview"`,
    `environment "preview"`, `isolated true`, `production false`, and the
    `instanceId` UUID the operator will enter. The harness never writes it.
-3. **Direct host reachability.** Only `db.<ref>.supabase.co:5432`, database
-   `postgres`, with TLS verified against the project CA, is accepted (a pooler
-   would make `lib/db` skip certificate verification). If the operator host
-   cannot reach the direct host (IPv6-only), the run fails closed; resolve
-   reachability rather than loosening the target rules.
+3. **Database reachability.** The harness accepts either the direct
+   `db.<ref>.supabase.co:5432` identity (`postgres`) or the project's included
+   Free-tier us-east-2 **session** pooler on port `5432`
+   (`postgres.<ref>`). Transaction pooling on `6543`, another region, a user
+   without the exact project suffix, query options, and every other pooler are
+   refused before connecting. Both paths verify TLS against the supplied
+   Supabase CA; the durable database marker remains the final project identity
+   proof. This keeps qualification on Supabase Free without weakening the
+   Production, ambiguity, marker, schema, or cleanup gates.
 4. **Deployed-Preview proof is out of scope.** This harness runs the exact route
    handler in-process against the isolated database. Proving the same through
    a deployed Vercel Preview requires a dedicated Preview deployment whose

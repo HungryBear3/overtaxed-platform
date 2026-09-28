@@ -157,6 +157,10 @@ const PROJECT_REF = /^[a-z]{20}$/;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
+const ISOLATED_PREVIEW_SESSION_POOLER_HOSTS = new Set([
+  "aws-0-us-east-2.pooler.supabase.com",
+  "aws-1-us-east-2.pooler.supabase.com",
+]);
 export const REHEARSAL_DATABASE_PREFIX = "ot_calendar_rehearsal_";
 
 /**
@@ -235,14 +239,19 @@ export function resolveQualificationTarget(
         "target_not_isolated_preview",
         "OT_CALENDAR_PREVIEW_PROJECT_REF must be the isolated project reference",
       );
+    const directTarget =
+      host === `db.${projectRef}.supabase.co` && user === "postgres";
+    const sessionPoolerTarget =
+      ISOLATED_PREVIEW_SESSION_POOLER_HOSTS.has(host) &&
+      user === `postgres.${projectRef}`;
     if (
-      host !== `db.${projectRef}.supabase.co` ||
+      (!directTarget && !sessionPoolerTarget) ||
       port !== 5432 ||
       database !== "postgres"
     )
       refuse(
         "target_not_isolated_preview",
-        "Target must be the declared project's direct database host, port 5432, database postgres",
+        "Target must be the declared project's direct database host or approved us-east-2 session pooler identity, port 5432, database postgres",
       );
     caPem = env.SUPABASE_CA_PEM?.trim() ?? "";
     if (!caPem.startsWith("-----BEGIN CERTIFICATE-----"))

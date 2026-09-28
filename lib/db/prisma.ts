@@ -83,21 +83,20 @@ function createPrismaClient() {
   // computed once from the parsed URL. The pooler uses a different certificate
   // than the direct connection, which is why it changes the CA decision.
 
-  // Configure SSL: prefer CA certificate (secure), but fallback for pooler or when insecure flag set
+  // Configure SSL: pin both direct Supabase hosts and the included session
+  // pooler to the supplied Supabase CA. Only the explicit legacy
+  // DATABASE_INSECURE_TLS=1 escape hatch may disable verification.
   let sslConfig: false | { rejectUnauthorized: boolean; ca?: string } = false
   if (useSSL) {
-    // Use CA cert only if we have it AND not using pooler (pooler uses different cert)
-    // OR if insecure flag is not set (meaning we want strict verification)
-    const useCaCert = hasCaCert && !isUsingPooler && process.env.DATABASE_INSECURE_TLS !== '1'
-    
-    if (useCaCert) {
+    const insecureTls = process.env.DATABASE_INSECURE_TLS === '1'
+    if (hasCaCert && !insecureTls) {
       sslConfig = {
         rejectUnauthorized: true,
         ca: caCert,
       }
     } else {
       sslConfig = {
-        rejectUnauthorized: false,
+        rejectUnauthorized: !insecureTls,
       }
     }
   }
