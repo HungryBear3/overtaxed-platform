@@ -185,9 +185,19 @@ const STAGE_PUBLISHERS: Record<DeadlineStage, StagePublisher> = {
   },
 };
 
-function hostOf(url: string): string {
+/**
+ * The host a URL may be cited from, or "" when it is not plain HTTPS. The
+ * producer follows redirects, so a final URL can land on plaintext or carry
+ * credentials while still naming the publisher's host; neither is the
+ * publisher speaking.
+ */
+function officialHostOf(url: string): string {
   try {
-    return new URL(url).host.toLowerCase();
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
+      return "";
+    }
+    return parsed.host.toLowerCase();
   } catch {
     return "";
   }
@@ -218,8 +228,8 @@ export function checkStageAuthority(
   if (
     !publisher ||
     source.authority !== publisher.authority ||
-    !publisher.hosts.has(hostOf(source.sourceUrl)) ||
-    !publisher.hosts.has(hostOf(source.finalUrl))
+    !publisher.hosts.has(officialHostOf(source.sourceUrl)) ||
+    !publisher.hosts.has(officialHostOf(source.finalUrl))
   ) {
     return {
       reason: "source_unofficial",

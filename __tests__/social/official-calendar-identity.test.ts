@@ -211,6 +211,97 @@ describe("checkStageAuthority", () => {
     expect(checkStageAuthority(snap, stage)?.reason).toBe("source_unofficial");
   });
 
+  const STAGE_SOURCES = {
+    assessor: provenance(),
+    bor: BOR_PROVENANCE,
+  } as const;
+
+  // Each variant keeps the stage's exact official host; only the scheme or
+  // the userinfo is wrong, so the host rule alone would wave it through.
+  const withScheme = (url: string, scheme: string) =>
+    url.replace(/^https:/, `${scheme}:`);
+  const withUserinfo = (url: string, userinfo: string) =>
+    url.replace(/^https:\/\//, `https://${userinfo}@`);
+  const HOSTILE_URLS: ReadonlyArray<
+    readonly [string, (url: string) => string]
+  > = [
+    ["http", (u) => withScheme(u, "http")],
+    ["file", (u) => withScheme(u, "file")],
+    ["ftp", (u) => withScheme(u, "ftp")],
+    ["ws", (u) => withScheme(u, "ws")],
+    ["wss", (u) => withScheme(u, "wss")],
+    ["an arbitrary foo scheme", (u) => withScheme(u, "foo")],
+    ["an upper-case HTTP scheme", (u) => withScheme(u, "HTTP")],
+    ["username and password", (u) => withUserinfo(u, "user:pass")],
+    ["username only", (u) => withUserinfo(u, "user")],
+    ["password only", (u) => withUserinfo(u, ":pass")],
+  ];
+  const PLACEMENTS = [
+    ["sourceUrl", (url: string) => ({ sourceUrl: url })],
+    ["finalUrl", (url: string) => ({ finalUrl: url })],
+    ["both URLs", (url: string) => ({ sourceUrl: url, finalUrl: url })],
+  ] as const;
+
+  describe.each(["assessor", "bor"] as const)(
+    "on the %s stage's own host",
+    (stage) => {
+      const official = STAGE_SOURCES[stage];
+      const cases = HOSTILE_URLS.flatMap(([variant, rewrite]) =>
+        PLACEMENTS.map(
+          ([where, place]) =>
+            [variant, where, place(rewrite(official.sourceUrl))] as const,
+        ),
+      );
+
+      it.each(cases)("refuses %s in %s", (_variant, _where, over) => {
+        const snap = snapshot({ [stage]: { ...official, ...over } });
+        expect(checkStageAuthority(snap, stage)?.reason).toBe(
+          "source_unofficial",
+        );
+      });
+    },
+  );
+
+  it.each([
+    [
+      "an upper-case scheme and host",
+      "HTTPS://WWW.COOKCOUNTYASSESSORIL.GOV/assessment-calendar-and-deadlines",
+    ],
+    [
+      "an explicit default port",
+      "https://www.cookcountyassessoril.gov:443/assessment-calendar-and-deadlines",
+    ],
+    [
+      "a fragment",
+      "https://www.cookcountyassessoril.gov/assessment-calendar-and-deadlines#2026",
+    ],
+    [
+      "the apex host",
+      "https://cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+    ],
+    [
+      "an empty userinfo the parser drops",
+      "https://@www.cookcountyassessoril.gov/assessment-calendar-and-deadlines",
+    ],
+  ])("still accepts an official HTTPS URL with %s", (_label, url) => {
+    const snap = snapshot({
+      assessor: provenance({ sourceUrl: url, finalUrl: url }),
+    });
+    expect(checkStageAuthority(snap, "assessor")).toBeNull();
+  });
+
+  it("refuses the official host on a non-default port", () => {
+    const snap = snapshot({
+      assessor: provenance({
+        finalUrl:
+          "https://www.cookcountyassessoril.gov:8443/assessment-calendar-and-deadlines",
+      }),
+    });
+    expect(checkStageAuthority(snap, "assessor")?.reason).toBe(
+      "source_unofficial",
+    );
+  });
+
   it("binds the claim to the reviewed bytes", () => {
     expect(checkStageAuthority(SNAP, "assessor", ASSESSOR_SHA)).toBeNull();
     expect(checkStageAuthority(SNAP, "assessor", BOR_SHA)?.reason).toBe(
