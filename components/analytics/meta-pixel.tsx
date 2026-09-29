@@ -11,7 +11,7 @@ import {
 } from "@/lib/analytics/meta-pixel-policy"
 import { isClientProductionMarketingRuntime } from "@/lib/marketing/preview-gate-client"
 
-interface MetaPixelProps {
+interface MetaPixelCandidateProps {
   pixelId: string
 }
 
@@ -27,20 +27,30 @@ type Fbq = ((...args: unknown[]) => void) & {
 type MetaWindow = Window & { fbq?: Fbq; _fbq?: Fbq }
 
 /**
+ * Every `fbq` this module installed, with the pixel it serves and whether that
+ * pixel was initialized. An `fbq` that is not in here — a tag manager's, an
+ * extension's — is never written to.
+ */
+const installed = new WeakMap<Fbq, { pixelId: string; initialized: boolean }>()
+
+/**
  * Meta Pixel candidate: consent-gated, production-only, canonical-host-only,
- * default off. Environment variable: NEXT_PUBLIC_META_PIXEL_ID.
+ * default off — and mounted nowhere. Activation is on HOLD: the build refuses
+ * to run while NEXT_PUBLIC_META_PIXEL_ID is set (next.config.mjs), and there
+ * is no consent surface to grant it.
  *
  * Every gate (lib/analytics/meta-pixel-policy) is checked before a script is
  * inserted, and again before every hit, because the Pixel reports the page URL
- * and referrer by itself. There is no `<noscript>` image: a request made
- * without JavaScript cannot check consent. Renders nothing.
+ * and referrer by itself. Nothing is ever queued for the vendor script to send
+ * later. There is no `<noscript>` image: a request made without JavaScript
+ * cannot check consent. Renders nothing.
  */
-export function MetaPixel({ pixelId }: MetaPixelProps) {
+export function MetaPixelCandidate({ pixelId }: MetaPixelCandidateProps) {
   const pathname = usePathname()
 
   useEffect(() => {
     if (!mayReportCurrentPage(pixelId)) return
-    installMetaPixel(pixelId, () => trackMetaEvent("PageView"))
+    installMetaPixel(pixelId)
   }, [pixelId, pathname])
 
   return null
@@ -65,19 +75,20 @@ function mayReportCurrentPage(pixelId: unknown): boolean {
 }
 
 /**
- * The standard Pixel bootstrap, minus everything that reports on its own:
- * pushState page views are disabled, automatic configuration (button and page
- * metadata collection) is off, `init` carries no Advanced Matching data, and
- * no hit is queued. PageView is sent from the script's load handler, through
- * the gated writer, so it describes the page as it is when the hit leaves.
+ * The standard Pixel bootstrap, minus everything that reports on its own or
+ * reports late. The stub never queues: until fbevents.js has taken over
+ * dispatch (`callMethod`), a call is dropped, so there is no backlog for the
+ * SDK to send after consent was withdrawn or the page changed. pushState page
+ * views are disabled; `init` carries no Advanced Matching data and runs, with
+ * automatic configuration off, only once the SDK is ready and every gate still
+ * holds for the page as it is then.
  */
-function installMetaPixel(pixelId: string, onReady: () => void): void {
+function installMetaPixel(pixelId: string): void {
   const metaWindow = window as MetaWindow
   if (metaWindow.fbq) return
 
   const fbq = function (...args: unknown[]) {
-    if (fbq.callMethod) fbq.callMethod(...args)
-    else fbq.queue.push(args)
+    if (typeof fbq.callMethod === "function") fbq.callMethod(...args)
   } as Fbq
   fbq.queue = []
   fbq.push = fbq
@@ -86,27 +97,38 @@ function installMetaPixel(pixelId: string, onReady: () => void): void {
   fbq.disablePushState = true
   metaWindow.fbq = fbq
   if (!metaWindow._fbq) metaWindow._fbq = fbq
-
-  fbq("set", "autoConfig", false, pixelId)
-  fbq("init", pixelId)
+  installed.set(fbq, { pixelId, initialized: false })
 
   const script = document.createElement("script")
   script.async = true
   script.src = META_FBEVENTS_URL
-  script.addEventListener("load", onReady, { once: true })
+  script.addEventListener("load", () => initializeWhenReady(fbq), { once: true })
   document.head.appendChild(script)
 }
 
+function initializeWhenReady(fbq: Fbq): void {
+  const state = installed.get(fbq)
+  if (!state || typeof fbq.callMethod !== "function") return
+  if (!mayReportCurrentPage(state.pixelId)) return
+  fbq("set", "autoConfig", false, state.pixelId)
+  fbq("init", state.pixelId)
+  state.initialized = true
+  trackMetaEvent("PageView")
+}
+
 /**
- * The only Meta writer. Refuses unless every load gate still holds, the
- * current page is one the Pixel may report, and the event is on the closed
- * allowlist — which has no Purchase and no custom events.
+ * The only Meta writer. Hands a hit to the SDK this module installed — and
+ * only once that SDK is ready and its pixel initialized — while every load
+ * gate still holds, the current page is one the Pixel may report, and the
+ * event is on the closed allowlist, which has no Purchase and no custom
+ * events. Anything else is dropped, never deferred.
  */
 export function trackMetaEvent(eventName: string, params?: Record<string, unknown>): void {
   if (typeof window === "undefined") return
   const fbq = (window as MetaWindow).fbq
-  if (typeof fbq !== "function") return
-  if (!mayReportCurrentPage(process.env.NEXT_PUBLIC_META_PIXEL_ID)) return
+  const state = fbq ? installed.get(fbq) : undefined
+  if (!fbq || !state?.initialized) return
+  if (!mayReportCurrentPage(state.pixelId)) return
   const event = buildMetaBrowserEvent(eventName, params)
   if (!event) return
   fbq("track", event.name, event.params)

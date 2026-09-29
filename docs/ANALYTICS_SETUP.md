@@ -8,20 +8,21 @@ Analytics tracking for OverTaxed follows the same pattern as newstart-il (FreshS
 |----------|--------|--------|
 | `NEXT_PUBLIC_GA_MEASUREMENT_ID` | `G-XXXXXXXXXX` | Google Analytics 4 → Admin → Data Streams |
 | `NEXT_PUBLIC_GOOGLE_ADS_ID` | `AW-XXXXXXXXX` | Google Ads → Tools → Conversions |
-| `NEXT_PUBLIC_META_PIXEL_ID` | 15–16 digits | Meta Business → Events Manager → Data Sources |
+| `NEXT_PUBLIC_META_PIXEL_ID` | **must be unset** — Meta Pixel activation is on HOLD | Meta Business → Events Manager → Data Sources |
 
-All are optional. If none are set, analytics components render nothing. The Meta
-Pixel additionally requires an explicit marketing-consent grant and a reportable
-page, so today it never loads — see `docs/analytics/OT-ANALYTICS-PHASE-B.md`.
+All are optional. If none are set, analytics components render nothing. No Meta
+Pixel is mounted, and a build with `NEXT_PUBLIC_META_PIXEL_ID` set fails with
+`META_PIXEL_ACTIVATION_HOLD` (`next.config.mjs`) rather than silently stopping
+the Pixel — see `docs/analytics/OT-ANALYTICS-PHASE-B.md`.
 
 ## Implementation
 
-- **AnalyticsProvider** wraps the app in `app/layout.tsx`; loads GA4 and Google Ads when IDs are set, and the consent-gated Meta Pixel candidate
+- **AnalyticsProvider** wraps the app in `app/layout.tsx`; loads GA4 and Google Ads when IDs are set. It mounts no Meta Pixel: the consent-gated candidate in `components/analytics/meta-pixel.tsx` is unmounted and on HOLD
 - **Contracts and governance:** funnel event contract, GA4 Admin checklist, campaign/experiment registry, decision-packet export and Meta posture are described in `docs/analytics/OT-ANALYTICS-PHASE-B.md`
 - **UTM capture:** Automatic on page load; stored in localStorage for attribution
 - **Page views:** Tracked on client-side navigation via `usePathname` / `useSearchParams`
 - **Events:** `lib/analytics/events.ts` — signUp, login, propertyAdded, appealStarted, appealFiled, checkoutStarted, pdfDownload, contactFormSubmit
-- **Purchases:** Current purchase reporting is server-side only for the OT `T2`/`T3` checkout flow, after durable order and exact Stripe settlement verification via Measurement Protocol.
+- **Purchases:** Current purchase reporting is server-side only for the OT `T2`/`T3` checkout flow, after durable order and exact Stripe settlement verification via Measurement Protocol — at most once per Checkout Session (durable claim in `lib/analytics/ga4-purchase-claim.ts`), with the body validated against the funnel contract before it is sent.
 - **Legacy billing:** Subscription checkout, add-slots, invoice checkout, and other older billing purchase analytics remain deliberately untracked until their durable settlement contracts are hardened.
 
 ## Troubleshooting: "Your Google tag wasn't detected" (GA4)

@@ -144,6 +144,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+/** Own keys only: `constructor` or `__proto__` is a parameter name, not a member of Object.prototype. */
+function hasOwn(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key)
+}
+
 function checkFields(
   params: Record<string, unknown>,
   required: Record<string, Rule>,
@@ -152,14 +157,14 @@ function checkFields(
 ): string[] {
   const violations: string[] = []
   for (const key of Object.keys(params)) {
-    if (!(key in required) && !(key in optional)) violations.push(`${unknownCode}:${key}`)
+    if (!hasOwn(required, key) && !hasOwn(optional, key)) violations.push(`${unknownCode}:${key}`)
   }
   for (const [key, rule] of Object.entries(required)) {
-    if (!(key in params) || params[key] === undefined) violations.push(`MISSING_PARAM:${key}`)
+    if (!hasOwn(params, key) || params[key] === undefined) violations.push(`MISSING_PARAM:${key}`)
     else if (!rule(params[key])) violations.push(`INVALID_VALUE:${key}`)
   }
   for (const [key, rule] of Object.entries(optional)) {
-    if (key in params && !rule(params[key])) violations.push(`INVALID_VALUE:${key}`)
+    if (hasOwn(params, key) && !rule(params[key])) violations.push(`INVALID_VALUE:${key}`)
   }
   return violations
 }
@@ -171,7 +176,7 @@ export function isServerOnlyEventName(name: unknown): boolean {
 /** Validate one event exactly as the sensitive browser boundary hands it to gtag. */
 export function validateBrowserFunnelEvent(name: unknown, params: unknown): BrowserValidation {
   if (isServerOnlyEventName(name)) return { ok: false, violations: ["SERVER_ONLY_EVENT"] }
-  const spec = typeof name === "string" && Object.prototype.hasOwnProperty.call(BROWSER_EVENTS, name) ? BROWSER_EVENTS[name] : undefined
+  const spec = typeof name === "string" && hasOwn(BROWSER_EVENTS, name) ? BROWSER_EVENTS[name] : undefined
   if (!spec) return { ok: false, violations: ["UNKNOWN_EVENT"] }
   if (!isPlainObject(params)) return { ok: false, violations: ["NOT_AN_OBJECT"] }
 
@@ -216,14 +221,14 @@ const PURCHASE_ITEM: Record<string, Rule> = {
 /** The grade of a contract event, or `null` for an event the contract does not know. */
 export function funnelEventGrade(name: unknown): EventGrade | null {
   if (name === "purchase") return "decision"
-  if (typeof name !== "string" || !Object.prototype.hasOwnProperty.call(BROWSER_EVENTS, name)) return null
+  if (typeof name !== "string" || !hasOwn(BROWSER_EVENTS, name)) return null
   return BROWSER_EVENTS[name].grade
 }
 
 /** Every parameter a contract event may carry; empty for an unknown event. */
 export function funnelEventParameters(name: unknown): readonly string[] {
   if (name === "purchase") return [...Object.keys(PURCHASE_REQUIRED), ...Object.keys(PURCHASE_OPTIONAL)]
-  if (typeof name !== "string" || !Object.prototype.hasOwnProperty.call(BROWSER_EVENTS, name)) return []
+  if (typeof name !== "string" || !hasOwn(BROWSER_EVENTS, name)) return []
   const spec = BROWSER_EVENTS[name]
   return [...Object.keys(spec.required), ...Object.keys(spec.optional)]
 }

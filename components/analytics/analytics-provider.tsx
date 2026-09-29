@@ -8,7 +8,8 @@ interface AnalyticsProviderProps {
 }
 
 /**
- * Analytics Provider: GA4, Meta Pixel, UTM capture, page view tracking.
+ * Analytics Provider: GA4 page view tracking and UTM capture. No Meta Pixel
+ * is mounted; its candidate is on activation HOLD (see next.config.mjs).
  *
  * The effects themselves live in `AnalyticsRouteTracker`, which renders no
  * route content. This wrapper keeps the historical shape — a provider that

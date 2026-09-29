@@ -144,6 +144,22 @@ describe("contract validation of a browser funnel event", () => {
     expect(validateBrowserFunnelEvent("begin_checkout", params).ok).toBe(accepted)
   })
 
+  it.each(["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"])(
+    "refuses a parameter named after an inherited object member: %s",
+    (key) => {
+      // JSON.parse makes `__proto__` an own, enumerable key, as it would be off the wire.
+      const params = JSON.parse(`{"page_location":"","page_referrer":"",${JSON.stringify(key)}:"jane-doe-123-main-st"}`)
+
+      expect(validateBrowserFunnelEvent("begin_checkout", params)).toEqual({ ok: false, violations: [`UNKNOWN_PARAM:${key}`] })
+    },
+  )
+
+  it("does not count a required parameter inherited through a prototype as present", () => {
+    const params = Object.assign(Object.create({ page_location: "" }), { page_referrer: "" })
+
+    expect(validateBrowserFunnelEvent("begin_checkout", params)).toEqual({ ok: false, violations: ["MISSING_PARAM:page_location"] })
+  })
+
   it("refuses purchase and refund as browser events", () => {
     for (const name of ["purchase", "refund"]) {
       const result = validateBrowserFunnelEvent(name, { transaction_id: "cs_test_synthetic0001", value: 69 })

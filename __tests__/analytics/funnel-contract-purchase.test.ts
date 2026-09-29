@@ -88,6 +88,22 @@ describe("server purchase payload contract", () => {
     expect(result.ok ? [] : result.violations).toContain(violation)
   })
 
+  /** An own, enumerable key — what JSON.parse produces for `"__proto__"` too. */
+  function withOwnKey<T extends object>(target: T, key: string, value: unknown): T {
+    Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true })
+    return target
+  }
+
+  it.each(["constructor", "__proto__", "toString"])("rejects a purchase or item parameter named after an inherited member: %s", (key) => {
+    const atEvent = payload()
+    withOwnKey(atEvent.events[0].params, key, "jane-doe-123-main-st")
+    const atItem = payload()
+    withOwnKey((atItem.events[0].params.items as object[])[0], key, "ord_t2")
+
+    expect(validateServerPurchasePayload(atEvent)).toEqual({ ok: false, violations: [`UNKNOWN_PARAM:${key}`] })
+    expect(validateServerPurchasePayload(atItem)).toEqual({ ok: false, violations: [`UNKNOWN_ITEM_PARAM:${key}`] })
+  })
+
   it("rejects anything other than exactly one purchase event", () => {
     const two = payload()
     two.events.push(two.events[0])

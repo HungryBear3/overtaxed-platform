@@ -236,6 +236,106 @@ describe("the GA4 behavior adapter", () => {
   })
 })
 
+/**
+ * The downstream tool rejects a missing dimension, a non-string dimension and
+ * an instant that is not on the calendar. Each of these once left the adapter
+ * as `ok: true`: `constructor` and `__proto__` resolved to inherited members of
+ * the alias tables, and `Date.parse` silently rolls `2026-02-30` to March 2.
+ */
+describe("hostile object keys and impossible instants", () => {
+  it.each(["constructor", "__proto__", "Constructor", " __proto__ ", "toString", "hasOwnProperty", "valueOf", "isPrototypeOf"])(
+    "maps the raw source and medium %j to a closed sentinel, never an inherited member",
+    (raw) => {
+      expect(mapMedium(raw)).toBe("other")
+      expect(mapSource(raw, "cpc")).toBe("other")
+      expect(mapSource(raw, "referral")).toBe("referral_other")
+      expect(mapCampaign(raw, "synthetic_fixture")).toBe("other")
+      expect(mapContent(raw)).toBe("other")
+      expect(mapLanding(raw)).toBe("other")
+    },
+  )
+
+  it.each(["constructor", "__proto__"])("exports %j as exact string sentinels the tool accepts", (raw) => {
+    const document = built(exportInput([rawRow({ session_source: raw, session_medium: raw })]))
+
+    expect(JSON.parse(serializeDecisionDocument(document)).rows).toEqual([
+      {
+        date: "2026-09-20",
+        source: "other",
+        medium: "other",
+        campaign: "ot_202608_season_synthappeal",
+        content: "srch_a",
+        landing_path: "/",
+        sessions: 30,
+        checkout_starts: 4,
+        purchase_events: 2,
+      },
+    ])
+  })
+
+  const february = (generatedAt: string) =>
+    exportInput([rawRow({ date: "20260220" })], {
+      generated_at: generatedAt,
+      coverage: { start: "2026-02-20", end: "2026-02-21" },
+      attested_complete_ranges: [],
+    })
+
+  it.each([
+    ["a day February does not have", "2026-02-30T12:00:00Z"],
+    ["hour 24", "2026-02-28T24:00:00Z"],
+    ["second 60", "2026-03-01T12:00:60Z"],
+    ["month 13", "2026-13-01T12:00:00Z"],
+    ["fractional seconds", "2026-03-01T12:00:00.000Z"],
+    ["an explicit offset", "2026-03-01T12:00:00+00:00"],
+    ["a local time", "2026-03-01T12:00:00"],
+  ])("refuses a generated_at that is %s", (_label, generatedAt) => {
+    const result = buildGa4BehaviorDocument(february(generatedAt))
+
+    expect(result).toEqual({ ok: false, issues: [{ code: "INVALID_TIMESTAMP", path: "$.generated_at" }] })
+  })
+
+  it("still accepts a real leap day", () => {
+    const result = buildGa4BehaviorDocument(
+      exportInput([rawRow({ date: "20240228" })], {
+        generated_at: "2024-02-29T23:59:59Z",
+        coverage: { start: "2024-02-28", end: "2024-02-28" },
+        attested_complete_ranges: [],
+      }),
+    )
+
+    expect(result.ok).toBe(true)
+  })
+
+  it("refuses year zero, which the tool's calendar does not have", () => {
+    const result = buildGa4BehaviorDocument(
+      exportInput([rawRow({ date: "00000101" })], {
+        generated_at: "0000-01-05T00:00:00Z",
+        coverage: { start: "0000-01-01", end: "0000-01-02" },
+        attested_complete_ranges: [],
+      }),
+    )
+
+    expect(result.ok).toBe(false)
+    expect(result.ok ? [] : result.issues).toEqual(
+      expect.arrayContaining([
+        { code: "INVALID_TIMESTAMP", path: "$.generated_at" },
+        { code: "INVALID_DATE", path: "$.coverage" },
+        { code: "INVALID_DATE", path: "$.rows[0].date" },
+      ]),
+    )
+  })
+
+  it("requires own fields: a field inherited through a prototype is missing", () => {
+    const row = Object.assign(Object.create({ sessions: 30 }), rawRow())
+    delete row.sessions
+
+    const result = buildGa4BehaviorDocument(exportInput([row]))
+
+    expect(result.ok).toBe(false)
+    expect(result.ok ? [] : result.issues).toContainEqual({ code: "MISSING_KEY:sessions", path: "$.rows[0]" })
+  })
+})
+
 describe("projecting the experiment registry", () => {
   const syntheticRegistry = () => ({
     schema: "ot.experiment_registry",

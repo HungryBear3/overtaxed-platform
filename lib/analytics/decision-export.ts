@@ -130,13 +130,22 @@ function isKnown<T extends string>(values: readonly T[], value: unknown): value 
   return typeof value === "string" && (values as readonly string[]).includes(value)
 }
 
+function hasOwn(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key)
+}
+
+/** An alias table's own entry. `constructor` or `__proto__` is raw text, not a key of Object.prototype. */
+function ownAlias<T extends string>(table: Readonly<Record<string, T>>, key: string): T | undefined {
+  return hasOwn(table, key) ? table[key] : undefined
+}
+
 export function mapMedium(raw: unknown): DownstreamMedium {
   if (isUnset(raw)) return "not_set"
   if (typeof raw !== "string") return "other"
   const value = raw.trim().toLowerCase()
   if (value === "(other)") return "other"
   if (isKnown(DOWNSTREAM_VOCABULARY.mediums, value) && value !== "not_set") return value
-  return MEDIUM_ALIASES[value] ?? "other"
+  return ownAlias(MEDIUM_ALIASES, value) ?? "other"
 }
 
 export function mapSource(raw: unknown, medium: DownstreamMedium): DownstreamSource {
@@ -145,7 +154,7 @@ export function mapSource(raw: unknown, medium: DownstreamMedium): DownstreamSou
   const value = raw.trim().toLowerCase()
   if (value === "(other)") return "other"
   const known = isKnown(DOWNSTREAM_VOCABULARY.sources, value) && !["referral_other", "not_set"].includes(value)
-  const mapped = known ? (value as DownstreamSource) : SOURCE_ALIASES[value]
+  const mapped = known ? (value as DownstreamSource) : ownAlias(SOURCE_ALIASES, value)
   if (mapped) return mapped
   return medium === "referral" ? "referral_other" : "other"
 }
@@ -227,11 +236,22 @@ function isObject(value: unknown): value is Json {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-/** Epoch ms of midnight UTC for a real calendar date, or null. */
+/**
+ * Epoch ms of midnight UTC for a real calendar date, or null. `Date.parse`
+ * rolls an impossible day over (`2026-02-30` is March 2) and knows a year
+ * zero; the tool's calendar does neither, so both are refused.
+ */
 function isoDay(value: unknown): number | null {
-  if (typeof value !== "string" || !ISO_DATE.test(value)) return null
+  if (typeof value !== "string" || !ISO_DATE.test(value) || value.startsWith("0000")) return null
   const ms = Date.parse(`${value}T00:00:00Z`)
   return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === value ? ms : null
+}
+
+/** Epoch ms for an exact `YYYY-MM-DDTHH:MM:SSZ` instant that exists on that calendar, or null. */
+function isoInstant(value: unknown): number | null {
+  if (typeof value !== "string" || !TIMESTAMP.test(value) || value.startsWith("0000")) return null
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) && new Date(ms).toISOString() === `${value.slice(0, 19)}.000Z` ? ms : null
 }
 
 function isoFromMs(ms: number): string {
@@ -261,7 +281,7 @@ function zonedDayStart(dayMs: number, timeZone: string): number {
 
 function closedKeys(value: Json, fields: readonly string[], path: string, issues: ExportIssue[]): void {
   if (Object.keys(value).some((key) => !fields.includes(key))) issues.push({ code: "UNKNOWN_FIELD", path })
-  for (const field of fields) if (!(field in value)) issues.push({ code: `MISSING_KEY:${field}`, path })
+  for (const field of fields) if (!hasOwn(value, field)) issues.push({ code: `MISSING_KEY:${field}`, path })
 }
 
 function isCount(value: unknown): value is number {
@@ -285,7 +305,7 @@ export function buildGa4BehaviorDocument(input: unknown): ExportResult {
   if (!isKnown(DOWNSTREAM_VOCABULARY.dataOrigins, origin)) issues.push({ code: "INVALID_DATA_ORIGIN", path: "$.data_origin" })
   const timeZone = input.timezone
   if (!isKnown(DOWNSTREAM_VOCABULARY.timezones, timeZone)) issues.push({ code: "INVALID_TIMEZONE", path: "$.timezone" })
-  const generatedAt = typeof input.generated_at === "string" && TIMESTAMP.test(input.generated_at) ? Date.parse(input.generated_at) : NaN
+  const generatedAt = isoInstant(input.generated_at) ?? NaN
   if (!Number.isFinite(generatedAt)) issues.push({ code: "INVALID_TIMESTAMP", path: "$.generated_at" })
 
   const coverage = isObject(input.coverage) ? input.coverage : {}
@@ -328,7 +348,7 @@ export function buildGa4BehaviorDocument(input: unknown): ExportResult {
   } else {
     closedKeys(quality, ["sampled", "thresholded", "other_row"], "$.quality", issues)
     for (const flag of ["sampled", "thresholded", "other_row"]) {
-      if (flag in quality && typeof quality[flag] !== "boolean") issues.push({ code: "TYPE_BOOLEAN", path: `$.quality.${flag}` })
+      if (hasOwn(quality, flag) && typeof quality[flag] !== "boolean") issues.push({ code: "TYPE_BOOLEAN", path: `$.quality.${flag}` })
     }
   }
 

@@ -24,6 +24,8 @@ const dbState: { stripeEvents: Map<string, Row>; otOrders: Map<string, Row> } = 
   stripeEvents: new Map(),
   otOrders: new Map(),
 }
+/** When set, the idempotency table accepts Stripe event claims but cannot record anything else. */
+let claimStoreDownExceptStripeEvents = false
 
 const fetchMock = jest.fn()
 ;(global as typeof globalThis & { fetch?: typeof fetch }).fetch = fetchMock as unknown as typeof fetch
@@ -33,6 +35,9 @@ jest.mock("@/lib/db", () => ({
     $transaction: jest.fn(async (work: (tx: unknown) => unknown) => work({})),
     stripeEvent: {
       create: jest.fn(async ({ data }: { data: Row }) => {
+        if (claimStoreDownExceptStripeEvents && !String(data.id).startsWith("evt_")) {
+          throw Object.assign(new Error("Can't reach database server"), { code: "P1001" })
+        }
         if (dbState.stripeEvents.has(String(data.id))) {
           throw Object.assign(new Error("unique"), { code: "P2002" })
         }
@@ -87,9 +92,10 @@ jest.mock("@/lib/email/send", () => ({
 jest.mock("@/lib/packet/generate-and-deliver", () => ({ generatePacketForInvoice: jest.fn() }))
 
 const kickOffMock = jest.fn(async (_order?: unknown) => ({ outcome: "DISABLED" }))
+let evidenceWritesEnabled = false
 jest.mock("@/lib/fulfillment-runtime/kickoff", () => ({
   kickOffT2FulfillmentEvidence: (order: unknown) => kickOffMock(order),
-  t2FulfillmentEvidenceWritesEnabled: () => false,
+  t2FulfillmentEvidenceWritesEnabled: () => evidenceWritesEnabled,
 }))
 
 const listLineItemsMock = jest.fn()
@@ -202,6 +208,8 @@ beforeEach(() => {
   ;(global as typeof globalThis & { fetch?: typeof fetch }).fetch = fetchMock as unknown as typeof fetch
   dbState.stripeEvents.clear()
   dbState.otOrders.clear()
+  evidenceWritesEnabled = false
+  claimStoreDownExceptStripeEvents = false
   listLineItemsMock.mockResolvedValue({
     data: [{
       quantity: 1,
@@ -301,16 +309,14 @@ describe("authoritative purchase continuity", () => {
     expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
   })
 
-  it("re-sends the same deterministic transaction id when a new event arrives for an already-paid order", async () => {
+  it("sends no second purchase when a different event arrives for an already-paid order", async () => {
     seedT2Order()
 
     await POST(webhook("evt_t2_first"))
-    await POST(webhook("evt_t2_second"))
+    const second = await POST(webhook("evt_t2_second"))
 
-    const payloads = purchasePayloads()
-    expect(payloads).toHaveLength(2)
-    expect(payloads[1].events[0].params.transaction_id).toBe(payloads[0].events[0].params.transaction_id)
-    expect(payloads[1].client_id).toBe(payloads[0].client_id)
+    expect(second.status).toBe(200)
+    expect(purchasePayloads()).toHaveLength(1)
     // The durable transition and its notifications happened once.
     expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
   })
@@ -325,6 +331,67 @@ describe("authoritative purchase continuity", () => {
 
     expect(res.status).toBe(200)
     expect(purchasePayloads()).toHaveLength(0)
+  })
+})
+
+/**
+ * At most one purchase transport per settled Checkout Session. The winner of a
+ * durable claim keyed by the transaction id sends; every later path — a
+ * redelivery that re-enters to retry T2 evidence, a retry after evidence
+ * failed, another event for the same session — finds the claim and sends
+ * nothing. A failed or ambiguous send is not retried: GA may miss a purchase,
+ * but never counts one twice. Settlement never depends on any of it.
+ */
+describe("one purchase transport per settled checkout", () => {
+  it("sends one purchase when the same paid T2 event is redelivered to retry evidence", async () => {
+    evidenceWritesEnabled = true
+    seedT2Order()
+
+    const first = await POST(webhook("evt_t2_evidence_redelivery"))
+    const second = await POST(webhook("evt_t2_evidence_redelivery"))
+
+    expect([first.status, second.status]).toEqual([200, 200])
+    expect(kickOffMock).toHaveBeenCalledTimes(2)
+    expect(purchasePayloads()).toHaveLength(1)
+  })
+
+  it("sends one purchase when evidence persistence fails after it and Stripe retries", async () => {
+    evidenceWritesEnabled = true
+    seedT2Order()
+    kickOffMock.mockRejectedValueOnce(new Error("evidence persistence unavailable"))
+
+    const failed = await POST(webhook("evt_t2_evidence_failure"))
+    const retried = await POST(webhook("evt_t2_evidence_failure"))
+
+    expect(failed.status).toBe(500)
+    expect(retried.status).toBe(200)
+    expect(kickOffMock).toHaveBeenCalledTimes(2)
+    expect(purchasePayloads()).toHaveLength(1)
+    expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not attempt a second transport after the first one failed", async () => {
+    seedT2Order()
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500, text: async () => "" })
+
+    const first = await POST(webhook("evt_t2_provider_failure"))
+    const second = await POST(webhook("evt_t2_provider_failure_other_event"))
+
+    expect([first.status, second.status]).toEqual([200, 200])
+    expect(purchasePayloads()).toHaveLength(1)
+  })
+
+  it("sends nothing, and still settles, when the claim cannot be recorded", async () => {
+    claimStoreDownExceptStripeEvents = true
+    seedT2Order()
+
+    const res = await POST(webhook("evt_t2_claim_store_down"))
+
+    expect(res.status).toBe(200)
+    expect(dbState.otOrders.get("ord_t2")).toMatchObject({ status: "PAID", settledAmountCents: 6900 })
+    expect(purchasePayloads()).toHaveLength(0)
+    expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
+    expect(kickOffMock).toHaveBeenCalledTimes(1)
   })
 })
 

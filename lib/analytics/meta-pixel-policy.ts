@@ -13,12 +13,13 @@
  *
  * The Pixel attaches the page URL and the referrer to every hit by itself;
  * no parameter allowlist can stop that. So a hit is allowed only while the
- * page is one the Pixel may see: an exact static public path (never a dynamic
- * route, whose segment would travel raw), no fragment, and a query made only
- * of governed values — utm_source/utm_medium from the governed vocabularies,
- * utm_campaign/utm_content only when canonical and owner-approved, a bounded
- * Meta click id, and `plan=diy` on /checkout. No `utm_term`, ever. The
- * referrer must be empty, origin-only, or a static page of this site.
+ * page is one the Pixel may see, judged on raw bytes: a canonical origin, an
+ * exact static public path (never a dynamic route, whose segment would travel
+ * raw), no fragment, and no query at all except the literal `?plan=diy` on
+ * /checkout. A click id or UTM value that fits a pattern is not thereby safe —
+ * a PIN, a name or a Stripe id fits too — so `fbclid` and `utm_*` pages are
+ * not reported. The referrer must be empty or a static page of this same
+ * origin with no query or fragment; another origin never qualifies.
  *
  * ## What a hit may say
  *
@@ -32,7 +33,6 @@
  */
 
 import { isCanonicalGaHost } from "./ga4"
-import { campaignIssues, contentIssues, mediumIssues, sourceIssues } from "./campaign-governance"
 import { CHECKOUT_TIERS, MAX_CHECKOUT_VALUE } from "./funnel-contract"
 import { normalizeLandingPath } from "@/lib/attribution/landing-paths"
 
@@ -103,36 +103,39 @@ export function readMetaPixelConsent(): MetaConsent {
 
 export type MetaPageContext = { origin: string; pathname: string; search: string; hash: string; referrer: string }
 
-const META_CLICK_ID = /^[A-Za-z0-9_-]{8,512}$/
+/** The one query the Pixel may see, compared as raw bytes on its one path. */
+const CHECKOUT_PLAN_PATH = "/checkout"
+const CHECKOUT_PLAN_QUERY = "?plan=diy"
 
 /** An exact static public path: a Phase-A landing that is not a template. */
 function isStaticPublicPath(pathname: string): boolean {
   return normalizeLandingPath(pathname) === pathname && !pathname.includes("[")
 }
 
-function isGovernedQuery(pathname: string, search: string): boolean {
-  if (search === "") return true
-  let params: URLSearchParams
+/** `https://` + a canonical host, spelled exactly as a browser serializes an origin. */
+function isCanonicalOrigin(origin: string): boolean {
+  let url: URL
   try {
-    params = new URLSearchParams(search)
+    url = new URL(origin)
   } catch {
     return false
   }
-  const keys = Array.from(params.keys())
-  if (new Set(keys).size !== keys.length) return false
-  for (const [key, value] of params.entries()) {
-    const ok =
-      (key === "utm_source" && sourceIssues(value).length === 0) ||
-      (key === "utm_medium" && mediumIssues(value).length === 0) ||
-      (key === "utm_campaign" && campaignIssues(value, "owner_approved").length === 0) ||
-      (key === "utm_content" && contentIssues(value).length === 0) ||
-      (key === "fbclid" && META_CLICK_ID.test(value)) ||
-      (key === "plan" && pathname === "/checkout" && value === "diy")
-    if (!ok) return false
-  }
-  return true
+  return url.protocol === "https:" && url.port === "" && url.origin === origin && isCanonicalGaHost(url.host)
 }
 
+/**
+ * No parsing and no decoding: a value is safe only if its raw bytes are known.
+ * A click id or a UTM value that merely fits a pattern can still be a PIN, a
+ * name or a Stripe id, so every query except the literal checkout link is out.
+ */
+function isReportableQuery(pathname: string, search: string): boolean {
+  return search === "" || (pathname === CHECKOUT_PLAN_PATH && search === CHECKOUT_PLAN_QUERY)
+}
+
+/**
+ * Empty, or a static page of this same origin with nothing after the path.
+ * Never another origin: its hostname alone is text somebody else chose.
+ */
 function isSafeReferrer(referrer: string, origin: string): boolean {
   if (referrer === "") return true
   let url: URL
@@ -141,17 +144,16 @@ function isSafeReferrer(referrer: string, origin: string): boolean {
   } catch {
     return false
   }
-  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) return false
-  if (url.pathname === "/") return true
-  return (url.origin === origin || isCanonicalGaHost(url.host)) && isStaticPublicPath(url.pathname)
+  return url.origin === origin && referrer === `${url.origin}${url.pathname}` && isStaticPublicPath(url.pathname)
 }
 
 /** True only while the page the Pixel would report is one it may see. */
 export function isMetaSafePageContext(context: MetaPageContext): boolean {
   return (
+    isCanonicalOrigin(context.origin) &&
     context.hash === "" &&
     isStaticPublicPath(context.pathname) &&
-    isGovernedQuery(context.pathname, context.search) &&
+    isReportableQuery(context.pathname, context.search) &&
     isSafeReferrer(context.referrer, context.origin)
   )
 }

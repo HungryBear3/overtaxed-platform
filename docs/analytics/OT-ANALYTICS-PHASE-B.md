@@ -9,12 +9,13 @@ Vercel setting was changed, no credential was read, and no live event was sent.
 | Area | Module | Checked-in artifact |
 |---|---|---|
 | Decision-grade funnel contract | `lib/analytics/funnel-contract.ts` | — |
+| Server purchase ownership (at most once) | `lib/analytics/ga4-purchase-claim.ts`, `lib/analytics/ga4-measurement.ts` | — |
 | GA4 Admin checklist + readback verifier | `lib/analytics/ga4-admin-checklist.ts` | `data/analytics/ot-ga4-admin-checklist.v1.json` |
 | Purchase dedup report (read-only) | `lib/analytics/purchase-dedup-report.ts` | — |
 | Canonical campaign naming | `lib/analytics/campaign-governance.ts` | — |
 | Experiment registry + linter | `lib/analytics/experiment-registry.ts` | `data/analytics/ot-experiment-registry.v1.json` (empty) |
 | Decision-packet export contract | `lib/analytics/decision-export.ts` | `data/analytics/ot-decision-export-mapping.v1.json`, `fixtures/analytics/decision-packet/*.synthetic.json` |
-| Meta Pixel candidate | `lib/analytics/meta-pixel-policy.ts`, `components/analytics/meta-pixel.tsx` | — |
+| Meta Pixel candidate (unmounted, HOLD) | `lib/analytics/meta-pixel-policy.ts`, `components/analytics/meta-pixel.tsx`, HOLD in `next.config.mjs` | — |
 | Meta CAPI posture | `lib/analytics/meta-capi.ts` (DEFERRED) | — |
 
 Regenerate the export artifacts with `npx tsx scripts/write-decision-export-artifacts.ts`;
@@ -28,9 +29,34 @@ qualified outcome: canonical outcome code `supportive`, live lookup only),
 events carry closed parameters and explicitly empty `page_location` /
 `page_referrer`; the sensitive boundary refuses any payload the contract does
 not describe. `purchase`/`refund` are server-only: the browser emitters refuse
-them, and the webhook's Measurement Protocol body is itself validated (no
-`user_id`, `user_properties` or `user_data`). GA4 is behavioral evidence; paid
-revenue is the Stripe/order record.
+them, and the webhook validates its Measurement Protocol body against
+`validateServerPurchasePayload` at runtime, before claiming or sending (no
+`user_id`, `user_properties` or `user_data`; a Checkout Session id as the
+transaction id; `USD`; `T2`/`T3`). A body the contract refuses is not sent.
+Validators read own keys only: a parameter named `constructor` or `__proto__`
+is an unknown parameter. GA4 is behavioral evidence; paid revenue is the
+Stripe/order record.
+
+### Server purchase: at most once
+
+The webhook reaches the purchase send more than once for one Checkout Session
+by design: a redelivery re-enters to retry T2 evidence, a retry follows a
+released event claim, and another event can name an already-paid session.
+Before transport, after every gate and the contract pass, the webhook inserts a
+claim row keyed by the session id into its existing idempotency table
+(`stripe_event`, unique primary key, `ga4_purchase:` prefix, never an `evt_`
+id). Only the inserter sends; the row is never released. No migration.
+
+- One transport per session at most, across every event, retry and concurrent
+  delivery.
+- A crash or timeout after the claim, or a provider error, leaves the purchase
+  claimed and unsent. It is never retried: GA can miss a purchase, never count
+  one twice.
+- A claim store that cannot record the claim means no send.
+- None of it is fatal to settlement, notifications or T2 evidence retry.
+
+Exactly-once delivery to GA is not claimed. A purchase lost this way is still
+paid revenue in the Stripe/order record.
 
 ### GA4 Admin checklist
 
@@ -62,32 +88,60 @@ experiments on one segment that share a day (as the decision-packet tool does).
 
 Written against the offline tool at `d64d095f361dc10b939289a8787f25dc6d5d925c`.
 Raw GA4 values map into the tool's vocabulary or its sentinels and are never
-passed through. The generated synthetic fixtures were accepted by that tool
+passed through. Alias tables are read by own key only, so a raw `constructor`
+or `__proto__` maps to `other`, never to an inherited member. Timestamps must
+be exact `YYYY-MM-DDTHH:MM:SSZ` instants that survive a round trip — no
+rolled-over `2026-02-30`, no `24:00`, no year `0000` — as the tool's calendar
+requires. The generated synthetic fixtures were accepted by that tool
 (`validate`: 4/4 ACCEPTED, `completeness=complete`; `build` exit 0).
 
 ### Meta
 
-The Pixel loads only with a well-formed `NEXT_PUBLIC_META_PIXEL_ID`, a
-production build, the canonical host and an explicit current
-`ot_marketing_consent_v1` grant — and only while the page it would report is an
-exact static path with governed query values and a safe referrer, because the
-Pixel sends the URL and referrer by itself. Automatic configuration and
-pushState page views are off, there is no Advanced Matching and no
-`<noscript>` image, and PageView waits for the script to load. The writer
-allows `PageView` and `InitiateCheckout` only. There is no browser Purchase.
-CAPI is DEFERRED with no send path and reads no environment variable.
+`MetaPixelCandidate` is mounted nowhere. The live analytics tree renders no
+Pixel, and `next.config.mjs` refuses to build while `NEXT_PUBLIC_META_PIXEL_ID`
+is set (`META_PIXEL_ACTIVATION_HOLD`). A deployment that would change Meta
+behavior is therefore never built; the current one keeps serving.
+
+The candidate itself loads only with a well-formed pixel id, a production
+build, the canonical host and an explicit current `ot_marketing_consent_v1`
+grant. It also requires that the page it would report be safe as raw bytes:
+
+- a canonical `https` origin and an exact static path;
+- no fragment, and no query at all except the literal `?plan=diy` on
+  `/checkout`. A `fbclid` or UTM value that fits a pattern can still be a PIN,
+  a name or a Stripe id, so those pages are not reported;
+- a referrer that is empty or a static page of the same origin with nothing
+  after the path. Another origin never qualifies.
+
+Nothing is ever queued for the vendor script. The bootstrap stub drops calls
+until fbevents.js has taken over dispatch. `init` and PageView run only on
+load, if the SDK is ready and every gate still holds. Each later hit is
+re-authorized when it is handed to the SDK, and only an `fbq` this module
+installed is ever written to. Once handed over, a hit is inside the SDK;
+anything the SDK buffers internally is not controllable from here.
+
+Automatic configuration and pushState page views are off, and there is no
+Advanced Matching and no `<noscript>` image. The writer allows `PageView` and
+`InitiateCheckout` only; there is no browser Purchase. CAPI is DEFERRED with no
+send path and reads no environment variable.
 
 ## Behavior changes against Phase A
 
 1. Free-check events now carry explicit empty `page_location`/`page_referrer`
    (previously omitted, which lets gtag fall back to the browser URL), and a
    surface or input mode outside the closed sets is no longer sent.
-2. The server purchase sends `currency` as ISO 4217 upper case (`USD`).
+2. The server purchase sends `currency` as ISO 4217 upper case (`USD`), is
+   validated against the funnel contract at runtime, and is sent at most once
+   per Checkout Session. A new event for an already-paid order, and an evidence
+   retry, no longer re-send it, and a failed send is not retried (see *Server
+   purchase: at most once*).
 3. `trackGA4Event`/`trackEvent` refuse `purchase` and `refund`.
-4. The Meta Pixel no longer loads without consent. There is no consent surface
-   yet, so **if `NEXT_PUBLIC_META_PIXEL_ID` is set in Production today, Meta
-   Pixel collection stops on deploy.** Lead, CompleteRegistration and every
-   custom Meta event are refused.
+4. The Phase-A Meta Pixel, which loaded without consent, is no longer
+   mounted, and nothing replaces it in the live tree. So that this cannot
+   silently stop Meta collection, **a build with `NEXT_PUBLIC_META_PIXEL_ID`
+   set fails** (`META_PIXEL_ACTIVATION_HOLD`). With the variable unset, as with
+   the variable unset in Phase A, no Meta script loads. Lead,
+   CompleteRegistration and every custom Meta event are refused.
 5. Expired or tampered touch records are removed when read (compare-and-remove:
    a value another tab wrote meanwhile is kept). An unreadable, empty or
    half-written legacy `utm_params` record is cleared, and a partly hostile one
@@ -95,9 +149,14 @@ CAPI is DEFERRED with no send path and reads no environment variable.
 
 ## Activation HOLDs
 
-- **Meta Pixel** — needs an approved consent surface and copy that writes
-  `ot_marketing_consent_v1`, Events Manager *Automatic advanced matching* OFF
-  (read back), and an owner decision on `NEXT_PUBLIC_META_PIXEL_ID`.
+- **Meta Pixel** — enforced by the build: while `NEXT_PUBLIC_META_PIXEL_ID`
+  is set in an environment, that environment cannot build this code. The
+  owner's migration decision is either to unset the variable, explicitly
+  accepting that the Pixel stops (it will not be restored without consent), or
+  to keep the current deployment. Activation later needs an approved consent
+  surface and copy that writes `ot_marketing_consent_v1`, a reviewed change
+  that mounts the candidate and lifts the build HOLD, and Events Manager
+  *Automatic advanced matching* OFF (read back).
 - **Meta CAPI** — DEFERRED. Needs durable marketing consent and consented,
   bounded `fbp`/`fbc` carried through signed checkout metadata, plus a policy
   review. A new design, not a flag.
