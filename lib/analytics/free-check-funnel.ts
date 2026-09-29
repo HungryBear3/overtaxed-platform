@@ -24,8 +24,8 @@ export type FreeCheckSurface = (typeof FREE_CHECK_SURFACES)[number]
 export const FREE_CHECK_INPUT_MODES = ["pin", "address"] as const
 export type FreeCheckInputMode = (typeof FREE_CHECK_INPUT_MODES)[number]
 
-const WINDOW_STATUSES = ["open", "closed", "upcoming", "unknown"] as const
-export type FreeCheckWindowStatus = (typeof WINDOW_STATUSES)[number]
+export const FREE_CHECK_WINDOW_STATUSES = ["open", "closed", "upcoming", "unknown"] as const
+export type FreeCheckWindowStatus = (typeof FREE_CHECK_WINDOW_STATUSES)[number]
 
 export type FreeCheckOutcomeParams = {
   outcome_code: FreeCheckOutcome["code"]
@@ -41,7 +41,7 @@ export type FreeCheckOutcomeParams = {
  * it would report a verification that did not happen.
  */
 function normalizeWindowStatus(value: unknown): FreeCheckWindowStatus {
-  return WINDOW_STATUSES.includes(value as FreeCheckWindowStatus)
+  return FREE_CHECK_WINDOW_STATUSES.includes(value as FreeCheckWindowStatus)
     ? (value as FreeCheckWindowStatus)
     : "unknown"
 }

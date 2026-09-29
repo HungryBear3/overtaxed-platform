@@ -18,7 +18,8 @@
  * Stored copies are revalidated against the touch contract before they are
  * trusted for anything, including suppressing a recapture: a value this code
  * did not write — unparseable, an unrecognized key, a hostile value, an instant
- * outside the window — counts as absent and is replaced by the next landing.
+ * outside the window — counts as absent, is removed when read, and is replaced
+ * by the next landing.
  *
  * localStorage only. No cookie, no network, and nothing here is read by any
  * analytics event; the only consumer is the checkout request, whose server
@@ -39,19 +40,41 @@ const CANONICAL_HOSTS: ReadonlySet<string> = new Set(["overtaxed-il.com", "www.o
 /** One landing per document. A fresh page load is a fresh module instance. */
 let landingRecorded = false
 
-function readTouch(key: string, now: number): AttributionTouch | null {
+/**
+ * A stored touch this code would write, or `null`. Anything else — expired,
+ * from the future, unparseable, carrying an unknown key or a hostile value —
+ * is removed as well as refused, so it does not sit in storage indefinitely.
+ */
+function readTouch(key: string, now: number, usable: (touch: AttributionTouch) => boolean = () => true): AttributionTouch | null {
+  let raw: string | null
   try {
-    const raw = window.localStorage.getItem(key)
-    if (raw === null) return null
-    return sanitizeTouch(JSON.parse(raw), now)
+    raw = window.localStorage.getItem(key)
   } catch {
     return null
+  }
+  if (raw === null) return null
+  let touch: AttributionTouch | null
+  try {
+    touch = sanitizeTouch(JSON.parse(raw), now)
+  } catch {
+    touch = null
+  }
+  if (touch && usable(touch)) return touch
+  discardIfUnchanged(key, raw)
+  return null
+}
+
+/** Remove a refused value, unless another tab has replaced it since it was read. */
+function discardIfUnchanged(key: string, raw: string): void {
+  try {
+    if (window.localStorage.getItem(key) === raw) window.localStorage.removeItem(key)
+  } catch {
+    // Storage unavailable: the value is still refused, only not removed.
   }
 }
 
 function readLastTouch(now: number): AttributionTouch | null {
-  const touch = readTouch(LAST_TOUCH_KEY, now)
-  return touch && isCampaignTouch(touch) ? touch : null
+  return readTouch(LAST_TOUCH_KEY, now, isCampaignTouch)
 }
 
 function writeTouch(key: string, touch: AttributionTouch): void {

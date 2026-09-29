@@ -74,7 +74,11 @@ export function getStoredUTMParams(): UTMParams | null {
   try {
     const stored = localStorage.getItem(UTM_STORAGE_KEY)
     const timestamp = localStorage.getItem(UTM_TIMESTAMP_KEY)
-    if (!stored || !timestamp) return null
+    if (!stored || !timestamp) {
+      // Half a record can never be read back; do not leave it behind.
+      if (stored || timestamp) clearUTMParams()
+      return null
+    }
 
     // A timestamp that is not a plain integer, or lies in the future, would
     // otherwise never expire (`Date.now() > NaN` is false), keeping whatever
@@ -90,8 +94,25 @@ export function getStoredUTMParams(): UTMParams | null {
       return null
     }
 
-    const utm = sanitizeStoredUTMParams(JSON.parse(stored))
-    return Object.keys(utm).length > 0 ? utm : null
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(stored)
+    } catch {
+      clearUTMParams()
+      return null
+    }
+    const utm = sanitizeStoredUTMParams(parsed)
+    if (Object.keys(utm).length === 0) {
+      clearUTMParams()
+      return null
+    }
+    // Keep only what the contract accepts: a refused value is removed from
+    // storage, not just from the result. Skipped if another tab rewrote it.
+    const sanitized = JSON.stringify(utm)
+    if (sanitized !== stored && localStorage.getItem(UTM_STORAGE_KEY) === stored) {
+      localStorage.setItem(UTM_STORAGE_KEY, sanitized)
+    }
+    return utm
   } catch {
     return null
   }

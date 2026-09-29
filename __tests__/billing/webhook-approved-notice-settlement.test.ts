@@ -320,7 +320,7 @@ describe("billing webhook approved notice settlement", () => {
       events: [{
         name: "purchase",
         params: {
-          currency: "usd",
+          currency: "USD",
           value: 97,
           transaction_id: "cs_notice_paid",
           item_name: "T3",
@@ -391,7 +391,7 @@ describe("billing webhook approved notice settlement", () => {
       events: [{
         name: "purchase",
         params: {
-          currency: "usd",
+          currency: "USD",
           value: 97,
           transaction_id: "cs_notice_paid",
           item_name: "T3",

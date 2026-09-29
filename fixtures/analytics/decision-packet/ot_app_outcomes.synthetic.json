@@ -1,0 +1,109 @@
+{
+  "schema": "decision_packet.app_outcomes",
+  "schema_version": 1,
+  "data_origin": "synthetic_fixture",
+  "business": "ot",
+  "timezone": "America/Chicago",
+  "generated_at": "2026-09-30T12:00:00Z",
+  "coverage": {
+    "start": "2026-08-19",
+    "end": "2026-09-27"
+  },
+  "attested_complete_ranges": [
+    {
+      "start": "2026-08-19",
+      "end": "2026-09-27"
+    }
+  ],
+  "conversion_ref_key_id": "k01",
+  "rows": [
+    {
+      "conversion_ref": "cr1_k01_SYNTHPHB000000000000000001",
+      "outcome": "qualified_action",
+      "date": "2026-09-26",
+      "source": "google",
+      "medium": "cpc",
+      "campaign": "ot_202608_season_synthappeal",
+      "content": "srch_a",
+      "landing_path": "/",
+      "classification": "customer"
+    },
+    {
+      "conversion_ref": "cr1_k01_SYNTHPHB000000000000000002",
+      "outcome": "qualified_action",
+      "date": "2026-09-25",
+      "source": "google",
+      "medium": "cpc",
+      "campaign": "ot_202608_season_synthappeal",
+      "content": "srch_a",
+      "landing_path": "/",
+      "classification": "customer"
+    },
+    {
+      "conversion_ref": "cr1_k01_SYNTHPHB000000000000000003",
+      "outcome": "qualified_action",
+      "date": "2026-09-24",
+      "source": "google",
+      "medium": "organic",
+      "campaign": "none",
+      "content": "none",
+      "landing_path": "/",
+      "classification": "customer"
+    },
+    {
+      "conversion_ref": "cr1_k01_SYNTHPHB000000000000000004",
+      "outcome": "qualified_action",
+      "date": "2026-09-21",
+      "source": "google",
+      "medium": "cpc",
+      "campaign": "ot_202608_season_synthappeal",
+      "content": "srch_a",
+      "landing_path": "/",
+      "classification": "customer"
+    },
+    {
+      "conversion_ref": "cr1_k01_SYNTHPHB000000000000000005",
+      "outcome": "qualified_action",
+      "date": "2026-09-15",
+      "source": "google",
+      "medium": "organic",
+      "campaign": "none",
+      "content": "none",
+      "landing_path": "/",
+      "classification": "customer"
+    },
+    {
+      "conversion_ref": "cr1_k01_SYNTHPHB000000000000000006",
+      "outcome": "qualified_action",
+      "date": "2026-09-01",
+      "source": "google",
+      "medium": "cpc",
+      "campaign": "ot_202608_season_synthappeal",
+      "content": "srch_a",
+      "landing_path": "/",
+      "classification": "customer"
+    },
+    {
+      "conversion_ref": "cr1_k01_SYNTHPHB000000000000000007",
+      "outcome": "qualified_action",
+      "date": "2026-08-25",
+      "source": "google",
+      "medium": "organic",
+      "campaign": "none",
+      "content": "none",
+      "landing_path": "/",
+      "classification": "customer"
+    },
+    {
+      "conversion_ref": "cr1_k01_SYNTHPHB000000000000000008",
+      "outcome": "qualified_action",
+      "date": "2026-09-22",
+      "source": "google",
+      "medium": "cpc",
+      "campaign": "ot_202608_season_synthappeal",
+      "content": "srch_a",
+      "landing_path": "/",
+      "classification": "test"
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "schema": "decision_packet.experiment_registry",
+  "schema_version": 1,
+  "data_origin": "synthetic_fixture",
+  "experiments": [
+    {
+      "experiment_id": "ot_exp_2026_001",
+      "business": "ot",
+      "status": "running",
+      "start_date": "2026-08-20",
+      "end_date": "2026-10-15",
+      "source": "google",
+      "medium": "cpc",
+      "campaign": "ot_202608_season_synthappeal",
+      "content": "srch_a",
+      "landing_path": "/",
+      "budget": {
+        "amount_minor": 300000,
+        "currency": "USD"
+      },
+      "primary_outcome": "paid_per_qualified_rate",
+      "evidence_threshold": {
+        "min_denominator": 5,
+        "min_events": 3
+      },
+      "decision": "pending"
+    },
+    {
+      "experiment_id": "ot_exp_2026_002",
+      "business": "ot",
+      "status": "planned",
+      "start_date": "2026-10-05",
+      "end_date": "2026-11-30",
+      "source": "newsletter",
+      "medium": "email",
+      "campaign": "ot_202610_ret_synthreminder",
+      "content": "eml_a",
+      "landing_path": "/",
+      "budget": {
+        "amount_minor": 50000,
+        "currency": "USD"
+      },
+      "primary_outcome": "checkout_start_rate",
+      "evidence_threshold": {
+        "min_denominator": 500,
+        "min_events": 20
+      },
+      "decision": "pending"
+    }
+  ]
+}

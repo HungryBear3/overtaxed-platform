@@ -34,7 +34,8 @@ export async function sendGaPurchaseEvent(args: GaPurchaseArgs): Promise<GaMeasu
     events: [{
       name: "purchase",
       params: {
-        currency: args.currency,
+        // ISO 4217 codes are upper case; Stripe reports them lower case.
+        currency: args.currency.toUpperCase(),
         value,
         transaction_id: args.transactionId,
         item_name: args.itemName,

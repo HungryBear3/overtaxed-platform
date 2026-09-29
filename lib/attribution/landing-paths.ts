@@ -82,3 +82,8 @@ export function normalizeLandingPath(pathname: unknown): string | null {
 export function isAllowlistedLanding(value: unknown): value is string {
   return typeof value === "string" && (STATIC_LANDING_PATHS.has(value) || TEMPLATE_VALUES.has(value))
 }
+
+/** Every value `normalizeLandingPath` can return, sorted. For export mapping contracts. */
+export function allowlistedLandingValues(): string[] {
+  return [...STATIC_LANDING_PATHS, ...TEMPLATE_VALUES].sort()
+}

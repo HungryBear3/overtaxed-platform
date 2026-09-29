@@ -177,8 +177,8 @@ describe("free-check funnel transport", () => {
     })
 
     for (const call of gtag.mock.calls) {
-      expect(call[2]).not.toHaveProperty("page_location")
-      expect(call[2]).not.toHaveProperty("page_referrer")
+      expect(call[2]).toHaveProperty("page_location", "")
+      expect(call[2]).toHaveProperty("page_referrer", "")
       for (const [key, value] of Object.entries(call[2] as Record<string, unknown>)) {
         expect(["string", "boolean", "number"]).toContain(typeof value)
         if (typeof value === "string") {
@@ -189,14 +189,16 @@ describe("free-check funnel transport", () => {
     }
   })
 
-  it("omits page_location and page_referrer entirely", () => {
+  // Omitting the page context is not enough: gtag then falls back to the
+  // browser's own URL and referrer. The sensitive boundary sends both empty.
+  it("sends page_location and page_referrer explicitly empty", () => {
     window.history.replaceState({}, "", "/check?pin=16012160010000#result")
 
     analytics.freeCheckStarted({ surface: "check_page", inputMode: "pin" })
 
     const params = eventsNamed("free_check_started")[0][2] as Record<string, string>
-    expect(params).not.toHaveProperty("page_location")
-    expect(params).not.toHaveProperty("page_referrer")
+    expect(params).toHaveProperty("page_location", "")
+    expect(params).toHaveProperty("page_referrer", "")
   })
 
   it("does not throw into the caller when the vendor boundary throws", () => {

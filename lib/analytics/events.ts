@@ -6,6 +6,7 @@
 import { trackMetaEvent, trackMetaCustomEvent } from "@/components/analytics/meta-pixel"
 import { trackGoogleAdsConversion } from "@/components/analytics/google-analytics"
 import { buildSanitizedPageContext, sanitizeGaEventParams } from "./ga4"
+import { isServerOnlyEventName, validateBrowserFunnelEvent } from "./funnel-contract"
 import { getStoredUTMParams } from "./utm-tracking"
 import {
   deriveFreeCheckOutcomeParams,
@@ -28,6 +29,9 @@ function safely(emit: () => void): void {
 }
 
 export function trackGA4Event(eventName: string, params?: Record<string, unknown>): void {
+  // A purchase or refund is written only by the signed webhook
+  // (lib/analytics/funnel-contract). No browser caller can add one.
+  if (isServerOnlyEventName(eventName)) return
   if (typeof window !== "undefined" && window.gtag) {
     const pageContext = buildSanitizedPageContext({
       locationHref: window.location.href,
@@ -54,18 +58,29 @@ export function trackEvent(eventName: string, params?: Record<string, unknown>):
  * itself, so the generic helper would attach a name and a street address to an
  * event that states a specific identified parcel qualified.
  *
- * The funnel therefore sends no browser URL or referrer context at all. It
- * still passes through `sanitizeGaEventParams`, so the blocked-key list and the
- * primitives-only rule continue to apply to the bounded params themselves; with
- * no `page_location`/`page_referrer` present there is nothing for the
- * sanitizer's URL-rewriting branch to preserve.
+ * The funnel therefore sends no browser URL or referrer context at all, and
+ * says so explicitly: an omitted `page_location`/`page_referrer` lets gtag fall
+ * back to the browser's own URL and referrer, so both are sent as "". It still
+ * passes through `sanitizeGaEventParams`, so the blocked-key list and the
+ * primitives-only rule continue to apply to the bounded params themselves.
  *
  * Deliberately narrow: `trackEvent`, `trackGA4Event` and the page_view path are
  * untouched and keep their sanitized page context.
  */
 function trackFreeCheckEvent(eventName: string, params: Record<string, unknown>): void {
+  emitSensitiveEvent(eventName, { ...params, page_location: "", page_referrer: "" })
+}
+
+/**
+ * The one writer for the sensitive funnel boundary. The payload is checked
+ * against the closed funnel contract (lib/analytics/funnel-contract) before it
+ * reaches gtag; anything the contract does not describe is not sent at all.
+ */
+function emitSensitiveEvent(eventName: string, params: Record<string, unknown>): void {
   if (typeof window === "undefined" || !window.gtag) return
-  window.gtag("event", eventName, sanitizeGaEventParams(params))
+  const payload = sanitizeGaEventParams(params)
+  if (!validateBrowserFunnelEvent(eventName, payload).ok) return
+  window.gtag("event", eventName, payload)
   if (process.env.NODE_ENV === "development") {
     console.log("[Analytics]", eventName, params)
   }
@@ -101,11 +116,7 @@ function beginCheckoutParams(plan: unknown, value: unknown): Record<string, unkn
  * referrer for this app-supplied event.
  */
 function trackCheckoutStartedEvent(plan: string, value?: number): void {
-  if (typeof window === "undefined" || !window.gtag) return
-  window.gtag("event", "begin_checkout", sanitizeGaEventParams(beginCheckoutParams(plan, value)))
-  if (process.env.NODE_ENV === "development") {
-    console.log("[Analytics]", "begin_checkout", { plan, value })
-  }
+  emitSensitiveEvent("begin_checkout", beginCheckoutParams(plan, value))
 }
 
 /**

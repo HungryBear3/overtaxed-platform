@@ -1,0 +1,85 @@
+{
+  "schema": "decision_packet.payment_ledger",
+  "schema_version": 1,
+  "data_origin": "synthetic_fixture",
+  "business": "ot",
+  "timezone": "America/Chicago",
+  "generated_at": "2026-09-30T12:00:00Z",
+  "coverage": {
+    "start": "2026-08-19",
+    "end": "2026-09-27"
+  },
+  "attested_complete_ranges": [
+    {
+      "start": "2026-08-19",
+      "end": "2026-09-27"
+    }
+  ],
+  "currency": "USD",
+  "conversion_ref_key_id": "k01",
+  "rows": [
+    {
+      "conversion_ref": "cr1_k01_SYNTHPHB000000000000000001",
+      "event": "charge",
+      "event_seq": 1,
+      "date": "2026-09-26",
+      "amount_minor": 6900,
+      "currency": "USD",
+      "classification": "customer"
+    },
+    {
+      "conversion_ref": "cr1_k01_SYNTHPHB000000000000000002",
+      "event": "charge",
+      "event_seq": 1,
+      "date": "2026-09-25",
+      "amount_minor": 9700,
+      "currency": "USD",
+      "classification": "customer"
+    },
+    {
+      "conversion_ref": "cr1_k01_SYNTHPHB000000000000000002",
+      "event": "refund",
+      "event_seq": 1,
+      "date": "2026-09-27",
+      "amount_minor": 4850,
+      "currency": "USD",
+      "classification": "customer"
+    },
+    {
+      "conversion_ref": "cr1_k01_SYNTHPHB000000000000000003",
+      "event": "charge",
+      "event_seq": 1,
+      "date": "2026-09-24",
+      "amount_minor": 6900,
+      "currency": "USD",
+      "classification": "customer"
+    },
+    {
+      "conversion_ref": "cr1_k01_SYNTHPHB000000000000000005",
+      "event": "charge",
+      "event_seq": 1,
+      "date": "2026-09-16",
+      "amount_minor": 6900,
+      "currency": "USD",
+      "classification": "customer"
+    },
+    {
+      "conversion_ref": "cr1_k01_SYNTHPHB000000000000000006",
+      "event": "charge",
+      "event_seq": 1,
+      "date": "2026-09-02",
+      "amount_minor": 9700,
+      "currency": "USD",
+      "classification": "customer"
+    },
+    {
+      "conversion_ref": "cr1_k01_SYNTHPHB000000000000000008",
+      "event": "charge",
+      "event_seq": 1,
+      "date": "2026-09-22",
+      "amount_minor": 6900,
+      "currency": "USD",
+      "classification": "test"
+    }
+  ]
+}

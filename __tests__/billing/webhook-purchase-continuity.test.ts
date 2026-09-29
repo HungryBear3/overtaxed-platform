@@ -101,6 +101,7 @@ jest.mock("@/lib/stripe/client", () => ({
 }))
 
 import { POST } from "@/app/api/billing/webhook/route"
+import { validateServerPurchasePayload } from "@/lib/analytics/funnel-contract"
 
 const SESSION_ID = "cs_test_t2_settled"
 
@@ -254,6 +255,17 @@ describe("authoritative purchase continuity", () => {
     expect(kickOffMock).toHaveBeenCalledWith(expect.objectContaining({ id: "ord_t2", status: "PAID" }))
   })
 
+  it("emits a purchase the decision-grade funnel contract accepts, with an ISO 4217 currency code", async () => {
+    seedT2Order()
+
+    await POST(webhook("evt_t2_contract"))
+
+    const payloads = purchasePayloads()
+    expect(payloads).toHaveLength(1)
+    expect(validateServerPurchasePayload(payloads[0])).toEqual({ ok: true })
+    expect(payloads[0].events[0].params.currency).toBe("USD")
+  })
+
   it("acknowledges a redelivery of the same Stripe event without a second purchase", async () => {
     seedT2Order()
 
@@ -263,6 +275,29 @@ describe("authoritative purchase continuity", () => {
     expect(first.status).toBe(200)
     expect(second.status).toBe(200)
     expect(purchasePayloads()).toHaveLength(1)
+    expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("contacts no Meta endpoint even with every Meta setting present, and a replay still sends one purchase", async () => {
+    const metaSettings = {
+      META_CAPI_ENABLED: "true",
+      META_CAPI_ACCESS_TOKEN: "EAAB-synthetic-token",
+      META_PIXEL_ID: "1234567890123456",
+      NEXT_PUBLIC_META_PIXEL_ID: "1234567890123456",
+    }
+    Object.assign(process.env, metaSettings)
+    try {
+      seedT2Order()
+
+      await POST(webhook("evt_t2_meta_env"))
+      await POST(webhook("evt_t2_meta_env"))
+    } finally {
+      for (const key of Object.keys(metaSettings)) delete process.env[key]
+    }
+
+    const urls = fetchMock.mock.calls.map(([url]) => String(url))
+    expect(urls.filter((url) => url.includes("/mp/collect"))).toHaveLength(1)
+    expect(urls.filter((url) => /facebook|graph\.|meta/i.test(url))).toEqual([])
     expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
   })
 

@@ -1,0 +1,43 @@
+{
+  "schema": "ot.ga4_admin_checklist",
+  "schema_version": 1,
+  "business": "ot",
+  "funnel_contract_version": "ot-funnel-contract-v1",
+  "custom_dimensions": [
+    {
+      "parameter_name": "surface",
+      "display_name": "OT free check surface",
+      "scope": "EVENT",
+      "events": ["free_check_completed", "free_check_qualified"],
+      "rationale": "Which entry point (home hero, check page, sticky bar) produced completed and qualified checks. Decides where the free check is placed. Closed three-value enum."
+    },
+    {
+      "parameter_name": "plan",
+      "display_name": "OT checkout plan",
+      "scope": "EVENT",
+      "events": ["begin_checkout"],
+      "rationale": "Which tier (T2 or T3) a checkout intent started for. Decides which offer is promoted. Purchase already carries the tier as the built-in item variant."
+    }
+  ],
+  "key_events": [
+    {
+      "event_name": "free_check_qualified",
+      "counting_method": "ONCE_PER_SESSION",
+      "rationale": "A session that produced at least one supportive outcome from a live lookup. Once per session so rechecking the same parcel is one qualified visit, not several."
+    },
+    {
+      "event_name": "purchase",
+      "counting_method": "ONCE_PER_EVENT",
+      "rationale": "Server-side purchase from the signed webhook after settlement and the durable PAID transition. Behavioral evidence only: paid revenue is the Stripe/order record."
+    }
+  ],
+  "readback": {
+    "api": "analyticsadmin.googleapis.com/v1beta",
+    "oauth_scope": "https://www.googleapis.com/auth/analytics.readonly",
+    "calls": [
+      "GET /v1beta/properties/{property_id}/customDimensions",
+      "GET /v1beta/properties/{property_id}/keyEvents"
+    ],
+    "match": "exact_set"
+  }
+}

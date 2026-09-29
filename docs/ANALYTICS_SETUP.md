@@ -8,13 +8,16 @@ Analytics tracking for OverTaxed follows the same pattern as newstart-il (FreshS
 |----------|--------|--------|
 | `NEXT_PUBLIC_GA_MEASUREMENT_ID` | `G-XXXXXXXXXX` | Google Analytics 4 → Admin → Data Streams |
 | `NEXT_PUBLIC_GOOGLE_ADS_ID` | `AW-XXXXXXXXX` | Google Ads → Tools → Conversions |
-| `NEXT_PUBLIC_META_PIXEL_ID` | Numeric | Meta Business → Events Manager → Data Sources |
+| `NEXT_PUBLIC_META_PIXEL_ID` | 15–16 digits | Meta Business → Events Manager → Data Sources |
 
-All are optional. If none are set, analytics components render nothing.
+All are optional. If none are set, analytics components render nothing. The Meta
+Pixel additionally requires an explicit marketing-consent grant and a reportable
+page, so today it never loads — see `docs/analytics/OT-ANALYTICS-PHASE-B.md`.
 
 ## Implementation
 
-- **AnalyticsProvider** wraps the app in `app/layout.tsx`; loads GA4, Google Ads, and Meta Pixel when IDs are set
+- **AnalyticsProvider** wraps the app in `app/layout.tsx`; loads GA4 and Google Ads when IDs are set, and the consent-gated Meta Pixel candidate
+- **Contracts and governance:** funnel event contract, GA4 Admin checklist, campaign/experiment registry, decision-packet export and Meta posture are described in `docs/analytics/OT-ANALYTICS-PHASE-B.md`
 - **UTM capture:** Automatic on page load; stored in localStorage for attribution
 - **Page views:** Tracked on client-side navigation via `usePathname` / `useSearchParams`
 - **Events:** `lib/analytics/events.ts` — signUp, login, propertyAdded, appealStarted, appealFiled, checkoutStarted, pdfDownload, contactFormSubmit
