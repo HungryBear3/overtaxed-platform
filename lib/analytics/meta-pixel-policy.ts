@@ -13,12 +13,14 @@
  *
  * The Pixel attaches the page URL and the referrer to every hit by itself;
  * no parameter allowlist can stop that. So a hit is allowed only while the
- * page is one the Pixel may see, judged on raw bytes: a canonical origin, an
- * exact static public path (never a dynamic route, whose segment would travel
- * raw), no fragment, and no query at all except the literal `?plan=diy` on
- * /checkout. A click id or UTM value that fits a pattern is not thereby safe —
- * a PIN, a name or a Stripe id fits too — so `fbclid` and `utm_*` pages are
- * not reported. The referrer must be empty or a static page of this same
+ * page is one the Pixel may see, judged on raw bytes: the raw `location.href`
+ * must be exactly its canonical origin, path and query put back together — no
+ * userinfo, which an origin never shows, and no empty `?` or `#`, which an
+ * empty search or hash never shows — with an exact static public path (never
+ * a dynamic route, whose segment would travel raw), no fragment, and no query
+ * at all except the literal `?plan=diy` on /checkout. A click id or UTM value
+ * that fits a pattern is not thereby safe — a PIN, a name or a Stripe id fits
+ * too — so `fbclid` and `utm_*` pages are not reported. The referrer must be empty or a static page of this same
  * origin with no query or fragment; another origin never qualifies.
  *
  * ## What a hit may say
@@ -101,7 +103,7 @@ export function readMetaPixelConsent(): MetaConsent {
   }
 }
 
-export type MetaPageContext = { origin: string; pathname: string; search: string; hash: string; referrer: string }
+export type MetaPageContext = { href: string; origin: string; pathname: string; search: string; hash: string; referrer: string }
 
 /** The one query the Pixel may see, compared as raw bytes on its one path. */
 const CHECKOUT_PLAN_PATH = "/checkout"
@@ -121,6 +123,27 @@ function isCanonicalOrigin(origin: string): boolean {
     return false
   }
   return url.protocol === "https:" && url.port === "" && url.origin === origin && isCanonicalGaHost(url.host)
+}
+
+/**
+ * The raw URL the Pixel sends is byte-for-byte the parts that were judged.
+ * `origin` drops userinfo and an empty `search`/`hash` drops its delimiter, so
+ * clean parts alone say nothing about `href`.
+ */
+function isExactPageUrl(context: MetaPageContext): boolean {
+  if (typeof context.href !== "string") return false
+  let url: URL
+  try {
+    url = new URL(context.href)
+  } catch {
+    return false
+  }
+  return (
+    url.username === "" &&
+    url.password === "" &&
+    url.href === context.href &&
+    context.href === `${context.origin}${context.pathname}${context.search}${context.hash}`
+  )
 }
 
 /**
@@ -151,6 +174,7 @@ function isSafeReferrer(referrer: string, origin: string): boolean {
 export function isMetaSafePageContext(context: MetaPageContext): boolean {
   return (
     isCanonicalOrigin(context.origin) &&
+    isExactPageUrl(context) &&
     context.hash === "" &&
     isStaticPublicPath(context.pathname) &&
     isReportableQuery(context.pathname, context.search) &&
@@ -172,12 +196,15 @@ export function buildMetaBrowserEvent(name: unknown, params?: unknown): MetaBrow
   if (name === "PageView") return { name: "PageView", params: {} }
   if (name !== "InitiateCheckout") return null
   const input = typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {}
-  const tier = (CHECKOUT_TIERS as readonly unknown[]).includes(input.content_name) ? input.content_name : undefined
+  // One read each: the value checked is the value sent, whatever a getter answers later.
+  const contentName = input.content_name
+  const value = input.value
+  const tier = (CHECKOUT_TIERS as readonly unknown[]).includes(contentName) ? contentName : undefined
   return {
     name: "InitiateCheckout",
     params: {
       ...(tier ? { content_name: tier } : {}),
-      ...(isCheckoutValue(input.value) ? { currency: "USD", value: input.value } : {}),
+      ...(isCheckoutValue(value) ? { currency: "USD", value } : {}),
     },
   }
 }

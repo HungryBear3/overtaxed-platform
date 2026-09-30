@@ -216,6 +216,7 @@ describe("the GA4 behavior adapter", () => {
     ["coverage that ends after generation", { generated_at: "2026-09-20T12:00:00Z" }, "COVERAGE_AFTER_GENERATED_AT", "$.coverage.end"],
     ["an attested range outside coverage", { attested_complete_ranges: [{ start: "2026-09-19", end: "2026-09-21" }] }, "ATTESTED_RANGE_INVALID", "$.attested_complete_ranges[0]"],
     ["an unknown timezone", { timezone: "Europe/Paris" }, "INVALID_TIMEZONE", "$.timezone"],
+    ["a timezone no zone database has", { timezone: "Not/A_Zone" }, "INVALID_TIMEZONE", "$.timezone"],
     ["an unknown data origin", { data_origin: "production_db" }, "INVALID_DATA_ORIGIN", "$.data_origin"],
     ["a reversed coverage", { coverage: { start: "2026-09-21", end: "2026-09-20" } }, "COVERAGE_RANGE_INVALID", "$.coverage"],
     ["a quality note", { quality: { sampled: false, thresholded: false, other_row: false, note: "x" } }, "UNKNOWN_FIELD", "$.quality"],
@@ -234,7 +235,88 @@ describe("the GA4 behavior adapter", () => {
     expect(JSON.stringify(result)).not.toContain("owner@example.com")
     expect(JSON.stringify(result)).not.toContain("customer_email")
   })
+
+  /** Like the registry: one read of the input, and only what it validated leaves. */
+  it("exports the generated_at it validated, whatever a getter answers later", () => {
+    const input = exportInput([rawRow()])
+    const reads = answersOnceThen(input, "generated_at", "2026-09-30T12:00:00Z", "0000-01-01T00:00:00Z")
+
+    const document = built(input)
+
+    expect(reads()).toBe(1)
+    expect(document.generated_at).toBe("2026-09-30T12:00:00Z")
+  })
+
+  it("exports the attested range it validated, whatever a getter answers later", () => {
+    const range: Json = { end: "2026-09-21" }
+    const reads = answersOnceThen(range, "start", "2026-09-20", "0000-01-01")
+
+    const document = built(exportInput([rawRow()], { attested_complete_ranges: [range] }))
+
+    expect(reads()).toBe(1)
+    expect(document.attested_complete_ranges).toEqual([{ start: "2026-09-20", end: "2026-09-21" }])
+  })
+
+  it("exports the quality flag it validated, whatever a getter answers later", () => {
+    const quality: Json = { thresholded: false, other_row: false }
+    const reads = answersOnceThen(quality, "sampled", false, "jane-doe")
+
+    const document = built(exportInput([rawRow()], { quality }))
+
+    expect(reads()).toBe(1)
+    expect(document.quality).toEqual({ sampled: false, thresholded: false, other_row: false })
+  })
+
+  it("exports the count it validated, whatever a getter answers later", () => {
+    const row = rawRow()
+    const reads = answersOnceThen(row, "sessions", 30, -1)
+
+    const document = built(exportInput([row]))
+
+    expect(reads()).toBe(1)
+    expect(document.rows).toMatchObject([{ sessions: 30 }])
+  })
+
+  it("refuses attested ranges with a hole", () => {
+    const ranges: unknown[] = new Array(2)
+    ranges[1] = { start: "2026-09-20", end: "2026-09-21" }
+
+    const result = buildGa4BehaviorDocument(exportInput([rawRow()], { attested_complete_ranges: ranges }))
+
+    expect(result).toEqual({ ok: false, issues: [{ code: "ATTESTED_RANGE_INVALID", path: "$.attested_complete_ranges[0]" }] })
+  })
+
+  it("refuses rows with a hole", () => {
+    const rows: Json[] = new Array(2)
+    rows[1] = rawRow()
+
+    const result = buildGa4BehaviorDocument(exportInput(rows))
+
+    expect(result.ok).toBe(false)
+    expect(result.ok ? [] : result.issues).toContainEqual({ code: "TYPE_OBJECT", path: "$.rows[0]" })
+  })
+
+  it("refuses, without throwing or echoing, an input it cannot read once", () => {
+    const input = exportInput([rawRow()])
+    Object.defineProperty(input, "timezone", { enumerable: true, get: () => { throw new Error("jane-doe") } })
+
+    expect(buildGa4BehaviorDocument(input)).toEqual({ ok: false, issues: [{ code: "TYPE_OBJECT", path: "$" }] })
+  })
 })
+
+/** Defines `key` to answer `first` on its first read and `later` on every read after; returns the read count. */
+function answersOnceThen(target: object, key: string, first: unknown, later: unknown): () => number {
+  let reads = 0
+  Object.defineProperty(target, key, {
+    enumerable: true,
+    configurable: true,
+    get() {
+      reads += 1
+      return reads === 1 ? first : later
+    },
+  })
+  return () => reads
+}
 
 /**
  * The downstream tool rejects a missing dimension, a non-string dimension and
@@ -336,6 +418,162 @@ describe("hostile object keys and impossible instants", () => {
   })
 })
 
+/**
+ * The tool's calendar runs 0001-01-01..9999-12-31 and it does exact zoned
+ * arithmetic at both ends. `Date.UTC` once moved years 0001-0099 into the
+ * 1900s, so coverage ending after generation left as `ok: true`; and the tool
+ * raises OverflowError settling an attested day whose settlement instant
+ * (next local midnight + 48h) falls past 9999-12-31.
+ */
+describe("the decision-packet calendar at its edges", () => {
+  /** When each packet zone's local midnight falls in UTC, per the tool's zoneinfo: local mean time before 1883. */
+  const EARLY_MIDNIGHT_UTC: Record<string, string> = {
+    UTC: "00:00:00",
+    "America/New_York": "04:56:02",
+    "America/Chicago": "05:50:36",
+    "America/Denver": "06:59:56",
+    "America/Los_Angeles": "07:52:58",
+  }
+  const ZONES = Object.keys(EARLY_MIDNIGHT_UTC)
+
+  const emptyDay = (day: string, generatedAt: string, timezone = "UTC", attested = true) =>
+    exportInput([], {
+      generated_at: generatedAt,
+      timezone,
+      coverage: { start: day, end: day },
+      attested_complete_ranges: attested ? [{ start: day, end: day }] : [],
+    })
+
+  it("refuses year-0001 coverage that ends after generation", () => {
+    expect(buildGa4BehaviorDocument(emptyDay("0001-01-02", "0001-01-01T12:00:00Z"))).toEqual({
+      ok: false,
+      issues: [{ code: "COVERAGE_AFTER_GENERATED_AT", path: "$.coverage.end" }],
+    })
+  })
+
+  const earlyDays = ["0001-01-01", "0001-01-02", "0004-02-29", "0099-12-31", "0100-01-01", "0100-03-01", "0101-01-01"]
+  const shift = (instant: string, seconds: number) => new Date(Date.parse(instant) + seconds * 1000).toISOString().replace(".000Z", "Z")
+
+  it.each(ZONES.flatMap((zone) => earlyDays.map((day) => [day, zone] as const)))(
+    "places the start of %s in %s at its exact instant",
+    (day, zone) => {
+      const midnight = `${day}T${EARLY_MIDNIGHT_UTC[zone]}Z`
+
+      for (const generatedAt of [shift(midnight, -1), midnight].filter((instant) => !instant.startsWith("0000"))) {
+        expect(buildGa4BehaviorDocument(emptyDay(day, generatedAt, zone, false))).toEqual({
+          ok: false,
+          issues: [{ code: "COVERAGE_AFTER_GENERATED_AT", path: "$.coverage.end" }],
+        })
+      }
+      expect(buildGa4BehaviorDocument(emptyDay(day, shift(midnight, 1), zone, false)).ok).toBe(true)
+    },
+  )
+
+  it("exports a real year-0001 day with its rows", () => {
+    const document = built(
+      exportInput([rawRow({ date: "00010102" })], {
+        generated_at: "0001-01-05T00:00:00Z",
+        coverage: { start: "0001-01-01", end: "0001-01-02" },
+        attested_complete_ranges: [{ start: "0001-01-01", end: "0001-01-02" }],
+      }),
+    )
+
+    expect(document).toMatchObject({ coverage: { start: "0001-01-01", end: "0001-01-02" }, rows: [{ date: "0001-01-02" }] })
+  })
+
+  const realFormatToParts = Intl.DateTimeFormat.prototype.formatToParts
+  it.each([
+    ["no date parts at all", () => []],
+    ["an era it does not know", function (this: Intl.DateTimeFormat, date?: Date | number) {
+      return realFormatToParts.call(this, date).map((part) => (part.type === "era" ? { ...part, value: "CE" } : part))
+    }],
+  ])("fails closed when the zone data yields %s", (_label, parts) => {
+    const formatToParts = jest.spyOn(Intl.DateTimeFormat.prototype, "formatToParts").mockImplementation(parts as () => Intl.DateTimeFormatPart[])
+    try {
+      const result = buildGa4BehaviorDocument(emptyDay("2026-09-20", "2026-09-30T12:00:00Z", "America/Chicago"))
+
+      expect(result.ok).toBe(false)
+      expect(result.ok ? [] : result.issues).toEqual([
+        { code: "COVERAGE_AFTER_GENERATED_AT", path: "$.coverage.end" },
+        { code: "ATTESTED_RANGE_UNSETTLEABLE", path: "$.attested_complete_ranges[0]" },
+      ])
+    } finally {
+      formatToParts.mockRestore()
+    }
+  })
+
+  it("refuses to attest 9999-12-31, whose settlement the tool cannot compute", () => {
+    expect(buildGa4BehaviorDocument(emptyDay("9999-12-31", "9999-12-31T12:00:00Z"))).toEqual({
+      ok: false,
+      issues: [{ code: "ATTESTED_RANGE_UNSETTLEABLE", path: "$.attested_complete_ranges[0]" }],
+    })
+  })
+
+  it.each(ZONES)("attests through 9999-12-28 and no later in %s", (zone) => {
+    const lastDays = (end: string) =>
+      exportInput([], {
+        generated_at: "9999-12-31T23:59:59Z",
+        timezone: zone,
+        coverage: { start: "9999-12-24", end: "9999-12-31" },
+        attested_complete_ranges: [{ start: "9999-12-24", end }],
+      })
+
+    expect(buildGa4BehaviorDocument(lastDays("9999-12-28")).ok).toBe(true)
+    for (const end of ["9999-12-29", "9999-12-30", "9999-12-31"]) {
+      expect(buildGa4BehaviorDocument(lastDays(end))).toEqual({
+        ok: false,
+        issues: [{ code: "ATTESTED_RANGE_UNSETTLEABLE", path: "$.attested_complete_ranges[0]" }],
+      })
+    }
+  })
+
+  it.each(ZONES)("still exports unattested coverage through 9999-12-31 in %s", (zone) => {
+    for (const day of ["9999-12-29", "9999-12-30", "9999-12-31"]) {
+      expect(buildGa4BehaviorDocument(emptyDay(day, "9999-12-31T23:59:59Z", zone, false)).ok).toBe(true)
+    }
+  })
+
+  it.each([
+    [
+      "an unordered range does not move the ordering baseline",
+      "2026-09-21T12:00:00Z",
+      { start: "2026-09-19", end: "2026-09-21" },
+      [{ start: "2026-09-19", end: "2026-09-20" }, { start: "2026-09-21", end: "2026-09-19" }, { start: "2026-09-20", end: "2026-09-21" }],
+      [1, 2],
+    ],
+    [
+      "a reversed range is invalid, not also unsettleable",
+      "9999-12-31T23:59:59Z",
+      { start: "9999-12-24", end: "9999-12-31" },
+      [{ start: "9999-12-30", end: "9999-12-29" }],
+      [0],
+    ],
+  ])("%s", (_label, generatedAt, coverage, ranges, invalid) => {
+    const result = buildGa4BehaviorDocument(exportInput([], { generated_at: generatedAt, timezone: "UTC", coverage, attested_complete_ranges: ranges }))
+
+    expect(result).toEqual({
+      ok: false,
+      issues: (invalid as number[]).map((index) => ({ code: "ATTESTED_RANGE_INVALID", path: `$.attested_complete_ranges[${index}]` })),
+    })
+  })
+
+  it("names only the range the tool cannot settle", () => {
+    const result = buildGa4BehaviorDocument(
+      exportInput([], {
+        generated_at: "9999-12-31T23:59:59Z",
+        timezone: "America/Chicago",
+        coverage: { start: "9999-12-20", end: "9999-12-31" },
+        attested_complete_ranges: [
+          { start: "9999-12-20", end: "9999-12-21" },
+          { start: "9999-12-27", end: "9999-12-29" },
+        ],
+      }),
+    )
+
+    expect(result).toEqual({ ok: false, issues: [{ code: "ATTESTED_RANGE_UNSETTLEABLE", path: "$.attested_complete_ranges[1]" }] })
+  })
+})
+
 describe("projecting the experiment registry", () => {
   const syntheticRegistry = () => ({
     schema: "ot.experiment_registry",
@@ -396,6 +634,158 @@ describe("projecting the experiment registry", () => {
     })
   })
 
+  /**
+   * The decision-packet tool's calendar, written out independently of the code
+   * under test: `\d{4}-\d{2}-\d{2}` naming a proleptic Gregorian day from
+   * 0001-01-01 to 9999-12-31 (Python's `date`). A registry the exporter
+   * projects successfully may carry no other date.
+   */
+  function toolCalendarHasDay(value: string): boolean {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+    if (!match) return false
+    const [year, month, day] = match.slice(1).map(Number)
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+    const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]
+    return year >= 1 && days !== undefined && day >= 1 && day <= days
+  }
+
+  function withDates(start_date: string, end_date: string) {
+    const registry = syntheticRegistry()
+    registry.experiments[0].start_date = start_date
+    registry.experiments[0].end_date = end_date
+    return registry
+  }
+
+  it.each([
+    ["a year-zero start", "0000-01-01", "2026-10-15", "$.experiments[0].start_date"],
+    ["a year-zero end", "0000-01-01", "0000-12-31", "$.experiments[0].end_date"],
+    ["a year-zero leap day", "0000-02-29", "2026-10-15", "$.experiments[0].start_date"],
+    ["February 29 of a common year", "2025-02-29", "2026-10-15", "$.experiments[0].start_date"],
+    ["April 31", "2026-08-20", "2026-04-31", "$.experiments[0].end_date"],
+  ])("refuses to export %s, a date the decision-packet calendar has no day for", (_label, start, end, path) => {
+    const result = projectExperimentRegistry(withDates(start, end))
+
+    expect(result.ok).toBe(false)
+    expect(result.ok ? [] : result.issues).toContainEqual({ code: "INVALID_DATE", path })
+  })
+
+  it("exports the first and last days of the decision-packet calendar", () => {
+    const result = projectExperimentRegistry(withDates("0001-01-01", "9999-12-31"))
+
+    expect(result).toMatchObject({ ok: true, document: { experiments: [{ start_date: "0001-01-01", end_date: "9999-12-31" }] } })
+  })
+
+  it("exports a registry date exactly when the decision-packet calendar has that day", () => {
+    const disagreements: string[] = []
+    for (const year of ["0000", "0001", "0004", "0100", "0400", "1900", "2000", "2024", "2025", "2100", "9999"]) {
+      for (let month = 0; month <= 13; month += 1) {
+        for (let day = 0; day <= 32; day += 1) {
+          const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+          for (const [start, end] of [[date, "9999-12-31"], ["0001-01-01", date]]) {
+            const result = projectExperimentRegistry(withDates(start, end))
+            if (result.ok !== toolCalendarHasDay(date)) disagreements.push(`${start}..${end}`)
+          }
+        }
+      }
+    }
+
+    expect(disagreements).toEqual([])
+  })
+
+  /**
+   * The exporter emits what it validated, never a later read of the input: a
+   * getter or Proxy that answers one value to the linter and another to the
+   * projection once exported a year-zero date and a free-text experiment id
+   * as `ok: true`, and an array hole the linter skipped left as `null`.
+   */
+  it.each([
+    ["start_date", "2026-08-20", "0000-01-01"],
+    ["end_date", "2026-10-15", "2026-02-30"],
+    ["experiment_id", "ot_exp_2026_001", "jane-doe-123-main-st"],
+    ["status", "running", "not_a_status"],
+  ])("exports the %s it validated, whatever a getter answers later", (field, first, later) => {
+    const registry = syntheticRegistry()
+    const reads = answersOnceThen(registry.experiments[0], field, first, later)
+
+    const result = projectExperimentRegistry(registry)
+
+    expect(reads()).toBe(1)
+    expect(result).toMatchObject({ ok: true, document: { experiments: [{ [field]: first }] } })
+  })
+
+  it("exports the budget it validated, whatever a getter answers later", () => {
+    const registry = syntheticRegistry()
+    const reads = answersOnceThen(registry.experiments[0].budget, "amount_minor", 300000, -5)
+
+    const result = projectExperimentRegistry(registry)
+
+    expect(reads()).toBe(1)
+    expect(result).toMatchObject({ ok: true, document: { experiments: [{ budget: { amount_minor: 300000 } }] } })
+  })
+
+  it("exports the experiment list it validated, whatever the registry answers later", () => {
+    const registry = syntheticRegistry()
+    const later = syntheticRegistry().experiments
+    later[0].start_date = "0000-01-01"
+    const reads = answersOnceThen(registry, "experiments", syntheticRegistry().experiments, later)
+
+    const result = projectExperimentRegistry(registry)
+
+    expect(reads()).toBe(1)
+    expect(result).toMatchObject({ ok: true, document: { experiments: [{ start_date: "2026-08-20" }] } })
+  })
+
+  it("exports what a Proxy answered to validation", () => {
+    const registry = syntheticRegistry()
+    let reads = 0
+    const experiment = new Proxy(registry.experiments[0], {
+      get(target, key, receiver) {
+        if (key !== "start_date") return Reflect.get(target, key, receiver)
+        reads += 1
+        return reads === 1 ? "2026-08-20" : "0000-01-01"
+      },
+    })
+
+    const result = projectExperimentRegistry({ ...registry, experiments: [experiment] })
+
+    expect(reads).toBe(1)
+    expect(result).toMatchObject({ ok: true, document: { experiments: [{ start_date: "2026-08-20" }] } })
+  })
+
+  it.each([
+    ["a leading hole", [1], [0]],
+    ["a trailing hole", [0], [1]],
+    ["only holes", [], [0, 1]],
+  ])("refuses an experiment list with %s", (_label, filled, holes) => {
+    const experiments: unknown[] = new Array(2)
+    for (const index of filled) experiments[index] = syntheticRegistry().experiments[0]
+
+    const result = projectExperimentRegistry({ ...syntheticRegistry(), experiments })
+
+    expect(result.ok).toBe(false)
+    for (const index of holes) {
+      expect(result.ok ? [] : result.issues).toContainEqual({ code: "TYPE_OBJECT", path: `$.experiments[${index}]` })
+    }
+  })
+
+  it.each([
+    ["a cycle", () => {
+      const registry: Json = syntheticRegistry()
+      registry.self = registry
+      return registry
+    }],
+    ["a BigInt", () => ({ ...syntheticRegistry(), schema_version: BigInt(1) })],
+    ["a throwing getter", () => {
+      const registry = syntheticRegistry()
+      Object.defineProperty(registry, "business", { enumerable: true, get: () => { throw new Error("jane-doe") } })
+      return registry
+    }],
+  ])("refuses, without throwing or echoing, a registry with %s", (_label, make) => {
+    const result = projectExperimentRegistry(make())
+
+    expect(result).toEqual({ ok: false, issues: [{ code: "TYPE_OBJECT", path: "$" }] })
+  })
+
   it("projects the checked-in approved registry as an empty operator export", () => {
     expect(projectExperimentRegistry(approvedRegistry)).toEqual({
       ok: true,
@@ -418,7 +808,10 @@ function everyString(value: unknown, visit: (text: string, key: string) => void,
 }
 
 describe("the synthetic fixture generator", () => {
-  const fixtures = generateSyntheticDecisionFixtures()
+  let fixtures: ReturnType<typeof generateSyntheticDecisionFixtures>
+  beforeAll(() => {
+    fixtures = generateSyntheticDecisionFixtures()
+  })
 
   it("produces the four decision-packet documents for OT", () => {
     expect(Object.keys(fixtures).sort()).toEqual([

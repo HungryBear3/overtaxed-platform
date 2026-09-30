@@ -182,14 +182,12 @@ describe("explicit consent", () => {
  * and another site's hostname is text somebody else chose.
  */
 describe("page context the Pixel would describe", () => {
-  const context = (overrides: Partial<{ origin: string; pathname: string; search: string; hash: string; referrer: string }> = {}) => ({
-    origin: "https://www.overtaxed-il.com",
-    pathname: "/",
-    search: "",
-    hash: "",
-    referrer: "",
-    ...overrides,
-  })
+  type Context = { href: string; origin: string; pathname: string; search: string; hash: string; referrer: string }
+  /** The raw `href` defaults to what a browser would serialize for the parts given. */
+  const context = (overrides: Partial<Context> = {}): Context => {
+    const parts = { origin: "https://www.overtaxed-il.com", pathname: "/", search: "", hash: "", referrer: "", ...overrides }
+    return { href: `${parts.origin}${parts.pathname}${parts.search}${parts.hash}`, ...parts }
+  }
 
   it.each([
     ["the home page", {}],
@@ -255,8 +253,32 @@ describe("page context the Pixel would describe", () => {
     ["a same-origin unlisted referrer", { referrer: "https://www.overtaxed-il.com/clients/jane-doe-123-main-st" }],
     ["a non-https referrer", { referrer: "android-app://com.google.android.gm/" }],
     ["an unparseable referrer", { referrer: "jane doe 123 main st" }],
+    // The raw page URL the Pixel sends: an origin never shows userinfo, and an
+    // empty search or hash never shows its delimiter, so the parts can all be
+    // clean while `location.href` is not.
+    ["a name and street as URL username and password", { href: "https://jane-doe:123-main-st@www.overtaxed-il.com/" }],
+    ["a name as the URL username", { href: "https://jane-doe@www.overtaxed-il.com/" }],
+    ["a PIN as the URL password", { href: "https://:16012160010000@www.overtaxed-il.com/" }],
+    ["a username with an empty password delimiter", { href: "https://jane-doe:@www.overtaxed-il.com/" }],
+    ["userinfo on the literal checkout plan link", { pathname: "/checkout", search: "?plan=diy", href: "https://jane-doe@www.overtaxed-il.com/checkout?plan=diy" }],
+    ["an empty query delimiter", { href: "https://www.overtaxed-il.com/?" }],
+    ["an empty fragment delimiter", { href: "https://www.overtaxed-il.com/#" }],
+    ["an empty fragment after the plan link", { pathname: "/checkout", search: "?plan=diy", href: "https://www.overtaxed-il.com/checkout?plan=diy#" }],
+    ["a raw URL for another page", { href: "https://www.overtaxed-il.com/check?pin=16012160010000" }],
+    ["a raw URL on another origin", { href: "https://overtaxed-platform-git-branch.vercel.app/" }],
+    ["a raw host in another case", { href: "https://WWW.overtaxed-il.com/" }],
+    ["an explicit default port", { href: "https://www.overtaxed-il.com:443/" }],
+    ["surrounding whitespace", { href: " https://www.overtaxed-il.com/" }],
+    ["an unparseable raw URL", { href: "jane doe 123 main st" }],
+    ["an empty raw URL", { href: "" }],
   ])("refuses %s", (_label, overrides) => {
     expect(isMetaSafePageContext(context(overrides))).toBe(false)
+  })
+
+  it("refuses a context without a raw page URL", () => {
+    const { href: _href, ...parts } = context()
+
+    expect(isMetaSafePageContext(parts as never)).toBe(false)
   })
 })
 
@@ -270,6 +292,43 @@ describe("the closed Meta event allowlist", () => {
       name: "InitiateCheckout",
       params: {},
     })
+  })
+
+  /**
+   * A parameter is read once: the value that passed the allowlist is the value
+   * sent. A getter that answered "T2" and 69 to the check once sent a name and
+   * a street in their place.
+   */
+  it("reads each checkout parameter once and builds from that read", () => {
+    const reads = { content_name: 0, value: 0 }
+    const params = {
+      get content_name() {
+        reads.content_name += 1
+        return reads.content_name === 1 ? "T2" : "PIN 16-01-216-001-0000 JANE DOE"
+      },
+      get value() {
+        reads.value += 1
+        return reads.value === 1 ? 69 : "123 Main St"
+      },
+    }
+
+    expect(buildMetaBrowserEvent("InitiateCheckout", params)).toEqual({
+      name: "InitiateCheckout",
+      params: { content_name: "T2", currency: "USD", value: 69 },
+    })
+    expect(reads).toEqual({ content_name: 1, value: 1 })
+  })
+
+  it("drops a checkout parameter whose one read is not allowlisted, whatever it answers later", () => {
+    let reads = 0
+    const params = {
+      get content_name() {
+        reads += 1
+        return reads === 1 ? "PIN 16-01-216-001-0000" : "T2"
+      },
+    }
+
+    expect(buildMetaBrowserEvent("InitiateCheckout", params)).toEqual({ name: "InitiateCheckout", params: {} })
   })
 
   it.each(["Purchase", "Lead", "CompleteRegistration", "PropertyAdded", "AppealStarted", "Subscribe", "free_check_qualified"])(
@@ -297,6 +356,9 @@ describe("the Pixel mount", () => {
     ["a PIN disguised as a Meta click id", () => { grantConsent(); window.history.replaceState({}, "", "/?fbclid=16-01-216-001-0000") }],
     ["a hostile referrer", () => { grantConsent(); setReferrer("https://partner.example.test/clients/jane-doe-100-w-randolph?order=ord_123") }],
     ["another site's root as the referrer", () => { grantConsent(); setReferrer("https://jane-doe-123-main-st.example.test/") }],
+    ["an empty query delimiter in the page URL", () => { grantConsent(); window.history.replaceState({}, "", "/?") }],
+    ["an empty fragment delimiter in the page URL", () => { grantConsent(); window.history.replaceState({}, "", "/#") }],
+    ["an empty fragment after the plan link", () => { grantConsent(); window.history.replaceState({}, "", "/checkout?plan=diy#") }],
   ])("inserts no script and makes no call with %s", (_label, arrange) => {
     arrange()
 
@@ -436,6 +498,15 @@ describe("events through the gated writer", () => {
     expect(sdk).not.toHaveBeenCalled()
   })
 
+  it.each(["/?", "/#"])("sends nothing once the raw page URL is %s, though its search and hash read empty", (path) => {
+    const sdk = installed()
+    window.history.replaceState({}, "", path)
+
+    trackMetaEvent("InitiateCheckout", { content_name: "T2", value: 69 })
+
+    expect(sdk).not.toHaveBeenCalled()
+  })
+
   it("never writes a browser Purchase, a custom event or an identifier", () => {
     const sdk = installed()
 
@@ -477,6 +548,197 @@ describe("events through the gated writer", () => {
     for (const marker of ["jane", "example", "16012160010000", "cs_live", "prop_123", "appeal_123"]) {
       expect(serialized).not.toContain(marker)
     }
+  })
+})
+
+/**
+ * A hit belongs to a live mount. The script's load event, the SDK taking over
+ * dispatch, a consent change or a navigation can each arrive after the mount
+ * that asked for the Pixel is gone; none of them may initialize the pixel or
+ * send anything then. A later mount adopts the one installed bootstrap and is
+ * judged, like every hit, on the page and consent as they are at dispatch.
+ */
+describe("no hit outlives the mount that authorized it", () => {
+  const safeCheckout = { content_name: "T2", value: 69 }
+
+  it("sends nothing, not even init, when the script loads after the mount is gone", () => {
+    grantConsent()
+    const view = render(<MetaPixelCandidate pixelId={PIXEL_ID} />)
+    trackMetaEvent("InitiateCheckout", safeCheckout)
+
+    view.unmount()
+    const sdk = runSdk()
+
+    expect(sdk).not.toHaveBeenCalled()
+    expect(fbq()?.queue).toEqual([])
+  })
+
+  it("sends nothing through an initialized SDK once the mount is gone", () => {
+    grantConsent()
+    const view = render(<MetaPixelCandidate pixelId={PIXEL_ID} />)
+    const sdk = runSdk()
+    sdk.mockClear()
+
+    view.unmount()
+    trackMetaEvent("InitiateCheckout", safeCheckout)
+    analytics.checkoutStarted("T2", 69)
+    trackMetaEvent("PageView")
+
+    expect(sdk).not.toHaveBeenCalled()
+  })
+
+  it("sends nothing when the SDK takes over dispatch, consent is renewed and the page changes after unmount", () => {
+    grantConsent()
+    const view = render(<MetaPixelCandidate pixelId={PIXEL_ID} />)
+    view.unmount()
+
+    const sdk = jest.fn()
+    fbq()!.callMethod = sdk
+    grantConsent(NOW)
+    window.history.replaceState({}, "", "/pricing")
+    trackMetaEvent("InitiateCheckout", safeCheckout)
+    act(() => {
+      pixelScripts()[0].dispatchEvent(new Event("load"))
+    })
+    trackMetaEvent("InitiateCheckout", safeCheckout)
+
+    expect(sdk).not.toHaveBeenCalled()
+  })
+
+  it("keeps a stale mount's callback inert while a later mount on a safe page initializes exactly once", () => {
+    grantConsent()
+    render(<MetaPixelCandidate pixelId={PIXEL_ID} />).unmount()
+    render(<MetaPixelCandidate pixelId={PIXEL_ID} />)
+
+    expect(pixelScripts()).toHaveLength(1)
+    const sdk = runSdk()
+
+    expect(sdk.mock.calls).toEqual([
+      ["set", "autoConfig", false, PIXEL_ID],
+      ["init", PIXEL_ID],
+      ["track", "PageView", {}],
+    ])
+  })
+
+  it("initializes a later mount on a safe page when the script loaded while no mount was live", () => {
+    grantConsent()
+    render(<MetaPixelCandidate pixelId={PIXEL_ID} />).unmount()
+    const sdk = runSdk()
+    expect(sdk).not.toHaveBeenCalled()
+
+    render(<MetaPixelCandidate pixelId={PIXEL_ID} />)
+
+    expect(sdk.mock.calls).toEqual([
+      ["set", "autoConfig", false, PIXEL_ID],
+      ["init", PIXEL_ID],
+      ["track", "PageView", {}],
+    ])
+  })
+
+  it("never initializes for a later mount on an unsafe page", () => {
+    grantConsent()
+    render(<MetaPixelCandidate pixelId={PIXEL_ID} />).unmount()
+    window.history.replaceState({}, "", "/check?pin=16-01-216-001-0000")
+    render(<MetaPixelCandidate pixelId={PIXEL_ID} />)
+
+    const sdk = runSdk()
+    trackMetaEvent("InitiateCheckout", safeCheckout)
+
+    expect(sdk).not.toHaveBeenCalled()
+  })
+
+  it("initializes once under StrictMode's mount, unmount and remount", () => {
+    grantConsent()
+    render(
+      <React.StrictMode>
+        <MetaPixelCandidate pixelId={PIXEL_ID} />
+      </React.StrictMode>,
+    )
+
+    expect(pixelScripts()).toHaveLength(1)
+    const sdk = runSdk()
+
+    expect(sdk.mock.calls).toEqual([
+      ["set", "autoConfig", false, PIXEL_ID],
+      ["init", PIXEL_ID],
+      ["track", "PageView", {}],
+    ])
+  })
+
+  it("keeps one live owner across a client navigation before the SDK loads, and sends no second PageView after", () => {
+    grantConsent()
+    const view = render(<MetaPixelCandidate pixelId={PIXEL_ID} />)
+    window.history.replaceState({}, "", "/pricing")
+    view.rerender(<MetaPixelCandidate pixelId={PIXEL_ID} />)
+
+    const sdk = runSdk()
+    window.history.replaceState({}, "", "/check")
+    view.rerender(<MetaPixelCandidate pixelId={PIXEL_ID} />)
+    trackMetaEvent("InitiateCheckout", safeCheckout)
+
+    expect(pixelScripts()).toHaveLength(1)
+    expect(sdk.mock.calls).toEqual([
+      ["set", "autoConfig", false, PIXEL_ID],
+      ["init", PIXEL_ID],
+      ["track", "PageView", {}],
+      ["track", "InitiateCheckout", { content_name: "T2", currency: "USD", value: 69 }],
+    ])
+  })
+
+  it("sends nothing once a navigation to an unsafe page leaves no live owner", () => {
+    grantConsent()
+    const view = render(<MetaPixelCandidate pixelId={PIXEL_ID} />)
+    const sdk = runSdk()
+    sdk.mockClear()
+
+    window.history.replaceState({}, "", "/townships/cicero")
+    view.rerender(<MetaPixelCandidate pixelId={PIXEL_ID} />)
+    window.history.replaceState({}, "", "/")
+    trackMetaEvent("InitiateCheckout", safeCheckout)
+
+    expect(sdk).not.toHaveBeenCalled()
+  })
+
+  it("authorizes against the page and consent as they are after reading the caller's parameters", () => {
+    grantConsent()
+    render(<MetaPixelCandidate pixelId={PIXEL_ID} />)
+    const sdk = runSdk()
+    sdk.mockClear()
+    const params = {
+      get content_name() {
+        localStorage.removeItem(MARKETING_CONSENT_STORAGE_KEY)
+        window.history.replaceState({}, "", "/?pin=16-01-216-001-0000")
+        return "T2"
+      },
+      value: 69,
+    }
+
+    trackMetaEvent("InitiateCheckout", params)
+
+    expect(sdk).not.toHaveBeenCalled()
+  })
+
+  it("hands the SDK exactly the parameters that were validated, whatever a getter answers later", () => {
+    grantConsent()
+    render(<MetaPixelCandidate pixelId={PIXEL_ID} />)
+    const sdk = runSdk()
+    sdk.mockClear()
+    let nameReads = 0
+    let valueReads = 0
+    const params = {
+      get content_name() {
+        nameReads += 1
+        return nameReads === 1 ? "T2" : "PIN 16-01-216-001-0000 JANE DOE"
+      },
+      get value() {
+        valueReads += 1
+        return valueReads === 1 ? 69 : "123 Main St"
+      },
+    }
+
+    trackMetaEvent("InitiateCheckout", params)
+
+    expect(sdk.mock.calls).toEqual([["track", "InitiateCheckout", { content_name: "T2", currency: "USD", value: 69 }]])
   })
 })
 

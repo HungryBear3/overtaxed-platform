@@ -237,6 +237,27 @@ function isObject(value: unknown): value is Json {
 }
 
 /**
+ * The input as plain JSON, read exactly once, or null if it cannot be. Every
+ * check and every exported byte then comes from this one read: a getter or
+ * Proxy cannot answer one value to validation and another to the document,
+ * an array hole becomes `null` (refused by the checks, never skipped), and
+ * inherited or non-enumerable fields are simply absent. A cycle, a BigInt or
+ * a throwing getter refuses the whole input without echoing anything.
+ */
+function readOnce(input: unknown): { value: unknown } | null {
+  try {
+    const text = JSON.stringify(input)
+    return text === undefined ? null : { value: JSON.parse(text) }
+  } catch {
+    return null
+  }
+}
+
+function unreadable(): ExportResult {
+  return { ok: false, issues: [{ code: "TYPE_OBJECT", path: "$" }] }
+}
+
+/**
  * Epoch ms of midnight UTC for a real calendar date, or null. `Date.parse`
  * rolls an impossible day over (`2026-02-30` is March 2) and knows a year
  * zero; the tool's calendar does neither, so both are refused.
@@ -258,11 +279,31 @@ function isoFromMs(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10)
 }
 
-/** The UTC instant at which `day` begins in `timeZone`. */
+/**
+ * Epoch ms of a proleptic-Gregorian UTC wall time. `Date.UTC` reads years
+ * 0-99 as 1900-1999; `setUTCFullYear` takes the year as given, so 0001-0099
+ * stay on the tool's calendar.
+ */
+function utcWallMs(year: number, month: number, day: number, hour: number, minute: number, second: number): number {
+  const wall = new Date(0)
+  wall.setUTCFullYear(year, month - 1, day)
+  wall.setUTCHours(hour, minute, second, 0)
+  return wall.getTime()
+}
+
+/** The Gregorian year a formatted date names: 1 BC is year 0, the day before 0001-01-01. */
+function astronomicalYear(era: string | undefined, year: string | undefined): number {
+  if (era === "AD") return Number(year)
+  if (era === "BC") return 1 - Number(year)
+  return NaN
+}
+
+/** The UTC instant at which `day` begins in `timeZone`; NaN if the zone data yields none. */
 function zonedDayStart(dayMs: number, timeZone: string): number {
   const format = new Intl.DateTimeFormat("en-US", {
     timeZone,
     hourCycle: "h23",
+    era: "short",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -272,11 +313,28 @@ function zonedDayStart(dayMs: number, timeZone: string): number {
   })
   const offsetAt = (instant: number) => {
     const parts = Object.fromEntries(format.formatToParts(new Date(instant)).map((part) => [part.type, part.value]))
-    const wall = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second))
+    const wall = utcWallMs(astronomicalYear(parts.era, parts.year), Number(parts.month), Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second))
     return wall - instant
   }
   const guess = dayMs - offsetAt(dayMs)
-  return dayMs - offsetAt(guess)
+  // Formatting an invalid Date throws; NaN refuses instead.
+  return Number.isFinite(guess) ? dayMs - offsetAt(guess) : NaN
+}
+
+/** Hours the tool waits after a GA4 day ends before it counts as settled (`SETTLE_HOURS` in its evidence.py). */
+const GA4_SETTLE_MS = 48 * 3_600_000
+/** The tool's last instant: Python's `datetime.max`, 9999-12-31T23:59:59.999999, in UTC. */
+const TOOL_LAST_INSTANT_MS = Date.parse("9999-12-31T23:59:59.999Z")
+
+/**
+ * Whether the tool can compute the settlement instant of an attested day. For
+ * every attested day it evaluates `day_start_utc(day + 1 day, tz) + 48h` and
+ * raises OverflowError when that lies past its calendar, whatever generated_at
+ * says. In every packet timezone the last such day is 9999-12-28. A NaN
+ * instant compares false and refuses.
+ */
+function settlementComputable(dayMs: number, timeZone: string): boolean {
+  return zonedDayStart(dayMs + DAY_MS, timeZone) + GA4_SETTLE_MS <= TOOL_LAST_INSTANT_MS
 }
 
 function closedKeys(value: Json, fields: readonly string[], path: string, issues: ExportIssue[]): void {
@@ -296,7 +354,10 @@ function isCount(value: unknown): value is number {
  * normalized, rows that normalize to the same day and segment are summed, and
  * the result is sorted, so row order never changes the output bytes.
  */
-export function buildGa4BehaviorDocument(input: unknown): ExportResult {
+export function buildGa4BehaviorDocument(raw: unknown): ExportResult {
+  const snapshot = readOnce(raw)
+  if (!snapshot) return unreadable()
+  const input = snapshot.value
   if (!isObject(input)) return { ok: false, issues: [{ code: "TYPE_OBJECT", path: "$" }] }
   const issues: ExportIssue[] = []
   closedKeys(input, INPUT_FIELDS, "$", issues)
@@ -317,7 +378,7 @@ export function buildGa4BehaviorDocument(input: unknown): ExportResult {
     issues.push({ code: "COVERAGE_RANGE_INVALID", path: "$.coverage" })
   } else if ((end - start) / DAY_MS + 1 > MAX_COVERAGE_DAYS) {
     issues.push({ code: "COVERAGE_TOO_LONG", path: "$.coverage" })
-  } else if (Number.isFinite(generatedAt) && isKnown(DOWNSTREAM_VOCABULARY.timezones, timeZone) && zonedDayStart(end, timeZone) >= generatedAt) {
+  } else if (Number.isFinite(generatedAt) && isKnown(DOWNSTREAM_VOCABULARY.timezones, timeZone) && !(zonedDayStart(end, timeZone) < generatedAt)) {
     issues.push({ code: "COVERAGE_AFTER_GENERATED_AT", path: "$.coverage.end" })
   }
 
@@ -338,8 +399,15 @@ export function buildGa4BehaviorDocument(input: unknown): ExportResult {
       rangeStart >= start &&
       rangeEnd <= end &&
       (previousEnd === null || rangeStart > previousEnd)
-    if (!valid) issues.push({ code: "ATTESTED_RANGE_INVALID", path: `$.attested_complete_ranges[${index}]` })
-    else previousEnd = rangeEnd
+    if (!valid) {
+      issues.push({ code: "ATTESTED_RANGE_INVALID", path: `$.attested_complete_ranges[${index}]` })
+      return
+    }
+    previousEnd = rangeEnd
+    // Settlement is monotone in the day, so the range's last day decides it.
+    if (isKnown(DOWNSTREAM_VOCABULARY.timezones, timeZone) && !settlementComputable(rangeEnd, timeZone)) {
+      issues.push({ code: "ATTESTED_RANGE_UNSETTLEABLE", path: `$.attested_complete_ranges[${index}]` })
+    }
   })
 
   const quality = input.quality
@@ -437,7 +505,10 @@ export function buildGa4BehaviorDocument(input: unknown): ExportResult {
  * sentinel here: the tool's registry has no sentinels, and an experiment on
  * `other` would describe no segment at all.
  */
-export function projectExperimentRegistry(registry: unknown): ExportResult {
+export function projectExperimentRegistry(raw: unknown): ExportResult {
+  const snapshot = readOnce(raw)
+  if (!snapshot) return unreadable()
+  const registry = snapshot.value
   const lint = lintExperimentRegistry(registry)
   if (!lint.ok) return { ok: false, issues: lint.issues }
   const valid = registry as ExperimentRegistry

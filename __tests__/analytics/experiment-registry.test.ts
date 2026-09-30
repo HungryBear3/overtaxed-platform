@@ -161,6 +161,90 @@ describe("the linter rejects", () => {
   })
 })
 
+/**
+ * Registry dates are days of the decision-packet tool's calendar: the
+ * proleptic Gregorian days from 0001-01-01 to 9999-12-31. JavaScript's Date
+ * also knows a year zero and round-trips it, so a round trip alone is not
+ * enough — the tool refuses `0000-…` outright.
+ */
+describe("registry dates", () => {
+  it.each([
+    ["a year-zero start", { start_date: "0000-01-01" }, "$.experiments[0].start_date"],
+    ["a year-zero end", { start_date: "0000-01-01", end_date: "0000-12-31" }, "$.experiments[0].end_date"],
+    ["a year-zero leap day", { start_date: "0000-02-29" }, "$.experiments[0].start_date"],
+    ["February 29 of a common year", { start_date: "2025-02-29" }, "$.experiments[0].start_date"],
+    ["February 29 of a century that is not a leap year", { end_date: "2100-02-29" }, "$.experiments[0].end_date"],
+    ["April 31", { end_date: "2026-04-31" }, "$.experiments[0].end_date"],
+    ["month thirteen", { end_date: "2026-13-01" }, "$.experiments[0].end_date"],
+    ["month zero", { start_date: "2026-00-10" }, "$.experiments[0].start_date"],
+    ["day zero", { start_date: "2026-10-00" }, "$.experiments[0].start_date"],
+    ["day thirty-two", { end_date: "2026-10-32" }, "$.experiments[0].end_date"],
+    ["a five-digit year", { end_date: "10000-01-01" }, "$.experiments[0].end_date"],
+    ["a signed year", { start_date: "+2026-10-05" }, "$.experiments[0].start_date"],
+    ["a timestamp", { start_date: "2026-10-05T00:00:00Z" }, "$.experiments[0].start_date"],
+    ["non-ASCII digits", { start_date: "２０２６-10-05" }, "$.experiments[0].start_date"],
+    ["a numeric date", { start_date: 20261005 }, "$.experiments[0].start_date"],
+    ["a prototype name as a date", { start_date: "constructor" }, "$.experiments[0].start_date"],
+  ])("rejects %s", (_label, overrides, path) => {
+    const result = issues(doc([experiment(overrides as Json)]))
+
+    expect(result).toContainEqual({ code: "INVALID_DATE", path })
+  })
+
+  it.each([
+    ["the first day of the calendar", "0001-01-01", "0001-01-01"],
+    ["the last day of the calendar", "9999-12-31", "9999-12-31"],
+    ["the whole calendar", "0001-01-01", "9999-12-31"],
+    ["a leap day", "2024-02-29", "2024-02-29"],
+    ["a quadricentennial leap day", "2000-02-29", "2000-02-29"],
+  ])("accepts %s", (_label, start_date, end_date) => {
+    expect(lintExperimentRegistry(doc([experiment({ start_date, end_date })]))).toEqual({ ok: true, experiments: 1 })
+  })
+
+  it.each(["start_date", "end_date"])("does not take %s from an experiment's prototype", (field) => {
+    const own = experiment()
+    const inherited = own[field]
+    delete own[field]
+    const value = Object.assign(Object.create({ [field]: inherited }), own)
+
+    expect(issues(doc([value]))).toContainEqual({ code: `MISSING_KEY:${field}`, path: "$.experiments[0]" })
+  })
+
+  it("does not take the experiment list from the registry's prototype", () => {
+    const own = doc([experiment()])
+    delete own.experiments
+    const value = Object.assign(Object.create({ experiments: [experiment()] }), own)
+
+    expect(issues(value)).toContainEqual({ code: "MISSING_KEY:experiments", path: "$" })
+  })
+
+  it("lints every slot of the experiment list: a hole is not an experiment", () => {
+    const experiments: Json[] = new Array(3)
+    experiments[1] = experiment()
+
+    expect(issues(doc(experiments))).toEqual(
+      expect.arrayContaining([
+        { code: "TYPE_OBJECT", path: "$.experiments[0]" },
+        { code: "TYPE_OBJECT", path: "$.experiments[2]" },
+      ]),
+    )
+  })
+
+  it("treats a parsed __proto__ key as an unknown key, not as a source of dates", () => {
+    const own = experiment()
+    delete own.start_date
+    const value = JSON.parse(JSON.stringify(own).replace(/^\{/, '{"__proto__":{"start_date":"2026-10-05"},'))
+
+    expect(Object.prototype.hasOwnProperty.call(value, "__proto__")).toBe(true)
+    expect(issues(doc([value]))).toEqual(
+      expect.arrayContaining([
+        { code: "UNKNOWN_KEY", path: "$.experiments[0]" },
+        { code: "MISSING_KEY:start_date", path: "$.experiments[0]" },
+      ]),
+    )
+  })
+})
+
 describe("segments and identity", () => {
   it("rejects two experiments on the same governed segment with overlapping dates", () => {
     const value = doc([

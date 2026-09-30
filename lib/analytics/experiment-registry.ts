@@ -149,14 +149,14 @@ class Findings {
   }
 }
 
-/** Closed object: report unknown keys by category and missing keys by name. */
+/** Closed object: report unknown keys by category and missing own keys by name; nothing is read from a prototype. */
 function closedObject(value: unknown, fields: readonly string[], path: string, out: Findings): value is Json {
   if (!isObject(value)) {
     out.add("TYPE_OBJECT", path)
     return false
   }
   for (const key of Object.keys(value)) if (!fields.includes(key)) out.add(forbiddenKeyCode(key), path)
-  for (const field of fields) if (!(field in value)) out.add(`MISSING_KEY:${field}`, path)
+  for (const field of fields) if (!Object.prototype.hasOwnProperty.call(value, field)) out.add(`MISSING_KEY:${field}`, path)
   return true
 }
 
@@ -171,9 +171,13 @@ function checkInteger(value: unknown, low: number, high: number, path: string, o
   else if (value < low || value > high) out.add("INTEGER_OUT_OF_RANGE", path)
 }
 
-/** Epoch day of a real calendar date, or null. */
+/**
+ * Epoch day of a real calendar date, or null. The decision-packet tool's
+ * calendar runs from 0001-01-01 to 9999-12-31; `Date` also knows a year zero
+ * and round-trips it, so year zero is refused before the round trip.
+ */
 function calendarDay(value: unknown): number | null {
-  if (typeof value !== "string" || !DATE.test(value)) return null
+  if (typeof value !== "string" || !DATE.test(value) || value.startsWith("0000")) return null
   const ms = Date.parse(`${value}T00:00:00Z`)
   if (!Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 10) !== value) return null
   return ms / 86_400_000
@@ -287,7 +291,8 @@ export function lintExperimentRegistry(doc: unknown): RegistryLint {
 
   const seenIds = new Set<string>()
   const checked: Checked[] = []
-  experiments.slice(0, MAX_EXPERIMENTS).forEach((experiment, index) => {
+  // Array.from visits holes (as undefined), which forEach would skip.
+  Array.from(experiments.slice(0, MAX_EXPERIMENTS)).forEach((experiment, index) => {
     const path = `$.experiments[${index}]`
     const result = lintExperiment(experiment, path, origin, currency, out)
     const id = isObject(experiment) ? experiment.experiment_id : undefined

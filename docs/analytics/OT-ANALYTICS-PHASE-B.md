@@ -80,7 +80,10 @@ lists, Phase-A landing values. No `utm_term`. Every canonical value is also a
 valid Phase-A UTM token and approved-code shape. The approved slug list is
 **empty**; synthetic slugs are accepted only in synthetic fixtures. The linter
 rejects free text, URLs/query/hash, identifiers (email, phone, PIN, Stripe, GA,
-UUID…), unknown keys (by category), bad dates/status/decisions, decisions
+UUID…), unknown keys (by category), missing keys (own keys only — nothing is
+read from a prototype), bad status/decisions, dates that are not days of the
+decision-packet tool's calendar (`0001-01-01`…`9999-12-31`: no year `0000`,
+no rolled-over `2026-02-30`), decisions
 before completion, float literals, mixed/unknown currencies, and any two
 experiments on one segment that share a day (as the decision-packet tool does).
 
@@ -92,7 +95,23 @@ passed through. Alias tables are read by own key only, so a raw `constructor`
 or `__proto__` maps to `other`, never to an inherited member. Timestamps must
 be exact `YYYY-MM-DDTHH:MM:SSZ` instants that survive a round trip — no
 rolled-over `2026-02-30`, no `24:00`, no year `0000` — as the tool's calendar
-requires. The generated synthetic fixtures were accepted by that tool
+requires. Zoned day starts are proleptic Gregorian at both ends of that
+calendar: years `0001`–`0099` are not read as the 1900s (as `Date.UTC` would),
+and a day before 1883 begins at the zone's local mean time, as in the tool's
+zoneinfo. A coverage end that does not begin strictly before `generated_at`,
+or whose start cannot be computed, is `COVERAGE_AFTER_GENERATED_AT`. The tool
+settles each attested GA4 day at its next local midnight plus 48 hours and
+raises `OverflowError` when that instant falls past `9999-12-31`, whatever
+`generated_at` says; so an attested range whose last day is later than
+`9999-12-28` (in every packet timezone) is refused as
+`ATTESTED_RANGE_UNSETTLEABLE` at that range. Unattested coverage through
+`9999-12-31` is still exported, because the tool accepts it.
+Each exporter reads its input exactly once, as plain JSON, and both
+checks and output come from that one read: a getter or Proxy cannot answer one
+value to validation and another to the document, an array hole is refused
+(never skipped and then written as `null`), and an input that cannot be read
+(a cycle, a BigInt, a throwing getter) is refused as `TYPE_OBJECT` at `$`. The
+registry linter also visits every array slot. The generated synthetic fixtures were accepted by that tool
 (`validate`: 4/4 ACCEPTED, `completeness=complete`; `build` exit 0).
 
 ### Meta
@@ -106,7 +125,10 @@ The candidate itself loads only with a well-formed pixel id, a production
 build, the canonical host and an explicit current `ot_marketing_consent_v1`
 grant. It also requires that the page it would report be safe as raw bytes:
 
-- a canonical `https` origin and an exact static path;
+- a canonical `https` origin and an exact static path, with the raw
+  `location.href` exactly that origin, path and query put back together — no
+  URL username or password (which `location.origin` never shows) and no empty
+  `?` or `#` (which an empty `search`/`hash` never shows);
 - no fragment, and no query at all except the literal `?plan=diy` on
   `/checkout`. A `fbclid` or UTM value that fits a pattern can still be a PIN,
   a name or a Stripe id, so those pages are not reported;
@@ -115,9 +137,14 @@ grant. It also requires that the page it would report be safe as raw bytes:
 
 Nothing is ever queued for the vendor script. The bootstrap stub drops calls
 until fbevents.js has taken over dispatch. `init` and PageView run only on
-load, if the SDK is ready and every gate still holds. Each later hit is
-re-authorized when it is handed to the SDK, and only an `fbq` this module
-installed is ever written to. Once handed over, a hit is inside the SDK;
+load, if the SDK is ready, a mount is live and every gate still holds. Each
+later hit is re-authorized — after the caller's parameters are read, each
+exactly once, so the value that passed the allowlist is the value sent — when it
+is handed to the SDK, and only an `fbq` this module installed is ever written
+to. Each effect run of the mount owns the installation until its cleanup: a
+script load, an SDK that became ready, a consent change or a navigation that
+arrives after the mount is gone sends nothing, not even `init`. A later mount
+adopts the one installed script and is judged on the page as it is then. Once handed over, a hit is inside the SDK;
 anything the SDK buffers internally is not controllable from here.
 
 Automatic configuration and pushState page views are off, and there is no
