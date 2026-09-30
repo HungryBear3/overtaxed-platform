@@ -132,10 +132,18 @@ a closed list; a GA4 value outside it is `other`, never echoed.
   - `USERS_NOT_ADDITIVE` — the bucket merged several raw GA4 values (usually
     `other`); users cannot be summed, events can.
   - `SLICE_INCONCLUSIVE` — GA4 thresholded, sampled, collapsed rows into
-    `(other)`, or truncated this slice; counts are shown, rates are not.
+    `(other)`, truncated this slice, or returned it empty with a stated
+    `emptyReason`; counts are shown, rates are not.
 - Report `status`: `OK`, `INCONCLUSIVE` (some slice is), or `INVALID_RESPONSE`
   (any response the request could not have produced — the whole report is
-  refused, never partial).
+  refused, never partial). That includes quality evidence of the wrong shape:
+  `metadata` missing or not an object, a metadata key outside GA4's
+  `ResponseMetaData`, a non-boolean thresholding or `(other)` flag, a
+  malformed `samplingMetadatas` entry, an active metric restriction, a missing
+  `rowCount` when rows are present, a foreign `kind`, a `propertyQuota`, or
+  non-empty `totals`/`maximums`/`minimums`. Save responses exactly as the API
+  returned them; a tool that stringifies or drops fields makes the report
+  refuse, not pass.
 
 **Purchase is not revenue.** `payment_authority:
 stripe_order_ledger_not_included`: GA4 can miss a purchase (claim-then-fail is

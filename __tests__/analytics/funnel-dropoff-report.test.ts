@@ -414,6 +414,96 @@ describe("hostile and malformed responses fail the whole report closed", () => {
     expect(JSON.stringify(report)).not.toContain("jane")
   })
 
+  /** Apply one mutation to every response, as a lossy save tool would. */
+  const everyResponse = (mutate: (response: Json) => void) => (r: Json[]) => void r.forEach(mutate)
+  const setMetadata = (key: string, value: unknown) =>
+    everyResponse((response) => void ((response.metadata as Json)[key] = value))
+
+  // B1: the quality evidence is the only input that decides whether a rate may
+  // be stated, so any shape GA4 could not have sent refuses the whole report.
+  it.each([
+    ["a string subjectToThresholding", setMetadata("subjectToThresholding", "true"), "METADATA_THRESHOLDING"],
+    ["a numeric subjectToThresholding", setMetadata("subjectToThresholding", 1), "METADATA_THRESHOLDING"],
+    ["a null subjectToThresholding", setMetadata("subjectToThresholding", null), "METADATA_THRESHOLDING"],
+    ["an object samplingMetadatas", setMetadata("samplingMetadatas", { samplesReadCount: "1" }), "METADATA_SAMPLING"],
+    ["a string samplingMetadatas", setMetadata("samplingMetadatas", "sampled"), "METADATA_SAMPLING"],
+    ["a non-object sampling entry", setMetadata("samplingMetadatas", ["1"]), "METADATA_SAMPLING"],
+    ["an empty sampling entry", setMetadata("samplingMetadatas", [{}]), "METADATA_SAMPLING"],
+    ["a sampling entry missing its space size", setMetadata("samplingMetadatas", [{ samplesReadCount: "1" }]), "METADATA_SAMPLING"],
+    ["a numeric sampling count", setMetadata("samplingMetadatas", [{ samplesReadCount: 1, samplingSpaceSize: "2" }]), "METADATA_SAMPLING"],
+    ["a non-decimal sampling count", setMetadata("samplingMetadatas", [{ samplesReadCount: "1e3", samplingSpaceSize: "2000" }]), "METADATA_SAMPLING"],
+    ["more samples read than the space", setMetadata("samplingMetadatas", [{ samplesReadCount: "30", samplingSpaceSize: "4" }]), "METADATA_SAMPLING"],
+    ["an unknown sampling key", setMetadata("samplingMetadatas", [{ samplesReadCount: "1", samplingSpaceSize: "2", note: HOSTILE }]), "METADATA_SAMPLING"],
+    ["a string dataLossFromOtherRow", setMetadata("dataLossFromOtherRow", "true"), "METADATA_OTHER_ROW"],
+    ["a numeric dataLossFromOtherRow", setMetadata("dataLossFromOtherRow", 1), "METADATA_OTHER_ROW"],
+    ["absent metadata", everyResponse((response) => void delete response.metadata), "METADATA_SHAPE"],
+    ["null metadata", everyResponse((response) => void (response.metadata = null)), "METADATA_SHAPE"],
+    ["array metadata", everyResponse((response) => void (response.metadata = [])), "METADATA_SHAPE"],
+    ["string metadata", everyResponse((response) => void (response.metadata = "{}")), "METADATA_SHAPE"],
+    ["an unknown metadata key", setMetadata("zzz", 1), "METADATA_UNKNOWN_FIELD"],
+    ["a renamed thresholding key", setMetadata("subject_to_thresholding", true), "METADATA_UNKNOWN_FIELD"],
+    ["a lowercase currency code", setMetadata("currencyCode", "usd"), "METADATA_CURRENCY"],
+    ["a numeric currency code", setMetadata("currencyCode", 840), "METADATA_CURRENCY"],
+    ["a malformed time zone", setMetadata("timeZone", "America/Chicago; DROP"), "METADATA_TIME_ZONE"],
+    ["an empty time zone", setMetadata("timeZone", ""), "METADATA_TIME_ZONE"],
+    ["a non-string time zone", setMetadata("timeZone", -5), "METADATA_TIME_ZONE"],
+    ["a non-string emptyReason", setMetadata("emptyReason", true), "METADATA_EMPTY_REASON"],
+    ["an emptyReason on a response with rows", setMetadata("emptyReason", "DATA_NOT_AVAILABLE"), "METADATA_EMPTY_REASON"],
+    ["a non-object schemaRestrictionResponse", setMetadata("schemaRestrictionResponse", "none"), "METADATA_SCHEMA_RESTRICTION"],
+    [
+      "an active metric restriction",
+      setMetadata("schemaRestrictionResponse", { activeMetricRestrictions: [{ metricName: "eventCount", restrictedMetricTypes: ["REVENUE_DATA"] }] }),
+      "METADATA_SCHEMA_RESTRICTION",
+    ],
+    ["a non-array metric restriction list", setMetadata("schemaRestrictionResponse", { activeMetricRestrictions: {} }), "METADATA_SCHEMA_RESTRICTION"],
+    ["an unknown schema restriction key", setMetadata("schemaRestrictionResponse", { zzz: [] }), "METADATA_SCHEMA_RESTRICTION"],
+    ["an absent rowCount with rows", everyResponse((response) => void delete response.rowCount), "ROW_COUNT"],
+    ["a string rowCount", everyResponse((response) => void (response.rowCount = String(response.rowCount))), "ROW_COUNT"],
+    ["a foreign kind", everyResponse((response) => void (response.kind = "evil")), "KIND"],
+    ["a non-string kind", everyResponse((response) => void (response.kind = 1)), "KIND"],
+    ["a property quota although none was requested", everyResponse((response) => void (response.propertyQuota = { tokensPerDay: { consumed: 1 } })), "PROPERTY_QUOTA"],
+    ["an empty property quota object", everyResponse((response) => void (response.propertyQuota = {})), "PROPERTY_QUOTA"],
+    ["totals although no aggregation was requested", everyResponse((response) => void (response.totals = [{ junk: "jane@example.com" }])), "AGGREGATES"],
+    ["maximums although no aggregation was requested", everyResponse((response) => void (response.maximums = [{}])), "AGGREGATES"],
+    ["minimums although no aggregation was requested", everyResponse((response) => void (response.minimums = [{}])), "AGGREGATES"],
+    ["non-array totals", everyResponse((response) => void (response.totals = {})), "AGGREGATES"],
+    ["null totals", everyResponse((response) => void (response.totals = null)), "AGGREGATES"],
+    [
+      "the reviewed kind + totals + quota combination",
+      everyResponse((response) => {
+        response.kind = "evil"
+        response.totals = [{ junk: "jane@example.com" }]
+        response.propertyQuota = { tokensPerDay: { consumed: 1 } }
+      }),
+      "KIND",
+    ],
+  ])("refuses %s", (_label, mutate, code) => {
+    const report = mutated(mutate as (responses: Json[], b: FunnelDropoffRequestBundle) => unknown)
+    expect(report.status).toBe("INVALID_RESPONSE")
+    expect(report.reasons).toEqual([`${code}:overall:events`])
+    expect(report.slices).toEqual([])
+    expect(report.date_range).toBeNull()
+    expect(JSON.stringify(report)).not.toMatch(/jane|conversion|dropoff_rate/)
+  })
+
+  it("refuses malformed quality evidence on a later response too, not only the first", () => {
+    const report = mutated((r) => void ((r[r.length - 1].metadata as Json).subjectToThresholding = "true"))
+    expect(report.status).toBe("INVALID_RESPONSE")
+    expect(report.reasons).toEqual(["METADATA_THRESHOLDING:checkout_blocked_reason:attempt_users"])
+    expect(report.slices).toEqual([])
+  })
+
+  it("does not let a stringified thresholding flag state rates for a slice", () => {
+    // The B1 reproduction: the slice GA4 thresholded must never come back OK.
+    const b = bundle()
+    const responses = responsesFor(b, {
+      device_category: { data: { mobile: OVERALL }, attempt: { mobile: 55 }, metadata: { subjectToThresholding: "true" } },
+    })
+    const report = evaluateFunnelDropoff(b, responses)
+    expect(report.status).toBe("INVALID_RESPONSE")
+    expect(report.reasons).toEqual(["METADATA_THRESHOLDING:device_category:events"])
+    expect(report.slices).toEqual([])
+  })
   it("refuses a bundle this module did not produce", () => {
     const b = clone(bundle())
     ;(b.requests[0].body as Json).dimensions = [{ name: "eventName" }, { name: "pagePathPlusQueryString" }]
@@ -476,6 +566,96 @@ describe("hostile and malformed responses fail the whole report closed", () => {
     )
     expect(report.status).toBe("OK")
     expect(slice(report, "campaign_source").buckets.map((bucket) => bucket.bucket)).toEqual(["other"])
+  })
+})
+
+describe("official GA4 response shapes the request can produce are accepted", () => {
+  function evaluated(mutate: (response: Json, index: number) => void) {
+    const b = bundle()
+    const responses = responsesFor(b)
+    responses.forEach(mutate)
+    return evaluateFunnelDropoff(b, responses)
+  }
+
+  it.each([
+    ["the currency and time zone GA4 always sends", () => undefined],
+    ["an empty metadata object", (r: Json) => void (r.metadata = {})],
+    [
+      "every clean metadata field with default values written out",
+      (r: Json) =>
+        void (r.metadata = {
+          currencyCode: "EUR",
+          timeZone: "America/Argentina/Buenos_Aires",
+          subjectToThresholding: false,
+          samplingMetadatas: [],
+          dataLossFromOtherRow: false,
+          emptyReason: "",
+          schemaRestrictionResponse: {},
+        }),
+    ],
+    ["an empty metric restriction list", (r: Json) => void ((r.metadata as Json).schemaRestrictionResponse = { activeMetricRestrictions: [] })],
+    ["a UTC time zone", (r: Json) => void ((r.metadata as Json).timeZone = "UTC")],
+    ["an Etc offset time zone", (r: Json) => void ((r.metadata as Json).timeZone = "Etc/GMT+5")],
+    ["an absent kind", (r: Json) => void delete r.kind],
+    ["a null property quota", (r: Json) => void (r.propertyQuota = null)],
+    [
+      "empty totals, maximums and minimums",
+      (r: Json) => {
+        r.totals = []
+        r.maximums = []
+        r.minimums = []
+      },
+    ],
+  ])("accepts %s as clean evidence", (_label, mutate) => {
+    const report = evaluated(mutate as (response: Json, index: number) => void)
+    expect(report.status).toBe("OK")
+    expect(report.reasons).toEqual([])
+    const steps = slice(report, "overall").buckets[0].steps
+    expect(steps.find((s) => s.step === "free_check_started")!.conversion_from_previous).toBe(0.4)
+  })
+
+  it("marks a sampled slice INCONCLUSIVE when the sampling entry is well formed", () => {
+    const report = evaluated((r, index) => {
+      if (index === 0) (r.metadata as Json).samplingMetadatas = [{ samplesReadCount: "4", samplingSpaceSize: "4" }]
+    })
+    expect(report.status).toBe("INCONCLUSIVE")
+    expect(report.reasons).toEqual(["SAMPLED:overall"])
+  })
+
+  it.each([
+    ["with rows and rowCount omitted", (r: Json) => {
+      delete r.rows
+      delete r.rowCount
+    }],
+    ["with an empty rows array and rowCount 0", (r: Json) => {
+      r.rows = []
+      r.rowCount = 0
+    }],
+    ["with an empty rows array and no rowCount", (r: Json) => {
+      r.rows = []
+      delete r.rowCount
+    }],
+  ])("accepts a valid empty response %s", (_label, mutate) => {
+    const report = evaluated(mutate as (response: Json, index: number) => void)
+    expect(report.status).toBe("OK")
+    expect(report.reasons).toEqual([])
+    for (const s of report.slices) {
+      expect(s.evidence).toBe("OK")
+      expect(s.buckets).toEqual([])
+    }
+  })
+
+  it("treats an empty response with a stated empty reason as inconclusive, not as zero", () => {
+    const report = evaluated((r, index) => {
+      if (index !== 0) return
+      delete r.rows
+      delete r.rowCount
+      ;(r.metadata as Json).emptyReason = "DATA_NOT_AVAILABLE"
+    })
+    expect(report.status).toBe("INCONCLUSIVE")
+    expect(report.reasons).toEqual(["EMPTY_REASON:overall"])
+    expect(slice(report, "overall").evidence).toBe("INSUFFICIENT_EVIDENCE")
+    expect(JSON.stringify(report)).not.toContain("DATA_NOT_AVAILABLE")
   })
 })
 

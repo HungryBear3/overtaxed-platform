@@ -40,6 +40,7 @@ const REASON_FOR_CODE: Readonly<Record<string, CheckoutBlockedReason>> = Object.
   T3_WINDOW_BLOCKED: "window_blocked",
   CHECKOUT_ELIGIBILITY_CLOSED: "window_blocked",
   CHECKOUT_WINDOW_CLOSING_TOO_SOON: "window_blocked",
+  CHECKOUT_WINDOW_TOO_CLOSE: "window_blocked",
   NOTICE_REVIEW_REQUIRED: "notice_review_required",
   INVALID_CHECKOUT_INPUT: "invalid_input",
   CHECKOUT_BODY_TOO_LARGE: "invalid_input",

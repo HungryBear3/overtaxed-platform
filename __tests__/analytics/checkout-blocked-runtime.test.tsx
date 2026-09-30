@@ -110,6 +110,11 @@ describe("checkout_blocked from the real checkout page", () => {
   it.each([
     ["a known non-gate code", async () => response(400, { code: "PROPERTY_NOT_FOUND", error: HOSTILE }), "property_not_found"],
     ["a rate limit", async () => response(429, { code: "CHECKOUT_RATE_LIMITED", error: HOSTILE }), "rate_limited"],
+    [
+      "the session route's window-too-close refusal",
+      async () => response(409, { code: "CHECKOUT_WINDOW_TOO_CLOSE", error: HOSTILE, window: { township: HOSTILE, status: "open" } }),
+      "window_blocked",
+    ],
     ["a hostile unknown code", async () => response(400, { code: HOSTILE, error: HOSTILE }), "unknown"],
     ["a prototype-named code", async () => response(400, { code: "__proto__", error: HOSTILE }), "unknown"],
     ["an unreadable 503 body", async () => ({ ok: false, status: 503, json: async () => { throw new Error(HOSTILE) } }), "unavailable"],

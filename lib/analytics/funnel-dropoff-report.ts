@@ -327,18 +327,109 @@ const METRIC_HEADERS = JSON.stringify([
   { name: "eventCount", type: "TYPE_INTEGER" },
 ])
 
-type Counts = { users: number; events: number; merged: boolean }
-type ParsedResponse = { rows: Array<{ event: string | null; bucket: string; users: number; events: number }>; quality: string[] }
-
 class InvalidResponse extends Error {
   constructor(readonly code: string) {
     super(code)
   }
 }
 
+const RUN_REPORT_KIND = "analyticsData#runReport"
+
+/** GA4 `ResponseMetaData` fields a `runReport` for this request can carry. */
+const METADATA_FIELDS = new Set([
+  "currencyCode",
+  "timeZone",
+  "subjectToThresholding",
+  "samplingMetadatas",
+  "dataLossFromOtherRow",
+  "emptyReason",
+  "schemaRestrictionResponse",
+])
+const SAMPLING_FIELDS = ["samplesReadCount", "samplingSpaceSize"]
+const INT64_PATTERN = /^(?:0|[1-9]\d{0,18})$/
+const CURRENCY_PATTERN = /^[A-Z]{3}$/
+const TIME_ZONE_PATTERN = /^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+){0,2}$/
+
+/** Canonical non-negative decimal strings, compared without Number rounding. */
+function decimalAtMost(a: string, b: string): boolean {
+  return a.length !== b.length ? a.length < b.length : a <= b
+}
+
+/**
+ * The quality evidence, validated against GA4's JSON shape. Only this evidence
+ * decides whether a rate may be stated, so a flag of the wrong type, a missing
+ * metadata object or an unknown key is a response GA4 could not have sent —
+ * never "clean". A metric restriction cannot apply to totalUsers or eventCount,
+ * so any active restriction is refused too.
+ */
+function metadataQuality(metadata: unknown, rowsReturned: number): string[] {
+  if (!isObject(metadata)) throw new InvalidResponse("METADATA_SHAPE")
+  if (Object.keys(metadata).some((key) => !METADATA_FIELDS.has(key))) throw new InvalidResponse("METADATA_UNKNOWN_FIELD")
+  const { currencyCode, timeZone, subjectToThresholding, samplingMetadatas, dataLossFromOtherRow, emptyReason } = metadata
+  if (currencyCode !== undefined && (typeof currencyCode !== "string" || !CURRENCY_PATTERN.test(currencyCode))) {
+    throw new InvalidResponse("METADATA_CURRENCY")
+  }
+  if (timeZone !== undefined && (typeof timeZone !== "string" || timeZone.length > 64 || !TIME_ZONE_PATTERN.test(timeZone))) {
+    throw new InvalidResponse("METADATA_TIME_ZONE")
+  }
+  if (subjectToThresholding !== undefined && typeof subjectToThresholding !== "boolean") {
+    throw new InvalidResponse("METADATA_THRESHOLDING")
+  }
+  if (dataLossFromOtherRow !== undefined && typeof dataLossFromOtherRow !== "boolean") {
+    throw new InvalidResponse("METADATA_OTHER_ROW")
+  }
+  if (samplingMetadatas !== undefined) {
+    const wellFormed =
+      Array.isArray(samplingMetadatas) &&
+      samplingMetadatas.every((sample) => {
+        if (!isObject(sample) || Object.keys(sample).length !== SAMPLING_FIELDS.length) return false
+        const [read, space] = SAMPLING_FIELDS.map((key) => (hasOwn(sample, key) ? sample[key] : undefined))
+        return (
+          typeof read === "string" &&
+          typeof space === "string" &&
+          INT64_PATTERN.test(read) &&
+          INT64_PATTERN.test(space) &&
+          decimalAtMost(read, space)
+        )
+      })
+    if (!wellFormed) throw new InvalidResponse("METADATA_SAMPLING")
+  }
+  // proto3 JSON omits an empty string; a tool that writes defaults out sends "".
+  if (emptyReason !== undefined && (typeof emptyReason !== "string" || (emptyReason !== "" && rowsReturned > 0))) {
+    throw new InvalidResponse("METADATA_EMPTY_REASON")
+  }
+  if (hasOwn(metadata, "schemaRestrictionResponse")) {
+    const restriction = metadata.schemaRestrictionResponse
+    const clean =
+      isObject(restriction) &&
+      Object.keys(restriction).every((key) => key === "activeMetricRestrictions") &&
+      (restriction.activeMetricRestrictions === undefined ||
+        (Array.isArray(restriction.activeMetricRestrictions) && restriction.activeMetricRestrictions.length === 0))
+    if (!clean) throw new InvalidResponse("METADATA_SCHEMA_RESTRICTION")
+  }
+  return [
+    ...(subjectToThresholding === true ? ["THRESHOLDED"] : []),
+    ...(Array.isArray(samplingMetadatas) && samplingMetadatas.length > 0 ? ["SAMPLED"] : []),
+    ...(dataLossFromOtherRow === true ? ["OTHER_ROW"] : []),
+    // GA4 stating why a report is empty means the zero is not an observation.
+    ...(typeof emptyReason === "string" && emptyReason !== "" ? ["EMPTY_REASON"] : []),
+  ]
+}
+
+type Counts = { users: number; events: number; merged: boolean }
+type ParsedResponse = { rows: Array<{ event: string | null; bucket: string; users: number; events: number }>; quality: string[] }
+
 function parseResponse(entry: FunnelRequestEntry, breakdown: Breakdown, response: unknown): ParsedResponse {
   if (!isObject(response)) throw new InvalidResponse("NOT_AN_OBJECT")
   if (Object.keys(response).some((key) => !RESPONSE_FIELDS.has(key))) throw new InvalidResponse("UNKNOWN_FIELD")
+  // What the request did not ask for cannot be in the response: no quota
+  // (returnPropertyQuota is false) and no metricAggregations.
+  if (hasOwn(response, "kind") && response.kind !== RUN_REPORT_KIND) throw new InvalidResponse("KIND")
+  if (response.propertyQuota !== undefined && response.propertyQuota !== null) throw new InvalidResponse("PROPERTY_QUOTA")
+  for (const aggregate of ["totals", "maximums", "minimums"]) {
+    const value = response[aggregate]
+    if (value !== undefined && !(Array.isArray(value) && value.length === 0)) throw new InvalidResponse("AGGREGATES")
+  }
   const dimensions = (entry.body.dimensions as Array<{ name: string }>).map((d) => d.name)
   if (JSON.stringify(response.dimensionHeaders ?? []) !== JSON.stringify(dimensions.map((name) => ({ name })))) {
     throw new InvalidResponse("HEADERS")
@@ -347,6 +438,8 @@ function parseResponse(entry: FunnelRequestEntry, breakdown: Breakdown, response
 
   const rows = response.rows ?? []
   if (!Array.isArray(rows)) throw new InvalidResponse("ROWS")
+  // Truncation is judged from rowCount, so it may be omitted only when no row came back.
+  if (rows.length > 0 && response.rowCount === undefined) throw new InvalidResponse("ROW_COUNT")
   const rowCount = response.rowCount ?? rows.length
   if (typeof rowCount !== "number" || !Number.isSafeInteger(rowCount) || rowCount < rows.length) {
     throw new InvalidResponse("ROW_COUNT")
@@ -380,13 +473,7 @@ function parseResponse(entry: FunnelRequestEntry, breakdown: Breakdown, response
     parsed.push({ event, bucket: breakdown.map(rawBucket), users: Number(counts[0]), events: Number(counts[1]) })
   }
 
-  const metadata = isObject(response.metadata) ? response.metadata : {}
-  const quality = [
-    ...(metadata.subjectToThresholding === true ? ["THRESHOLDED"] : []),
-    ...(Array.isArray(metadata.samplingMetadatas) && metadata.samplingMetadatas.length > 0 ? ["SAMPLED"] : []),
-    ...(metadata.dataLossFromOtherRow === true ? ["OTHER_ROW"] : []),
-    ...(rowCount > rows.length ? ["ROWS_TRUNCATED"] : []),
-  ]
+  const quality = [...metadataQuality(response.metadata, rows.length), ...(rowCount > rows.length ? ["ROWS_TRUNCATED"] : [])]
   return { rows: parsed, quality }
 }
 
