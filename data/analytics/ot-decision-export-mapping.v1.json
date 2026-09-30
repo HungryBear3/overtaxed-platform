@@ -1,0 +1,154 @@
+{
+  "schema": "ot.decision_export_mapping",
+  "schema_version": 1,
+  "contract_version": "ot-decision-export-v1",
+  "decision_packet_tool": {
+    "commit": "d64d095f361dc10b939289a8787f25dc6d5d925c",
+    "schema_version": 1
+  },
+  "raw_values_passed_through": false,
+  "sentinels": {
+    "unset": "not_set",
+    "unknown": "other",
+    "no_campaign_or_content": "none",
+    "ga4_other_row_sets_quality_flag": "other_row"
+  },
+  "source": {
+    "exact": [
+      "direct",
+      "google",
+      "bing",
+      "duckduckgo",
+      "yahoo",
+      "facebook",
+      "instagram",
+      "tiktok",
+      "pinterest",
+      "youtube",
+      "linkedin",
+      "reddit",
+      "x",
+      "nextdoor",
+      "newsletter",
+      "chatgpt",
+      "perplexity"
+    ],
+    "aliases": {
+      "(direct)": "direct",
+      "google.com": "google",
+      "www.google.com": "google",
+      "bing.com": "bing",
+      "www.bing.com": "bing",
+      "duckduckgo.com": "duckduckgo",
+      "yahoo.com": "yahoo",
+      "search.yahoo.com": "yahoo",
+      "fb": "facebook",
+      "facebook.com": "facebook",
+      "m.facebook.com": "facebook",
+      "l.facebook.com": "facebook",
+      "lm.facebook.com": "facebook",
+      "ig": "instagram",
+      "instagram.com": "instagram",
+      "l.instagram.com": "instagram",
+      "tiktok.com": "tiktok",
+      "pinterest.com": "pinterest",
+      "youtube.com": "youtube",
+      "m.youtube.com": "youtube",
+      "linkedin.com": "linkedin",
+      "lnkd.in": "linkedin",
+      "reddit.com": "reddit",
+      "old.reddit.com": "reddit",
+      "twitter": "x",
+      "twitter.com": "x",
+      "x.com": "x",
+      "t.co": "x",
+      "nextdoor.com": "nextdoor",
+      "chatgpt.com": "chatgpt",
+      "chat.openai.com": "chatgpt",
+      "perplexity.ai": "perplexity",
+      "www.perplexity.ai": "perplexity"
+    },
+    "unknown_with_referral_medium": "referral_other",
+    "unknown_otherwise": "other"
+  },
+  "medium": {
+    "exact": [
+      "none",
+      "organic",
+      "cpc",
+      "paid_social",
+      "social",
+      "email",
+      "referral",
+      "display",
+      "affiliate",
+      "sms",
+      "qr"
+    ],
+    "aliases": {
+      "(none)": "none",
+      "ppc": "cpc",
+      "paidsearch": "cpc",
+      "paid_search": "cpc",
+      "paidsocial": "paid_social",
+      "paid-social": "paid_social",
+      "social-network": "social",
+      "social_network": "social",
+      "e-mail": "email",
+      "e_mail": "email",
+      "banner": "display",
+      "cpm": "display"
+    },
+    "unknown": "other"
+  },
+  "campaign": {
+    "rule": "canonical under ot-campaign-governance-v1 and slug known downstream, else other",
+    "no_campaign_placeholders": [
+      "(organic)",
+      "(direct)",
+      "(referral)",
+      "(none)"
+    ]
+  },
+  "content": {
+    "rule": "canonical <format>_<variant> with variant known downstream, else other; unset is none"
+  },
+  "landing": {
+    "rule": "Phase-A landing value known downstream, else other; never a raw path",
+    "represented": [
+      "/"
+    ],
+    "pending_downstream_extension": [
+      "/about",
+      "/appeal-deadline/[slug]",
+      "/appeal-packet",
+      "/blog",
+      "/blog/[slug]",
+      "/board-of-review",
+      "/check",
+      "/checkout",
+      "/contact",
+      "/deadlines",
+      "/disclaimer",
+      "/faq",
+      "/hoa",
+      "/homestead-exemption",
+      "/how-it-works",
+      "/landlord-notices",
+      "/partner/[code]",
+      "/pricing",
+      "/privacy",
+      "/refunds",
+      "/terms",
+      "/township/[slug]",
+      "/townships",
+      "/townships/[slug]"
+    ]
+  },
+  "documents": {
+    "ga4_behavior": "buildGa4BehaviorDocument",
+    "experiment_registry": "projectExperimentRegistry",
+    "app_outcomes": "HOLD: needs an owner-defined OT qualified action and operator-keyed conversion_ref MACs",
+    "payment_ledger": "HOLD: needs a read-only Stripe/order ledger source and operator-keyed conversion_ref MACs"
+  }
+}

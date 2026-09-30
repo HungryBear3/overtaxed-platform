@@ -1,0 +1,65 @@
+{
+  "schema": "ot.ga4_admin_checklist",
+  "schema_version": 2,
+  "business": "ot",
+  "funnel_contract_version": "ot-funnel-contract-v2",
+  "custom_dimensions": [
+    {
+      "parameter_name": "surface",
+      "display_name": "OT free check surface",
+      "scope": "EVENT",
+      "events": ["free_check_started", "free_check_completed", "free_check_qualified"],
+      "status": "pending",
+      "rationale": "Which entry point (home hero, check page, sticky bar) started, completed and qualified free checks. Decides where the free check is placed. Closed three-value enum."
+    },
+    {
+      "parameter_name": "input_mode",
+      "display_name": "OT free check input mode",
+      "scope": "EVENT",
+      "events": ["free_check_started"],
+      "status": "pending",
+      "rationale": "Whether a started check was entered as a PIN or an address. Decides which input the form leads with. Closed two-value enum; never the typed value."
+    },
+    {
+      "parameter_name": "outcome_code",
+      "display_name": "OT free check outcome",
+      "scope": "EVENT",
+      "events": ["free_check_completed", "free_check_qualified"],
+      "status": "pending",
+      "rationale": "Which canonical outcome a completed check produced. Shows how much of the completed-to-qualified drop is the evidence rather than friction. Closed enum from the outcome matrix."
+    },
+    {
+      "parameter_name": "plan",
+      "display_name": "OT checkout plan",
+      "scope": "EVENT",
+      "events": ["begin_checkout", "checkout_blocked"],
+      "status": "pending",
+      "rationale": "Which tier (T2 or T3) a checkout attempt was for. Purchase already carries the tier as the built-in item variant."
+    },
+    {
+      "parameter_name": "blocked_reason",
+      "display_name": "OT checkout blocked reason",
+      "scope": "EVENT",
+      "events": ["checkout_blocked"],
+      "status": "pending",
+      "rationale": "Why a checkout attempt did not reach Stripe. Decides which gate or failure to work on first. Closed eleven-value enum; never the server message."
+    }
+  ],
+  "key_events": [
+    {
+      "event_name": "purchase",
+      "counting_method": "ONCE_PER_EVENT",
+      "status": "pending",
+      "rationale": "Server-side purchase from the signed webhook after settlement and the durable PAID transition. The only key event. Behavioral evidence only: paid revenue is the Stripe/order record."
+    }
+  ],
+  "readback": {
+    "api": "analyticsadmin.googleapis.com/v1beta",
+    "oauth_scope": "https://www.googleapis.com/auth/analytics.readonly",
+    "calls": [
+      "GET /v1beta/properties/{property_id}/customDimensions",
+      "GET /v1beta/properties/{property_id}/keyEvents"
+    ],
+    "match": "exact_set"
+  }
+}

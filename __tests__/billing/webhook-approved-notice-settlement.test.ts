@@ -210,6 +210,10 @@ afterEach(() => {
   jest.useRealTimers()
 })
 
+function gaPurchaseSends() {
+  return fetchMock.mock.calls.filter(([url]) => String(url).includes("/mp/collect"))
+}
+
 function request(
   eventId: string,
   orderId: string,
@@ -228,7 +232,7 @@ function request(
       type: "checkout.session.completed",
       data: {
         object: {
-          id: "cs_notice_paid",
+          id: "cs_test_notice_paid",
           mode: "payment",
           payment_intent: "pi_test",
           payment_status: overrides.paymentStatus ?? "paid",
@@ -254,12 +258,12 @@ function request(
 }
 
 function seedOrder(overrides: Row = {}) {
-  dbState.otOrders.set("cs_notice_paid", {
+  dbState.otOrders.set("cs_test_notice_paid", {
     id: "ord_notice",
     checkoutKey: "checkout-key",
     contractKey: "contract-key",
     attempt: 1,
-    stripeSessionId: "cs_notice_paid",
+    stripeSessionId: "cs_test_notice_paid",
     tier: "T3",
     email: "buyer@example.com",
     name: "Buyer Example",
@@ -320,9 +324,9 @@ describe("billing webhook approved notice settlement", () => {
       events: [{
         name: "purchase",
         params: {
-          currency: "usd",
+          currency: "USD",
           value: 97,
-          transaction_id: "cs_notice_paid",
+          transaction_id: "cs_test_notice_paid",
           item_name: "T3",
           item_category: "ot_checkout",
           item_variant: "T3",
@@ -361,7 +365,7 @@ describe("billing webhook approved notice settlement", () => {
         type: "checkout.session.completed",
         data: {
           object: {
-            id: "cs_notice_paid",
+            id: "cs_test_notice_paid",
             mode: "payment",
             payment_intent: "pi_test",
           payment_status: "paid",
@@ -391,9 +395,9 @@ describe("billing webhook approved notice settlement", () => {
       events: [{
         name: "purchase",
         params: {
-          currency: "usd",
+          currency: "USD",
           value: 97,
-          transaction_id: "cs_notice_paid",
+          transaction_id: "cs_test_notice_paid",
           item_name: "T3",
           item_category: "ot_checkout",
           item_variant: "T3",
@@ -420,7 +424,7 @@ describe("billing webhook approved notice settlement", () => {
 
     expect(response.status).toBe(200)
     const payload = JSON.parse(String(fetchMock.mock.calls[0][1].body))
-    expect(payload.events[0].params.transaction_id).toBe("cs_notice_paid")
+    expect(payload.events[0].params.transaction_id).toBe("cs_test_notice_paid")
   })
 
   it("fails safe and redacts secrets when Measurement Protocol delivery fails", async () => {
@@ -509,7 +513,7 @@ describe("billing webhook approved notice settlement", () => {
     const response = await POST(request("evt_notice_paid", "ord_notice"))
 
     expect(response.status).toBe(200)
-    expect(dbState.otOrders.get("cs_notice_paid")).toMatchObject({ status: "PAID", settledAmountCents: 9700, settledCurrency: "usd" })
+    expect(dbState.otOrders.get("cs_test_notice_paid")).toMatchObject({ status: "PAID", settledAmountCents: 9700, settledCurrency: "usd" })
     expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
     expect(sendOrderConfirmationMock).toHaveBeenCalledTimes(1)
     jest.useRealTimers()
@@ -522,7 +526,7 @@ describe("billing webhook approved notice settlement", () => {
     const response = await POST(request("evt_notice_tampered", "ord_notice"))
 
     expect(response.status).toBe(200)
-    expect(dbState.otOrders.get("cs_notice_paid")).toMatchObject({ status: "PAID_RECOVERY_REQUIRED" })
+    expect(dbState.otOrders.get("cs_test_notice_paid")).toMatchObject({ status: "PAID_RECOVERY_REQUIRED" })
     expect(sendNewOrderAlertMock).not.toHaveBeenCalled()
     expect(sendOrderConfirmationMock).not.toHaveBeenCalled()
     jest.useRealTimers()
@@ -542,7 +546,7 @@ describe("billing webhook approved notice settlement", () => {
     const response = await POST(request("evt_t3_closed", "ord_notice"))
 
     expect(response.status).toBe(200)
-    expect(dbState.otOrders.get("cs_notice_paid")).toMatchObject({ status: "PAID_RECOVERY_REQUIRED" })
+    expect(dbState.otOrders.get("cs_test_notice_paid")).toMatchObject({ status: "PAID_RECOVERY_REQUIRED" })
     expect(sendNewOrderAlertMock).not.toHaveBeenCalled()
     expect(sendOrderConfirmationMock).not.toHaveBeenCalled()
     jest.useRealTimers()
@@ -566,7 +570,7 @@ describe("billing webhook approved notice settlement", () => {
 
     const response = await POST(request("evt_t2_paid", "ord_notice", { tier: "T2" }))
     expect(response.status).toBe(200)
-    expect(dbState.otOrders.get("cs_notice_paid")).toMatchObject({ status: "PAID" })
+    expect(dbState.otOrders.get("cs_test_notice_paid")).toMatchObject({ status: "PAID" })
     expect(kickOffT2FulfillmentEvidenceMock).toHaveBeenCalledTimes(1)
     expect(kickOffT2FulfillmentEvidenceMock).toHaveBeenCalledWith(
       expect.objectContaining({ id: "ord_notice", tier: "T2", status: "PAID" }),
@@ -668,6 +672,7 @@ describe("billing webhook approved notice settlement", () => {
     expect(kickOffT2FulfillmentEvidenceMock).toHaveBeenCalledTimes(2)
     expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
     expect(sendOrderConfirmationMock).toHaveBeenCalledTimes(1)
+    expect(gaPurchaseSends()).toHaveLength(1)
   })
 
   it("retries enabled T2 evidence when a failed claim release leaves the event row", async () => {
@@ -699,6 +704,7 @@ describe("billing webhook approved notice settlement", () => {
     expect(kickOffT2FulfillmentEvidenceMock).toHaveBeenCalledTimes(2)
     expect(sendNewOrderAlertMock).toHaveBeenCalledTimes(1)
     expect(sendOrderConfirmationMock).toHaveBeenCalledTimes(1)
+    expect(gaPurchaseSends()).toHaveLength(1)
   })
 
   it.each([
@@ -731,7 +737,7 @@ describe("billing webhook approved notice settlement", () => {
 
     const response = await POST(request("evt_t2_missing_ack", "ord_notice", { tier: "T2" }))
     expect(response.status).toBe(200)
-    expect(dbState.otOrders.get("cs_notice_paid")).toMatchObject({ status: "PAID_RECOVERY_REQUIRED" })
+    expect(dbState.otOrders.get("cs_test_notice_paid")).toMatchObject({ status: "PAID_RECOVERY_REQUIRED" })
     expect(sendNewOrderAlertMock).not.toHaveBeenCalled()
     expect(sendOrderConfirmationMock).not.toHaveBeenCalled()
   })
@@ -740,7 +746,7 @@ describe("billing webhook approved notice settlement", () => {
     seedOrder()
     const response = await POST(request("evt_amount_mismatch", "ord_notice", { amountTotal: 9800 }))
     expect(response.status).toBe(200)
-    expect(dbState.otOrders.get("cs_notice_paid")).toMatchObject({
+    expect(dbState.otOrders.get("cs_test_notice_paid")).toMatchObject({
       status: "PAID_RECOVERY_REQUIRED",
       settledAmountCents: 9800,
     })
@@ -751,7 +757,7 @@ describe("billing webhook approved notice settlement", () => {
     seedOrder({ status: "CANCELLED" })
     const response = await POST(request("evt_cancelled_paid", "ord_notice"))
     expect(response.status).toBe(200)
-    expect(dbState.otOrders.get("cs_notice_paid")).toMatchObject({
+    expect(dbState.otOrders.get("cs_test_notice_paid")).toMatchObject({
       status: "CANCELLED",
       settledAmountCents: 9700,
     })
@@ -764,10 +770,10 @@ describe("billing webhook approved notice settlement", () => {
     const response = await POST(request("evt_binding_mismatch", "ord_notice"))
 
     expect(response.status).toBe(200)
-    expect(dbState.otOrders.get("cs_notice_paid")).toMatchObject({
+    expect(dbState.otOrders.get("cs_test_notice_paid")).toMatchObject({
       stripeSessionId: "cs_original",
       status: "PAID_RECOVERY_REQUIRED",
-      recoveryStripeSessionId: "cs_notice_paid",
+      recoveryStripeSessionId: "cs_test_notice_paid",
       recoveryStripeEventId: "evt_binding_mismatch",
       recoveryReason: "DURABLE_CONTRACT_MISMATCH",
     })
@@ -782,7 +788,7 @@ describe("billing webhook approved notice settlement", () => {
 
     expect(response.status).toBe(500)
     expect(dbState.stripeEvents.has("evt_recovery_cas_miss")).toBe(false)
-    expect(dbState.otOrders.get("cs_notice_paid")).toMatchObject({
+    expect(dbState.otOrders.get("cs_test_notice_paid")).toMatchObject({
       stripeSessionId: "cs_original",
       status: "CHECKOUT_CREATED",
     })

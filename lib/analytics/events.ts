@@ -6,7 +6,9 @@
 import { trackMetaEvent, trackMetaCustomEvent } from "@/components/analytics/meta-pixel"
 import { trackGoogleAdsConversion } from "@/components/analytics/google-analytics"
 import { buildSanitizedPageContext, sanitizeGaEventParams } from "./ga4"
+import { isServerOnlyEventName, validateBrowserFunnelEvent } from "./funnel-contract"
 import { getStoredUTMParams } from "./utm-tracking"
+import { isCheckoutBlockedReason, type CheckoutBlockedReason } from "./checkout-funnel"
 import {
   deriveFreeCheckOutcomeParams,
   type FreeCheckInputMode,
@@ -28,6 +30,9 @@ function safely(emit: () => void): void {
 }
 
 export function trackGA4Event(eventName: string, params?: Record<string, unknown>): void {
+  // A purchase or refund is written only by the signed webhook
+  // (lib/analytics/funnel-contract). No browser caller can add one.
+  if (isServerOnlyEventName(eventName)) return
   if (typeof window !== "undefined" && window.gtag) {
     const pageContext = buildSanitizedPageContext({
       locationHref: window.location.href,
@@ -54,20 +59,53 @@ export function trackEvent(eventName: string, params?: Record<string, unknown>):
  * itself, so the generic helper would attach a name and a street address to an
  * event that states a specific identified parcel qualified.
  *
- * The funnel therefore sends no browser URL or referrer context at all. It
- * still passes through `sanitizeGaEventParams`, so the blocked-key list and the
- * primitives-only rule continue to apply to the bounded params themselves; with
- * no `page_location`/`page_referrer` present there is nothing for the
- * sanitizer's URL-rewriting branch to preserve.
+ * The funnel therefore sends no browser URL or referrer context at all, and
+ * says so explicitly: an omitted `page_location`/`page_referrer` lets gtag fall
+ * back to the browser's own URL and referrer, so both are sent as "". It still
+ * passes through `sanitizeGaEventParams`, so the blocked-key list and the
+ * primitives-only rule continue to apply to the bounded params themselves.
  *
  * Deliberately narrow: `trackEvent`, `trackGA4Event` and the page_view path are
  * untouched and keep their sanitized page context.
  */
 function trackFreeCheckEvent(eventName: string, params: Record<string, unknown>): void {
+  emitSensitiveEvent(eventName, { ...params, page_location: "", page_referrer: "" })
+}
+
+/**
+ * The one writer for the sensitive funnel boundary. The payload is checked
+ * against the closed funnel contract (lib/analytics/funnel-contract) before it
+ * reaches gtag; anything the contract does not describe is not sent at all.
+ */
+function emitSensitiveEvent(eventName: string, params: Record<string, unknown>): void {
   if (typeof window === "undefined" || !window.gtag) return
-  window.gtag("event", eventName, sanitizeGaEventParams(params))
+  const payload = sanitizeGaEventParams(params)
+  if (!validateBrowserFunnelEvent(eventName, payload).ok) return
+  window.gtag("event", eventName, payload)
   if (process.env.NODE_ENV === "development") {
     console.log("[Analytics]", eventName, params)
+  }
+}
+
+/** Checkout tier codes: the only values `plan` may carry. */
+const BEGIN_CHECKOUT_PLANS: ReadonlySet<string> = new Set(["T2", "T3"])
+
+/** No offered checkout approaches this; a larger number is not a price. */
+const MAX_BEGIN_CHECKOUT_VALUE = 10_000
+
+/**
+ * The closed begin_checkout property set. A caller cannot widen it: an unknown
+ * plan or an implausible value is dropped, and the checkout start is still
+ * recorded without it.
+ */
+function beginCheckoutParams(plan: unknown, value: unknown): Record<string, unknown> {
+  const boundedValue =
+    typeof value === "number" && Number.isFinite(value) && value > 0 && value <= MAX_BEGIN_CHECKOUT_VALUE
+  return {
+    ...(typeof plan === "string" && BEGIN_CHECKOUT_PLANS.has(plan) ? { plan } : {}),
+    ...(boundedValue ? { value } : {}),
+    page_location: "",
+    page_referrer: "",
   }
 }
 
@@ -79,16 +117,7 @@ function trackFreeCheckEvent(eventName: string, params: Record<string, unknown>)
  * referrer for this app-supplied event.
  */
 function trackCheckoutStartedEvent(plan: string, value?: number): void {
-  if (typeof window === "undefined" || !window.gtag) return
-  window.gtag("event", "begin_checkout", sanitizeGaEventParams({
-    plan,
-    value,
-    page_location: "",
-    page_referrer: "",
-  }))
-  if (process.env.NODE_ENV === "development") {
-    console.log("[Analytics]", "begin_checkout", { plan, value })
-  }
+  emitSensitiveEvent("begin_checkout", beginCheckoutParams(plan, value))
 }
 
 /**
@@ -128,6 +157,25 @@ export const analytics = {
     safely(() => {
       trackCheckoutStartedEvent(plan, value)
       trackMetaEvent("InitiateCheckout", { content_name: plan, value })
+    })
+  },
+
+  /**
+   * One checkout intent that ended without a hosted checkout URL. The intent's
+   * other possible end is `checkoutStarted`; the caller emits exactly one of the
+   * two. The reason is a closed enum (./checkout-funnel) and the plan a tier
+   * code; anything else sends nothing. No Meta event: a refusal is not intent
+   * worth advertising against.
+   */
+  checkoutBlocked: (plan: string, reason: CheckoutBlockedReason) => {
+    safely(() => {
+      if (!BEGIN_CHECKOUT_PLANS.has(plan) || !isCheckoutBlockedReason(reason)) return
+      emitSensitiveEvent("checkout_blocked", {
+        plan,
+        blocked_reason: reason,
+        page_location: "",
+        page_referrer: "",
+      })
     })
   },
 

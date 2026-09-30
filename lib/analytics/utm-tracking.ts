@@ -1,7 +1,16 @@
 /**
  * UTM Parameter Tracking
  * Captures and stores UTM parameters for marketing attribution.
+ *
+ * Every value written to or read back from the legacy `utm_params` key obeys
+ * the attribution touch contract (lib/attribution/touch-contract): the five
+ * UTM keys only, each independently bounded and token-shaped. The values come
+ * from URL query parameters that anyone who writes a link chooses, and
+ * `sanitizeGaEventParams` cannot catch an email or a PIN that carries neither
+ * `?` nor `#`, so nothing unvalidated is persisted or returned from here.
  */
+
+import { MAX_CLOCK_SKEW_MS, UTM_KEYS, sanitizeUtmValue } from "@/lib/attribution/touch-contract"
 
 export interface UTMParams {
   utm_source?: string
@@ -20,12 +29,13 @@ export function captureUTMParams(): UTMParams {
 
   const params = new URLSearchParams(window.location.search)
   const utm: UTMParams = {}
-  const utmKeys: (keyof UTMParams)[] = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"]
-
-  utmKeys.forEach((key) => {
-    const value = params.get(key)
-    if (value) utm[key] = value
-  })
+  for (const key of UTM_KEYS) {
+    const values = params.getAll(key)
+    // A repeated key is ambiguous; neither value is kept.
+    if (values.length !== 1) continue
+    const value = sanitizeUtmValue(key, values[0])
+    if (value !== null) utm[key] = value
+  }
 
   if (Object.keys(utm).length > 0) {
     try {
@@ -64,19 +74,58 @@ export function getStoredUTMParams(): UTMParams | null {
   try {
     const stored = localStorage.getItem(UTM_STORAGE_KEY)
     const timestamp = localStorage.getItem(UTM_TIMESTAMP_KEY)
-    if (!stored || !timestamp) return null
+    if (!stored || !timestamp) {
+      // Half a record can never be read back; do not leave it behind.
+      if (stored || timestamp) clearUTMParams()
+      return null
+    }
 
-    const storedTime = parseInt(timestamp, 10)
-    const expiryTime = storedTime + UTM_EXPIRY_DAYS * 24 * 60 * 60 * 1000
-    if (Date.now() > expiryTime) {
+    // A timestamp that is not a plain integer, or lies in the future, would
+    // otherwise never expire (`Date.now() > NaN` is false), keeping whatever
+    // sits under the key alive indefinitely.
+    const storedTime = /^\d{1,16}$/.test(timestamp) ? Number(timestamp) : Number.NaN
+    const now = Date.now()
+    if (
+      !Number.isSafeInteger(storedTime) ||
+      storedTime > now + MAX_CLOCK_SKEW_MS ||
+      now - storedTime > UTM_EXPIRY_DAYS * 24 * 60 * 60 * 1000
+    ) {
       clearUTMParams()
       return null
     }
 
-    return JSON.parse(stored)
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(stored)
+    } catch {
+      clearUTMParams()
+      return null
+    }
+    const utm = sanitizeStoredUTMParams(parsed)
+    if (Object.keys(utm).length === 0) {
+      clearUTMParams()
+      return null
+    }
+    // Keep only what the contract accepts: a refused value is removed from
+    // storage, not just from the result. Skipped if another tab rewrote it.
+    const sanitized = JSON.stringify(utm)
+    if (sanitized !== stored && localStorage.getItem(UTM_STORAGE_KEY) === stored) {
+      localStorage.setItem(UTM_STORAGE_KEY, sanitized)
+    }
+    return utm
   } catch {
     return null
   }
+}
+
+function sanitizeStoredUTMParams(raw: unknown): UTMParams {
+  const utm: UTMParams = {}
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return utm
+  for (const key of UTM_KEYS) {
+    const value = sanitizeUtmValue(key, (raw as Record<string, unknown>)[key])
+    if (value !== null) utm[key] = value
+  }
+  return utm
 }
 
 export function clearUTMParams(): void {

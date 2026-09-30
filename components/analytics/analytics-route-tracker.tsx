@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react"
 import { usePathname, useSearchParams } from "next/navigation"
-import { MetaPixel } from "./meta-pixel"
 import { captureUTMParams } from "@/lib/analytics/utm-tracking"
 import { trackGA4Event } from "@/lib/analytics/events"
 import {
@@ -16,8 +15,9 @@ import {
 import { isClientProductionMarketingRuntime } from "@/lib/marketing/preview-gate-client"
 
 /**
- * Route-scoped analytics effects: GA4 page_view on navigation, UTM recapture,
- * and the Meta Pixel mount. Renders no route content — deliberately.
+ * Route-scoped analytics effects: GA4 page_view on navigation and UTM
+ * recapture. Renders nothing — deliberately. It mounts no Meta Pixel: the
+ * consent-gated candidate is on activation HOLD (see next.config.mjs).
  *
  * `useSearchParams()` cannot be prerendered. React suspends on it during a
  * static render and Next resolves the whole enclosing `<Suspense>` boundary on
@@ -31,19 +31,17 @@ import { isClientProductionMarketingRuntime } from "@/lib/marketing/preview-gate
  * body — correct only after hydration, and invisible to a crawler, a link
  * preview, or a reader whose scripts have not run.
  *
- * Env vars: NEXT_PUBLIC_GA_MEASUREMENT_ID, NEXT_PUBLIC_GOOGLE_ADS_ID,
- * NEXT_PUBLIC_META_PIXEL_ID
+ * Env vars: NEXT_PUBLIC_GA_MEASUREMENT_ID, NEXT_PUBLIC_GOOGLE_ADS_ID
  */
 export function AnalyticsRouteTracker() {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const [gaReady, setGaReady] = useState(() => isGaReadyOnWindow())
 
-  const metaPixelId = process.env.NEXT_PUBLIC_META_PIXEL_ID
   const liveMarketing =
     isClientProductionMarketingRuntime() &&
     isCanonicalGaHost(typeof window !== "undefined" ? window.location.host : null)
-  // GA4 script loads from root layout (server) for reliable collect; this tracker handles page_view on nav + UTM + Meta
+  // GA4 script loads from root layout (server) for reliable collect; this tracker handles page_view on nav + UTM
 
   useEffect(() => {
     captureUTMParams()
@@ -84,5 +82,5 @@ export function AnalyticsRouteTracker() {
     }))
   }, [gaReady, liveMarketing, pathname])
 
-  return <>{liveMarketing && metaPixelId && <MetaPixel pixelId={metaPixelId} />}</>
+  return null
 }

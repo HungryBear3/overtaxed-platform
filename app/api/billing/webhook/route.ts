@@ -16,6 +16,7 @@ import {
 } from "@/lib/checkout/ot-settlement"
 import { sanitizeAnonymousGaIdentifiers } from "@/lib/analytics/ga4"
 import { sendGaPurchaseEvent } from "@/lib/analytics/ga4-measurement"
+import { claimGaPurchaseTransport } from "@/lib/analytics/ga4-purchase-claim"
 import { scheduleT2ArtifactOrchestration } from "@/lib/fulfillment-runtime/t2-artifact-scheduling"
 import { enqueueAndScheduleNeutralReportProduction } from "@/lib/fulfillment-runtime/neutral-generation-scheduling"
 import { NEUTRAL_GENERATION_INVOCATION_BUDGET_MS } from "@/lib/fulfillment-runtime/neutral-generation-worker"
@@ -431,18 +432,27 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ received: true, recovery: true })
         }
 
-        const gaResult = await sendGaPurchaseEvent({
-          host: request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? new URL(request.url).host,
-          amountCents,
-          currency,
-          itemName: tier,
-          itemCategory: "ot_checkout",
-          itemVariant: tier,
-          transactionId: sessionId,
-          anonymousIds: sanitizeAnonymousGaIdentifiers(metadata),
-        })
+        // At most one GA purchase per session, whatever path got here: a durable
+        // claim keyed by the session id is taken just before transport and never
+        // released, so evidence retries, redeliveries and later events send
+        // nothing. Every outcome is nonfatal to the settlement above.
+        const gaResult = await sendGaPurchaseEvent(
+          {
+            host: request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? new URL(request.url).host,
+            amountCents,
+            currency,
+            itemName: tier,
+            itemCategory: "ot_checkout",
+            itemVariant: tier,
+            transactionId: sessionId,
+            anonymousIds: sanitizeAnonymousGaIdentifiers(metadata),
+          },
+          () => claimGaPurchaseTransport(prisma, sessionId),
+        )
         if (!gaResult.ok) {
-          console.error(`[webhook] GA purchase delivery failed status=${gaResult.status}`)
+          console.error(
+            `[webhook] GA purchase not delivered code=${gaResult.code}${gaResult.code === "provider_error" ? ` status=${gaResult.status}` : ""}`,
+          )
         }
 
         if (!alreadyPaid) {

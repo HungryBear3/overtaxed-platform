@@ -1,10 +1,12 @@
 "use client"
 import Link from "next/link"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { getAnonymousGaIdentifiersForRequest } from "@/lib/analytics/ga4"
 import { analytics } from "@/lib/analytics/events"
+import { checkoutBlockedReasonForResponse, type CheckoutBlockedReason } from "@/lib/analytics/checkout-funnel"
 import { getApprovedAttributionCodesForRequest } from "@/lib/attribution/client-codes"
+import { getCheckoutAttributionForRequest } from "@/lib/attribution/touch-store"
 import { isClientPreviewStubMode } from "@/lib/marketing/preview-gate-client"
 import { NEUTRAL_REPORT_LIMITS, NEUTRAL_REPORT_NAME, NEUTRAL_REPORT_PRICE, NEUTRAL_REPORT_QA, NEUTRAL_REPORT_REFUND, NEUTRAL_REPORT_SUMMARY, NEUTRAL_REPORT_TURNAROUND } from "@/lib/copy/neutral-report"
 
@@ -28,6 +30,12 @@ type GateState = {
   window?: { township: string; status: WindowState; openDate?: string | null; closeDate?: string | null }
   candidates?: Candidate[]
 }
+/**
+ * One checkout intent is one user-initiated submission. `in_flight` while the
+ * server is asked for a session, `handed_off` once the Stripe URL is being
+ * opened, `idle` otherwise — after a failure, a gate, or a back/forward restore.
+ */
+type IntentState = "idle" | "in_flight" | "handed_off"
 
 const PLANS: Array<{ id: PlanId; name: string; price: string; priceNote: string; bullets: string[]; tag?: string }> = [
   {
@@ -58,6 +66,19 @@ const gateCardStyle: React.CSSProperties = {
   color: "#17243b",
 }
 
+/**
+ * Record an intent's outcome without letting measurement touch the checkout:
+ * whatever the analytics module does, the gate still renders and the hand-off
+ * still happens.
+ */
+function recordOutcome(emit: () => void): void {
+  try {
+    emit()
+  } catch {
+    // Analytics failure is not the buyer's problem.
+  }
+}
+
 function checkoutKey(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(16).padStart(8, "0")}-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padEnd(12, "0")}`
 }
@@ -79,6 +100,36 @@ export default function CheckoutPage({ initialPlan = "diy", neutralReport = fals
   const [showNoticeForm, setShowNoticeForm] = useState(false)
   const [noticeDate, setNoticeDate] = useState("")
   const [noticeAddress, setNoticeAddress] = useState("")
+  // Refs, not state: a second submit event can arrive before React re-renders
+  // the disabled button, and only a ref is already current for it. Both survive
+  // StrictMode's simulated remount, which re-runs effects on the same instance.
+  const intent = useRef<IntentState>("idle")
+  const intentGeneration = useRef(0)
+  const mounted = useRef(false)
+
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      intentGeneration.current += 1
+    }
+  }, [])
+
+  useEffect(() => {
+    // A back/forward-cache restore returns the page exactly as it was left:
+    // mid hand-off, button disabled. Someone who comes back from Stripe and
+    // submits again is starting a new intent.
+    function onPageShow(event: PageTransitionEvent) {
+      if (!event.persisted) return
+      // Invalidate outstanding work before allowing a new intent. Its eventual
+      // response must not unlock, overwrite, or navigate for the restored page.
+      intentGeneration.current += 1
+      intent.current = "idle"
+      setLoading(false)
+    }
+    window.addEventListener("pageshow", onPageShow)
+    return () => window.removeEventListener("pageshow", onPageShow)
+  }, [])
 
   const plan = neutralReport ? {
     id: "diy" as const,
@@ -106,14 +157,26 @@ export default function CheckoutPage({ initialPlan = "diy", neutralReport = fals
     }
     const tier = PLAN_TO_TIER[planId]
     if (!tier) return
+    // One request, and at most one begin_checkout, per intent.
+    if (intent.current !== "idle") return
+    const generation = ++intentGeneration.current
+    const ownsIntent = () => mounted.current && intentGeneration.current === generation
+    intent.current = "in_flight"
     setLoading(true)
     setError(null)
+    // The intent ends in exactly one of begin_checkout and checkout_blocked.
+    // Until a response arrives, a failure is the network's.
+    let blockedReason: CheckoutBlockedReason = "network_error"
+    let outcomeRecorded = false
     try {
       const gaIdentifiers = getAnonymousGaIdentifiersForRequest()
       // Code references from the server-approved registry only — never a raw
       // UTM value, a referrer, or a free-text label. Empty registry means this
       // is `{}`, and the server re-validates whatever it does carry.
       const attributionCodes = getApprovedAttributionCodesForRequest()
+      // The bounded first and last non-direct touches (lib/attribution/touch-
+      // contract). The server revalidates them before any reach Stripe.
+      const attributionTouches = getCheckoutAttributionForRequest()
       const res = await fetch("/api/checkout/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -131,12 +194,18 @@ export default function CheckoutPage({ initialPlan = "diy", neutralReport = fals
             ? { reassessmentNoticeDate: noticeDate, reassessmentNoticeAddress: noticeAddress }
             : {}),
           ...attributionCodes,
+          ...attributionTouches,
           ...gaIdentifiers,
         }),
       })
+      blockedReason = res.ok ? "unknown" : checkoutBlockedReasonForResponse(undefined, res.status)
       const data = (await res.json()) as GateState & { url?: string }
+      if (!ownsIntent()) return
       if (!res.ok) {
+        blockedReason = checkoutBlockedReasonForResponse(data?.code, res.status)
         if (["T2_ACKNOWLEDGMENT_REQUIRED", "T3_WINDOW_BLOCKED", "NOTICE_REVIEW_REQUIRED", "ADDRESS_AMBIGUOUS"].includes(data.code)) {
+          outcomeRecorded = true
+          recordOutcome(() => analytics.checkoutBlocked(tier, blockedReason))
           setGate(data)
           setLoading(false)
           return
@@ -145,11 +214,22 @@ export default function CheckoutPage({ initialPlan = "diy", neutralReport = fals
       }
       if (!data.url) throw new Error("Checkout failed")
       const checkoutValue = Number.parseFloat(plan.price.replace(/[^0-9.]/g, ""))
-      analytics.checkoutStarted(tier, Number.isFinite(checkoutValue) ? checkoutValue : undefined)
+      outcomeRecorded = true
+      recordOutcome(() => analytics.checkoutStarted(tier, Number.isFinite(checkoutValue) ? checkoutValue : undefined))
       router.push(data.url)
+      // Set only once navigation has been handed over: if `push` throws, the
+      // intent is released below instead of locking a page that never left.
+      intent.current = "handed_off"
     } catch (caught: unknown) {
+      if (!ownsIntent()) return
+      // A hand-off that fails after begin_checkout is not a second outcome.
+      if (!outcomeRecorded) recordOutcome(() => analytics.checkoutBlocked(tier, blockedReason))
       setError(caught instanceof Error ? caught.message : "Something went wrong")
       setLoading(false)
+    } finally {
+      // A failure or a gate releases the intent; a hand-off keeps it until a
+      // back/forward restore, so a stray submit during navigation is ignored.
+      if (ownsIntent() && intent.current === "in_flight") intent.current = "idle"
     }
   }
 

@@ -1,0 +1,9 @@
+{
+  "schema": "ot.experiment_registry",
+  "schema_version": 1,
+  "registry_origin": "owner_approved",
+  "business": "ot",
+  "currency": "USD",
+  "governance_version": "ot-campaign-governance-v1",
+  "experiments": []
+}
