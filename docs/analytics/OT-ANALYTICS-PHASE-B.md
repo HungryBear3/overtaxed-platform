@@ -10,7 +10,7 @@ Vercel setting was changed, no credential was read, and no live event was sent.
 |---|---|---|
 | Decision-grade funnel contract | `lib/analytics/funnel-contract.ts` | — |
 | Server purchase ownership (at most once) | `lib/analytics/ga4-purchase-claim.ts`, `lib/analytics/ga4-measurement.ts` | — |
-| GA4 Admin checklist + readback verifier | `lib/analytics/ga4-admin-checklist.ts` | `data/analytics/ot-ga4-admin-checklist.v2.json` |
+| GA4 Admin checklist + readback verifier | `lib/analytics/ga4-admin-checklist.ts` | `data/analytics/ot-ga4-admin-checklist.v3.json` |
 | Purchase dedup report (read-only) | `lib/analytics/purchase-dedup-report.ts` | — |
 | Canonical campaign naming | `lib/analytics/campaign-governance.ts` | — |
 | Experiment registry + linter | `lib/analytics/experiment-registry.ts` | `data/analytics/ot-experiment-registry.v1.json` (empty) |

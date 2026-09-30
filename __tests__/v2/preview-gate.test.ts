@@ -139,16 +139,17 @@ describe("marketing preview gate", () => {
   });
 });
 
-describe("layout.tsx source no longer always mounts Analytics + ReferralCapture", () => {
-  it("imports the gate and mounts both behind a conditional", () => {
+describe("layout.tsx source gates ReferralCapture and mounts no Vercel Analytics", () => {
+  it("imports the gate, gates ReferralCapture, and never mounts <Analytics />", () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, "../../app/layout.tsx"),
       "utf8",
     );
     expect(src).toMatch(/preview-gate/);
-    // Analytics must be wrapped in a `{ ... && <Analytics ... /> }` conditional.
-    expect(src).toMatch(/&&\s*<Analytics\s*\/>/);
-    // ReferralCapture mount must also be gated.
+    // Vercel Web Analytics is removed outright, not gated.
+    expect(src).not.toMatch(/<Analytics\b/);
+    expect(src).not.toContain("@vercel/analytics");
+    // ReferralCapture mount must stay gated.
     expect(src).toMatch(/&&\s*\(\s*<Suspense[^>]*>\s*<ReferralCapture/);
   });
 });

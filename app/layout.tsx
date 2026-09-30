@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Analytics } from "@vercel/analytics/next";
 import { Suspense } from "react";
 import { ReferralCapture } from "@/components/ReferralCapture";
 import { AnalyticsRouteTracker } from "@/components/analytics";
@@ -66,9 +65,11 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // Preview/dev/test must not mount Vercel Analytics or the ?ref= referral
+  // Preview/dev/test must not mount Google Analytics or the ?ref= referral
   // capture. Both are gated through the marketing preview gate so that
   // production builds on overtaxed-il.com keep their existing behavior.
+  // Vercel Web Analytics is removed outright: its beacon sent the raw landing
+  // URL (query and hash) and any external referrer.
   const liveMarketing = isProductionMarketingRuntime();
   return (
     <html lang="en">
@@ -83,8 +84,7 @@ export default function RootLayout({
           `/packet` — the page that holds a customer's one-time packet code in
           memory, and whose own contract says nothing observes what is typed
           there — would run first-touch capture, the route tracker, and on the
-          production host Google Analytics, Vercel Analytics and the referral
-          capture as well. Route children stay OUTSIDE the boundary, so this can
+          production host Google Analytics and the referral capture as well. Route children stay OUTSIDE the boundary, so this can
           suppress telemetry and can never blank a page.
         */}
         <InstrumentationBoundary>
@@ -109,7 +109,6 @@ export default function RootLayout({
           <Suspense fallback={null}>
             <AnalyticsRouteTracker />
           </Suspense>
-          {liveMarketing && <Analytics />}
         </InstrumentationBoundary>
         {children}
         </PrivateDocumentBoundary>

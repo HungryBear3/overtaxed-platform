@@ -3,6 +3,7 @@
 import { useEffect } from "react"
 import { useSearchParams } from "next/navigation"
 import { isClientPreviewStubMode } from "@/lib/marketing/preview-gate-client"
+import { normalizeReferralCode } from "@/lib/referrals/code"
 
 export function ReferralCapture() {
   const searchParams = useSearchParams()
@@ -12,12 +13,14 @@ export function ReferralCapture() {
     // this component directly we must still refuse to set cookies or POST.
     if (isClientPreviewStubMode()) return
 
-    const ref = searchParams.get("ref")
-    if (ref && ref.length > 0 && ref.length <= 64) {
+    // `?ref=` is visitor-controlled. Anything that is not a canonical code is
+    // dropped here: no cookie, no request. Only the canonical form is stored.
+    const ref = normalizeReferralCode(searchParams.get("ref"))
+    if (ref) {
       // Store in cookie for 30 days
       const expires = new Date()
       expires.setDate(expires.getDate() + 30)
-      document.cookie = `ot_ref=${encodeURIComponent(ref)}; expires=${expires.toUTCString()}; path=/; SameSite=Lax`
+      document.cookie = `ot_ref=${ref}; expires=${expires.toUTCString()}; path=/; SameSite=Lax`
 
       // Fire-and-forget visit increment
       fetch("/api/referrals/visit", {

@@ -14,7 +14,24 @@ import {
   STARTER_SLOTS,
   requiresCustomPricing,
 } from "@/lib/billing/pricing"
+import { normalizeReferralCode } from "@/lib/referrals/code"
 import { z } from "zod"
+
+/**
+ * The `ot_ref` cookie is client-controlled. Forward it to Stripe only as the
+ * canonical code of a referral an admin already issued. The lookup is
+ * read-only and never blocks checkout: any failure sends no referral.
+ */
+async function issuedReferralCode(cookie: string | undefined): Promise<string> {
+  const code = normalizeReferralCode(cookie)
+  if (!code) return ""
+  try {
+    const referral = await prisma.referral.findUnique({ where: { code }, select: { code: true } })
+    return referral?.code === code ? code : ""
+  } catch {
+    return ""
+  }
+}
 
 const schema = z.object({
   plan: z.enum(["STARTER", "GROWTH", "PORTFOLIO"]),
@@ -258,6 +275,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const referralCode = await issuedReferralCode(request.cookies.get("ot_ref")?.value)
     let checkoutSession
     try {
       checkoutSession = await stripe.checkout.sessions.create({
@@ -272,7 +290,7 @@ export async function POST(request: NextRequest) {
           userId: user.id,
           plan: parsed.data.plan,
           propertyCount: String(quantity), // Use quantity charged (e.g. Starter capped at 2), not client request
-          referralCode: request.cookies.get("ot_ref")?.value ?? "",
+          referralCode,
         },
       })
     } catch (createErr: unknown) {

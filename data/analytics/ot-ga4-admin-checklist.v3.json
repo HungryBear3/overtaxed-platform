@@ -1,6 +1,6 @@
 {
   "schema": "ot.ga4_admin_checklist",
-  "schema_version": 2,
+  "schema_version": 3,
   "business": "ot",
   "funnel_contract_version": "ot-funnel-contract-v2",
   "custom_dimensions": [
@@ -53,12 +53,29 @@
       "rationale": "Server-side purchase from the signed webhook after settlement and the durable PAID transition. The only key event. Behavioral evidence only: paid revenue is the Stripe/order record."
     }
   ],
+  "enhanced_measurement": [
+    {
+      "setting": "browser_history",
+      "readback_field": "pageChangesEnabled",
+      "required_value": false,
+      "status": "pending",
+      "rationale": "Enhanced Measurement 'Page changes based on browser history events' must be OFF on the web stream. The app sends its own SPA page_view with a governed page context; the automatic history-change page_view duplicates it and carries the raw URL."
+    },
+    {
+      "setting": "site_search",
+      "readback_field": "siteSearchEnabled",
+      "required_value": false,
+      "status": "pending",
+      "rationale": "Enhanced Measurement 'Site search' must be OFF on the web stream. It lifts raw query-string values (which can hold an address or a PIN) into view_search_results events outside the funnel contract."
+    }
+  ],
   "readback": {
-    "api": "analyticsadmin.googleapis.com/v1beta",
+    "api": "analyticsadmin.googleapis.com",
     "oauth_scope": "https://www.googleapis.com/auth/analytics.readonly",
     "calls": [
       "GET /v1beta/properties/{property_id}/customDimensions",
-      "GET /v1beta/properties/{property_id}/keyEvents"
+      "GET /v1beta/properties/{property_id}/keyEvents",
+      "GET /v1alpha/properties/{property_id}/dataStreams/{data_stream_id}/enhancedMeasurementSettings"
     ],
     "match": "exact_set"
   }

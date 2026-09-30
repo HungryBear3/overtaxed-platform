@@ -139,13 +139,17 @@ describe("the root layout gates every instrumentation mount", () => {
     "ReferralCapture",
     "GoogleAnalytics",
     "AnalyticsRouteTracker",
-    "<Analytics />",
   ])("mounts %s inside the boundary", (component) => {
     expect(gated).toContain(component)
     // …and nowhere else in the layout, which would defeat the gate.
     const outside = LAYOUT.replace(gated, "")
       .split("export default")[1] ?? ""
     expect(outside).not.toContain(`<${component.replace(/[<>/ ]/g, "")} `)
+  })
+
+  it("mounts no Vercel Analytics anywhere", () => {
+    expect(LAYOUT).not.toMatch(/<Analytics\b/)
+    expect(LAYOUT).not.toContain("@vercel/analytics")
   })
 
   it("keeps route children OUTSIDE the boundary", () => {

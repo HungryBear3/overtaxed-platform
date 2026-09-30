@@ -71,7 +71,7 @@ work today.
 
 ## GA4 owner actions (all pending)
 
-Machine-readable: `data/analytics/ot-ga4-admin-checklist.v2.json`, validated by
+Machine-readable: `data/analytics/ot-ga4-admin-checklist.v3.json`, validated by
 `validateGa4AdminChecklist`, verified after the fact by
 `verifyGa4AdminReadback` against a read-only Admin API readback.
 
@@ -88,6 +88,28 @@ Event-scoped custom dimensions to create:
 Key events: **`purchase` only** (once per event). If `free_check_qualified`
 was already marked as a key event from the Phase-B checklist, un-mark it — the
 readback verifier reports it as `UNEXPECTED_KEY_EVENT`.
+
+Enhanced Measurement on the web stream (Admin → Data streams → web stream →
+Enhanced measurement → gear), both **OFF**:
+
+| Setting | Readback field | Why |
+|---|---|---|
+| `browser_history` — "Page changes based on browser history events" | `pageChangesEnabled` | The app sends its own SPA `page_view` with a governed page context; the automatic one duplicates it and carries the raw URL. |
+| `site_search` — "Site search" | `siteSearchEnabled` | Lifts raw query-string values into `view_search_results`, outside the funnel contract. |
+
+Readback for these is one read-only
+`GET /v1alpha/properties/{property_id}/dataStreams/{data_stream_id}/enhancedMeasurementSettings`
+(scope `analytics.readonly`), passed to `verifyGa4AdminReadback` as
+`enhancedMeasurementSettings` next to `customDimensions` and `keyEvents`. A
+setting that is ON is reported as `ENHANCED_MEASUREMENT_ON:<setting>`. Every
+item stays `pending` in the checklist; only a passing readback is evidence that
+the owner changed the property.
+
+Vercel Web Analytics is removed from the app and its package metadata (its
+beacon sent the raw landing URL and external referrer). If the Vercel project
+still shows Web Analytics as enabled, disabling it there is an owner action;
+no client in the build sends to it. `npx tsx scripts/vercel-analytics-bundle-scan.ts .next`
+checks a fresh build for its client, endpoint and queue markers.
 
 Custom dimensions only collect from the day they are created; the report's
 custom-parameter slices are empty (or the Data API refuses the request) before

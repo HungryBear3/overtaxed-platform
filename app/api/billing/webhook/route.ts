@@ -23,6 +23,7 @@ import { NEUTRAL_GENERATION_INVOCATION_BUDGET_MS } from "@/lib/fulfillment-runti
 import { NEUTRAL_REPORT_COMMERCE_POLICY } from "@/lib/commerce/neutral-report-policy"
 
 import { bindPayment, providerId, recordReversal, reversalTypes } from "@/lib/checkout/ot-reversal"
+import { normalizeReferralCode } from "@/lib/referrals/code"
 
 // The neutral report production scheduled by this route runs in `after()`,
 // which still counts against the function's duration. Declared explicitly and
@@ -528,7 +529,8 @@ export async function POST(request: NextRequest) {
       const userId = metadata.userId
       const plan = metadata.plan
       const propertyCountStr = metadata.propertyCount
-      const referralCode = metadata.referralCode
+      // Metadata `referralCode` was copied from a client cookie: untrusted.
+      const referralCode = normalizeReferralCode(metadata.referralCode)
       const mode = data.mode as string | undefined
 
       if (!userId || !plan) {
@@ -536,26 +538,31 @@ export async function POST(request: NextRequest) {
         break
       }
 
-      // Track referral conversion — guard against double-counting on webhook replay
+      // Track referral conversion — guard against double-counting on webhook replay.
+      // Only a referral an admin already issued is credited; metadata never
+      // creates one, and nothing here can fail the settlement.
       if (referralCode) {
         try {
           const amountTotal = (data.amount_total as number | null) ?? 0
           const existingUser = await prisma.user.findUnique({ where: { id: userId }, select: { referralCode: true } })
           const alreadyTracked = existingUser?.referralCode === referralCode
           if (!alreadyTracked) {
-            await prisma.referral.upsert({
+            const credited = await prisma.referral.updateMany({
               where: { code: referralCode },
-              update: {
+              data: {
                 conversions: { increment: 1 },
                 revenue: { increment: amountTotal / 100 },
               },
-              create: { code: referralCode, conversions: 1, revenue: amountTotal / 100 },
             })
-            await prisma.user.update({
-              where: { id: userId },
-              data: { referralCode },
-            })
-            console.log(`[webhook] Referral conversion tracked: code=${referralCode} user=${userId}`)
+            if (credited.count === 1) {
+              await prisma.user.update({
+                where: { id: userId },
+                data: { referralCode },
+              })
+              console.log(`[webhook] Referral conversion tracked: code=${referralCode} user=${userId}`)
+            } else {
+              console.log(`[webhook] Referral code not issued, ignoring for user=${userId}`)
+            }
           } else {
             console.log(`[webhook] Referral already tracked for user=${userId}, skipping`)
           }
