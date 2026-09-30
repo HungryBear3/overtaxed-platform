@@ -13,8 +13,8 @@
  * The root layout undid part of that by construction. Every route in this app
  * inherits one root layout, and that layout mounts UTM first-touch capture,
  * approved-code capture, and the analytics route tracker unconditionally — plus
- * the referral capture, Google Analytics and Vercel Analytics on the production
- * marketing host. None of those is a token logger, and the specific leak is not
+ * the referral capture and Google Analytics on the production marketing host
+ * (Vercel Web Analytics was also mounted there until it was removed). None of those is a token logger, and the specific leak is not
  * the point: a page whose whole job is to hold a bearer credential in memory
  * should not also be running third-party script, writing first-touch
  * localStorage, or reporting page views, because every one of those is a

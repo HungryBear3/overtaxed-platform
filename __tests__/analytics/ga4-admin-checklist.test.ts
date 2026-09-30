@@ -4,11 +4,12 @@
  * The checked-in GA4 Admin checklist and its readback verification contract.
  *
  * The checklist names the only event-scoped custom dimensions and key events
- * the OT property should carry. The verifier compares an operator-captured,
+ * the OT property should carry, and the Enhanced Measurement settings that must
+ * be OFF on its web stream. The verifier compares an operator-captured,
  * read-only Admin API readback against it. Nothing here calls an API: the
  * readback is data handed in.
  */
-import checklist from "@/data/analytics/ot-ga4-admin-checklist.v2.json"
+import checklist from "@/data/analytics/ot-ga4-admin-checklist.v3.json"
 import {
   validateGa4AdminChecklist,
   verifyGa4AdminReadback,
@@ -18,6 +19,26 @@ type Json = Record<string, unknown>
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
+}
+
+/**
+ * The web stream's Enhanced Measurement settings with browser-history page
+ * changes and site search OFF. The Admin API emits proto3 JSON, so a false
+ * boolean may also be omitted entirely.
+ */
+function conformingEnhancedMeasurement(): Json {
+  return {
+    name: "properties/123456789/dataStreams/987654321/enhancedMeasurementSettings",
+    streamEnabled: true,
+    scrollsEnabled: true,
+    outboundClicksEnabled: true,
+    siteSearchEnabled: false,
+    videoEngagementEnabled: true,
+    fileDownloadsEnabled: true,
+    pageChangesEnabled: false,
+    formInteractionsEnabled: false,
+    searchQueryParameter: "q,s,search,query,keyword",
+  }
 }
 
 /** The exact readback a correctly configured property returns. */
@@ -50,6 +71,7 @@ function conformingReadback(): Json {
         },
       ],
     },
+    enhancedMeasurementSettings: conformingEnhancedMeasurement(),
   }
 }
 
@@ -69,6 +91,27 @@ describe("the checked-in checklist", () => {
     expect(checklist.key_events.map((k) => [k.event_name, k.counting_method, k.status])).toEqual([
       ["purchase", "ONCE_PER_EVENT", "pending"],
     ])
+  })
+
+  it("requires browser-history page changes and site search OFF, pending an owner readback", () => {
+    const c = checklist as unknown as Json
+    expect(c.schema_version).toBe(3)
+    expect(
+      (c.enhanced_measurement as Json[]).map((s) => [s.setting, s.readback_field, s.required_value, s.status]),
+    ).toEqual([
+      ["browser_history", "pageChangesEnabled", false, "pending"],
+      ["site_search", "siteSearchEnabled", false, "pending"],
+    ])
+  })
+
+  it("reads the Enhanced Measurement settings back with a read-only GET", () => {
+    const readback = (checklist as unknown as { readback: { calls: string[]; oauth_scope: string } }).readback
+    expect(readback.calls).toEqual([
+      "GET /v1beta/properties/{property_id}/customDimensions",
+      "GET /v1beta/properties/{property_id}/keyEvents",
+      "GET /v1alpha/properties/{property_id}/dataStreams/{data_stream_id}/enhancedMeasurementSettings",
+    ])
+    expect(readback.oauth_scope).toBe("https://www.googleapis.com/auth/analytics.readonly")
   })
 })
 
@@ -138,6 +181,70 @@ describe("checklist validation refuses what is not decision-grade", () => {
     ["an unknown top-level key", (c: Json) => (c.notes = "free text"), "UNKNOWN_KEY:notes"],
     ["a missing purchase key event", (c: Json) => (c.key_events as Json[]).pop(), "PURCHASE_KEY_EVENT_REQUIRED"],
     ["a wrong contract version", (c: Json) => (c.funnel_contract_version = "ot-funnel-contract-v0"), "CONTRACT_VERSION_MISMATCH"],
+    ["the previous schema version", (c: Json) => (c.schema_version = 2), "SCHEMA"],
+    ["no Enhanced Measurement section", (c: Json) => delete c.enhanced_measurement, "ENHANCED_MEASUREMENT_REQUIRED:browser_history"],
+    [
+      "a missing browser-history requirement",
+      (c: Json) => (c.enhanced_measurement as Json[]).shift(),
+      "ENHANCED_MEASUREMENT_REQUIRED:browser_history",
+    ],
+    [
+      "a missing site-search requirement",
+      (c: Json) => (c.enhanced_measurement as Json[]).pop(),
+      "ENHANCED_MEASUREMENT_REQUIRED:site_search",
+    ],
+    [
+      "browser-history page changes allowed ON",
+      (c: Json) => ((c.enhanced_measurement as Json[])[0].required_value = true),
+      "ENHANCED_MEASUREMENT_MUST_BE_OFF:browser_history",
+    ],
+    [
+      "site search allowed ON",
+      (c: Json) => ((c.enhanced_measurement as Json[])[1].required_value = true),
+      "ENHANCED_MEASUREMENT_MUST_BE_OFF:site_search",
+    ],
+    [
+      "a setting read from the wrong field",
+      (c: Json) => ((c.enhanced_measurement as Json[])[0].readback_field = "siteSearchEnabled"),
+      "ENHANCED_MEASUREMENT_FIELD:browser_history",
+    ],
+    [
+      "a setting marked done without a readback",
+      (c: Json) => ((c.enhanced_measurement as Json[])[0].status = "done"),
+      "INVALID_STATUS:browser_history",
+    ],
+    [
+      "an unknown Enhanced Measurement setting",
+      (c: Json) =>
+        (c.enhanced_measurement as Json[]).push({
+          setting: "scrolls",
+          readback_field: "scrollsEnabled",
+          required_value: false,
+          status: "pending",
+          rationale: "x",
+        }),
+      "UNKNOWN_ENHANCED_MEASUREMENT_SETTING:scrolls",
+    ],
+    [
+      "a duplicated Enhanced Measurement setting",
+      (c: Json) => (c.enhanced_measurement as Json[]).push(clone((c.enhanced_measurement as Json[])[1])),
+      "DUPLICATE_ENHANCED_MEASUREMENT:site_search",
+    ],
+    [
+      "an unknown key on an Enhanced Measurement setting",
+      (c: Json) => ((c.enhanced_measurement as Json[])[0].verified_at = "2026-09-30"),
+      "UNKNOWN_KEY:verified_at",
+    ],
+    [
+      "a write scope on the readback",
+      (c: Json) => ((c.readback as Json).oauth_scope = "https://www.googleapis.com/auth/analytics.edit"),
+      "READBACK_SCOPE_NOT_READ_ONLY",
+    ],
+    [
+      "a readback without the Enhanced Measurement call",
+      (c: Json) => ((c.readback as Json).calls as string[]).pop(),
+      "READBACK_CALLS",
+    ],
   ])("rejects %s", (_label, mutate, violation) => {
     const candidate = clone(checklist) as unknown as Json
     mutate(candidate)
@@ -196,6 +303,35 @@ describe("readback verification", () => {
       findings: ["MALFORMED_READBACK"],
     })
     expect(verifyGa4AdminReadback(checklist, null)).toEqual({ status: "FAIL", findings: ["MALFORMED_READBACK"] })
+  })
+
+  it.each([
+    ["browser-history page changes", "pageChangesEnabled", "ENHANCED_MEASUREMENT_ON:browser_history"],
+    ["site search", "siteSearchEnabled", "ENHANCED_MEASUREMENT_ON:site_search"],
+  ])("fails a stream with %s ON", (_label, field, finding) => {
+    const readback = conformingReadback()
+    ;(readback.enhancedMeasurementSettings as Json)[field] = true
+    expect(verifyGa4AdminReadback(checklist, readback)).toEqual({ status: "FAIL", findings: [finding] })
+  })
+
+  it("treats an omitted proto3 false as OFF", () => {
+    const readback = conformingReadback()
+    delete (readback.enhancedMeasurementSettings as Json).pageChangesEnabled
+    delete (readback.enhancedMeasurementSettings as Json).siteSearchEnabled
+    expect(verifyGa4AdminReadback(checklist, readback)).toEqual({ status: "PASS", findings: [] })
+  })
+
+  it.each([
+    ["no Enhanced Measurement readback", (r: Json) => delete r.enhancedMeasurementSettings],
+    ["a non-boolean setting", (r: Json) => ((r.enhancedMeasurementSettings as Json).pageChangesEnabled = "false")],
+    ["a null setting", (r: Json) => ((r.enhancedMeasurementSettings as Json).siteSearchEnabled = null)],
+    ["a readback of another resource", (r: Json) => ((r.enhancedMeasurementSettings as Json).name = "properties/1/dataStreams/2")],
+    ["a readback with no resource name", (r: Json) => delete (r.enhancedMeasurementSettings as Json).name],
+    ["an array body", (r: Json) => (r.enhancedMeasurementSettings = [])],
+  ])("fails closed on %s", (_label, mutate) => {
+    const readback = conformingReadback()
+    mutate(readback)
+    expect(verifyGa4AdminReadback(checklist, readback)).toEqual({ status: "FAIL", findings: ["MALFORMED_READBACK"] })
   })
 
   it("reports a duplicated dimension registration", () => {

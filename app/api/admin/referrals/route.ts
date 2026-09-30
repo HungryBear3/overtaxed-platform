@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
 import { prisma } from "@/lib/db"
+import { normalizeReferralCode } from "@/lib/referrals/code"
 
 async function requireAdmin(request: NextRequest) {
   const session = await getSession(request)
@@ -26,12 +27,18 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     await requireAdmin(request)
-    const { code, name } = await request.json()
-    if (!code || typeof code !== "string") {
-      return NextResponse.json({ error: "code is required" }, { status: 400 })
+    const { code: rawCode, name } = await request.json()
+    // Same canonical validator every public referral ingress applies, so an
+    // admin cannot issue a code those paths would reject. No trimming.
+    const code = normalizeReferralCode(rawCode)
+    if (!code) {
+      return NextResponse.json(
+        { error: "code must be 2-32 ASCII letters or digits, optionally joined by single hyphens" },
+        { status: 400 },
+      )
     }
     const referral = await prisma.referral.create({
-      data: { code: code.toLowerCase().trim(), name },
+      data: { code, name },
     })
     return NextResponse.json({ referral })
   } catch (err) {

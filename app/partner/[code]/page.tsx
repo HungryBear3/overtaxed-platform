@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation"
 import { prisma } from "@/lib/db"
+import { normalizeReferralCode } from "@/lib/referrals/code"
 import type { Metadata } from "next"
 
 interface Props {
@@ -14,27 +15,24 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function PartnerDashboardPage({ params }: Props) {
-  const { code } = await params
+  // The path segment is visitor-controlled. Only a referral an admin already
+  // issued has a dashboard; this GET never creates one.
+  const code = normalizeReferralCode((await params).code)
+  if (!code) notFound()
   let referral = null
   try {
-    referral = await prisma.referral.upsert({
-      where: { code: code.toLowerCase() },
-      update: {},
-      create: { code: code.toLowerCase() },
-    })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    referral = await prisma.referral.findUnique({ where: { code } })
+  } catch {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center max-w-lg px-4">
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Dashboard unavailable</h1>
           <p className="text-gray-500 mb-4">Please try again in a moment.</p>
-          <p className="text-xs text-red-400 font-mono break-all">{msg}</p>
-          <pre className="text-xs text-left bg-gray-100 p-3 rounded overflow-auto">{msg}</pre>
         </div>
       </div>
     )
   }
+  if (!referral) notFound()
 
   const commissionRate = referral.commissionRate // per-partner rate (default 20%, John = 50%)
   const estimatedEarnings = Number(referral.revenue) * commissionRate

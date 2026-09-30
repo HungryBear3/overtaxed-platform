@@ -38,7 +38,7 @@ jest.mock("@/lib/drip", () => ({
 
 jest.mock("@/lib/db", () => ({
   prisma: {
-    referral: { upsert: jest.fn() },
+    referral: { upsert: jest.fn(), updateMany: jest.fn() },
     contingencyLead: { create: jest.fn() },
     oTLead: { create: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
     townshipAlert: { upsert: jest.fn(), update: jest.fn() },
@@ -47,7 +47,7 @@ jest.mock("@/lib/db", () => ({
 
 jest.mock("@/lib/db/prisma", () => ({
   prisma: {
-    referral: { upsert: jest.fn() },
+    referral: { upsert: jest.fn(), updateMany: jest.fn() },
     contingencyLead: { create: jest.fn() },
     oTLead: { create: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
     townshipAlert: { upsert: jest.fn(), update: jest.fn() },
@@ -94,7 +94,7 @@ const dripModule = jest.requireMock("@/lib/drip") as {
 };
 const dbModule = jest.requireMock("@/lib/db") as {
   prisma: {
-    referral: { upsert: jest.Mock };
+    referral: { upsert: jest.Mock; updateMany: jest.Mock };
     contingencyLead: { create: jest.Mock };
     oTLead: { create: jest.Mock };
   };
@@ -175,6 +175,7 @@ describe("preview gate — route handlers do not call live services", () => {
     expect(json.ok).toBe(true);
     expect(json.mode).toBe("preview_noop");
     expect(dbModule.prisma.referral.upsert).not.toHaveBeenCalled();
+    expect(dbModule.prisma.referral.updateMany).not.toHaveBeenCalled();
   });
 
   // This previously asserted preview_noop — a 200 that captured nothing in
