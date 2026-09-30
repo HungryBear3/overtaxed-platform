@@ -459,6 +459,11 @@ describe("hostile and malformed responses fail the whole report closed", () => {
     ["an unknown schema restriction key", setMetadata("schemaRestrictionResponse", { zzz: [] }), "METADATA_SCHEMA_RESTRICTION"],
     ["an absent rowCount with rows", everyResponse((response) => void delete response.rowCount), "ROW_COUNT"],
     ["a string rowCount", everyResponse((response) => void (response.rowCount = String(response.rowCount))), "ROW_COUNT"],
+    // B1-R: null is not a row count, and snapshot() turns NaN/Infinity into null.
+    ["a null rowCount with rows", everyResponse((response) => void (response.rowCount = null)), "ROW_COUNT"],
+    ["a NaN rowCount with rows", everyResponse((response) => void (response.rowCount = NaN)), "ROW_COUNT"],
+    ["an Infinity rowCount with rows", everyResponse((response) => void (response.rowCount = Infinity)), "ROW_COUNT"],
+    ["a -Infinity rowCount with rows", everyResponse((response) => void (response.rowCount = -Infinity)), "ROW_COUNT"],
     ["a foreign kind", everyResponse((response) => void (response.kind = "evil")), "KIND"],
     ["a non-string kind", everyResponse((response) => void (response.kind = 1)), "KIND"],
     ["a property quota although none was requested", everyResponse((response) => void (response.propertyQuota = { tokensPerDay: { consumed: 1 } })), "PROPERTY_QUOTA"],
@@ -634,6 +639,10 @@ describe("official GA4 response shapes the request can produce are accepted", ()
     ["with an empty rows array and no rowCount", (r: Json) => {
       r.rows = []
       delete r.rowCount
+    }],
+    ["with an empty rows array and a null rowCount", (r: Json) => {
+      r.rows = []
+      r.rowCount = null
     }],
   ])("accepts a valid empty response %s", (_label, mutate) => {
     const report = evaluated(mutate as (response: Json, index: number) => void)

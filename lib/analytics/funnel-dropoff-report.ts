@@ -438,8 +438,9 @@ function parseResponse(entry: FunnelRequestEntry, breakdown: Breakdown, response
 
   const rows = response.rows ?? []
   if (!Array.isArray(rows)) throw new InvalidResponse("ROWS")
-  // Truncation is judged from rowCount, so it may be omitted only when no row came back.
-  if (rows.length > 0 && response.rowCount === undefined) throw new InvalidResponse("ROW_COUNT")
+  // Truncation is judged from rowCount, so it may be omitted or null only when no
+  // row came back. snapshot() has already turned NaN/Infinity into null.
+  if (rows.length > 0 && response.rowCount == null) throw new InvalidResponse("ROW_COUNT")
   const rowCount = response.rowCount ?? rows.length
   if (typeof rowCount !== "number" || !Number.isSafeInteger(rowCount) || rowCount < rows.length) {
     throw new InvalidResponse("ROW_COUNT")
