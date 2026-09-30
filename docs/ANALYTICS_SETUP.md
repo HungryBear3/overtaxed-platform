@@ -20,8 +20,9 @@ the Pixel — see `docs/analytics/OT-ANALYTICS-PHASE-B.md`.
 - **AnalyticsProvider** wraps the app in `app/layout.tsx`; loads GA4 and Google Ads when IDs are set. It mounts no Meta Pixel: the consent-gated candidate in `components/analytics/meta-pixel.tsx` is unmounted and on HOLD
 - **Contracts and governance:** funnel event contract, GA4 Admin checklist, campaign/experiment registry, decision-packet export and Meta posture are described in `docs/analytics/OT-ANALYTICS-PHASE-B.md`
 - **UTM capture:** Automatic on page load; stored in localStorage for attribution
-- **Page views:** Tracked on client-side navigation via `usePathname` / `useSearchParams`
-- **Events:** `lib/analytics/events.ts` — signUp, login, propertyAdded, appealStarted, appealFiled, checkoutStarted, pdfDownload, contactFormSubmit
+- **Page views:** Tracked on client-side navigation via `usePathname` / `useSearchParams`. GA4 sees only the approved landing route (`/(other)` for anything else), a UTM query rebuilt from governed values, and an allowlisted referrer origin — see `docs/analytics/OT-FUNNEL-DROPOFF.md`
+- **Funnel drop-off:** read-only GA4 Data API report and owner guide in `docs/analytics/OT-FUNNEL-DROPOFF.md`
+- **Events:** `lib/analytics/events.ts` — signUp, login, propertyAdded, appealStarted, appealFiled, checkoutStarted, checkoutBlocked, pdfDownload, contactFormSubmit
 - **Purchases:** Current purchase reporting is server-side only for the OT `T2`/`T3` checkout flow, after durable order and exact Stripe settlement verification via Measurement Protocol — at most once per Checkout Session (durable claim in `lib/analytics/ga4-purchase-claim.ts`), with the body validated against the funnel contract before it is sent.
 - **Legacy billing:** Subscription checkout, add-slots, invoice checkout, and other older billing purchase analytics remain deliberately untracked until their durable settlement contracts are hardened.
 

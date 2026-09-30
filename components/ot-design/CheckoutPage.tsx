@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { getAnonymousGaIdentifiersForRequest } from "@/lib/analytics/ga4"
 import { analytics } from "@/lib/analytics/events"
+import { checkoutBlockedReasonForResponse, type CheckoutBlockedReason } from "@/lib/analytics/checkout-funnel"
 import { getApprovedAttributionCodesForRequest } from "@/lib/attribution/client-codes"
 import { getCheckoutAttributionForRequest } from "@/lib/attribution/touch-store"
 import { isClientPreviewStubMode } from "@/lib/marketing/preview-gate-client"
@@ -63,6 +64,19 @@ const gateCardStyle: React.CSSProperties = {
   borderRadius: 10,
   padding: 16,
   color: "#17243b",
+}
+
+/**
+ * Record an intent's outcome without letting measurement touch the checkout:
+ * whatever the analytics module does, the gate still renders and the hand-off
+ * still happens.
+ */
+function recordOutcome(emit: () => void): void {
+  try {
+    emit()
+  } catch {
+    // Analytics failure is not the buyer's problem.
+  }
 }
 
 function checkoutKey(): string {
@@ -150,6 +164,10 @@ export default function CheckoutPage({ initialPlan = "diy", neutralReport = fals
     intent.current = "in_flight"
     setLoading(true)
     setError(null)
+    // The intent ends in exactly one of begin_checkout and checkout_blocked.
+    // Until a response arrives, a failure is the network's.
+    let blockedReason: CheckoutBlockedReason = "network_error"
+    let outcomeRecorded = false
     try {
       const gaIdentifiers = getAnonymousGaIdentifiersForRequest()
       // Code references from the server-approved registry only — never a raw
@@ -180,10 +198,14 @@ export default function CheckoutPage({ initialPlan = "diy", neutralReport = fals
           ...gaIdentifiers,
         }),
       })
+      blockedReason = res.ok ? "unknown" : checkoutBlockedReasonForResponse(undefined, res.status)
       const data = (await res.json()) as GateState & { url?: string }
       if (!ownsIntent()) return
       if (!res.ok) {
+        blockedReason = checkoutBlockedReasonForResponse(data?.code, res.status)
         if (["T2_ACKNOWLEDGMENT_REQUIRED", "T3_WINDOW_BLOCKED", "NOTICE_REVIEW_REQUIRED", "ADDRESS_AMBIGUOUS"].includes(data.code)) {
+          outcomeRecorded = true
+          recordOutcome(() => analytics.checkoutBlocked(tier, blockedReason))
           setGate(data)
           setLoading(false)
           return
@@ -192,13 +214,16 @@ export default function CheckoutPage({ initialPlan = "diy", neutralReport = fals
       }
       if (!data.url) throw new Error("Checkout failed")
       const checkoutValue = Number.parseFloat(plan.price.replace(/[^0-9.]/g, ""))
-      analytics.checkoutStarted(tier, Number.isFinite(checkoutValue) ? checkoutValue : undefined)
+      outcomeRecorded = true
+      recordOutcome(() => analytics.checkoutStarted(tier, Number.isFinite(checkoutValue) ? checkoutValue : undefined))
       router.push(data.url)
       // Set only once navigation has been handed over: if `push` throws, the
       // intent is released below instead of locking a page that never left.
       intent.current = "handed_off"
     } catch (caught: unknown) {
       if (!ownsIntent()) return
+      // A hand-off that fails after begin_checkout is not a second outcome.
+      if (!outcomeRecorded) recordOutcome(() => analytics.checkoutBlocked(tier, blockedReason))
       setError(caught instanceof Error ? caught.message : "Something went wrong")
       setLoading(false)
     } finally {

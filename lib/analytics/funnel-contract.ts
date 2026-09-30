@@ -1,15 +1,16 @@
 /**
  * The decision-grade OT funnel contract.
  *
- * Four events carry decisions: `free_check_completed` (a live lookup produced
- * an authoritative outcome), `free_check_qualified` (that outcome was
- * `supportive` — the one qualified outcome, derived from the canonical outcome
- * matrix, never from page arithmetic, never from the preview fixture),
- * `begin_checkout` (the server returned a hosted checkout URL for one intent)
- * and `purchase` (the signed webhook settled the payment and persisted PAID).
- * `free_check_started` still crosses the same sensitive boundary and is held
- * to the same closed shape, but it is diagnostic: it is not promoted to a
- * custom dimension, a key event or the decision export.
+ * Six events are the funnel: `free_check_started` (a reader submitted a check
+ * that passed the surface's own validation), `free_check_completed` (a live
+ * lookup produced an authoritative outcome), `free_check_qualified` (that
+ * outcome was `supportive` — the one qualified outcome, derived from the
+ * canonical outcome matrix, never from page arithmetic, never from the preview
+ * fixture), `begin_checkout` (the server returned a hosted checkout URL for one
+ * intent), `checkout_blocked` (it did not, for one closed reason — see
+ * ./checkout-funnel) and `purchase` (the signed webhook settled the payment and
+ * persisted PAID). One checkout intent ends in exactly one of `begin_checkout`
+ * and `checkout_blocked`, so their sum is the number of checkout attempts.
  *
  * Browser events are closed: every parameter is listed below with its only
  * acceptable values, and `page_location`/`page_referrer` must be present and
@@ -26,14 +27,17 @@
 
 import { FREE_CHECK_OUTCOME_MATRIX } from "@/lib/free-check-outcome-contract"
 import { sanitizeAnonymousGaIdentifiers } from "./ga4"
+import { CHECKOUT_BLOCKED_REASONS } from "./checkout-funnel"
 import { FREE_CHECK_INPUT_MODES, FREE_CHECK_SURFACES, FREE_CHECK_WINDOW_STATUSES } from "./free-check-funnel"
 
-export const FUNNEL_CONTRACT_VERSION = "ot-funnel-contract-v1"
+export const FUNNEL_CONTRACT_VERSION = "ot-funnel-contract-v2"
 
 export const DECISION_FUNNEL_EVENTS = [
+  "free_check_started",
   "free_check_completed",
   "free_check_qualified",
   "begin_checkout",
+  "checkout_blocked",
   "purchase",
 ] as const
 export type DecisionFunnelEvent = (typeof DECISION_FUNNEL_EVENTS)[number]
@@ -109,7 +113,7 @@ function matrixRow(params: Record<string, unknown>) {
 
 const BROWSER_EVENTS: Readonly<Record<string, BrowserEventSpec>> = {
   free_check_started: {
-    grade: "diagnostic",
+    grade: "decision",
     required: { surface: oneOf(FREE_CHECK_SURFACES), input_mode: oneOf(FREE_CHECK_INPUT_MODES), ...PAGE_CONTEXT },
     optional: {},
   },
@@ -137,6 +141,11 @@ const BROWSER_EVENTS: Readonly<Record<string, BrowserEventSpec>> = {
     grade: "decision",
     required: { ...PAGE_CONTEXT },
     optional: { plan: oneOf(CHECKOUT_TIERS), value: isAmount },
+  },
+  checkout_blocked: {
+    grade: "decision",
+    required: { plan: oneOf(CHECKOUT_TIERS), blocked_reason: oneOf(CHECKOUT_BLOCKED_REASONS), ...PAGE_CONTEXT },
+    optional: {},
   },
 }
 

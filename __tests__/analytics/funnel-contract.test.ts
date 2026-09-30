@@ -57,16 +57,18 @@ afterEach(() => {
 })
 
 describe("the contract names exactly the decision-grade funnel", () => {
-  it("promotes free_check_completed, one qualified outcome, begin_checkout and purchase — nothing else", () => {
+  it("names the six funnel events — started, completed, one qualified outcome, begin_checkout, checkout_blocked and purchase — nothing else", () => {
     expect([...DECISION_FUNNEL_EVENTS]).toEqual([
+      "free_check_started",
       "free_check_completed",
       "free_check_qualified",
       "begin_checkout",
+      "checkout_blocked",
       "purchase",
     ])
   })
 
-  it("treats free_check_started as diagnostic: closed, but not decision-grade", () => {
+  it("treats free_check_started as a closed, decision-grade funnel step", () => {
     expect(
       validateBrowserFunnelEvent("free_check_started", {
         surface: "check_page",
@@ -74,7 +76,7 @@ describe("the contract names exactly the decision-grade funnel", () => {
         page_location: "",
         page_referrer: "",
       }),
-    ).toEqual({ ok: true, grade: "diagnostic" })
+    ).toEqual({ ok: true, grade: "decision" })
   })
 })
 

@@ -1,5 +1,7 @@
+import { normalizeLandingPath } from "@/lib/attribution/landing-paths"
+import { campaignIssues, contentIssues, mediumIssues, sourceIssues } from "./campaign-governance"
+
 const CANONICAL_GA_HOSTS = new Set(["overtaxed-il.com", "www.overtaxed-il.com"])
-const STRIPE_CHECKOUT_HOST = "checkout.stripe.com"
 export const GA_READY_EVENT_NAME = "ot:ga-ready"
 export const GA_READY_WINDOW_FLAG = "__OT_GA_READY__"
 const BLOCKED_KEYS = [
@@ -60,20 +62,134 @@ function safeUrl(raw: string | null | undefined): URL | null {
   }
 }
 
-function sanitizeUrl(raw: string | null | undefined, suppressStripeCheckoutReferrer: boolean): string | undefined {
+/**
+ * The path GA4 is told for any page that is not an approved landing route.
+ * Account, appeal and property pages carry record ids in their paths, and an
+ * unknown path is text somebody else wrote; neither is reported.
+ */
+export const UNLISTED_PAGE_PATH = "/(other)"
+
+/**
+ * Referrer hosts GA4 may see, each for a governed source. A referrer from any
+ * other host is sent as "" (direct): a hostname can itself be chosen text, and
+ * GA4 needs only the host to classify these. A partner that wants credit tags
+ * its links with governed UTM values instead.
+ */
+const REFERRER_HOST_SOURCES: Readonly<Record<string, string>> = Object.freeze({
+  "google.com": "google",
+  "www.google.com": "google",
+  "bing.com": "bing",
+  "www.bing.com": "bing",
+  "duckduckgo.com": "duckduckgo",
+  "search.yahoo.com": "yahoo",
+  "facebook.com": "facebook",
+  "www.facebook.com": "facebook",
+  "m.facebook.com": "facebook",
+  "l.facebook.com": "facebook",
+  "lm.facebook.com": "facebook",
+  "instagram.com": "instagram",
+  "www.instagram.com": "instagram",
+  "l.instagram.com": "instagram",
+  "tiktok.com": "tiktok",
+  "www.tiktok.com": "tiktok",
+  "pinterest.com": "pinterest",
+  "www.pinterest.com": "pinterest",
+  "youtube.com": "youtube",
+  "www.youtube.com": "youtube",
+  "m.youtube.com": "youtube",
+  "linkedin.com": "linkedin",
+  "www.linkedin.com": "linkedin",
+  "lnkd.in": "linkedin",
+  "reddit.com": "reddit",
+  "www.reddit.com": "reddit",
+  "old.reddit.com": "reddit",
+  "out.reddit.com": "reddit",
+  "t.co": "x",
+  "x.com": "x",
+  "nextdoor.com": "nextdoor",
+  "www.nextdoor.com": "nextdoor",
+  "chatgpt.com": "chatgpt",
+  "perplexity.ai": "perplexity",
+  "www.perplexity.ai": "perplexity",
+})
+
+/** The governed source a referrer host stands for, or null. Own keys only. */
+export function referrerHostSource(host: unknown): string | null {
+  if (typeof host !== "string" || !Object.prototype.hasOwnProperty.call(REFERRER_HOST_SOURCES, host)) return null
+  return REFERRER_HOST_SOURCES[host]
+}
+
+function webUrl(raw: string | null | undefined): URL | null {
   const parsed = safeUrl(raw)
+  if (!parsed || (parsed.protocol !== "https:" && parsed.protocol !== "http:") || parsed.port !== "") return null
+  return parsed
+}
+
+/** The approved landing value for a pathname, or the unlisted marker. */
+export function governedPagePath(pathname: unknown): string {
+  return normalizeLandingPath(pathname) ?? UNLISTED_PAGE_PATH
+}
+
+/** A query parameter present exactly once. A repeated key is ambiguous and dropped. */
+function single(params: URLSearchParams, key: string): string | null {
+  const values = params.getAll(key)
+  return values.length === 1 ? values[0] : null
+}
+
+/**
+ * The governed UTM query for a landing, rebuilt from values the campaign
+ * governance accepts — never the original query. A source outside the closed
+ * list means no query at all; medium, campaign (owner-approved slugs only) and
+ * content are then each kept only if governed. `utm_term`, click ids and every
+ * other parameter are dropped.
+ */
+function governedCampaignQuery(params: URLSearchParams): string {
+  const source = single(params, "utm_source")
+  if (source === null || sourceIssues(source).length > 0) return ""
+  const kept: Array<[string, string]> = [["utm_source", source]]
+  const medium = single(params, "utm_medium")
+  if (medium !== null && mediumIssues(medium).length === 0) kept.push(["utm_medium", medium])
+  const campaign = single(params, "utm_campaign")
+  if (campaign !== null && campaignIssues(campaign, "owner_approved").length === 0) kept.push(["utm_campaign", campaign])
+  const content = single(params, "utm_content")
+  if (content !== null && contentIssues(content).length === 0) kept.push(["utm_content", content])
+  return `?${kept.map(([key, value]) => `${key}=${value}`).join("&")}`
+}
+
+/**
+ * The page location GA4 may see: origin, the approved landing route (or
+ * UNLISTED_PAGE_PATH), and the governed UTM query. Every value in it is from a
+ * closed list, so applying it twice gives the same string.
+ */
+export function governedPageLocation(raw: string | null | undefined): string | undefined {
+  const parsed = webUrl(raw)
   if (!parsed) return undefined
-  if (suppressStripeCheckoutReferrer && normalizeHost(parsed.host) === STRIPE_CHECKOUT_HOST) return undefined
-  return `${parsed.origin}${parsed.pathname}`
+  return `${parsed.origin}${governedPagePath(parsed.pathname)}${governedCampaignQuery(parsed.searchParams)}`
+}
+
+/**
+ * The page referrer GA4 may see: an allowlisted host's origin with path `/`,
+ * this site's origin with its governed path, or "".
+ */
+export function governedPageReferrer(raw: string | null | undefined): string {
+  const parsed = webUrl(raw)
+  if (!parsed) return ""
+  if (isCanonicalGaHost(parsed.host)) return `${parsed.origin}${governedPagePath(parsed.pathname)}`
+  return referrerHostSource(parsed.host) ? `${parsed.origin}/` : ""
 }
 
 export function buildSanitizedPageContext(input: { locationHref?: string | null; referrer?: string | null }) {
   return {
-    page_location: sanitizeUrl(input.locationHref, false),
-    page_referrer: sanitizeUrl(input.referrer, true) ?? "",
+    page_location: governedPageLocation(input.locationHref),
+    page_referrer: governedPageReferrer(input.referrer),
   }
 }
 
+/**
+ * Bound a generic event's parameters. `page_location`, `page_referrer` and
+ * `page_path` are always re-governed (an explicit "" is kept as ""), so no
+ * caller can hand GA4 a raw URL, referrer or path under those names.
+ */
 export function sanitizeGaEventParams(params: Record<string, unknown> = {}): Record<string, unknown> {
   const output: Record<string, unknown> = {}
 
@@ -82,11 +198,22 @@ export function sanitizeGaEventParams(params: Record<string, unknown> = {}): Rec
     if (BLOCKED_KEYS.includes(key)) continue
     if (Array.isArray(value)) continue
     if (typeof value === "object") continue
-    if (typeof value === "string" && (value.includes("checkout.stripe.com") || value.includes("?") || value.includes("#"))) {
-      if (key === "page_location" || key === "page_referrer") {
-        const sanitized = sanitizeUrl(value, key === "page_referrer")
-        if (sanitized) output[key] = sanitized
+    if (key === "page_location" || key === "page_referrer" || key === "page_path") {
+      if (typeof value !== "string") continue
+      if (value === "") {
+        if (key !== "page_path") output[key] = ""
+        continue
       }
+      const governed =
+        key === "page_location"
+          ? governedPageLocation(value)
+          : key === "page_referrer"
+            ? governedPageReferrer(value)
+            : governedPagePath(value)
+      if (governed !== undefined) output[key] = governed
+      continue
+    }
+    if (typeof value === "string" && (value.includes("checkout.stripe.com") || value.includes("?") || value.includes("#"))) {
       continue
     }
     output[key] = value

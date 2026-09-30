@@ -8,7 +8,7 @@
  * read-only Admin API readback against it. Nothing here calls an API: the
  * readback is data handed in.
  */
-import checklist from "@/data/analytics/ot-ga4-admin-checklist.v1.json"
+import checklist from "@/data/analytics/ot-ga4-admin-checklist.v2.json"
 import {
   validateGa4AdminChecklist,
   verifyGa4AdminReadback,
@@ -22,23 +22,20 @@ function clone<T>(value: T): T {
 
 /** The exact readback a correctly configured property returns. */
 function conformingReadback(): Json {
+  const dimension = (id: number, parameterName: string, displayName: string) => ({
+    name: `properties/123456789/customDimensions/${id}`,
+    parameterName,
+    displayName,
+    scope: "EVENT",
+  })
   return {
     customDimensions: {
       customDimensions: [
-        {
-          name: "properties/123456789/customDimensions/1001",
-          parameterName: "surface",
-          displayName: "OT free check surface",
-          scope: "EVENT",
-          description: "",
-          disallowAdsPersonalization: false,
-        },
-        {
-          name: "properties/123456789/customDimensions/1002",
-          parameterName: "plan",
-          displayName: "OT checkout plan",
-          scope: "EVENT",
-        },
+        { ...dimension(1001, "surface", "OT free check surface"), description: "", disallowAdsPersonalization: false },
+        dimension(1002, "plan", "OT checkout plan"),
+        dimension(1003, "input_mode", "OT free check input mode"),
+        dimension(1004, "outcome_code", "OT free check outcome"),
+        dimension(1005, "blocked_reason", "OT checkout blocked reason"),
       ],
     },
     keyEvents: {
@@ -51,14 +48,6 @@ function conformingReadback(): Json {
           custom: false,
           countingMethod: "ONCE_PER_EVENT",
         },
-        {
-          name: "properties/123456789/keyEvents/2002",
-          eventName: "free_check_qualified",
-          createTime: "2026-09-01T00:00:00Z",
-          deletable: true,
-          custom: true,
-          countingMethod: "ONCE_PER_SESSION",
-        },
       ],
     },
   }
@@ -69,14 +58,16 @@ describe("the checked-in checklist", () => {
     expect(validateGa4AdminChecklist(checklist)).toEqual({ ok: true })
   })
 
-  it("registers exactly two event-scoped dimensions and two key events", () => {
-    expect(checklist.custom_dimensions.map((d) => [d.parameter_name, d.scope])).toEqual([
-      ["surface", "EVENT"],
-      ["plan", "EVENT"],
+  it("registers exactly five event-scoped dimensions and purchase as the only key event, all pending", () => {
+    expect(checklist.custom_dimensions.map((d) => [d.parameter_name, d.scope, d.status])).toEqual([
+      ["surface", "EVENT", "pending"],
+      ["input_mode", "EVENT", "pending"],
+      ["outcome_code", "EVENT", "pending"],
+      ["plan", "EVENT", "pending"],
+      ["blocked_reason", "EVENT", "pending"],
     ])
-    expect(checklist.key_events.map((k) => [k.event_name, k.counting_method])).toEqual([
-      ["free_check_qualified", "ONCE_PER_SESSION"],
-      ["purchase", "ONCE_PER_EVENT"],
+    expect(checklist.key_events.map((k) => [k.event_name, k.counting_method, k.status])).toEqual([
+      ["purchase", "ONCE_PER_EVENT", "pending"],
     ])
   })
 })
@@ -90,13 +81,9 @@ describe("checklist validation refuses what is not decision-grade", () => {
       "PARAMETER_NOT_IN_CONTRACT:township",
     ],
     [
-      "a diagnostic-only parameter",
-      (c: Json) => {
-        const d = (c.custom_dimensions as Json[])[0]
-        d.parameter_name = "input_mode"
-        d.events = ["free_check_started"]
-      },
-      "EVENT_NOT_DECISION_GRADE:free_check_started",
+      "an event the contract does not know",
+      (c: Json) => ((c.custom_dimensions as Json[])[0].events = ["page_view"]),
+      "EVENT_NOT_DECISION_GRADE:page_view",
     ],
     [
       "the transaction id as a dimension",
@@ -113,14 +100,35 @@ describe("checklist validation refuses what is not decision-grade", () => {
       "RESERVED_PARAMETER:page_location",
     ],
     [
-      "a key event for a diagnostic event",
-      (c: Json) => ((c.key_events as Json[])[0].event_name = "free_check_started"),
-      "EVENT_NOT_DECISION_GRADE:free_check_started",
+      "a browser event as a key event",
+      (c: Json) =>
+        (c.key_events as Json[]).push({
+          event_name: "free_check_qualified",
+          counting_method: "ONCE_PER_SESSION",
+          status: "pending",
+          rationale: "x",
+        }),
+      "KEY_EVENT_NOT_PERMITTED:free_check_qualified",
+    ],
+    [
+      "begin_checkout as a key event",
+      (c: Json) => ((c.key_events as Json[])[0].event_name = "begin_checkout"),
+      "KEY_EVENT_NOT_PERMITTED:begin_checkout",
     ],
     [
       "an unknown counting method",
-      (c: Json) => ((c.key_events as Json[])[1].counting_method = "ONCE_PER_USER"),
+      (c: Json) => ((c.key_events as Json[])[0].counting_method = "ONCE_PER_USER"),
       "INVALID_COUNTING_METHOD:purchase",
+    ],
+    [
+      "a dimension marked done without a readback",
+      (c: Json) => ((c.custom_dimensions as Json[])[0].status = "done"),
+      "INVALID_STATUS:surface",
+    ],
+    [
+      "a key event with no status",
+      (c: Json) => delete (c.key_events as Json[])[0].status,
+      "INVALID_STATUS:purchase",
     ],
     [
       "a duplicated dimension",
@@ -153,19 +161,21 @@ describe("readback verification", () => {
     dims[1].displayName = "Plan"
     dims.push({ parameterName: "property_pin", displayName: "PIN", scope: "EVENT" })
     dims.push({ parameterName: "jane doe 100 W Randolph", displayName: "x", scope: "EVENT" })
+    dims.splice(2, 1)
     const keys = (readback.keyEvents as { keyEvents: Json[] }).keyEvents
     keys[0].countingMethod = "ONCE_PER_SESSION"
-    keys.splice(1, 1)
     keys.push({ eventName: "begin_checkout", countingMethod: "ONCE_PER_EVENT" })
+    keys.push({ eventName: "free_check_qualified", countingMethod: "ONCE_PER_SESSION" })
 
     expect(verifyGa4AdminReadback(checklist, readback)).toEqual({
       status: "FAIL",
       findings: [
-        "MISSING_KEY_EVENT:free_check_qualified",
+        "MISSING_DIMENSION:input_mode",
         "SENSITIVE_DIMENSION:property_pin",
         "UNEXPECTED_DIMENSION:[redacted]",
         "UNEXPECTED_DIMENSION:property_pin",
         "UNEXPECTED_KEY_EVENT:begin_checkout",
+        "UNEXPECTED_KEY_EVENT:free_check_qualified",
         "WRONG_COUNTING_METHOD:purchase",
         "WRONG_DISPLAY_NAME:plan",
         "WRONG_SCOPE:surface",

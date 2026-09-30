@@ -44,7 +44,7 @@ describe("GA4 sanitization", () => {
     })
   })
 
-  it("sanitizes initial and route-change location/referrer to origin plus pathname only", () => {
+  it("sanitizes initial and route-change location to the approved route and the referrer to an allowlisted origin", () => {
     expect(
       buildSanitizedPageContext({
         locationHref: "https://www.overtaxed-il.com/checkout?email=a@example.com#done",
@@ -52,7 +52,7 @@ describe("GA4 sanitization", () => {
       }),
     ).toEqual({
       page_location: "https://www.overtaxed-il.com/checkout",
-      page_referrer: "https://www.google.com/search",
+      page_referrer: "https://www.google.com/",
     })
   })
 
@@ -63,7 +63,7 @@ describe("GA4 sanitization", () => {
         referrer: "https://checkout.stripe.com/pay/cs_test_secret?foo=bar",
       }),
     ).toEqual({
-      page_location: "https://www.overtaxed-il.com/checkout/success",
+      page_location: "https://www.overtaxed-il.com/(other)",
       page_referrer: "",
     })
   })
@@ -94,7 +94,7 @@ describe("GA4 sanitization", () => {
       }),
     ).toEqual({
       page_location: "https://www.overtaxed-il.com/check",
-      page_referrer: "https://www.google.com/search",
+      page_referrer: "https://www.google.com/",
       keep_me: "ok",
     })
   })

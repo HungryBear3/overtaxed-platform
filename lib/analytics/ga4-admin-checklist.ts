@@ -2,8 +2,11 @@
  * The GA4 Admin checklist for the OT property, and the read-only readback
  * verification that proves a property matches it.
  *
- * The checklist (data/analytics/ot-ga4-admin-checklist.v1.json) names the only
+ * The checklist (data/analytics/ot-ga4-admin-checklist.v2.json) names the only
  * event-scoped custom dimensions and key events the property should carry.
+ * `purchase` is the only permitted key event. Every item is an owner action
+ * whose status is `pending`: nothing in this repository writes to GA4, so no
+ * item can be marked done here — a matching readback is the only evidence.
  * Each must trace to a decision-grade event in the funnel contract
  * (./funnel-contract): a dimension may register only a parameter that every
  * event it lists actually carries, and never a reserved parameter — the empty
@@ -45,6 +48,9 @@ const RESERVED_PARAMETERS: ReadonlySet<string> = new Set([
 
 const COUNTING_METHODS: ReadonlySet<string> = new Set(["ONCE_PER_EVENT", "ONCE_PER_SESSION"])
 
+/** Only the server-owned, ledger-backed purchase may be a key event. */
+const PERMITTED_KEY_EVENTS: ReadonlySet<string> = new Set(["purchase"])
+
 /** A parameter name safe to echo in a finding. Anything else is redacted. */
 const SAFE_TOKEN = /^[a-z][a-z0-9_]{0,39}$/
 const DISPLAY_NAME = /^[A-Za-z][A-Za-z0-9 _]{0,81}$/
@@ -79,7 +85,7 @@ function validateDimension(dimension: unknown, violations: string[]): string | n
     violations.push("MALFORMED_DIMENSION")
     return null
   }
-  closedKeys(dimension, ["parameter_name", "display_name", "scope", "events", "rationale"], violations)
+  closedKeys(dimension, ["parameter_name", "display_name", "scope", "events", "status", "rationale"], violations)
   const parameter = dimension.parameter_name
   if (typeof parameter !== "string" || !SAFE_TOKEN.test(parameter)) {
     violations.push("INVALID_PARAMETER_NAME")
@@ -91,6 +97,7 @@ function validateDimension(dimension: unknown, violations: string[]): string | n
     violations.push(`INVALID_DISPLAY_NAME:${parameter}`)
   }
   if (!isRationale(dimension.rationale)) violations.push(`INVALID_RATIONALE:${parameter}`)
+  if (dimension.status !== "pending") violations.push(`INVALID_STATUS:${parameter}`)
 
   const events = dimension.events
   if (!Array.isArray(events) || events.length === 0 || new Set(events).size !== events.length) {
@@ -112,17 +119,19 @@ function validateKeyEvent(keyEvent: unknown, violations: string[]): string | nul
     violations.push("MALFORMED_KEY_EVENT")
     return null
   }
-  closedKeys(keyEvent, ["event_name", "counting_method", "rationale"], violations)
+  closedKeys(keyEvent, ["event_name", "counting_method", "status", "rationale"], violations)
   const name = keyEvent.event_name
   if (funnelEventGrade(name) !== "decision") {
     violations.push(`EVENT_NOT_DECISION_GRADE:${label(name)}`)
     return null
   }
   const eventName = name as string
+  if (!PERMITTED_KEY_EVENTS.has(eventName)) violations.push(`KEY_EVENT_NOT_PERMITTED:${eventName}`)
   if (typeof keyEvent.counting_method !== "string" || !COUNTING_METHODS.has(keyEvent.counting_method)) {
     violations.push(`INVALID_COUNTING_METHOD:${eventName}`)
   }
   if (!isRationale(keyEvent.rationale)) violations.push(`INVALID_RATIONALE:${eventName}`)
+  if (keyEvent.status !== "pending") violations.push(`INVALID_STATUS:${eventName}`)
   return eventName
 }
 
@@ -147,7 +156,7 @@ export function validateGa4AdminChecklist(checklist: unknown): ChecklistValidati
     ["schema", "schema_version", "business", "funnel_contract_version", "custom_dimensions", "key_events", "readback"],
     violations,
   )
-  if (checklist.schema !== "ot.ga4_admin_checklist" || checklist.schema_version !== 1) violations.push("SCHEMA")
+  if (checklist.schema !== "ot.ga4_admin_checklist" || checklist.schema_version !== 2) violations.push("SCHEMA")
   if (checklist.business !== "ot") violations.push("BUSINESS")
   if (checklist.funnel_contract_version !== FUNNEL_CONTRACT_VERSION) violations.push("CONTRACT_VERSION_MISMATCH")
 

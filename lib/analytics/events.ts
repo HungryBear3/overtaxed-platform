@@ -8,6 +8,7 @@ import { trackGoogleAdsConversion } from "@/components/analytics/google-analytic
 import { buildSanitizedPageContext, sanitizeGaEventParams } from "./ga4"
 import { isServerOnlyEventName, validateBrowserFunnelEvent } from "./funnel-contract"
 import { getStoredUTMParams } from "./utm-tracking"
+import { isCheckoutBlockedReason, type CheckoutBlockedReason } from "./checkout-funnel"
 import {
   deriveFreeCheckOutcomeParams,
   type FreeCheckInputMode,
@@ -156,6 +157,25 @@ export const analytics = {
     safely(() => {
       trackCheckoutStartedEvent(plan, value)
       trackMetaEvent("InitiateCheckout", { content_name: plan, value })
+    })
+  },
+
+  /**
+   * One checkout intent that ended without a hosted checkout URL. The intent's
+   * other possible end is `checkoutStarted`; the caller emits exactly one of the
+   * two. The reason is a closed enum (./checkout-funnel) and the plan a tier
+   * code; anything else sends nothing. No Meta event: a refusal is not intent
+   * worth advertising against.
+   */
+  checkoutBlocked: (plan: string, reason: CheckoutBlockedReason) => {
+    safely(() => {
+      if (!BEGIN_CHECKOUT_PLANS.has(plan) || !isCheckoutBlockedReason(reason)) return
+      emitSensitiveEvent("checkout_blocked", {
+        plan,
+        blocked_reason: reason,
+        page_location: "",
+        page_referrer: "",
+      })
     })
   },
 

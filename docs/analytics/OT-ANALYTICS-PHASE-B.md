@@ -10,7 +10,7 @@ Vercel setting was changed, no credential was read, and no live event was sent.
 |---|---|---|
 | Decision-grade funnel contract | `lib/analytics/funnel-contract.ts` | — |
 | Server purchase ownership (at most once) | `lib/analytics/ga4-purchase-claim.ts`, `lib/analytics/ga4-measurement.ts` | — |
-| GA4 Admin checklist + readback verifier | `lib/analytics/ga4-admin-checklist.ts` | `data/analytics/ot-ga4-admin-checklist.v1.json` |
+| GA4 Admin checklist + readback verifier | `lib/analytics/ga4-admin-checklist.ts` | `data/analytics/ot-ga4-admin-checklist.v2.json` |
 | Purchase dedup report (read-only) | `lib/analytics/purchase-dedup-report.ts` | — |
 | Canonical campaign naming | `lib/analytics/campaign-governance.ts` | — |
 | Experiment registry + linter | `lib/analytics/experiment-registry.ts` | `data/analytics/ot-experiment-registry.v1.json` (empty) |
@@ -23,9 +23,10 @@ the tests fail whenever the files and the code disagree.
 
 ### Funnel contract
 
-Decision-grade events: `free_check_completed`, `free_check_qualified` (the one
+Decision-grade events (contract v2, see `OT-FUNNEL-DROPOFF.md`):
+`free_check_started`, `free_check_completed`, `free_check_qualified` (the one
 qualified outcome: canonical outcome code `supportive`, live lookup only),
-`begin_checkout`, `purchase`. `free_check_started` stays diagnostic. Browser
+`begin_checkout`, `checkout_blocked`, `purchase`. Browser
 events carry closed parameters and explicitly empty `page_location` /
 `page_referrer`; the sensitive boundary refuses any payload the contract does
 not describe. `purchase`/`refund` are server-only: the browser emitters refuse
@@ -60,11 +61,10 @@ paid revenue in the Stripe/order record.
 
 ### GA4 Admin checklist
 
-Two event-scoped custom dimensions — `surface` (free-check entry point) and
-`plan` (checkout tier) — and two key events — `free_check_qualified`
-(once per session) and `purchase` (once per event). Readback is two read-only
-Admin API list calls compared as exact sets; pagination or malformed input
-fails closed.
+Superseded by checklist v2 (`OT-FUNNEL-DROPOFF.md`): five event-scoped custom
+dimensions and `purchase` as the only key event, every item `pending`.
+Readback is two read-only Admin API list calls compared as exact sets;
+pagination or malformed input fails closed.
 
 ### Purchase dedup report
 
