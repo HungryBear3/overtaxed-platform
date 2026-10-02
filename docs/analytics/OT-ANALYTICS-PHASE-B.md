@@ -10,10 +10,11 @@ Vercel setting was changed, no credential was read, and no live event was sent.
 |---|---|---|
 | Decision-grade funnel contract | `lib/analytics/funnel-contract.ts` | — |
 | Server purchase ownership (at most once) | `lib/analytics/ga4-purchase-claim.ts`, `lib/analytics/ga4-measurement.ts` | — |
-| GA4 Admin checklist + readback verifier | `lib/analytics/ga4-admin-checklist.ts` | `data/analytics/ot-ga4-admin-checklist.v3.json` |
+| GA4 Admin checklist + readback verifier | `lib/analytics/ga4-admin-checklist.ts` | `data/analytics/ot-ga4-admin-checklist.v4.json` |
 | Purchase dedup report (read-only) | `lib/analytics/purchase-dedup-report.ts` | — |
 | Canonical campaign naming | `lib/analytics/campaign-governance.ts` | — |
 | Experiment registry + linter | `lib/analytics/experiment-registry.ts` | `data/analytics/ot-experiment-registry.v1.json` (empty) |
+| Registry-bound campaign link builder (`npx tsx scripts/ot-campaign-link.ts --experiment <id>`) | `lib/analytics/campaign-link-builder.ts`, `scripts/ot-campaign-link.ts` | the registry above; yields no link while it is empty |
 | Decision-packet export contract | `lib/analytics/decision-export.ts` | `data/analytics/ot-decision-export-mapping.v1.json`, `fixtures/analytics/decision-packet/*.synthetic.json` |
 | Meta Pixel candidate (unmounted, HOLD) | `lib/analytics/meta-pixel-policy.ts`, `components/analytics/meta-pixel.tsx`, HOLD in `next.config.mjs` | — |
 | Meta CAPI posture | `lib/analytics/meta-capi.ts` (DEFERRED) | — |

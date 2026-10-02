@@ -2,13 +2,16 @@
  * The GA4 Admin checklist for the OT property, and the read-only readback
  * verification that proves a property matches it.
  *
- * The checklist (data/analytics/ot-ga4-admin-checklist.v3.json) names the only
+ * The checklist (data/analytics/ot-ga4-admin-checklist.v4.json) names the only
  * event-scoped custom dimensions and key events the property should carry.
  * `purchase` is the only permitted key event. It also names the web stream's
  * Enhanced Measurement settings that must be OFF: browser-history page changes
  * (the app sends its own governed SPA page_view, and the automatic one
  * duplicates it with the raw URL) and site search (it lifts raw query values
- * into events). Every item is an owner action
+ * into events). Outbound clicks, form interactions and file downloads each
+ * carry a raw URL outside the funnel contract; their posture is the owner's to
+ * record — `off` (recommended) or `on_accepted` — and while it is `undecided`,
+ * as it ships, no readback can pass. Every item is an owner action
  * whose status is `pending`: nothing in this repository writes to GA4, so no
  * item can be marked done here — a matching readback is the only evidence.
  * Each must trace to a decision-grade event in the funnel contract
@@ -40,12 +43,27 @@ const READBACK_CALLS = [
 /**
  * The Enhanced Measurement settings the checklist must require OFF, each bound
  * to the one field of the EnhancedMeasurementSettings resource that reads it.
- * Closed: the checklist may name no other setting.
  */
-const ENHANCED_MEASUREMENT_FIELDS: Readonly<Record<string, string>> = {
+const FIXED_OFF_FIELDS: Readonly<Record<string, string>> = {
   browser_history: "pageChangesEnabled",
   site_search: "siteSearchEnabled",
 }
+
+/**
+ * The Enhanced Measurement settings whose posture the owner records, bound the
+ * same way. Each sends a raw URL GA4's governed page context never sees.
+ */
+const OWNER_DECIDED_FIELDS: Readonly<Record<string, string>> = {
+  outbound_clicks: "outboundClicksEnabled",
+  form_interactions: "formInteractionsEnabled",
+  file_downloads: "fileDownloadsEnabled",
+}
+
+/** Every setting the checklist must name. Closed: it may name no other. */
+const ENHANCED_MEASUREMENT_FIELDS: Readonly<Record<string, string>> = { ...FIXED_OFF_FIELDS, ...OWNER_DECIDED_FIELDS }
+
+/** `undecided` is a valid checklist state, but no readback passes against it. */
+const OWNER_POSTURES: ReadonlySet<string> = new Set(["undecided", "off", "on_accepted"])
 
 const ENHANCED_MEASUREMENT_RESOURCE = /^properties\/\d+\/dataStreams\/\d+\/enhancedMeasurementSettings$/
 
@@ -161,18 +179,26 @@ function validateEnhancedMeasurement(settings: unknown, violations: string[]): v
       violations.push("MALFORMED_ENHANCED_MEASUREMENT")
       continue
     }
-    closedKeys(item, ["setting", "readback_field", "required_value", "status", "rationale"], violations)
     const setting = item.setting
     if (typeof setting !== "string" || !Object.hasOwn(ENHANCED_MEASUREMENT_FIELDS, setting)) {
+      closedKeys(item, ["setting", "readback_field", "required_value", "status", "rationale"], violations)
       violations.push(`UNKNOWN_ENHANCED_MEASUREMENT_SETTING:${label(setting)}`)
       continue
     }
+    const ownerDecided = Object.hasOwn(OWNER_DECIDED_FIELDS, setting)
+    closedKeys(item, ["setting", "readback_field", ownerDecided ? "owner_posture" : "required_value", "status", "rationale"], violations)
     if (seen.has(setting)) violations.push(`DUPLICATE_ENHANCED_MEASUREMENT:${setting}`)
     seen.add(setting)
     if (item.readback_field !== ENHANCED_MEASUREMENT_FIELDS[setting]) {
       violations.push(`ENHANCED_MEASUREMENT_FIELD:${setting}`)
     }
-    if (item.required_value !== false) violations.push(`ENHANCED_MEASUREMENT_MUST_BE_OFF:${setting}`)
+    if (ownerDecided) {
+      if (typeof item.owner_posture !== "string" || !OWNER_POSTURES.has(item.owner_posture)) {
+        violations.push(`INVALID_OWNER_POSTURE:${setting}`)
+      }
+    } else if (item.required_value !== false) {
+      violations.push(`ENHANCED_MEASUREMENT_MUST_BE_OFF:${setting}`)
+    }
     if (!isRationale(item.rationale)) violations.push(`INVALID_RATIONALE:${setting}`)
     if (item.status !== "pending") violations.push(`INVALID_STATUS:${setting}`)
   }
@@ -187,7 +213,14 @@ function validateReadbackSection(readback: unknown, violations: string[]): void 
     violations.push("MALFORMED_READBACK_CONTRACT")
     return
   }
-  closedKeys(readback, ["api", "oauth_scope", "calls", "match"], violations)
+  closedKeys(readback, ["api", "oauth_scope", "calls", "match", "enhanced_measurement_resource"], violations)
+  // The operator configures the target here, never by copying the response name.
+  // An unconfigured shipped checklist is valid, but cannot verify a readback.
+  if (readback.enhanced_measurement_resource !== undefined &&
+      (typeof readback.enhanced_measurement_resource !== "string" ||
+       !ENHANCED_MEASUREMENT_RESOURCE.test(readback.enhanced_measurement_resource))) {
+    violations.push("INVALID_ENHANCED_MEASUREMENT_TARGET")
+  }
   if (readback.api !== "analyticsadmin.googleapis.com") violations.push("READBACK_API")
   if (readback.oauth_scope !== GA4_ADMIN_READ_ONLY_SCOPE) violations.push("READBACK_SCOPE_NOT_READ_ONLY")
   if (JSON.stringify(readback.calls) !== JSON.stringify(READBACK_CALLS)) violations.push("READBACK_CALLS")
@@ -212,7 +245,7 @@ export function validateGa4AdminChecklist(checklist: unknown): ChecklistValidati
     ],
     violations,
   )
-  if (checklist.schema !== "ot.ga4_admin_checklist" || checklist.schema_version !== 3) violations.push("SCHEMA")
+  if (checklist.schema !== "ot.ga4_admin_checklist" || checklist.schema_version !== 4) violations.push("SCHEMA")
   if (checklist.business !== "ot") violations.push("BUSINESS")
   if (checklist.funnel_contract_version !== FUNNEL_CONTRACT_VERSION) violations.push("CONTRACT_VERSION_MISMATCH")
 
@@ -240,56 +273,89 @@ export function validateGa4AdminChecklist(checklist: unknown): ChecklistValidati
 type ReadbackList = { items: Json[]; paged: boolean } | null
 
 /** One list response. The Admin API omits the list field when it is empty. */
-function readList(response: unknown, field: string, required: readonly string[]): ReadbackList {
-  if (!isObject(response)) return null
-  const list = response[field] ?? []
+function readList(response: unknown, evidence: unknown, property: string, field: string, required: readonly string[]): ReadbackList {
+  if (!isObject(evidence) || Object.keys(evidence).sort().join(",") !== "complete,request" ||
+      evidence.complete !== true || evidence.request !== `GET /v1beta/${property}/${field}`) return null
+  if (!isObject(response) || Object.keys(response).some((key) => key !== field && key !== "nextPageToken")) return null
+  const list = Object.hasOwn(response, field) ? response[field] : []
   if (!Array.isArray(list)) return null
   for (const item of list) {
     if (!isObject(item) || required.some((key) => typeof item[key] !== "string")) return null
+    if (typeof item.name !== "string" || !item.name.startsWith(`${property}/${field}/`) ||
+        !/^\d+$/.test(item.name.slice(`${property}/${field}/`.length))) return null
   }
   const token = response.nextPageToken
-  if (token !== undefined && typeof token !== "string") return null
+  if (Object.hasOwn(response, "nextPageToken") && typeof token !== "string") return null
   return { items: list as Json[], paged: typeof token === "string" && token.length > 0 }
 }
 
 /**
- * One Enhanced Measurement settings body. The Admin API emits proto3 JSON, so a
- * false boolean may be omitted; anything present must be a real boolean, and
- * the resource name must be a web stream's settings resource.
+ * Proto3 omission means false only after the operator attests an unfiltered,
+ * complete GET capture for the independently configured checklist target.
+ * This offline verifier validates evidence, not the truth of that attestation.
+ * Name-only bodies are insufficient even with capture metadata. Unknown keys
+ * (including partial-response/field-mask metadata) fail without echoing values.
  */
-function readEnhancedMeasurement(response: unknown): Record<string, boolean> | null {
-  if (!isObject(response)) return null
-  if (typeof response.name !== "string" || !ENHANCED_MEASUREMENT_RESOURCE.test(response.name)) return null
+function readEnhancedMeasurement(response: unknown, evidence: unknown, target: string): Record<string, boolean> | null {
+  if (!isObject(evidence) || Object.keys(evidence).sort().join(",") !== "complete,request" ||
+      evidence.complete !== true || evidence.request !== `GET /v1alpha/${target}`) return null
+  if (!isObject(response) || response.name !== target) return null
+  const booleanFields = [
+    ...Object.values(ENHANCED_MEASUREMENT_FIELDS),
+    "streamEnabled", "scrollsEnabled", "videoEngagementEnabled",
+  ]
+  const stringFields = ["searchQueryParameter", "uriQueryParameter"]
+  const allowed = ["name", ...booleanFields, ...stringFields]
+  if (Object.keys(response).some((key) => !allowed.includes(key))) return null
+  if (!booleanFields.some((field) => Object.hasOwn(response, field))) return null
+  for (const field of stringFields) {
+    if (Object.hasOwn(response, field) && typeof response[field] !== "string") return null
+  }
   const values: Record<string, boolean> = {}
-  for (const field of Object.values(ENHANCED_MEASUREMENT_FIELDS)) {
+  for (const field of booleanFields) {
     const value = response[field]
-    if (value !== undefined && typeof value !== "boolean") return null
+    if (Object.hasOwn(response, field) && typeof value !== "boolean") return null
     values[field] = value === true
   }
   return values
 }
 
 /**
- * Compare a readback — `{ customDimensions, keyEvents, enhancedMeasurementSettings }`,
- * each the exact body of its read-only call — against a valid checklist: the
- * two lists as exact sets, and each required Enhanced Measurement setting OFF.
+ * Compare `{ customDimensions, keyEvents, enhancedMeasurementSettings,
+ * customDimensionsEvidence, keyEventsEvidence, enhancedMeasurementEvidence }`
+ * against a valid checklist. Each evidence is exactly `{ request, complete: true }`.
+ * The first three entries are unmodified API bodies; separate evidence records
+ * the exact GET request (no query/field masks) and attests a complete response.
+ * Configure `checklist.readback.enhanced_measurement_resource` independently as
+ * `properties/<id>/dataStreams/<id>/enhancedMeasurementSettings`; that one target
+ * binds every capture and response, including each list item resource name.
+ * Both lists use the property prefix of that target. No target is inferred from supplied evidence.
+ * Compare the
+ * two lists as exact sets, each fixed Enhanced Measurement setting OFF, and each
+ * owner-decided setting OFF unless the owner accepted it ON. An owner-decided
+ * setting still `undecided` fails whatever the stream reads.
  */
 export function verifyGa4AdminReadback(checklist: unknown, readback: unknown): ReadbackVerification {
   if (!validateGa4AdminChecklist(checklist).ok) return { status: "FAIL", findings: ["INVALID_CHECKLIST"] }
   const expected = checklist as {
     custom_dimensions: Array<{ parameter_name: string; display_name: string }>
     key_events: Array<{ event_name: string; counting_method: string }>
+    enhanced_measurement: Array<{ setting: string; owner_posture?: string }>
+    readback: { enhanced_measurement_resource?: string }
   }
+  const target = expected.readback.enhanced_measurement_resource
+  if (!target) return { status: "FAIL", findings: ["ENHANCED_MEASUREMENT_TARGET_REQUIRED"] }
 
   if (
     !isObject(readback) ||
-    Object.keys(readback).sort().join(",") !== "customDimensions,enhancedMeasurementSettings,keyEvents"
+    Object.keys(readback).sort().join(",") !== "customDimensions,customDimensionsEvidence,enhancedMeasurementEvidence,enhancedMeasurementSettings,keyEvents,keyEventsEvidence"
   ) {
     return { status: "FAIL", findings: ["MALFORMED_READBACK"] }
   }
-  const dimensions = readList(readback.customDimensions, "customDimensions", ["parameterName", "displayName", "scope"])
-  const keyEvents = readList(readback.keyEvents, "keyEvents", ["eventName", "countingMethod"])
-  const enhancedMeasurement = readEnhancedMeasurement(readback.enhancedMeasurementSettings)
+  const property = target.split("/").slice(0, 2).join("/")
+  const dimensions = readList(readback.customDimensions, readback.customDimensionsEvidence, property, "customDimensions", ["parameterName", "displayName", "scope"])
+  const keyEvents = readList(readback.keyEvents, readback.keyEventsEvidence, property, "keyEvents", ["eventName", "countingMethod"])
+  const enhancedMeasurement = readEnhancedMeasurement(readback.enhancedMeasurementSettings, readback.enhancedMeasurementEvidence, target)
   if (!dimensions || !keyEvents || !enhancedMeasurement) return { status: "FAIL", findings: ["MALFORMED_READBACK"] }
 
   const incomplete = [
@@ -332,8 +398,16 @@ export function verifyGa4AdminReadback(checklist: unknown, readback: unknown): R
     if (!seenEvents.has(want.event_name)) findings.add(`MISSING_KEY_EVENT:${want.event_name}`)
   }
 
-  for (const [setting, field] of Object.entries(ENHANCED_MEASUREMENT_FIELDS)) {
+  for (const [setting, field] of Object.entries(FIXED_OFF_FIELDS)) {
     if (enhancedMeasurement[field]) findings.add(`ENHANCED_MEASUREMENT_ON:${setting}`)
+  }
+  for (const [setting, field] of Object.entries(OWNER_DECIDED_FIELDS)) {
+    const posture = expected.enhanced_measurement.find((item) => item.setting === setting)?.owner_posture
+    if (posture === "off") {
+      if (enhancedMeasurement[field]) findings.add(`ENHANCED_MEASUREMENT_ON:${setting}`)
+    } else if (posture !== "on_accepted") {
+      findings.add(`ENHANCED_MEASUREMENT_POSTURE_UNDECIDED:${setting}`)
+    }
   }
 
   const sorted = Array.from(findings).sort()

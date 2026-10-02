@@ -25,11 +25,17 @@
  *     (`clx1abc…`), a token.
  *
  * A shape-legal token can still be a word someone chose (`jane_doe`). The
- * contract cannot read meaning, and nothing here joins a touch to a person: it
- * only ever travels with the anonymous checkout it preceded.
+ * shape rules cannot read meaning, so the Stripe projection additionally keeps
+ * a campaign touch only when its whole tuple passes the closed, owner-approved
+ * campaign governance (lib/analytics/campaign-governance) — the same lists
+ * GA4's page context uses — and never projects `utm_term`. Nothing here joins
+ * a touch to a person: it only ever travels with the anonymous checkout it
+ * preceded.
  *
  * Pure and isomorphic: no storage, no network, no framework.
  */
+
+import { campaignTupleIssues } from "@/lib/analytics/campaign-governance"
 
 import { isAllowlistedLanding, normalizeLandingPath } from "./landing-paths"
 
@@ -186,12 +192,11 @@ export function revalidateCheckoutAttribution(raw: unknown, now: number): Checko
   return { first, last }
 }
 
-const METADATA_FIELD_SUFFIX: Readonly<Record<TouchField | "landing", string>> = {
+const METADATA_FIELD_SUFFIX: Readonly<Record<Exclude<TouchField, "term"> | "landing", string>> = {
   source: "Source",
   medium: "Medium",
   campaign: "Campaign",
   content: "Content",
-  term: "Term",
   landing: "Landing",
 }
 
@@ -199,10 +204,25 @@ function secondPrecisionIso(at: number): string {
   return new Date(Math.floor(at / 1000) * 1000).toISOString().replace(".000Z", "Z")
 }
 
-function projectTouch(prefix: "firstTouch" | "lastTouch", touch: AttributionTouch | null): Record<string, string> {
+/**
+ * The touch as it may reach Stripe, or `null` when it may not. A direct touch
+ * keeps its landing and instant. A campaign touch is kept only when its whole
+ * source/medium/campaign/content tuple passes the owner-approved campaign
+ * governance GA4 applies; otherwise nothing of it is kept, because a partial
+ * tuple — or a direct-looking landing left behind — would misstate the visit.
+ * The term is never kept: search terms are text a person typed.
+ */
+function governedTouch(touch: AttributionTouch): AttributionTouch | null {
+  const { term: _term, ...kept } = touch
+  if (!isCampaignTouch(touch)) return kept
+  return campaignTupleIssues(kept, "owner_approved").length === 0 ? kept : null
+}
+
+function projectTouch(prefix: "firstTouch" | "lastTouch", raw: AttributionTouch | null): Record<string, string> {
+  const touch = raw ? governedTouch(raw) : null
   if (!touch) return {}
   const output: Record<string, string> = {}
-  for (const field of ["source", "medium", "campaign", "content", "term", "landing"] as const) {
+  for (const field of ["source", "medium", "campaign", "content", "landing"] as const) {
     const value = touch[field]
     if (value !== undefined) output[`${prefix}${METADATA_FIELD_SUFFIX[field]}`] = value
   }
@@ -211,9 +231,10 @@ function projectTouch(prefix: "firstTouch" | "lastTouch", touch: AttributionTouc
 }
 
 /**
- * Stripe metadata for already-revalidated touches. Fixed key names, each value
- * bounded by its contract (well under Stripe's 500-character limit), and none
- * in the `attribution*` namespace owned by the approved-code binding.
+ * Stripe metadata for already-revalidated touches, each governed as a whole
+ * (see governedTouch). Fixed key names, each value bounded by its contract
+ * (well under Stripe's 500-character limit), and none in the `attribution*`
+ * namespace owned by the approved-code binding.
  */
 export function touchesToStripeMetadata(touches: CheckoutAttribution): Record<string, string> {
   return {

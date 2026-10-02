@@ -180,6 +180,32 @@ export function mediumIssues(value: unknown): string[] {
   return (CAMPAIGN_MEDIUMS as readonly string[]).includes(value as string) ? [] : ["MEDIUM_NOT_GOVERNED"]
 }
 
+export type CampaignTuple = { source?: unknown; medium?: unknown; campaign?: unknown; content?: unknown }
+
+/**
+ * Judge source, medium, campaign and content together, as one segment. Source,
+ * medium and campaign are required; content may be absent (the registry's
+ * `"none"`), but a content value that is present must be governed. Issues are
+ * prefixed with the field they belong to. An empty list means the tuple may be
+ * kept whole; any issue means none of it may be.
+ */
+export function campaignTupleIssues(tuple: CampaignTuple, origin: GovernanceOrigin): string[] {
+  const issues: string[] = []
+  const check = (field: keyof CampaignTuple, judge: (value: unknown) => string[], required: boolean) => {
+    const value = tuple[field]
+    if (value === undefined) {
+      if (required) issues.push(`${field}:MISSING`)
+      return
+    }
+    for (const issue of judge(value)) issues.push(`${field}:${issue}`)
+  }
+  check("source", sourceIssues, true)
+  check("medium", mediumIssues, true)
+  check("campaign", (value) => campaignIssues(value, origin), true)
+  check("content", contentIssues, false)
+  return issues
+}
+
 /** A landing must be a value Phase-A capture can produce: a public path or template. */
 export function landingIssues(value: unknown): string[] {
   const screened = screen(value)
