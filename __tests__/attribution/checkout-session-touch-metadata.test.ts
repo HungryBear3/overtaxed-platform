@@ -174,7 +174,7 @@ beforeEach(() => {
 })
 
 describe("submitted attribution touches", () => {
-  it("revalidates both touches and stamps them as fixed, bounded metadata beside the GA identifiers", async () => {
+  it("stamps no touch whose campaign tuple is not owner-approved, beside the GA identifiers, and still checks out", async () => {
     const first = instant(3)
     const last = instant(1)
 
@@ -204,36 +204,26 @@ describe("submitted attribution touches", () => {
       gaClientId: "1234567890.1724102400",
       gaSessionId: "1724102400",
       gaSessionNumber: "4",
-      firstTouchSource: "property_manager",
-      firstTouchMedium: "email",
-      firstTouchCampaign: "hoa_resident_resource_20260723",
-      firstTouchLanding: "/hoa",
-      firstTouchAt: first.iso,
-      lastTouchSource: "facebook",
-      lastTouchMedium: "paid_social",
-      lastTouchCampaign: "ot_2026_cicero_deadline",
-      lastTouchContent: "v1_video",
-      lastTouchTerm: "appeal",
-      lastTouchLanding: "/appeal-deadline/[slug]",
-      lastTouchAt: last.iso,
     })
-    expect(touchKeys(lastMetadata())).toEqual([
-      "firstTouchAt",
-      "firstTouchCampaign",
-      "firstTouchLanding",
-      "firstTouchMedium",
-      "firstTouchSource",
-      "lastTouchAt",
-      "lastTouchCampaign",
-      "lastTouchContent",
-      "lastTouchLanding",
-      "lastTouchMedium",
-      "lastTouchSource",
-      "lastTouchTerm",
-    ])
+    expect(touchKeys(lastMetadata())).toEqual([])
   })
 
-  it("keeps every stamped value inside Stripe's metadata limits even at each field's maximum length", async () => {
+  it("stamps nothing from a canonical tuple whose slug is not owner-approved, and never a term", async () => {
+    const { at } = instant(1)
+
+    const res = await postT2({
+      attribution: {
+        first: { landing: "/", at },
+        last: { source: "reddit", medium: "paid_social", campaign: "ot_202610_acq_synthappeal", content: "img_a", term: "springfield", landing: "/", at },
+      },
+    })
+
+    expect(res.status).toBe(200)
+    expect(touchKeys(lastMetadata())).toEqual(["firstTouchAt", "firstTouchLanding"])
+    expect(JSON.stringify(lastMetadata())).not.toContain("springfield")
+  })
+
+  it("keeps every stamped value inside Stripe's metadata limits and stamps no maximum-length ungoverned value", async () => {
     const { at } = instant(1)
 
     await postT2({
@@ -244,7 +234,7 @@ describe("submitted attribution touches", () => {
     })
 
     const metadata = lastMetadata()
-    expect(touchKeys(metadata)).toHaveLength(14)
+    expect(touchKeys(metadata)).toEqual([])
     expect(Object.keys(metadata).length).toBeLessThanOrEqual(50)
     for (const [key, value] of Object.entries(metadata)) {
       expect(key.length).toBeLessThanOrEqual(40)

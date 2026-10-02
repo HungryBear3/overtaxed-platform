@@ -69,9 +69,25 @@ in `lib/analytics/campaign-governance.ts`), `utm_campaign` is never sent and
 `sessionCampaignName` shows GA4 placeholders only. Source, medium and content
 work today.
 
+The first/last touches stamped into Stripe Checkout Session metadata
+(`firstTouch*`/`lastTouch*`, `lib/attribution/touch-contract.ts`) are stricter
+than the page context: a campaign touch is projected only when its whole
+source/medium/campaign tuple (plus content, when present) passes the same
+owner-approved governance, and otherwise not at all — no partial tuple and no
+leftover landing. `utm_term` is never projected. A direct first touch still
+stamps its landing and instant. Until a slug is approved, no campaign touch
+reaches Stripe.
+
+Campaign URLs come from the experiment registry, not by hand:
+`npx tsx scripts/ot-campaign-link.ts --experiment <id>` prints the canonical
+URL for one `planned` or `running` entry of an owner-approved registry, after
+checking that GA4's governed page context and the Stripe projection both keep
+it unchanged. It refuses anything else, and yields nothing while the registry
+is empty.
+
 ## GA4 owner actions (all pending)
 
-Machine-readable: `data/analytics/ot-ga4-admin-checklist.v3.json`, validated by
+Machine-readable: `data/analytics/ot-ga4-admin-checklist.v4.json`, validated by
 `validateGa4AdminChecklist`, verified after the fact by
 `verifyGa4AdminReadback` against a read-only Admin API readback.
 
@@ -90,20 +106,65 @@ was already marked as a key event from the Phase-B checklist, un-mark it — the
 readback verifier reports it as `UNEXPECTED_KEY_EVENT`.
 
 Enhanced Measurement on the web stream (Admin → Data streams → web stream →
-Enhanced measurement → gear), both **OFF**:
+Enhanced measurement → gear). These two are always **OFF**:
 
 | Setting | Readback field | Why |
 |---|---|---|
 | `browser_history` — "Page changes based on browser history events" | `pageChangesEnabled` | The app sends its own SPA `page_view` with a governed page context; the automatic one duplicates it and carries the raw URL. |
 | `site_search` — "Site search" | `siteSearchEnabled` | Lifts raw query-string values into `view_search_results`, outside the funnel contract. |
 
-Readback for these is one read-only
-`GET /v1alpha/properties/{property_id}/dataStreams/{data_stream_id}/enhancedMeasurementSettings`
-(scope `analytics.readonly`), passed to `verifyGa4AdminReadback` as
-`enhancedMeasurementSettings` next to `customDimensions` and `keyEvents`. A
-setting that is ON is reported as `ENHANCED_MEASUREMENT_ON:<setting>`. Every
-item stays `pending` in the checklist; only a passing readback is evidence that
-the owner changed the property.
+These three are the owner's decision, recorded as `owner_posture` in the
+checklist: `off` (recommended) or `on_accepted`. The owner recorded `off` for
+all three on 2026-10-02. If any posture is changed to `undecided`, readback fails with
+`ENHANCED_MEASUREMENT_POSTURE_UNDECIDED:<setting>` whatever the stream reads.
+
+| Setting | Readback field | Why OFF is recommended |
+|---|---|---|
+| `outbound_clicks` — "Outbound clicks" | `outboundClicksEnabled` | Sends `click` with the raw destination `link_url`, outside the funnel contract. |
+| `form_interactions` — "Form interactions" | `formInteractionsEnabled` | Sends `form_start`/`form_submit` with form ids, names and the raw `form_destination`; the free check and checkout already report through governed funnel events. |
+| `file_downloads` — "File downloads" | `fileDownloadsEnabled` | Sends `file_download` with the raw `link_url` and file name; a delivered report or packet link can identify the order. |
+
+Readback uses read-only scope `analytics.readonly`. Independently configure
+`checklist.readback.enhanced_measurement_resource` as
+`properties/{property_id}/dataStreams/{data_stream_id}/enhancedMeasurementSettings`
+from the intended property/stream configuration, never from a supplied response.
+The checked-in target is the owner-verified Overtaxed IL property and web stream.
+The checklist still cannot PASS until complete unfiltered readbacks show that the
+live settings and exact custom-definition/key-event sets conform.
+
+Pass exactly these six entries to `verifyGa4AdminReadback`:
+
+| Unmodified Admin API response body | Separate capture evidence | Exact `request` |
+|---|---|---|
+| `customDimensions` | `customDimensionsEvidence` | `GET /v1beta/properties/{property_id}/customDimensions` |
+| `keyEvents` | `keyEventsEvidence` | `GET /v1beta/properties/{property_id}/keyEvents` |
+| `enhancedMeasurementSettings` | `enhancedMeasurementEvidence` | `GET /v1alpha/properties/{property_id}/dataStreams/{data_stream_id}/enhancedMeasurementSettings` |
+
+Each evidence object contains **only** `request` and `complete: true` (boolean).
+Requests must match exactly, with no query parameters, filters, field masks or
+other metadata. Both list requests derive their property from the configured
+Enhanced Measurement target. Every list item's Admin API `name` must be
+`properties/{property_id}/customDimensions/{numeric_id}` or
+`properties/{property_id}/keyEvents/{numeric_id}`, respectively, for that same
+property. Retargeting both a response and its evidence does not change the target.
+
+List envelopes allow only their respective array and optional string
+`nextPageToken`. An omitted array is proto3 empty; an explicit null or nonarray
+is malformed. A nonempty token always fails with
+`PAGINATION_INCOMPLETE:<list>`: `complete: true` does not override pagination,
+and this verifier does not aggregate pages. Unknown envelope/evidence keys,
+including `partial`, `partialResponse`, `fields` and `fieldMask`, fail closed.
+Target, envelope or evidence failures return `MALFORMED_READBACK` without echoing
+resource names, capture strings, metadata values or page tokens.
+
+The Enhanced Measurement body must name the exact configured resource and use
+only recognized, correctly typed fields. A name-only body is insufficient.
+Omitted proto3 false settings are accepted only with complete unfiltered capture
+evidence. A setting ON when required (or owner-recorded) OFF produces
+`ENHANCED_MEASUREMENT_ON:<setting>`; `on_accepted` passes either value.
+This offline verifier validates the supplied evidence contract, not the truth
+of the operator's completeness attestation; it performs no API request. Every
+item stays `pending`; only a passing readback supports a property-match claim.
 
 Vercel Web Analytics is removed from the app and its package metadata (its
 beacon sent the raw landing URL and external referrer). If the Vercel project

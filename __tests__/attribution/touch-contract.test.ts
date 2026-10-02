@@ -195,7 +195,10 @@ describe("server revalidation of submitted attribution", () => {
 })
 
 describe("Stripe metadata projection", () => {
-  it("projects touches onto fixed bounded keys with second-precision UTC instants", () => {
+  // The shipped approval list is empty, so no campaign tuple is governed yet.
+  // The governed (approved-slug) projection is covered by
+  // touch-governance-approved.test.ts.
+  it("projects no keys for a touch whose campaign tuple is not owner-approved", () => {
     expect(
       touchesToStripeMetadata({
         first: {
@@ -215,26 +218,40 @@ describe("Stripe metadata projection", () => {
           at: Date.parse("2026-09-27T21:05:00.000Z"),
         },
       }),
-    ).toEqual({
-      firstTouchSource: "property_manager",
-      firstTouchMedium: "email",
-      firstTouchCampaign: "hoa_resident_resource_20260723",
-      firstTouchLanding: "/hoa",
-      firstTouchAt: "2026-09-20T08:30:15Z",
-      lastTouchSource: "facebook",
-      lastTouchMedium: "paid_social",
-      lastTouchCampaign: "ot_2026_cicero_deadline",
-      lastTouchContent: "v1_video",
-      lastTouchTerm: "appeal",
-      lastTouchLanding: "/appeal-deadline/[slug]",
-      lastTouchAt: "2026-09-27T21:05:00Z",
+    ).toEqual({})
+  })
+
+  it("refuses a canonically shaped tuple whose slug exists only for synthetic fixtures", () => {
+    expect(
+      touchesToStripeMetadata({
+        first: null,
+        last: {
+          source: "reddit",
+          medium: "paid_social",
+          campaign: "ot_202610_acq_synthappeal",
+          content: "img_a",
+          landing: "/",
+          at: Date.parse("2026-09-27T21:05:00.000Z"),
+        },
+      }),
+    ).toEqual({})
+  })
+
+  it("never projects a person-chosen word, even when every other field is governed", () => {
+    const metadata = touchesToStripeMetadata({
+      first: { source: "jane_doe", medium: "whatever", campaign: "Elm_St_Smith", term: "springfield", at: NOW },
+      last: { term: "springfield", landing: "/", at: NOW },
     })
+    expect(metadata).toEqual({})
   })
 
   it("projects a direct first touch as landing and instant only", () => {
     expect(touchesToStripeMetadata({ first: { at: Date.parse("2026-09-20T08:30:15.000Z") }, last: null })).toEqual({
       firstTouchAt: "2026-09-20T08:30:15Z",
     })
+    expect(
+      touchesToStripeMetadata({ first: { landing: "/check", at: Date.parse("2026-09-20T08:30:15.000Z") }, last: null }),
+    ).toEqual({ firstTouchLanding: "/check", firstTouchAt: "2026-09-20T08:30:15Z" })
   })
 
   it("contributes no keys when there is no attribution", () => {

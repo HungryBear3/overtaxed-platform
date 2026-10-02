@@ -19,6 +19,7 @@ import {
   CAMPAIGN_MEDIUMS,
   CAMPAIGN_SOURCES,
   campaignIssues,
+  campaignTupleIssues,
   contentIssues,
   forbiddenValueCode,
   landingIssues,
@@ -127,6 +128,40 @@ describe("consistency with the Phase-A allowlists", () => {
 
   it("every canonical campaign and content value is a well-formed approved-code shape", () => {
     for (const value of [...canonicalCampaigns, ...canonicalContent]) expect(ATTRIBUTION_CODE_PATTERN.test(value)).toBe(true)
+  })
+})
+
+describe("a campaign tuple judged as a whole", () => {
+  const tuple = { source: "reddit", medium: "paid_social", campaign: "ot_202610_acq_synthappeal", content: "img_a" }
+
+  it("accepts a complete governed tuple, with or without content", () => {
+    expect(campaignTupleIssues(tuple, "synthetic_fixture")).toEqual([])
+    expect(campaignTupleIssues({ ...tuple, content: undefined }, "synthetic_fixture")).toEqual([])
+  })
+
+  it("refuses an otherwise governed tuple whose slug is not owner-approved", () => {
+    expect(campaignTupleIssues(tuple, "owner_approved")).toEqual(["campaign:CAMPAIGN_SLUG"])
+  })
+
+  it.each([
+    ["no source", { source: undefined }, ["source:MISSING"]],
+    ["no medium", { medium: undefined }, ["medium:MISSING"]],
+    ["no campaign", { campaign: undefined }, ["campaign:MISSING"]],
+    ["an ungoverned source", { source: "partner" }, ["source:SOURCE_NOT_GOVERNED"]],
+    ["a capitalized source", { source: "Reddit" }, ["source:SOURCE_NOT_GOVERNED"]],
+    ["an ungoverned medium", { medium: "bogus" }, ["medium:MEDIUM_NOT_GOVERNED"]],
+    ["an unknown campaign slug", { campaign: "ot_202610_acq_cicero" }, ["campaign:CAMPAIGN_SLUG"]],
+    [
+      "a legacy campaign",
+      { campaign: "ot_2026_cicero_deadline" },
+      ["campaign:CAMPAIGN_MONTH", "campaign:CAMPAIGN_OBJECTIVE", "campaign:CAMPAIGN_SLUG"],
+    ],
+    ["ungoverned content", { content: "v1_video" }, ["content:CONTENT_FORMAT", "content:CONTENT_VARIANT"]],
+    ["the registry's no-content sentinel as a value", { content: "none" }, ["content:CONTENT_SHAPE"]],
+    ["an email as content", { content: "jane@example.com" }, ["content:FORBIDDEN_VALUE:EMAIL"]],
+    ["two broken fields", { source: undefined, content: "gif_a" }, ["source:MISSING", "content:CONTENT_FORMAT"]],
+  ])("refuses a tuple with %s", (_label, change, issues) => {
+    expect(campaignTupleIssues({ ...tuple, ...change }, "synthetic_fixture")).toEqual(issues)
   })
 })
 

@@ -522,9 +522,9 @@ export async function POST(req: NextRequest) {
   }
 
   const gaIdentifiers = sanitizeAnonymousGaIdentifiers(input)
-  // Only revalidated touches reach Stripe: the five bounded UTM values, an
-  // allowlisted landing value and a second-precision instant per touch. Never
-  // the raw query, a referrer or anything else the request carried.
+  // Only revalidated touches reach Stripe: the governed four-field campaign
+  // tuple, an allowlisted landing and a second-precision instant per touch.
+  // utm_term never reaches Stripe, nor the raw query or a referrer.
   const touchMetadata = touchesToStripeMetadata(revalidateCheckoutAttribution(input.attribution, Date.now()))
   const normalizedEmail = normalizeEmail(input.email)
   const priceId = PRICE_MAP[input.tier]
