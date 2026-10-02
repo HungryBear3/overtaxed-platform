@@ -7,9 +7,13 @@ Audit implemented from: `/Users/abigailclaw/cc-worktrees/ot-analytics-resume-202
 
 ## Verdict
 
-**`IMPLEMENTED_LOCAL_UNCOMMITTED` — awaiting independent exact-byte review.**
+**`CHECKPOINTED_LOCAL` — live GA4 configuration and complete readback remain pending.**
 
-All three slices are implemented locally. After the second narrow GA4 fix cycle, the focused seven suites pass 384/384 tests and the broad 65-suite selection passes 2095 tests with 1 skipped. TypeScript exits 0. The historical full-suite run below was not rerun after the fix cycles and is not evidence for the current bytes. Nothing is committed or pushed. No campaign slug or registry entry was added.
+The reviewed implementation was committed locally as `8e1d9aa286c8b2f3ad11d569d6327bbe215ace91`; it has not been pushed or deployed. The owner then selected `off` for outbound clicks, form interactions, and file downloads. In the signed-in GA4 Admin UI, the controller verified property **Overtaxed IL** (`524756528`) and web stream **Overtaxed IL** (`13608120040`, measurement ID `G-4GKQSKZD73`, URL `https://www.overtaxed-il.com`). The checklist now pins `properties/524756528/dataStreams/13608120040/enhancedMeasurementSettings` independently of any supplied readback.
+
+The live mutation was not saved. Background control turned outbound clicks and form interactions off in the open sheet, but could not switch file downloads; the separate foreground-consent request timed out. Escape closed the sheet and discarded those unsaved changes. Live settings and all complete readback captures remain pending. No campaign slug or registry entry was added.
+
+All three implementation slices are present in the checkpoint. Before that checkpoint, the focused seven suites passed 384/384 tests and the broad 65-suite selection passed 2095 tests with 1 skipped; TypeScript exited 0. Those figures identify the implementation checkpoint, not the later owner-posture/resource follow-up.
 
 ## 1. Identity
 
@@ -30,7 +34,7 @@ The untracked `node_modules` symlink points to `/Users/abigailclaw/overtaxed-pla
 | `scripts/ot-campaign-link.ts` | **new** CLI `--experiment <id>` |
 | `lib/analytics/ga4-admin-checklist.ts` | schema v4; owner postures, independently configured target, exact complete capture evidence for all three calls, closed list envelopes and property-bound item names |
 | `app/api/checkout/session/route.ts` | comment-only correction describing the governed four-field tuple and excluded `utm_term`; execution unchanged |
-| `data/analytics/ot-ga4-admin-checklist.v3.json` → `.v4.json` | `git mv`, `schema_version: 4`, three `owner_posture: "undecided"` items |
+| `data/analytics/ot-ga4-admin-checklist.v3.json` → `.v4.json` | `git mv`, `schema_version: 4`; follow-up records all three `owner_posture: "off"` values and pins the owner-verified Enhanced Measurement resource |
 | `__tests__/analytics/campaign-governance.test.ts` | + tuple tests |
 | `__tests__/attribution/touch-contract.test.ts` | projection expectations changed to fail-closed |
 | `__tests__/attribution/touch-governance-approved.test.ts` | **new** positive path, with an approval simulated |
@@ -101,9 +105,7 @@ CLI `scripts/ot-campaign-link.ts`:
   | `form_interactions` | `formInteractionsEnabled` |
   | `file_downloads` | `fileDownloadsEnabled` |
 
-- **Ships `undecided`.** While any owner item is undecided, the verifier returns `FAIL` with `ENHANCED_MEASUREMENT_POSTURE_UNDECIDED:<setting>` whatever the stream reads, even on an all-OFF stream.
-  - `off`: ON in the readback gives `ENHANCED_MEASUREMENT_ON:<setting>`.
-  - `on_accepted`: passes either way.
+- **Current checked-in posture is `off` for all three owner-decided settings.** The verifier still preserves the full posture contract: `undecided` fails with `ENHANCED_MEASUREMENT_POSTURE_UNDECIDED:<setting>` even on an all-OFF stream; `off` rejects ON readback; `on_accepted` permits either value.
 - Each owner item's rationale ends "Recommended posture: OFF." (pinned by a test).
 - Proto3 omitted false settings are accepted only with an independently configured target and complete unfiltered capture evidence. Name-only Enhanced Measurement bodies, unknown fields, non-booleans and null fail closed. Missing target gives `ENHANCED_MEASUREMENT_TARGET_REQUIRED`; a malformed configured target gives `INVALID_CHECKLIST`.
 - A missing owner item gives `ENHANCED_MEASUREMENT_REQUIRED:<setting>`, so the checklist is invalid and the verifier returns `INVALID_CHECKLIST`.
@@ -175,7 +177,7 @@ Coverage was 27/27 non-equivalent mutants killed.
 6. **Dynamic landing templates can't be linked.** A registry entry whose `landing_path` is a template can't produce a URL; the owner must register a static route.
 7. **The builder does not check the date window.** It gates on `status` only, not `start_date`/`end_date` against today.
 8. **The CLI has no `--list` mode.** "Yields no links" for the empty registry is shown by lint `{ok:true, experiments:0}` plus `EXPERIMENT_NOT_FOUND`.
-9. **The checklist moved from v3 to v4.** Any operator-held copy of v3 now validates as `SCHEMA`. G-7 cannot PASS until the owner edits the three `owner_posture` values, independently configures the Enhanced Measurement resource, and supplies all three complete unfiltered captures (reviewed configuration and read-only evidence).
+9. **The checklist moved from v3 to v4.** Any operator-held copy of v3 now validates as `SCHEMA`. The owner postures and exact Enhanced Measurement target are now recorded, but G-7 remains blocked until the live settings conform and all three complete unfiltered captures are supplied.
 
 ## 5. Boundaries kept
 
@@ -198,8 +200,8 @@ Coverage was 27/27 non-equivalent mutants killed.
 
 ## 7. Next steps (owner)
 
-1. Independent exact-byte review of this uncommitted change set (hashes in §1).
-2. S-1: name the pilot slug(s) in a reviewed change.
-3. S-2: add one `planned` registry entry, then G-6 via `scripts/ot-campaign-link.ts`.
-4. Record the EM posture in checklist v4. `off` is recommended for all three.
+1. Finish the approved live Enhanced Measurement changes, save, reopen, and verify all five governed settings.
+2. Capture complete unfiltered Admin API evidence for custom dimensions, key events, and Enhanced Measurement; run G-7.
+3. S-1: name the pilot slug(s) in a reviewed change.
+4. S-2: add one `planned` registry entry, then G-6 via `scripts/ot-campaign-link.ts`.
 5. S-4: approve the privacy copy.

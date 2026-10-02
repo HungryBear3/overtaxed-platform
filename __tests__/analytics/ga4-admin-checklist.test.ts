@@ -117,7 +117,7 @@ describe("the checked-in checklist", () => {
     ])
   })
 
-  it("requires browser-history page changes and site search OFF, and leaves the other three to the owner, undecided", () => {
+  it("requires browser-history page changes and site search OFF, and records the owner's other three settings as OFF", () => {
     const c = shipped as unknown as Json
     expect(c.schema_version).toBe(4)
     expect(
@@ -125,9 +125,9 @@ describe("the checked-in checklist", () => {
     ).toEqual([
       ["browser_history", "pageChangesEnabled", false, undefined, "pending"],
       ["site_search", "siteSearchEnabled", false, undefined, "pending"],
-      ["outbound_clicks", "outboundClicksEnabled", undefined, "undecided", "pending"],
-      ["form_interactions", "formInteractionsEnabled", undefined, "undecided", "pending"],
-      ["file_downloads", "fileDownloadsEnabled", undefined, "undecided", "pending"],
+      ["outbound_clicks", "outboundClicksEnabled", undefined, "off", "pending"],
+      ["form_interactions", "formInteractionsEnabled", undefined, "off", "pending"],
+      ["file_downloads", "fileDownloadsEnabled", undefined, "off", "pending"],
     ])
   })
 
@@ -538,7 +538,7 @@ describe("readback verification", () => {
     expect(verifyGa4AdminReadback(checklist, readback)).toEqual({ status: "PASS", findings: [] })
   })
 
-  it("fails the shipped checklist closed until the owner records a posture, even on an all-OFF stream", () => {
+  it("fails an undecided checklist closed even on an all-OFF stream", () => {
     expect(verifyGa4AdminReadback(withOwnerPosture("undecided"), conformingReadback())).toEqual({
       status: "FAIL",
       findings: [

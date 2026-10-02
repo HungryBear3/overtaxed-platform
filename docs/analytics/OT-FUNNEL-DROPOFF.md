@@ -114,8 +114,8 @@ Enhanced measurement → gear). These two are always **OFF**:
 | `site_search` — "Site search" | `siteSearchEnabled` | Lifts raw query-string values into `view_search_results`, outside the funnel contract. |
 
 These three are the owner's decision, recorded as `owner_posture` in the
-checklist: `off` (recommended) or `on_accepted`. They ship `undecided`, and
-while any is `undecided` the readback fails with
+checklist: `off` (recommended) or `on_accepted`. The owner recorded `off` for
+all three on 2026-10-02. If any posture is changed to `undecided`, readback fails with
 `ENHANCED_MEASUREMENT_POSTURE_UNDECIDED:<setting>` whatever the stream reads.
 
 | Setting | Readback field | Why OFF is recommended |
@@ -128,8 +128,9 @@ Readback uses read-only scope `analytics.readonly`. Independently configure
 `checklist.readback.enhanced_measurement_resource` as
 `properties/{property_id}/dataStreams/{data_stream_id}/enhancedMeasurementSettings`
 from the intended property/stream configuration, never from a supplied response.
-The shipped checklist leaves this target unconfigured and cannot PASS until it
-is configured and all owner postures are decided.
+The checked-in target is the owner-verified Overtaxed IL property and web stream.
+The checklist still cannot PASS until complete unfiltered readbacks show that the
+live settings and exact custom-definition/key-event sets conform.
 
 Pass exactly these six entries to `verifyGa4AdminReadback`:
 

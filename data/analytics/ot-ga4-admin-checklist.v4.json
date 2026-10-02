@@ -71,21 +71,21 @@
     {
       "setting": "outbound_clicks",
       "readback_field": "outboundClicksEnabled",
-      "owner_posture": "undecided",
+      "owner_posture": "off",
       "status": "pending",
       "rationale": "Enhanced Measurement 'Outbound clicks' sends a click event carrying the raw destination link_url, outside the funnel contract and the governed page context. Owner decides; the readback fails until a posture is recorded. Recommended posture: OFF."
     },
     {
       "setting": "form_interactions",
       "readback_field": "formInteractionsEnabled",
-      "owner_posture": "undecided",
+      "owner_posture": "off",
       "status": "pending",
       "rationale": "Enhanced Measurement 'Form interactions' sends form_start and form_submit events carrying form ids, names and the raw form_destination URL, outside the funnel contract; the free check and checkout forms already report through governed funnel events. Owner decides; the readback fails until a posture is recorded. Recommended posture: OFF."
     },
     {
       "setting": "file_downloads",
       "readback_field": "fileDownloadsEnabled",
-      "owner_posture": "undecided",
+      "owner_posture": "off",
       "status": "pending",
       "rationale": "Enhanced Measurement 'File downloads' sends a file_download event carrying the raw link_url and file name, which for a delivered report or packet link can identify the order. Owner decides; the readback fails until a posture is recorded. Recommended posture: OFF."
     }
@@ -93,6 +93,7 @@
   "readback": {
     "api": "analyticsadmin.googleapis.com",
     "oauth_scope": "https://www.googleapis.com/auth/analytics.readonly",
+    "enhanced_measurement_resource": "properties/524756528/dataStreams/13608120040/enhancedMeasurementSettings",
     "calls": [
       "GET /v1beta/properties/{property_id}/customDimensions",
       "GET /v1beta/properties/{property_id}/keyEvents",
