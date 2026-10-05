@@ -24,15 +24,14 @@ export function generateStaticParams() {
  * is a claim that keeps being shown, unchanged, for as long as someone keeps
  * pasting the URL into Slack.
  *
- * The card now carries the township's name and its triennial cycle year, both
- * of which are roster facts that do not move, and points at the page for the
- * window. The page can re-derive the window on every request; a cached PNG
+ * The card carries the township's name only, and points at the page for the
+ * window. It used to print the roster's reassessment-cycle year, which the
+ * official sources do not support for every district. The page can re-derive the window on every request; a cached PNG
  * cannot.
  */
 export default async function OG({ params }: { params: { slug: string } }) {
   const t = getTownshipBySlug(params.slug);
   const name = t?.name ?? "Cook County";
-  const cycleYear = t?.cycleYear ?? null;
 
   return new ImageResponse(
     (
@@ -66,7 +65,7 @@ export default async function OG({ params }: { params: { slug: string } }) {
               textTransform: "uppercase",
             }}
           >
-            {cycleYear ? `${cycleYear} reassessment cycle` : "Cook County"}
+            Cook County
           </div>
           <div
             style={{

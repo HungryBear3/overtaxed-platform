@@ -41,7 +41,8 @@ export default function Page() {
     <div className="ot-root">
       <SiteHeader active="deadlines" />
       <LiveDeadlinesPage />
-      <SiteFooter />
+      {/* Informational page: CC-12 footer unconditionally, see SiteFooter. */}
+      <SiteFooter informationalPage />
     </div>
   );
 }
