@@ -59,7 +59,7 @@ describe("/deadlines lead tracking", () => {
       fireEvent.change(screen.getByLabelText("Cook County address"), {
         target: { value: "100 W Randolph St, Chicago IL" },
       });
-      fireEvent.click(screen.getByRole("button", { name: /check eligibility/i }));
+      fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }));
 
       expect(analytics.deadlineFreeCheckStart).toHaveBeenCalledWith({
         source: "deadline_bottom_cta",

@@ -25,17 +25,13 @@ import TownshipPage, {
   type TownshipFaqEntry,
 } from "@/components/ot-design/TownshipPage";
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
-import {
-  TOWNSHIPS,
-  TOWNSHIPS_BY_SLUG,
-  type Township,
-} from "@/lib/townships";
+import { TOWNSHIPS_BY_SLUG, type Township } from "@/lib/townships";
 import {
   buildTownship2026Views,
   type Township2026View,
 } from "@/lib/deadlines-2026";
 import { DEADLINE_PENDING_NOTICE } from "@/lib/deadline-sources";
-import { cc08, cc16, CC_10 } from "@/lib/copy/canonical";
+import { cc08, cc16 } from "@/lib/copy/canonical";
 import "../../ot-design.css";
 
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
@@ -71,7 +67,9 @@ function buildTownshipFaqEntries(
   t: Township,
   view: Township2026View,
 ): TownshipFaqEntry[] {
-  const nextCycle = t.cycleYear + 3;
+  // No cycle years. The roster's `cycleYear` is not supported by the official
+  // sources for every district, and the Assessor window is not evidence of
+  // which year a township is reassessed in, so no year is printed at all.
   const entries: TownshipFaqEntry[] = [];
 
   if (view.official && view.retrievedAt) {
@@ -88,9 +86,8 @@ function buildTownshipFaqEntries(
     entries.push({
       q: `When does the ${t.name} Township appeal window open and close?`,
       a:
-        `The ${t.cycleYear} Cook County Assessor window opens ${view.openLabel} and closes ${view.lastFileLabel}. ` +
-        `After it closes, the next opportunity to formally appeal will be in ${nextCycle} ` +
-        `(Cook County reassesses each township once every three years). ${provenance}`,
+        `The Cook County Assessor window opens ${view.openLabel} and closes ${view.lastFileLabel}. ` +
+        `${provenance}`,
     });
     entries.push({
       // These township windows are Assessor-stage reassessment windows. Calling
@@ -110,15 +107,14 @@ function buildTownshipFaqEntries(
       q: `When can I appeal in ${t.name} Township?`,
       a:
         `${DEADLINE_PENDING_NOTICE} ` +
-        `Cook County reassesses each township once every three years, and ${t.name} is in the ${t.cycleYear} cycle.`,
+        `Cook County reassesses each township once every three years.`,
     });
   }
 
   entries.push({
     q: `What does it cost to appeal?`,
     a:
-      `The Cook County Assessor charges no fee to file. ${CC_10} ` +
-      `You can also file on your own at no cost.`,
+      `The Cook County Assessor charges no fee to file. You can file on your own at no cost.`,
   });
   entries.push({
     q: `What evidence do I need to appeal in ${t.name}?`,
@@ -189,25 +185,25 @@ export async function generateMetadata({
   const description =
     view?.official && view.lastFileLabel
       ? `${t.name} Township Cook County Assessor appeal window: ${view.openLabel} – ${view.lastFileLabel}. ` +
-        `Run a free check, get a deadline reminder, or have a $69 packet prepared that you review, sign, and file yourself.`
+        `Confirm your filing deadline with the county before you file.`
       : `${t.name} Township, Cook County. We have not verified this township's Assessor filing deadline against the county's published calendar, so this page does not show one. ` +
         `Confirm your filing deadline with the county before you file.`;
 
   return {
-    title: `${t.name} Township Property Tax Appeal Deadline ${t.cycleYear}`,
+    title: `${t.name} Township Property Tax Appeal Deadline`,
     description,
     alternates: { canonical: `${siteUrl}/township/${t.slug}` },
     openGraph: {
       type: "website",
       url: `${siteUrl}/township/${t.slug}`,
-      title: `${t.name} Township Property Tax Appeal — ${t.cycleYear} Cycle`,
+      title: `${t.name} Township Property Tax Appeal`,
       description,
       siteName: "OverTaxed IL",
       // og:image auto-wired by app/township/[slug]/opengraph-image.tsx
     },
     twitter: {
       card: "summary_large_image",
-      title: `${t.name} Township appeal window — ${t.cycleYear}`,
+      title: `${t.name} Township appeal window`,
       description,
       // twitter:image auto-wired by app/township/[slug]/opengraph-image.tsx
     },
@@ -238,9 +234,6 @@ export default async function Page({
     })
     .filter((n): n is { township: Township; view: Township2026View } => n !== null);
 
-  const cycleCount =
-    TOWNSHIPS.filter((x) => x.cycleYear === t.cycleYear).length - 1;
-
   const faq = buildTownshipFaqEntries(t, view);
   const breadcrumbJsonLd = buildBreadcrumbJsonLd(t);
   const faqJsonLd = buildFaqJsonLd(faq);
@@ -253,9 +246,9 @@ export default async function Page({
         view={view}
         neighbors={neighbors}
         faq={faq}
-        cycleCount={cycleCount}
       />
-      <SiteFooter />
+      {/* Informational page: CC-12 footer unconditionally, see SiteFooter. */}
+      <SiteFooter informationalPage />
       <script
         type="application/ld+json"
         // Server-rendered structured data. The breadcrumb mirrors the visible

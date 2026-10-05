@@ -21,7 +21,6 @@ export const OT_PUBLIC_CONTACT = {
 const FOOTER_TOWNSHIP_GROUPS = [
   {
     label: "South & West",
-    cycle: "2026 cycle",
     count: TOWNSHIPS.filter((t) => t.district === "south-west-suburbs").length,
     // Cross-links, not a shortlist of open windows. This used to filter on a
     // seed status, so the footer of every page silently asserted which four
@@ -32,7 +31,6 @@ const FOOTER_TOWNSHIP_GROUPS = [
   },
   {
     label: "North Suburbs",
-    cycle: "2027 cycle",
     count: TOWNSHIPS.filter((t) => t.district === "north-suburbs").length,
     examples: TOWNSHIPS.filter((t) => t.district === "north-suburbs")
       .slice(0, 3)
@@ -40,7 +38,6 @@ const FOOTER_TOWNSHIP_GROUPS = [
   },
   {
     label: "City of Chicago",
-    cycle: "2028 cycle",
     count: TOWNSHIPS.filter((t) => t.district === "chicago").length,
     examples: TOWNSHIPS.filter((t) => t.district === "chicago")
       .slice(0, 3)
@@ -102,15 +99,24 @@ export function SiteHeader({
 
 // `freeCheckLanding` is the `/check` variant, by owner ruling: CC-12 only (a
 // CC-18 exception, since CC-01 describes the paid packet a free-only landing
-// must not), and no township count or cycle-year labels. Every other surface
-// keeps the default render.
+// must not), and no township count. `informationalPage` is the
+// `/township/[slug]`, `/deadlines` and `/townships` variant, by owner
+// authorization (2026-10-05): they are informational pages, so the default
+// CC-01 sentence (a prepared appeal packet) is dropped, and so is the neutral
+// report's name and limits (a product those pages do not offer). They keep
+// CC-12 verbatim, the neutral tagline and meta line, and the township counts.
+// `neutralReport` stays flag-driven on the surfaces that sell the report. Every
+// other surface keeps its existing render. No surface carries cycle-year labels.
 export function SiteFooter({
   neutralReport = false,
   freeCheckLanding = false,
+  informationalPage = false,
 }: {
   neutralReport?: boolean;
   freeCheckLanding?: boolean;
+  informationalPage?: boolean;
 }) {
+  const neutralChrome = neutralReport || informationalPage;
   return (
     <footer className="ot-footer ot-footer-grid">
       <div className="ot-footer-inner">
@@ -120,7 +126,7 @@ export function SiteFooter({
               <span className="ot-logo-mark">●</span> OverTaxed IL
             </div>
             <div className="ot-footer-tagline">
-              {neutralReport ? "Cook County assessment records, organized for homeowners." : "Cook County property tax appeals, built for homeowners."}
+              {neutralChrome ? "Cook County assessment records, organized for homeowners." : "Cook County property tax appeals, built for homeowners."}
             </div>
             <div className="ot-footer-contact">
               <a href={`mailto:${OT_PUBLIC_CONTACT.email}`}>{OT_PUBLIC_CONTACT.email}</a>
@@ -148,7 +154,9 @@ export function SiteFooter({
                 <div key={group.label} className="ot-footer-township-group">
                   <Link href="/townships" className="ot-footer-township-group-head">
                     {group.label}
-                    {freeCheckLanding ? null : <span>{group.count} · {group.cycle}</span>}
+                    {/* No cycle year on any surface: "2028 cycle" filed Jefferson
+                        under a year the official sources do not support. */}
+                    {freeCheckLanding ? null : <span>{group.count}</span>}
                   </Link>
                   <div className="ot-footer-township-examples">
                     {group.examples.map((t) => (
@@ -176,15 +184,19 @@ export function SiteFooter({
                 named the one stage OverTaxed IL cannot serve, in shared chrome,
                 which would have required CC-11 on all 52 paths to say something
                 the Assessor-stage packet never depended on.
-                `/check` is the one owner-ruled exception: see `freeCheckLanding`. */}
-            <p className="ot-footer-disclaimer">{neutralReport ? `${NEUTRAL_REPORT_NAME}. ${NEUTRAL_REPORT_LIMITS}` : freeCheckLanding ? CC_12 : CC_18}</p>
+                Owner-ruled exceptions, not a change to the frozen rule: `/check`
+                (see `freeCheckLanding`), and the informational township,
+                deadline and townships-index pages (see `informationalPage`).
+                Both render CC-12 alone, verbatim and in its own element, so
+                BL-F2's CC-12 requirement is met on those routes too. */}
+            <p className="ot-footer-disclaimer">{informationalPage ? CC_12 : neutralReport ? `${NEUTRAL_REPORT_NAME}. ${NEUTRAL_REPORT_LIMITS}` : freeCheckLanding ? CC_12 : CC_18}</p>
           </div>
         </div>
 
         <div className="ot-footer-bottom">
           <div className="ot-footer-copy">© 2026 OverTaxed IL · Chicago, IL</div>
           <div className="ot-footer-meta">
-            <Link href="/privacy">Privacy</Link> · <Link href="/terms">Terms</Link> · <Link href="/refunds">Refunds</Link> · {neutralReport ? "Official-record compilation, not advice" : "Public-record estimates, not legal advice"}
+            <Link href="/privacy">Privacy</Link> · <Link href="/terms">Terms</Link> · <Link href="/refunds">Refunds</Link> · {neutralChrome ? "Official-record compilation, not advice" : "Public-record estimates, not legal advice"}
           </div>
         </div>
       </div>

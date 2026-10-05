@@ -115,13 +115,15 @@ describe("/check L-1 landing copy", () => {
 })
 
 describe("SiteFooter blast radius", () => {
-  it("default footer still carries CC-18 and the cycle labels", () => {
+  // Cycle-year labels were later removed from every footer variant (see
+  // __tests__/marketing/public-route-truth.test.tsx); the default still keeps
+  // CC-18 and the township counts, which `/check` drops.
+  it("default footer still carries CC-18 and the township counts", () => {
     const html = renderToStaticMarkup(<SiteFooter />)
     const footerText = text(html)
     expect(footerText).toContain(CC_18)
-    expect(footerText).toContain("2026 cycle")
-    expect(footerText).toContain("2027 cycle")
-    expect(footerText).toContain("2028 cycle")
+    expect(footerText).toMatch(/City of Chicago \d+/)
+    expect(footerText).not.toMatch(/\d{4} cycle/)
   })
 
   it("neutralReport footer is unchanged and still links /refunds", () => {
@@ -131,7 +133,22 @@ describe("SiteFooter blast radius", () => {
     expect(footerText).not.toContain(CC_18)
     expect(footerText).toContain("Cook County assessment records, organized for homeowners.")
     expect(footerText).toContain("Official-record compilation, not advice")
-    expect(footerText).toContain("2028 cycle")
+    expect(footerText).not.toMatch(/\d{4} cycle/)
+    expect(html).toContain('href="/refunds"')
+    expect(footerText).not.toContain(CC_12)
+  })
+
+  it("informationalPage footer carries CC-12 alone, the neutral chrome and the counts", () => {
+    const html = renderToStaticMarkup(<SiteFooter informationalPage />)
+    const footerText = text(html)
+    expect(html).toContain(`<p class="ot-footer-disclaimer">${CC_12}</p>`)
+    expect(footerText).not.toContain(CC_01)
+    expect(footerText).not.toContain(NEUTRAL_REPORT_NAME)
+    expect(footerText).not.toContain(NEUTRAL_REPORT_LIMITS)
+    expect(footerText).toContain("Cook County assessment records, organized for homeowners.")
+    expect(footerText).toContain("Official-record compilation, not advice")
+    expect(footerText).toMatch(/City of Chicago \d+/)
+    expect(footerText).not.toMatch(/\d{4} cycle/)
     expect(html).toContain('href="/refunds"')
   })
 })

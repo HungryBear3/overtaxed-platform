@@ -3194,9 +3194,7 @@ body.ot-stars-on .ot-logo-mark::before {
 }
 @media (max-width: 600px) {
   .ot-tbl th:nth-child(3),
-  .ot-tbl td:nth-child(3),
-  .ot-tbl th:nth-child(5),
-  .ot-tbl td:nth-child(5) { display: none; }
+  .ot-tbl td:nth-child(3) { display: none; }
   .ot-tbl th, .ot-tbl td { padding: 12px 14px; }
   .ot-footer-cols { grid-template-columns: 1fr; gap: 28px; }
   .ot-deadlines-share-inner { justify-content: flex-start; }

@@ -32,7 +32,7 @@ import Link from "next/link";
 import { useState } from "react";
 import type { Township } from "@/lib/townships";
 import type { Deadline2026Status, Township2026View } from "@/lib/deadlines-2026";
-import { cc08, cc16, CC_10 } from "@/lib/copy/canonical";
+import { cc08, cc16 } from "@/lib/copy/canonical";
 import { DEADLINE_PENDING_NOTICE } from "@/lib/deadline-sources";
 
 const DISTRICT_LABEL: Record<string, string> = {
@@ -57,8 +57,6 @@ export interface TownshipPageProps {
   neighbors: Array<{ township: Township; view: Township2026View }>;
   /** Plain text, byte-identical to the FAQPage JSON-LD the route emits. */
   faq: TownshipFaqEntry[];
-  /** Other townships sharing this reassessment cycle. */
-  cycleCount: number;
 }
 
 const STATUS_PILL: Record<Deadline2026Status, { label: string; cls: string }> = {
@@ -134,7 +132,6 @@ function TownshipHero({
           <div className="ot-tp-hero-main">
             <div className="ot-tp-status-row">
               <StatusPill status={view.status} size="md" />
-              <span className="ot-tp-cycle-tag">{t.cycleYear} reassessment cycle</span>
             </div>
             <h1 className="ot-tp-h1">
               <span className="ot-tp-h1-name">{t.name} Township</span>
@@ -146,7 +143,7 @@ function TownshipHero({
               </span>
             </h1>
             <p className="ot-tp-sub">
-              {DISTRICT_LABEL[t.district]} · Cook County, Illinois · {t.cycleYear} triennial reassessment.
+              {DISTRICT_LABEL[t.district]} · Cook County, Illinois.
               {/* Assessor, not Board of Review. These township windows are the
                   Assessor's, and naming the Board here both misdirected the
                   filing and put the one stage OverTaxed IL cannot serve into
@@ -219,10 +216,6 @@ function TownshipHero({
                 </div>
               )}
               <div>
-                <dt>Reassessment cycle</dt>
-                <dd>{t.cycleYear} (next: {t.cycleYear + 3})</dd>
-              </div>
-              <div>
                 <dt>Filing body</dt>
                 <dd>Cook County Assessor</dd>
               </div>
@@ -270,11 +263,14 @@ function TownshipCheckCta({ t, view }: { t: Township; view: Township2026View }) 
       <div className="ot-tp-check-inner">
         <div className="ot-tp-check-eyebrow">For your property</div>
         <h2 className="ot-tp-check-h2">
-          See whether <em>your</em> {t.name} property is overassessed.
+          Free Cook County Property Check
         </h2>
+        {/* The approved neutral `/check` copy, as on `/deadlines`. "Takes 30
+            seconds" was a timing promise the check does not make. */}
         <p className="ot-tp-check-sub">
-          Free, takes 30 seconds, no signup. We pull your assessed value from
-          the Cook County Assessor and compare it to public-record comparable properties in {t.name}.
+          Enter your PIN or address. We&apos;ll compare your assessed value with
+          comparable properties on the public record, and show your township&apos;s
+          appeal-window status where we have verified it. No account, no card.
         </p>
         <form
           className="ot-bottom-cta-form"
@@ -292,9 +288,12 @@ function TownshipCheckCta({ t, view }: { t: Township; view: Township2026View }) 
             aria-label={`${t.name} address`}
           />
           <button type="submit" className="ot-cta">
-            Run free check <span className="ot-cta-arrow">→</span>
+            Check my assessment <span className="ot-cta-arrow">→</span>
           </button>
         </form>
+        <div className="ot-tp-check-meta">
+          Free · No account required · Uses public Cook County Assessor records
+        </div>
         <div className="ot-tp-check-meta">
           {/* No "about N days left". The day count is the projection's to
               publish, and the informational tier does not publish one. */}
@@ -368,7 +367,6 @@ function TownshipNeighbors({
             <Link key={n.slug} href={`/township/${n.slug}`} className="ot-tp-neighbor-card">
               <div className="ot-tp-neighbor-row">
                 <StatusPill status={view.status} size="sm" />
-                <span className="ot-tp-neighbor-cycle">{n.cycleYear}</span>
               </div>
               <div className="ot-tp-neighbor-name">{n.name} Township</div>
               {/* Each neighbour card reads that neighbour's own projection. It
@@ -412,10 +410,6 @@ function TownshipFaq({ t, faq }: { t: Township; faq: TownshipFaqEntry[] }) {
             </details>
           ))}
         </div>
-        <p className="ot-tp-faq-note">
-          {CC_10}{" "}
-          <Link href="/#pricing">See the pricing details</Link>.
-        </p>
       </div>
     </section>
   );
@@ -539,7 +533,6 @@ export default function TownshipPage({
   view,
   neighbors,
   faq,
-  cycleCount,
 }: TownshipPageProps) {
   const windowOpen = view.official && view.status === "open";
   return (
@@ -554,11 +547,9 @@ export default function TownshipPage({
                 {township.name} sits in the {DISTRICT_LABEL[township.district]}.
               </h2>
               <p className="ot-tp-map-sub">
+                {/* No cycle year: see the route's FAQ builder for why. */}
                 Cook County&apos;s 38 townships are reassessed on a 3-year
-                rotating cycle. {township.name} is in the{" "}
-                <strong>{township.cycleYear}</strong> cycle, along with{" "}
-                {cycleCount} other townships in the{" "}
-                {DISTRICT_LABEL[township.district].toLowerCase()}.
+                rotating cycle.
               </p>
             </div>
             <Link href="/deadlines" className="ot-tp-secondary-link">

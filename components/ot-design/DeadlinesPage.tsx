@@ -387,7 +387,6 @@ function TownshipsTable() {
                 <th scope="col">Status</th>
                 <th scope="col">Official 2026 deadline</th>
                 <th scope="col">Days</th>
-                <th scope="col">Cycle</th>
                 <th scope="col" aria-label="Open township page" />
               </tr>
             </thead>
@@ -402,7 +401,6 @@ function TownshipsTable() {
                     {formatDeadline(t)}
                   </td>
                   <td className="ot-tbl-days">{formatDays(t)}</td>
-                  <td className="ot-tbl-cycle">{t.cycleYear}</td>
                   <td className="ot-tbl-arrow">
                     <Link href={`/township/${t.slug}`} aria-label={`See ${t.name} details`} onClick={() => trackTownshipSelection(t, "township_table")}>→</Link>
                   </td>
@@ -410,7 +408,7 @@ function TownshipsTable() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="ot-tbl-empty">No townships match this filter.</td>
+                  <td colSpan={5} className="ot-tbl-empty">No townships match this filter.</td>
                 </tr>
               )}
             </tbody>
@@ -428,11 +426,14 @@ function BottomCheckCta() {
     <section className="ot-bottom-cta">
       <div className="ot-bottom-cta-inner">
         <div className="ot-bottom-cta-eyebrow">While you&apos;re here</div>
-        <h2 className="ot-h2">Check if your assessment is too high.</h2>
+        {/* The approved neutral `/check` copy. "Too high", "Check eligibility"
+            and an "overpayment estimate" promised a determination the free
+            check does not make. */}
+        <h2 className="ot-h2">Free Cook County Property Check</h2>
         <p className="ot-bottom-cta-sub">
-          Knowing the deadline is half of it. The other half is knowing whether
-          your assessed value is actually out of line with comparable properties.
-          Free, takes 30 seconds, no signup.
+          Enter your PIN or address. We&apos;ll compare your assessed value with
+          comparable properties on the public record, and show your township&apos;s
+          appeal-window status where we have verified it. No account, no card.
         </p>
         <form
           className="ot-bottom-cta-form"
@@ -454,11 +455,11 @@ function BottomCheckCta() {
             aria-label="Cook County address"
           />
           <button type="submit" className="ot-cta">
-            Check eligibility <span className="ot-cta-arrow">→</span>
+            Check my assessment <span className="ot-cta-arrow">→</span>
           </button>
         </form>
         <div className="ot-bottom-cta-meta">
-          See your specific overpayment estimate before you decide whether to file.
+          Free · No account required · Uses public Cook County Assessor records
         </div>
       </div>
     </section>
@@ -524,8 +525,7 @@ function TownshipGrid() {
           </div>
         </div>
         <div className="ot-fullmap-foot">
-          Three triennial reassessment districts: 2026 South &amp; West Suburbs,
-          2027 North Suburbs, 2028 City of Chicago.
+          Cook County reassesses each township once every three years.
         </div>
       </div>
     </section>
