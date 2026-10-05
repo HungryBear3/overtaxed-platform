@@ -25,12 +25,12 @@ export default function CheckPage() {
             Free · No signup required
           </div>
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            Is Cook County over-assessing your property?
+            Free Cook County Property Check
           </h1>
           <p className="text-lg text-gray-600">
             Enter your PIN or address. We&apos;ll compare your assessed value with
-            comparable properties and show the assessment-level gap against Cook County&apos;s
-            10% target, and your township&apos;s appeal-window status. No account, no card.
+            comparable properties on the public record, and show your township&apos;s
+            appeal-window status where we have verified it. No account, no card.
           </p>
         </div>
 
@@ -56,7 +56,7 @@ export default function CheckPage() {
         </div>
       </main>
 
-      <SiteFooter />
+      <SiteFooter freeCheckLanding />
     </div>
   )
 }
