@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { buildTickerItems, TICKER_STANDING_ITEM, TOWNSHIPS } from "@/lib/townships";
-import { CC_18 } from "@/lib/copy/canonical";
+import { CC_12, CC_18 } from "@/lib/copy/canonical";
 import { NEUTRAL_REPORT_LIMITS, NEUTRAL_REPORT_NAME } from "@/lib/copy/neutral-report";
 import { analytics } from "@/lib/analytics/events";
 import { isPreviewFreeCheckResponse } from "@/lib/analytics/free-check-funnel";
@@ -100,7 +100,17 @@ export function SiteHeader({
   );
 }
 
-export function SiteFooter({ neutralReport = false }: { neutralReport?: boolean }) {
+// `freeCheckLanding` is the `/check` variant, by owner ruling: CC-12 only (a
+// CC-18 exception, since CC-01 describes the paid packet a free-only landing
+// must not), and no township count or cycle-year labels. Every other surface
+// keeps the default render.
+export function SiteFooter({
+  neutralReport = false,
+  freeCheckLanding = false,
+}: {
+  neutralReport?: boolean;
+  freeCheckLanding?: boolean;
+}) {
   return (
     <footer className="ot-footer ot-footer-grid">
       <div className="ot-footer-inner">
@@ -138,7 +148,7 @@ export function SiteFooter({ neutralReport = false }: { neutralReport?: boolean 
                 <div key={group.label} className="ot-footer-township-group">
                   <Link href="/townships" className="ot-footer-township-group-head">
                     {group.label}
-                    <span>{group.count} · {group.cycle}</span>
+                    {freeCheckLanding ? null : <span>{group.count} · {group.cycle}</span>}
                   </Link>
                   <div className="ot-footer-township-examples">
                     {group.examples.map((t) => (
@@ -165,8 +175,9 @@ export function SiteFooter({ neutralReport = false }: { neutralReport?: boolean 
                 "may vary from final Board of Review outcomes" is dropped: it
                 named the one stage OverTaxed IL cannot serve, in shared chrome,
                 which would have required CC-11 on all 52 paths to say something
-                the Assessor-stage packet never depended on. */}
-            <p className="ot-footer-disclaimer">{neutralReport ? `${NEUTRAL_REPORT_NAME}. ${NEUTRAL_REPORT_LIMITS}` : CC_18}</p>
+                the Assessor-stage packet never depended on.
+                `/check` is the one owner-ruled exception: see `freeCheckLanding`. */}
+            <p className="ot-footer-disclaimer">{neutralReport ? `${NEUTRAL_REPORT_NAME}. ${NEUTRAL_REPORT_LIMITS}` : freeCheckLanding ? CC_12 : CC_18}</p>
           </div>
         </div>
 
