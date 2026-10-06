@@ -4,11 +4,13 @@ import { collectInformationalSnapshot, sourceBodyForSnapshot } from "@/lib/deadl
 import { parseInformationalAssessorHtml } from "@/lib/deadlines/assessor-calendar-parser";
 import { informationalSnapshotStore } from "@/lib/deadlines/informational-snapshot-store";
 import { commerceSnapshotStore } from "@/lib/deadlines/commerce-snapshot-store";
+import { informationalRefreshEnabled } from "@/lib/deadlines/informational-flags";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
-const enabled = () => process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED === "true";
+// Refresh is write-only capability: refused in Preview read-only mode even if the refresh flag is true.
+const enabled = () => informationalRefreshEnabled();
 const commerceEnabled = () => process.env.OT_COMMERCE_DEADLINE_SNAPSHOT_ENABLED === "true";
 const reply = (status: string, code = 200) => NextResponse.json({ status }, { status: code, headers: { "Cache-Control": "no-store" } });
 export async function GET(request: Request) {

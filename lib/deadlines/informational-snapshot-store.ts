@@ -1,12 +1,14 @@
 import "server-only";
-import { createInformationalRefreshBarrier } from "./informational-refresh-barrier";
+import { createInformationalRefreshBarrier, createInformationalRefreshBarrierReader } from "./informational-refresh-barrier";
+import { informationalReadEnabled, informationalRefreshEnabled as enabled } from "./informational-flags";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { decodeInformationalSnapshot, MAX_INFORMATIONAL_SNAPSHOT_LENGTH } from "./informational-snapshot";
 
 export const INFORMATIONAL_SNAPSHOT_KEY = "ot:informational-assessor:2026:v1";
-const enabled = () => process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED === "true";
-type Reader = { $queryRaw<T>(sql: Prisma.Sql): Promise<T> };
+/** SELECT-only capability: no transaction, execute or lock surface. */
+export type InformationalSnapshotReadClient = { $queryRaw<T>(sql: Prisma.Sql): Promise<T> };
+type Reader = InformationalSnapshotReadClient;
 type Transaction = Reader & { $executeRaw(sql: Prisma.Sql): Promise<number> };
 export type InformationalSnapshotClient = Reader & {
   $transaction<T>(work: (tx: Transaction) => Promise<T>): Promise<T>;
@@ -15,16 +17,21 @@ type Stored = { value: string };
 const readSql = () => Prisma.sql`SELECT left("value", ${MAX_INFORMATIONAL_SNAPSHOT_LENGTH + 1}) AS value
   FROM "SystemConfig" WHERE "key" = ${INFORMATIONAL_SNAPSHOT_KEY} LIMIT 1`;
 
+/** Decoded read of the dedicated namespace; read-predicate gated and rechecked after the await. */
+function createInformationalSnapshotRead(client: Reader) {
+  return async (now: Date) => {
+    if (!informationalReadEnabled()) return null;
+    try {
+      const rows = await client.$queryRaw<Stored[]>(readSql());
+      return informationalReadEnabled() && rows[0] ? decodeInformationalSnapshot(rows[0].value, now) : null;
+    } catch { return null; }
+  };
+}
+
 /** Dedicated informational namespace; never touches the bundled commerce snapshot. */
 export function createInformationalSnapshotStore(client: InformationalSnapshotClient) {
   return {
-    async read(now: Date) {
-      if (!enabled()) return null;
-      try {
-        const rows = await client.$queryRaw<Stored[]>(readSql());
-        return enabled() && rows[0] ? decodeInformationalSnapshot(rows[0].value, now) : null;
-      } catch { return null; }
-    },
+    read: createInformationalSnapshotRead(client),
     async publish(raw: string): Promise<"PUBLISHED" | "UNCHANGED" | "REFUSED"> {
       if (!enabled() || raw.length > MAX_INFORMATIONAL_SNAPSHOT_LENGTH) return "REFUSED";
       try {
@@ -56,6 +63,33 @@ export function createInformationalSnapshotStore(client: InformationalSnapshotCl
   };
 }
 
+/** Read-only capability: decoded snapshot only when the digest-ready barrier binds its exact bytes. */
+function barrierCheckedRead(client: Reader) {
+  const read = createInformationalSnapshotRead(client);
+  const barrier = createInformationalRefreshBarrierReader(client, INFORMATIONAL_SNAPSHOT_KEY);
+  return async (now: Date) => {
+    const snapshot = await read(now);
+    return snapshot && await barrier.permits(JSON.stringify(snapshot)) ? snapshot : null;
+  };
+}
+
+/**
+ * Public/detail read path. Exposes only `read`, over a client narrowed to
+ * `$queryRaw` (SELECT statements built here). Allowed under the refresh flag or
+ * Preview read-only; never offers publish, begin, complete or locks.
+ */
+export async function informationalSnapshotReader() {
+  if (!informationalReadEnabled()) return null;
+  try {
+    const { prisma } = await import("@/lib/db");
+    if (!informationalReadEnabled()) return null;
+    const db = prisma as unknown as Reader;
+    const client: Reader = { $queryRaw: sql => db.$queryRaw(sql) };
+    return { read: barrierCheckedRead(client) };
+  } catch { return null; }
+}
+
+/** Refresh (write) capability. Refused while Preview read-only is active. */
 export async function informationalSnapshotStore() {
   if (!enabled()) return null;
   try {
@@ -64,9 +98,6 @@ export async function informationalSnapshotStore() {
     const client = prisma as unknown as InformationalSnapshotClient;
     const store = createInformationalSnapshotStore(client);
     const barrier = createInformationalRefreshBarrier(client, INFORMATIONAL_SNAPSHOT_KEY);
-    return { ...store, begin: barrier.begin, complete: barrier.complete, async read(now: Date) {
-      const snapshot = await store.read(now);
-      return snapshot && await barrier.permits(JSON.stringify(snapshot)) ? snapshot : null;
-    } };
+    return { ...store, begin: barrier.begin, complete: barrier.complete, read: barrierCheckedRead(client) };
   } catch { return null; }
 }

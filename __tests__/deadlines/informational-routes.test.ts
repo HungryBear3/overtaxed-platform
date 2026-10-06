@@ -1,19 +1,20 @@
 /** @jest-environment node */
 import { GET as refresh } from "@/app/api/cron/informational-deadlines/route";
 import { GET as read } from "@/app/api/deadlines/informational/route";
-import { informationalSnapshotStore } from "@/lib/deadlines/informational-snapshot-store";
+import { informationalSnapshotReader, informationalSnapshotStore } from "@/lib/deadlines/informational-snapshot-store";
 import { collectInformationalSnapshot, sourceBodyForSnapshot } from "@/lib/deadlines/collect-informational-snapshot";
 import { commerceSnapshotStore } from "@/lib/deadlines/commerce-snapshot-store";
 import { parseInformationalAssessorHtml } from "@/lib/deadlines/assessor-calendar-parser";
 import { TOWNSHIPS } from "@/lib/townships";
 import { INFORMATIONAL_SOURCE_URL as URL } from "@/lib/deadlines/informational-snapshot";
 jest.mock("server-only", () => ({}));
-jest.mock("@/lib/deadlines/informational-snapshot-store", () => ({ informationalSnapshotStore: jest.fn() }));
+jest.mock("@/lib/deadlines/informational-snapshot-store", () => ({ informationalSnapshotStore: jest.fn(), informationalSnapshotReader: jest.fn() }));
 jest.mock("@/lib/deadlines/collect-informational-snapshot", () => ({ collectInformationalSnapshot: jest.fn(), sourceBodyForSnapshot: jest.fn() }));
 jest.mock("@/lib/deadlines/commerce-snapshot-store", () => ({ commerceSnapshotStore: jest.fn() }));
 const AT = new Date("2026-09-12T08:00:00Z");
 const KEY = "synthetic-cron-test-" + "x".repeat(32);
 const factory = jest.mocked(informationalSnapshotStore);
+const readerFactory = jest.mocked(informationalSnapshotReader);
 const collect = jest.mocked(collectInformationalSnapshot);
 const sourceBody = jest.mocked(sourceBodyForSnapshot);
 const commerceFactory = jest.mocked(commerceSnapshotStore);
@@ -32,7 +33,7 @@ beforeEach(() => {
   process.env.CRON_SECRET = KEY; process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED = "true";
   delete process.env.OT_COMMERCE_DEADLINE_SNAPSHOT_ENABLED;
   store.begin.mockResolvedValue("synthetic-attempt"); store.complete.mockResolvedValue(true);
-  factory.mockResolvedValue(store); store.read.mockResolvedValue(fixture()); store.publish.mockResolvedValue("PUBLISHED"); collect.mockResolvedValue(fixture());
+  factory.mockResolvedValue(store); readerFactory.mockResolvedValue({ read: store.read }); store.read.mockResolvedValue(fixture()); store.publish.mockResolvedValue("PUBLISHED"); collect.mockResolvedValue(fixture());
   sourceBody.mockReturnValue(Buffer.from("official-body")); commerceFactory.mockResolvedValue(null); commerce.publish.mockResolvedValue("PUBLISHED");
 });
 afterEach(() => {
@@ -52,7 +53,7 @@ test.each(["", KEY, `bearer ${KEY}`, `Bearer ${KEY}wrong`])("invalid authorizati
 test("disabled refresh and public read have no storage or provider effects", async () => {
   delete process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED;
   expect(await (await refresh(request())).json()).toEqual({ status: "disabled" });
-  expect(await (await read()).json()).toBeNull(); expect(factory).not.toHaveBeenCalled(); expect(collect).not.toHaveBeenCalled();
+  expect(await (await read()).json()).toBeNull(); expect(factory).not.toHaveBeenCalled(); expect(readerFactory).not.toHaveBeenCalled(); expect(collect).not.toHaveBeenCalled();
 });
 test("authorized refresh pins trusted adapters and preserves complete source bytes", async () => {
   const value = fixture(); const response = await refresh(request());
@@ -76,14 +77,14 @@ test("unavailable storage and raw exceptions remain generic", async () => {
 });
 test("public read is no-store and never fetches/publishes or renews receipt", async () => {
   const response = await read(); expect(response.headers.get("cache-control")).toBe("no-store"); expect(await response.json()).toEqual(fixture());
-  expect(collect).not.toHaveBeenCalled(); expect(store.publish).not.toHaveBeenCalled();
+  expect(collect).not.toHaveBeenCalled(); expect(store.publish).not.toHaveBeenCalled(); expect(factory).not.toHaveBeenCalled();
 });
 test("public read revalidates after storage delay or late disable and hides raw failures", async () => {
   store.read.mockImplementationOnce(async () => { jest.setSystemTime(new Date(AT.getTime() + 86_400_001)); return fixture(); });
   expect(await (await read()).json()).toBeNull(); jest.setSystemTime(AT);
   store.read.mockImplementationOnce(async () => { delete process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED; return fixture(); });
   expect(await (await read()).json()).toBeNull(); process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED = "true";
-  factory.mockRejectedValueOnce(new Error("private driver diagnostics")); expect(await (await read()).json()).toBeNull();
+  readerFactory.mockRejectedValueOnce(new Error("private driver diagnostics")); expect(await (await read()).json()).toBeNull();
 });
 
 test("attempt must be durable before fetching, and completion must bind successful publication", async () => {

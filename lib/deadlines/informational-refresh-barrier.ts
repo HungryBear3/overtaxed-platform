@@ -1,8 +1,8 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
-import type { InformationalSnapshotClient } from "./informational-snapshot-store";
-const enabled = () => process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED === "true";
+import type { InformationalSnapshotClient, InformationalSnapshotReadClient } from "./informational-snapshot-store";
+import { informationalReadEnabled, informationalRefreshEnabled as enabled } from "./informational-flags";
 const digest = (raw: string) => createHash("sha256").update(raw).digest("hex");
 type Marker = { id: string; state: "pending" | "ready"; digest: string | null };
 function decode(raw: string): Marker | null {
@@ -13,10 +13,26 @@ function decode(raw: string): Marker | null {
       ((value.state === "pending" && value.digest === null) || (value.state === "ready" && typeof value.digest === "string" && /^[0-9a-f]{64}$/.test(value.digest))) ? value : null;
   } catch { return null; }
 }
+const markerSql = (key: string) => Prisma.sql`SELECT left("value", 300) AS value FROM "SystemConfig" WHERE "key" = ${key} LIMIT 1`;
+
+/** SELECT-only barrier check: only a ready marker bound to these exact bytes permits a read. */
+export function createInformationalRefreshBarrierReader(client: InformationalSnapshotReadClient, snapshotKey: string) {
+  const read = () => markerSql(`${snapshotKey}:attempt`);
+  return {
+    async permits(raw: string): Promise<boolean> {
+      if (!informationalReadEnabled()) return false;
+      try {
+        const marker = decode((await client.$queryRaw<{ value: string }[]>(read()))[0]?.value);
+        return informationalReadEnabled() && marker?.state === "ready" && marker.digest === digest(raw);
+      } catch { return false; }
+    },
+  };
+}
+
 /** A failed attempt stays pending. Only that attempt can bind the persisted complete snapshot. */
 export function createInformationalRefreshBarrier(client: InformationalSnapshotClient, snapshotKey: string) {
   const key = `${snapshotKey}:attempt`;
-  const read = () => Prisma.sql`SELECT left("value", 300) AS value FROM "SystemConfig" WHERE "key" = ${key} LIMIT 1`;
+  const read = () => markerSql(key);
   const lock = () => Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${snapshotKey}))::text AS locked`;
   return {
     async begin(): Promise<string | null> {
@@ -49,12 +65,6 @@ export function createInformationalRefreshBarrier(client: InformationalSnapshotC
         });
       } catch { return false; }
     },
-    async permits(raw: string): Promise<boolean> {
-      if (!enabled()) return false;
-      try {
-        const marker = decode((await client.$queryRaw<{ value: string }[]>(read()))[0]?.value);
-        return enabled() && marker?.state === "ready" && marker.digest === digest(raw);
-      } catch { return false; }
-    },
+    permits: createInformationalRefreshBarrierReader(client, snapshotKey).permits,
   };
 }
