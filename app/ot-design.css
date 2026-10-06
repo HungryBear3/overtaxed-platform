@@ -3195,10 +3195,30 @@ body.ot-stars-on .ot-logo-mark::before {
 @media (max-width: 600px) {
   .ot-tbl th:nth-child(3),
   .ot-tbl td:nth-child(3) { display: none; }
-  .ot-tbl th, .ot-tbl td { padding: 12px 14px; }
+  /* Township, Status, Days and the details arrow must fit the card down to
+     320px with the longest real labels ("Not yet open", "deadline passed")
+     beside two-word township names. The card clips, so anything wider is
+     cut off rather than scrolled. */
+  .ot-tbl th, .ot-tbl td { padding: 12px 4px; }
+  .ot-tbl th:first-child, .ot-tbl td:first-child { padding-left: 10px; }
+  .ot-tbl th:last-child, .ot-tbl td.ot-tbl-arrow { padding: 0 4px 0 0; }
+  .ot-tbl-name { font-size: 15px; }
+  .ot-tbl-days { font-size: 11.5px; }
+  .ot-tbl .ot-status-pill { font-size: 11px; padding: 3px 8px; gap: 5px; }
+  .ot-tbl-arrow a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    min-height: 32px;
+  }
   .ot-footer-cols { grid-template-columns: 1fr; gap: 28px; }
   .ot-deadlines-share-inner { justify-content: flex-start; }
   .ot-share-label { display: none; }
+}
+@media (max-width: 359px) {
+  /* Below 360px the pills may break onto two lines ("Not yet / open"). */
+  .ot-tbl .ot-status-pill { white-space: normal; line-height: 1.25; border-radius: 10px; }
 }
 
 /* ═════════════════════════════════════════════════════════════════════════
