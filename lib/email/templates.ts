@@ -239,31 +239,42 @@ export function assessmentIncreaseTemplate(args: {
     new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)
   const pct = previousValue > 0 ? (((newValue - previousValue) / previousValue) * 100).toFixed(1) : "—"
 
-  const subject = `Assessment increase detected for ${propertyAddress} (${taxYear})`
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+
+  // Factual only: this reports a change in the published record. It must not
+  // imply that an appeal is currently available, cite a deadline, or sell.
+  const scope =
+    "This notice reports a change in the published assessment record only. It does not determine whether any review or filing option is open or available for this property."
+
+  const subject = `Recorded assessment change for ${propertyAddress} (${taxYear})`
 
   const text = `Hi${userName ? ` ${userName}` : ""},
 
-We detected an assessment increase for your property.
+Our latest automated check of published Cook County assessment data shows a higher assessed value for your property than the value we previously recorded.
 
 Property: ${propertyAddress} (PIN ${pin})
 Tax year: ${taxYear}
-Previous: ${currency(previousValue)} → New: ${currency(newValue)}${pct !== "—" ? ` (${pct}% increase)` : ""}
+Previously recorded: ${currency(previousValue)} → Newly recorded: ${currency(newValue)}${pct !== "—" ? ` (${pct}% increase)` : ""}
 
-You may be able to appeal. View your property:
+${scope}
+
+View the recorded property details:
 ${propertyLink}
 
 – The OverTaxed IL Team
 `
 
-  const html = `<p>Hi${userName ? ` ${userName}` : ""},</p>
-<p>We detected an <strong>assessment increase</strong> for your property.</p>
+  const html = `<p>Hi${userName ? ` ${esc(userName)}` : ""},</p>
+<p>Our latest automated check of published Cook County assessment data shows a <strong>higher assessed value</strong> for your property than the value we previously recorded.</p>
 <table cellpadding="4" style="margin:16px 0">
-<tr><td style="color:#6b7280">Property:</td><td><strong>${propertyAddress}</strong> (PIN ${pin})</td></tr>
+<tr><td style="color:#6b7280">Property:</td><td><strong>${esc(propertyAddress)}</strong> (PIN ${esc(pin)})</td></tr>
 <tr><td style="color:#6b7280">Tax year:</td><td><strong>${taxYear}</strong></td></tr>
-<tr><td style="color:#6b7280">Previous:</td><td>${currency(previousValue)}</td></tr>
-<tr><td style="color:#6b7280">New:</td><td><strong>${currency(newValue)}</strong>${pct !== "—" ? ` (${pct}% increase)` : ""}</td></tr>
+<tr><td style="color:#6b7280">Previously recorded:</td><td>${currency(previousValue)}</td></tr>
+<tr><td style="color:#6b7280">Newly recorded:</td><td><strong>${currency(newValue)}</strong>${pct !== "—" ? ` (${pct}% increase)` : ""}</td></tr>
 </table>
-<p><a href="${propertyLink}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">View Property</a></p>
+<p>${scope}</p>
+<p><a href="${propertyLink}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px">View recorded property details</a></p>
 <p>— The OverTaxed IL Team</p>`
 
   return { subject, text, html }
