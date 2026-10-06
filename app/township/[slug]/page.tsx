@@ -1,8 +1,10 @@
 /**
  * /township/[slug] — one township, one evaluated deadline state.
  *
- * The route evaluates `buildTownship2026Views()` once per request and hands
- * the resulting projection to the body, the metadata, and the FAQPage JSON-LD.
+ * The route evaluates `buildTownship2026Views()` once per request, against the
+ * same published informational snapshot `/deadlines` and `/townships` read,
+ * and hands the resulting projection to the body, the metadata, the FAQPage
+ * JSON-LD and the neighbour cards.
  * Those three used to disagree: the body read roster seed dates through
  * `TownshipPage`, the description recomputed its own "N days left to file"
  * from `t.daysUntilClose`, and the JSON-LD was a hand-typed prose copy of the
@@ -21,6 +23,7 @@
  */
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { cache } from "react";
 import TownshipPage, {
   type TownshipFaqEntry,
 } from "@/components/ot-design/TownshipPage";
@@ -30,6 +33,10 @@ import {
   buildTownship2026Views,
   type Township2026View,
 } from "@/lib/deadlines-2026";
+import {
+  readInformationalSnapshot,
+  UNAVAILABLE_SERVER_INFORMATIONAL_SNAPSHOT,
+} from "@/lib/deadlines/read-informational-snapshot";
 import { DEADLINE_PENDING_NOTICE } from "@/lib/deadline-sources";
 import { cc08, cc16 } from "@/lib/copy/canonical";
 import "../../ot-design.css";
@@ -45,10 +52,19 @@ export const dynamic = "force-dynamic";
  * Evaluate every township once and index it. Neighbour cards need their own
  * neighbours' projections, and re-evaluating per card would let two cards on
  * one page straddle a midnight boundary.
+ *
+ * The source is the published informational snapshot the indexes hydrate
+ * from, read at one instant per request (`cache` shares it between the page
+ * and its metadata). It is never the bundled synthetic default: an
+ * unavailable, stale or invalid read is passed as an explicit unavailable
+ * snapshot, which renders every township pending.
  */
-function evaluate(): Map<string, Township2026View> {
-  return new Map(buildTownship2026Views().map((v) => [v.slug, v]));
-}
+const evaluate = cache(async (): Promise<Map<string, Township2026View>> => {
+  const now = new Date();
+  const snapshot =
+    (await readInformationalSnapshot(now)) ?? UNAVAILABLE_SERVER_INFORMATIONAL_SNAPSHOT;
+  return new Map(buildTownship2026Views(now, snapshot).map((v) => [v.slug, v]));
+});
 
 /**
  * The FAQ, as plain text, in the exact form both the visible `<details>` list
@@ -178,7 +194,7 @@ export async function generateMetadata({
   if (!t) {
     return { title: "Township not found" };
   }
-  const view = evaluate().get(slug);
+  const view = (await evaluate()).get(slug);
 
   // No "N days left to file". A countdown in a description is a number a
   // crawler caches and a reader trusts, and neither of them re-derives it.
@@ -218,7 +234,7 @@ export default async function Page({
 }) {
   const { slug } = await params;
   const t = TOWNSHIPS_BY_SLUG[slug];
-  const views = evaluate();
+  const views = await evaluate();
   const view = views.get(slug);
   if (!t || !view) {
     notFound();
