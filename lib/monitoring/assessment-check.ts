@@ -1,6 +1,7 @@
 /**
  * Automated assessment check: fetch Cook County data for monitored properties,
- * upsert AssessmentHistory, update lastCheckedAt. Optionally email on increase.
+ * upsert AssessmentHistory, update lastCheckedAt. Optionally email on increase,
+ * default-off behind assessment-increase-email-policy.
  */
 import { prisma } from "@/lib/db"
 import { getPropertyByPIN, formatPIN } from "@/lib/cook-county"
@@ -8,6 +9,10 @@ import { sendEmail } from "@/lib/email"
 import { isEmailConfigured } from "@/lib/email/config"
 import { assessmentIncreaseTemplate, appealDecisionTemplate } from "@/lib/email/templates"
 import type { AssessmentHistoryRecord } from "@/lib/cook-county/types"
+import {
+  assessmentIncreaseEmailMode,
+  type AssessmentIncreaseEmailMode,
+} from "@/lib/monitoring/assessment-increase-email-policy"
 
 const ASSESSMENT_CHECK_SOURCE = "Cook County Open Data (automated check)"
 const PROPERTY_TIMEOUT_MS = 15_000
@@ -27,6 +32,13 @@ export interface AssessmentCheckResult {
   updated: boolean
   newYears: number[]
   increaseDetected: boolean
+  /**
+   * Set only when an increase was detected. "sent" means the message was
+   * handed to sendEmail (delivery itself is fire-and-forget); "skipped" means
+   * the policy allowed a send but email is unconfigured or the owner has no
+   * address.
+   */
+  increaseEmail?: Exclude<AssessmentIncreaseEmailMode, "send"> | "sent" | "skipped"
   error?: string
 }
 
@@ -242,7 +254,23 @@ export async function runAssessmentChecks(deadline?: number): Promise<Assessment
       if (newLatest.marketValue != null) updateData.currentMarketValue = newLatest.marketValue
       await prisma.property.update({ where: { id: prop.id }, data: updateData })
 
-      if (r.increaseDetected && isEmailConfigured() && prop.user?.email) {
+      if (r.increaseDetected) {
+        const mode = assessmentIncreaseEmailMode()
+        if (mode !== "send") {
+          r.increaseEmail = mode
+          if (mode !== "disabled") {
+            console.info(
+              `[assessment-check] increase email ${mode === "dry_run" ? "dry-run" : "blocked on preview"}: not sent for property ${prop.id} (${latestYear})`
+            )
+          }
+        } else if (!isEmailConfigured() || !prop.user?.email) {
+          r.increaseEmail = "skipped"
+        } else {
+          r.increaseEmail = "sent"
+        }
+      }
+
+      if (r.increaseEmail === "sent" && prop.user?.email) {
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
         const link = `${appUrl}/properties/${prop.id}`
         const t = assessmentIncreaseTemplate({
