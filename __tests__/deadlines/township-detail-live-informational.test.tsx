@@ -25,7 +25,7 @@ import { TOWNSHIPS, TOWNSHIPS_BY_SLUG } from "@/lib/townships";
 jest.mock("server-only", () => ({}));
 jest.mock("@/lib/deadlines/informational-snapshot-store", () => {
   const actual = jest.requireActual("@/lib/deadlines/informational-snapshot-store");
-  return { ...actual, informationalSnapshotStore: jest.fn() };
+  return { ...actual, informationalSnapshotReader: jest.fn() };
 });
 jest.mock("@/lib/analytics/events", () => ({
   analytics: new Proxy({}, { get: () => jest.fn() }),
@@ -35,7 +35,7 @@ import * as storeModule from "@/lib/deadlines/informational-snapshot-store";
 import TownshipRoutePage, { generateMetadata, dynamic } from "@/app/township/[slug]/page";
 import { GET as readInformational } from "@/app/api/deadlines/informational/route";
 
-const factory = jest.mocked(storeModule.informationalSnapshotStore);
+const factory = jest.mocked(storeModule.informationalSnapshotReader);
 const { createInformationalSnapshotStore } = storeModule;
 
 // Hypothetical evaluation clock and retrieval instant (not a real fetch time).
@@ -75,7 +75,7 @@ function installStore() {
       $queryRaw: (async () => (stored === null ? [] : [{ value: stored }])) as never,
       $transaction: (async () => { throw new Error("tests never write"); }) as never,
     });
-    return { ...store, begin: jest.fn(), complete: jest.fn(), async read(now: Date) { reads.push(now); return store.read(now); } } as never;
+    return { async read(now: Date) { reads.push(now); return store.read(now); } } as never;
   });
 }
 

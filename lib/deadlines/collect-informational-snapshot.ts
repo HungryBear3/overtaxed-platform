@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import type { TownshipSnapshotRow } from "./official-source-state";
+import { informationalRefreshEnabled as enabled } from "./informational-flags";
 import { decodeInformationalSnapshot, INFORMATIONAL_PARSER_VERSION, INFORMATIONAL_SOURCE_URL, INFORMATIONAL_YEAR } from "./informational-snapshot";
 
 export const MAX_ASSESSOR_HTML_BYTES = 500_000;
@@ -12,7 +13,7 @@ type Inputs = {
 };
 /** Runtime route supplies fixed trusted adapters, never request-shaped dependencies. */
 export async function collectOfficialDeadlineCapture({ fetchSource, parseHtml, now }: Inputs) {
-  if (process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED !== "true") return null;
+  if (!enabled()) return null;
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
     const startedAt = now().toISOString();
@@ -30,7 +31,7 @@ export async function collectOfficialDeadlineCapture({ fetchSource, parseHtml, n
       if (size > MAX_ASSESSOR_HTML_BYTES) return null;
       chunks.push(Buffer.from(value));
     }
-    if (!size || process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED !== "true") return null;
+    if (!size || !enabled()) return null;
     const bytes = Buffer.concat(chunks);
     const townships = parseHtml(new TextDecoder("utf-8", { fatal: true }).decode(bytes), INFORMATIONAL_YEAR);
     const snapshot = { schemaVersion: 1, synthetic: false, sources: { bor: null, assessor: {
@@ -39,7 +40,7 @@ export async function collectOfficialDeadlineCapture({ fetchSource, parseHtml, n
       contentSha256: createHash("sha256").update(bytes).digest("hex"),
       parseStatus: "ok", parserVersion: INFORMATIONAL_PARSER_VERSION,
     } }, townships };
-    const decoded = process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED === "true"
+    const decoded = enabled()
       ? decodeInformationalSnapshot(JSON.stringify(snapshot), now()) : null;
     return decoded ? { snapshot: decoded, sourceBody: bytes } : null;
   } catch { return null; }

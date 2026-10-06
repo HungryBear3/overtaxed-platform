@@ -1,7 +1,6 @@
 import type { OfficialDeadlineSnapshot } from "./official-source-state";
 import { decodeInformationalSnapshot } from "./informational-snapshot";
-
-const enabled = () => process.env.OT_INFORMATIONAL_DEADLINE_REFRESH_ENABLED === "true";
+import { informationalReadEnabled as enabled } from "./informational-flags";
 
 /**
  * Server-side read of the published informational snapshot at one instant.
@@ -15,8 +14,9 @@ export async function readInformationalSnapshot(now: Date): Promise<OfficialDead
   try {
     if (!enabled()) return null;
     // Loaded only when enabled, so disabled renders never touch storage modules.
-    const { informationalSnapshotStore } = await import("./informational-snapshot-store");
-    const store = await informationalSnapshotStore();
+    // Read-only capability: same decoder and digest-ready barrier as refresh mode, no write surface.
+    const { informationalSnapshotReader } = await import("./informational-snapshot-store");
+    const store = await informationalSnapshotReader();
     const value = await store?.read(now);
     // Recheck after asynchronous storage access, against the clock after it:
     // a slow read must not serve a source that expired while it waited.
