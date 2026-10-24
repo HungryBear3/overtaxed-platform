@@ -82,6 +82,7 @@ export type DraftGateResult = {
   candidateId: string | null;
   /** Hash of the candidate rebuilt at draft time; null when it could not be. */
   currentContentHash: string | null;
+  currentStatus: WindowStatus | null;
   verdict: "blocked" | "date_only" | "permitted";
   decisions: {
     intent: DraftIntent;
@@ -102,7 +103,7 @@ const ZONED_INSTANT =
  * Date.parse alone reads zone-less input in host time and rolls 02-30 forward.
  * Never throws: month 00/13 or day 00/32 parse to NaN, not an Invalid Date.
  */
-function zonedInstantMs(value: unknown): number {
+export function zonedInstantMs(value: unknown): number {
   const m = typeof value === "string" ? ZONED_INSTANT.exec(value) : null;
   if (!m) return NaN;
   const [, day, hh, mm, ss = "0", oh = "0", om = "0"] = m;
@@ -168,6 +169,7 @@ export function gateOfficialCalendarDraft(
     return {
       candidateId: fresh?.candidateId ?? null,
       currentContentHash: fresh?.contentHash ?? null,
+      currentStatus: fresh?.status ?? null,
       verdict: allowed.some((k) => k !== "plain_date")
         ? "permitted"
         : allowed.length
