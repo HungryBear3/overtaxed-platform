@@ -4316,7 +4316,14 @@ body.ot-stars-on .ot-logo-mark::before {
 
 /* ─── Mobile (<960px) ─── */
 @media (max-width: 1100px) {
-  .ot-hero-inner-split { grid-template-columns: 1fr; gap: 56px; padding: 56px 24px 72px; }
+  /* minmax(0, …) so the single track is not floored at its children's
+     min-content width, which the nowrap status chip pushed past the viewport. */
+  .ot-hero-inner-split { grid-template-columns: minmax(0, 1fr); gap: 56px; padding: 56px 24px 72px; }
+  .ot-hero-inner-split > .ot-hero-l,
+  .ot-hero-inner-split > .ot-hero-r { min-width: 0; }
+  /* Narrow hero chip: wrap the label instead of clipping it. */
+  .ot-hero-narrative .ot-chip { white-space: normal; overflow: visible; text-overflow: clip; }
+  .ot-hero-narrative .ot-chip > .ot-chip-text { white-space: normal; min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
   .ot-hero-split .ot-hero-l { max-width: 100%; }
   .ot-hero-split .ot-hero-r { position: static; }
   .ot-hero-deliverables { grid-template-columns: 1fr 1fr; }
