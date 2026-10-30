@@ -1,4 +1,6 @@
 import { X509Certificate } from "node:crypto"
+import { isIP } from "node:net"
+import { checkServerIdentity, type PeerCertificate } from "node:tls"
 import type { PoolConfig } from "pg"
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1", "[::1]"])
@@ -64,9 +66,13 @@ export function buildNeutralPoolConfig(
     // before node-postgres hands the value to net.connect.
     if (seen.size > 0) throw new Error("NEUTRAL_DATABASE_URL_OPTION_FORBIDDEN")
     // Only the explicit opt-in enables TLS here; a CA alone keeps plaintext.
-    // The opt-in demands a parsed CA certificate and leaves Node's default
-    // chain and hostname/IP-SAN verification in place (no identity override).
-    const ssl = loopbackTls === "verify-full" ? { rejectUnauthorized: true, ca: validatedCa(rawCa, true) } : false
+    // The opt-in demands a parsed CA certificate and keeps Node's chain
+    // verification. Identity is bound to the exact URL host (see exactHostIdentity):
+    // pg sends no servername for an IP literal, so Node would otherwise validate
+    // against its 'localhost' fallback.
+    const ssl = loopbackTls === "verify-full"
+      ? { rejectUnauthorized: true, ca: validatedCa(rawCa, true), ...exactHostIdentity(parsed.hostname) }
+      : false
     try {
       return {
         host: parsed.hostname === "[::1]" ? "::1" : parsed.hostname,
@@ -91,10 +97,32 @@ export function buildNeutralPoolConfig(
   // TLS object or reinterpret a Prisma-only pooler hint.
   parsed.searchParams.delete("sslmode")
   parsed.searchParams.delete("pgbouncer")
+  // A DNS host keeps the unchanged TLS object: pg supplies servername=host and
+  // Node's standard validator applies. An IP literal gets no servername from pg,
+  // so its identity is bound to the exact address instead.
+  const identity = isIP(unbracket(parsed.hostname)) ? exactHostIdentity(parsed.hostname) : {}
   return {
     connectionString: parsed.toString(),
-    ssl: { rejectUnauthorized: true, ca },
+    ssl: { rejectUnauthorized: true, ca, ...identity },
   }
+}
+
+function unbracket(hostname: string): string {
+  return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname
+}
+
+/**
+ * Node's standard certificate identity check, bound to the exact validated URL
+ * host (IPv6 brackets removed). The name Node offers is ignored: for an IP
+ * literal it is the 'localhost' fallback, not the dialled endpoint. Any error is
+ * returned unchanged, so rejectUnauthorized=true still refuses the connection;
+ * CA chain verification runs before this check and is unaffected.
+ */
+function exactHostIdentity(hostname: string): {
+  checkServerIdentity: (offered: string, cert: PeerCertificate) => Error | undefined
+} {
+  const host = unbracket(hostname)
+  return { checkServerIdentity: (_offered, cert) => checkServerIdentity(host, cert) }
 }
 
 function validatedCa(rawCa: string | undefined, requireCaCertificate: boolean): string {

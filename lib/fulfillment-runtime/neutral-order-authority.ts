@@ -1,5 +1,5 @@
 import "server-only"
-import { Prisma } from "@prisma/client"
+import { Prisma, type PrismaClient } from "@prisma/client"
 import { neutralPrisma } from "@/lib/fulfillment-runtime/neutral-db"
 import { normalizePIN } from "@/lib/cook-county"
 import { NEUTRAL_REPORT_COMMERCE_POLICY, neutralOrderReservationKey } from "@/lib/commerce/neutral-report-policy"
@@ -7,9 +7,13 @@ import { neutralSettledAmountAuthority, trustedPaymentAuthority } from "@/lib/fu
 
 export type NeutralOrderAuthority = { orderId: string; propertyPin: string; reservationId: string; admissionSha256: string; dataEvidenceSha256: string; deadlineEvidenceSha256: string }
 
-export async function resolveNeutralOrderAuthority(orderId: string): Promise<NeutralOrderAuthority | null> {
+export type NeutralOrderAuthorityDb = Pick<PrismaClient, "$transaction">
+
+// Trusted server code only: the caller supplies the client; nothing here reads
+// the environment. The exported default below stays bound to neutralPrisma().
+export function createNeutralOrderAuthorityResolver({ db }: { db: NeutralOrderAuthorityDb }): (orderId: string) => Promise<NeutralOrderAuthority | null> {
+  return async orderId => {
   if (!orderId || orderId.length > 128) return null
-  const db=neutralPrisma() as unknown as { $queryRaw<T>(q: unknown): Promise<T>; $transaction<T>(fn:(tx:{ $queryRaw<T>(q:unknown):Promise<T> })=>Promise<T>):Promise<T> }
   const rows = await db.$transaction(async tx=>{
     await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(684921338)::text AS "locked"`)
     return tx.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
@@ -29,4 +33,11 @@ export async function resolveNeutralOrderAuthority(orderId: string): Promise<Neu
   if (!row || !/^\d{14}$/.test(pin) || row.reservationKey !== neutralOrderReservationKey(orderId)) return null
   for (const key of ["admissionSha256","dataEvidenceSha256","deadlineEvidenceSha256"] as const) if (!/^[0-9a-f]{64}$/.test(String(row[key] ?? ""))) return null
   return { orderId, propertyPin: pin, reservationId: String(row.reservationId), admissionSha256: String(row.admissionSha256), dataEvidenceSha256: String(row.dataEvidenceSha256), deadlineEvidenceSha256: String(row.deadlineEvidenceSha256) }
+  }
+}
+
+export async function resolveNeutralOrderAuthority(orderId: string): Promise<NeutralOrderAuthority | null> {
+  // Same guard first, so an invalid id never constructs the default client.
+  if (!orderId || orderId.length > 128) return null
+  return createNeutralOrderAuthorityResolver({ db: neutralPrisma() })(orderId)
 }
