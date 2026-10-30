@@ -39,8 +39,20 @@ describe("Production resolve manifest", () => {
       .sort();
     const pending = onDisk.filter((name) => name > applied);
 
-    expect([...coveredMigrationNames(), ...OT_NEUTRAL_PRODUCTION_DEPLOYABLE_AFTER_BASELINE]).toEqual(pending);
-    expect(new Set([...coveredMigrationNames(), ...OT_NEUTRAL_PRODUCTION_DEPLOYABLE_AFTER_BASELINE]).size).toBe(pending.length);
+    // Free-report forward migrations are not paid-baseline resolution entries.
+    // Keep the paid operator manifest byte-identical and require an exact union,
+    // never a date filter or permissive contains-only check.
+    const freeForward = [
+      '20261019130000_factual_analysis',
+      '20261020180000_factual_acl',
+      '20261020190000_acquisition_snapshot',
+    ];
+    // Order -> acquisition snapshot binding (paid checkout transfer); additive, exact.
+    const snapshotBindingForward = ['20261021120000_order_snapshot_binding'];
+    const zeroTotalForward = ['20261024120000_ot_zero_total_settlement'];
+    const all = [...coveredMigrationNames(), ...OT_NEUTRAL_PRODUCTION_DEPLOYABLE_AFTER_BASELINE, ...freeForward, ...snapshotBindingForward, ...zeroTotalForward];
+    expect(all).toEqual(pending);
+    expect(new Set(all).size).toBe(pending.length);
     expect(OT_NEUTRAL_PRODUCTION_RESOLVE_MANIFEST.map((e) => e.order)).toEqual(
       coveredMigrationNames().map((_, index) => index + 1),
     );

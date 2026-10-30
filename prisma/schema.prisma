@@ -9,6 +9,39 @@ datasource db {
   provider = "postgresql"
 }
 
+/// Immutable raw factual result and complete private source capture.
+/// SQL migration adds append-only trigger and byte/identity constraints.
+model OTFactualResult {
+  id String @id
+  snapshotId String @unique @map("snapshot_id")
+  subjectKey String @map("subject_key")
+  version Int
+  canonical String
+  sha256 String
+  capture String?
+  captureSha256 String? @map("capture_sha256")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  latest OTFactualLatest?
+  disclosures OTFactualDisclosure[]
+  @@unique([subjectKey, version])
+  @@map("ot_factual_result")
+}
+model OTFactualLatest {
+  subjectKey String @id @map("subject_key")
+  version Int @default(0)
+  resultId String? @unique @map("result_id")
+  result OTFactualResult? @relation(fields: [resultId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  @@map("ot_factual_latest")
+}
+model OTFactualDisclosure {
+  tokenSha256 String @id @map("token_sha256")
+  resultId String @map("result_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz
+  result OTFactualResult @relation(fields: [resultId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  @@map("ot_factual_disclosure")
+}
+
 // ============================================
 // Authentication & User Management
 // ============================================
@@ -846,6 +879,7 @@ model OTOrder {
   checkoutProductId         String?
   checkoutAmountCents       Int?
   checkoutCurrency          String?
+  checkoutDiscountPromotionCodeId String?
   settledAmountCents        Int?
   settledCurrency           String?
   recoveryStripeSessionId   String?

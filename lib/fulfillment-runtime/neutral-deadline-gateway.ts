@@ -43,7 +43,7 @@ function parseNeutralOfficialCalendar(input: {
     if (state.kind !== "verified" || !state.eligible || state.status !== "open") throw new Error()
     const cutoff = evaluateCheckoutBusinessDayCutoff({ closeDate: state.lastFileDate, now: evaluated })
     if (!cutoff.allowed) throw new Error()
-    const deadline: NeutralDeadlineAuthoritySnapshot = Object.freeze({ trusted: true, status: "open", closeDate: state.lastFileDate, sourceName: "Cook County Assessor", sourceUrl: NEUTRAL_CALENDAR_URL, retrievedAt: input.retrievedAt, businessDaysRemainingAtGeneration: cutoff.businessDaysRemaining, businessDayCutoffAllowed: true, townshipName: input.subjectTownship, townshipKey: key, taxYear: 2026, authorityId: "ccao-assessment-calendar", snapshotSha256: hash })
+    const deadline: NeutralDeadlineAuthoritySnapshot = Object.freeze({ trusted: true, status: "open", openDate: state.openDate, closeDate: state.lastFileDate, sourceName: "Cook County Assessor", sourceUrl: NEUTRAL_CALENDAR_URL, retrievedAt: input.retrievedAt, businessDaysRemainingAtGeneration: cutoff.businessDaysRemaining, businessDayCutoffAllowed: true, townshipName: input.subjectTownship, townshipKey: key, taxYear: 2026, authorityId: "ccao-assessment-calendar", snapshotSha256: hash })
     const deadlineEvidenceSha256 = createHash("sha256").update(JSON.stringify({ deadline, sourceBytesSha256: hash })).digest("hex")
     return { ok: true, evidence: Object.freeze({ deadline, sourceBytes: Buffer.from(input.sourceBytes), sourceBytesSha256: hash, deadlineEvidenceSha256 }) }
   } catch { return { ok: false, blocker: "NEUTRAL_DEADLINE_UNAVAILABLE" } }

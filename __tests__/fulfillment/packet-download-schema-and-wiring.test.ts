@@ -143,6 +143,10 @@ describe("the migration is additive and discoverable", () => {
 describe("runtime wiring guards", () => {
   const sources = {
     route: readFileSync(join(ROOT, "app/api/ot/packet/download/route.ts"), "utf8"),
+    handler: readFileSync(
+      join(ROOT, "lib/fulfillment-runtime/packet-download-handler.ts"),
+      "utf8",
+    ),
     service: readFileSync(join(ROOT, "lib/fulfillment-runtime/packet-download.ts"), "utf8"),
     downloadStore: readFileSync(
       join(ROOT, "lib/fulfillment-runtime/packet-download-store.ts"),
@@ -162,7 +166,7 @@ describe("runtime wiring guards", () => {
     ),
   }
 
-  it.each(["route", "service", "downloadStore", "orphanStore"] as const)(
+  it.each(["route", "handler", "service", "downloadStore", "orphanStore"] as const)(
     "%s cannot reach a settlement, provider, or mail side effect",
     (key) => {
       const source = sources[key].toLowerCase()

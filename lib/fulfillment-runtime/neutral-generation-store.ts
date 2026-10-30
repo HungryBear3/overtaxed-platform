@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { NEUTRAL_REPORT_COMMERCE_POLICY } from "@/lib/commerce/neutral-report-policy";
 import { neutralPrisma } from "@/lib/fulfillment-runtime/neutral-db";
-import { trustedPaymentAuthority } from "@/lib/fulfillment-runtime/payment-authority";
+import { neutralSettledAmountAuthority, trustedPaymentAuthority } from "@/lib/fulfillment-runtime/payment-authority";
 import type {
   NeutralGenerationClaim,
   NeutralGenerationProduction,
@@ -27,7 +27,7 @@ const db = new Proxy({} as Db, {
 const authority = (orderId?: string) => Prisma.sql`
   ${orderId ? Prisma.sql`o."id"=${orderId} AND` : Prisma.empty}
   o."tier"='T2' AND o."status"='PAID'
-  AND o."settledAmountCents"=6900 AND lower(o."settledCurrency")='usd' AND o."amountPaid"=69
+  AND ${neutralSettledAmountAuthority("o")}
   AND o."propertyPin" ~ '^[0-9]{14}$'
   AND o."checkoutPriceId" IS NOT NULL AND o."checkoutProductId" IS NOT NULL
   AND r."checkout_price_id"=o."checkoutPriceId" AND r."checkout_product_id"=o."checkoutProductId"

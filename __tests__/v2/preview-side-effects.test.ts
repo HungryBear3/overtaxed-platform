@@ -12,6 +12,13 @@
 // `jest.fn()` instances live inside the factory and are reached via the
 // `jest.requireMock(...)` calls below.
 
+// Supply only a local signing-key configuration; retain the real access checks.
+// Missing-key refusal is covered separately in free-report.test.ts.
+jest.mock("@/lib/evidence/server/free-result-access", () => {
+  const actual = jest.requireActual("@/lib/evidence/server/free-result-access")
+  return { ...actual, productionFreeResultAccess: () => actual.createFreeResultAccess({ secret: "test-only-free-report-config-0123456789abcdef" }) }
+})
+
 jest.mock("stripe", () => {
   const sessionsCreate = jest.fn();
   const ctor = jest.fn().mockImplementation(() => ({
@@ -226,21 +233,23 @@ describe("preview gate — route handlers do not call live services", () => {
     expect(stripeModule._sessionsCreate).not.toHaveBeenCalled();
   });
 
-  it("/api/free-check returns a preview sample without calling Cook County or rate-limit", async () => {
+  it("/api/free-check holds unqualified acquisition without calling Cook County; existing POST rate check remains", async () => {
     const res = await freeCheckPOST(
       mkReq("/api/free-check", { pin: "12345678901234" }),
     );
     const json = await res.json();
-    expect(res.status).toBe(200);
-    expect(json.success).toBe(true);
-    expect(json.mode).toBe("preview_noop");
-    expect(json.subject?.pin).toBeTruthy();
-    expect(json.compCount).toBeGreaterThan(0);
+    expect(res.status).toBe(503);
+    expect(json.code).toBe("ACQUISITION_HOLD");
+    expect(json).not.toHaveProperty("resultId");
+    expect(json).not.toHaveProperty("subject");
+    expect(json).not.toHaveProperty("compCount");
+    expect(json.error).toContain("no figures are shown");
     expect(cookCountyModule.getPropertyByPIN).not.toHaveBeenCalled();
     expect(cookCountyModule.searchPropertiesByAddress).not.toHaveBeenCalled();
     expect(cookCountyModule.getComparableSales).not.toHaveBeenCalled();
     expect(cookCountyModule.getComparableEquity).not.toHaveBeenCalled();
-    expect(rateLimitModule.rateLimit).not.toHaveBeenCalled();
+    expect(rateLimitModule.rateLimit).toHaveBeenCalledTimes(1);
+    expect(rateLimitModule.rateLimit).toHaveBeenCalledWith("test-client", 10, 60_000);
   });
 });
 

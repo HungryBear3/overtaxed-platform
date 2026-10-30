@@ -45,6 +45,7 @@ export type OtSettlementOrder = {
   checkoutProductId: string | null
   checkoutAmountCents: number | null
   checkoutCurrency: string | null
+  checkoutDiscountPromotionCodeId?: string | null
   contractKey: string | null
   attempt: number
 }

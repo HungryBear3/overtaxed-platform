@@ -96,6 +96,8 @@ suite(
       CREATE VIEW ot_neutral_runtime_order AS SELECT * FROM ot_order;
       CREATE VIEW ot_neutral_runtime_payment_binding AS SELECT * FROM ot_payment_binding;
       CREATE VIEW ot_neutral_runtime_settlement_reversal AS SELECT * FROM ot_settlement_reversal;
+      CREATE TABLE ot_zero_total_settlement (order_id text, session_id text, subtotal_cents integer, discount_cents integer);
+      CREATE VIEW ot_neutral_runtime_zero_total_settlement AS SELECT * FROM ot_zero_total_settlement;
     `);
       await owner.query(
         fs.readFileSync(

@@ -1,5 +1,5 @@
 /**
- * @jest-environment jsdom
+ * @jest-environment ./test-support/factual-jsdom-environment.cjs
  */
 import React from "react"
 import { render, screen } from "@testing-library/react"
@@ -12,6 +12,7 @@ import {
 } from "@/components/check/FreeCheckResult"
 import { CC_02, CC_03, CC_04, CC_05, CC_06, CC_07 } from "@/lib/copy/canonical"
 import { FREE_CHECK_OUTCOME_MATRIX } from "@/lib/free-check-outcome-contract"
+import { createFactualLocalRuntime, SYNTHETIC_SUBJECT_PIN } from "@/test-support/factual-local-fixture"
 
 const ALLOWED_OUTCOMES = [...FREE_CHECK_OUTCOME_MATRIX]
 
@@ -142,6 +143,40 @@ const DENIED_OUTCOMES: Array<[string, unknown]> = [
   ],
 ]
 
+describe("server-owned factual record contract", () => {
+  async function mount(rewrite?: (b: any) => any) {
+    const rt = createFactualLocalRuntime()
+    const receipt = await (await rt.route.POST(new Request('http://local/api/free-check', { method: 'POST', body: JSON.stringify({ pin: SYNTHETIC_SUBJECT_PIN }) }))).json()
+    global.fetch = jest.fn(async (url: any) => {
+      const res = await rt.route.GET(new Request(new URL(String(url), 'http://local')))
+      return rewrite ? new Response(JSON.stringify(rewrite(await res.json()))) : res
+    }) as any
+    render(<FreeCheckResult result={receipt} />)
+    return receipt
+  }
+  it('renders the actual server result ID, complete records, limitations and source links', async () => {
+    const receipt = await mount()
+    const summary = await screen.findByTestId('factual-summary')
+    expect(summary.getAttribute('data-result-id')).toBe(receipt.resultId)
+    expect(summary.textContent).toContain('$42,500.00')
+    expect(screen.getAllByRole('row')).toHaveLength(5)
+    expect(summary.textContent).toContain('No conclusion about your assessment is drawn')
+    expect(summary.textContent).toContain('Filing window: UNKNOWN')
+    expect(summary.querySelectorAll('a[href^="https://datacatalog.cookcountyil.gov/"]')).toHaveLength(2)
+    for (const pattern of BANNED) expect(summary.textContent).not.toMatch(pattern)
+  })
+  it.each([
+    ['missing limitations', (b: any) => ({ ...b, limitations: [] })],
+    ['wrong snapshot binding', (b: any) => ({ ...b, snapshotId: 'snap_' + 'z'.repeat(24) })],
+    ['normalized claims', (b: any) => ({ ...b, validationRef: 1, status: 'VALIDATED', relativeGap: 0.4 })],
+  ])('rejects %s in the real GET consumer', async (_n, rewrite) => {
+    await mount(rewrite)
+    await screen.findByTestId('factual-refused')
+    expect(screen.queryByTestId('factual-summary')).toBeNull()
+    expect(document.body.textContent).not.toMatch(/\$42,500|40%/)
+  })
+})
+
 describe("free-check result outcome matrix", () => {
   it.each(ALLOWED_OUTCOMES)(
     "accepts the allowed tuple %s/%s",
@@ -156,11 +191,11 @@ describe("free-check result outcome matrix", () => {
 })
 
 describe("free-check result rendering", () => {
-  it.each(ALLOWED_OUTCOMES)("renders exactly one canonical outcome for %s/%s", (outcome) => {
+  it.each(ALLOWED_OUTCOMES)("refuses retired estimator outcome %s/%s rather than adopting its headline", (outcome) => {
     render(<FreeCheckResult result={buildResult(outcome)} />)
     const present = [CC_03, CC_04, CC_05, CC_06].filter((copy) => screen.queryAllByText(copy).length > 0)
-    expect(present).toEqual([outcome.headline])
-    expect(screen.getByText(CC_02).textContent).toBe(CC_02)
+    expect(present).toEqual([])
+    expect(screen.getByTestId("factual-refused")).toBeTruthy()
   })
 
   it.each(ALLOWED_OUTCOMES)("renders no banned merits or savings copy in %s/%s", (outcome) => {
@@ -170,28 +205,18 @@ describe("free-check result rendering", () => {
     }
   })
 
-  it.each(ALLOWED_OUTCOMES)("matches record capability gating for %s/%s", (outcome) => {
+  it.each(ALLOWED_OUTCOMES)("retired capability flags cannot release records or checkout for %s/%s", (outcome) => {
     const { container } = render(<FreeCheckResult result={buildResult(outcome)} />)
     const text = container.textContent ?? ""
-    if (outcome.showRecordComparison) {
-      expect(text).toMatch(/\$42,500/)
-      expect(text).toMatch(/Comparable properties \(/)
-    } else {
-      expect(text).not.toMatch(/\$42,500/)
-      expect(text).not.toMatch(/Comparable properties \(/)
-    }
-    if (outcome.allowCheckout) {
-      expect(container.querySelectorAll('a[href^="/auth/signup"]').length).toBeGreaterThan(0)
-      expect(container.querySelectorAll('a[href^="/pricing"]').length).toBeGreaterThan(0)
-    } else {
-      expect(container.querySelectorAll('a[href^="/auth/signup"]')).toHaveLength(0)
-      expect(container.querySelectorAll('a[href^="/pricing"]')).toHaveLength(0)
-    }
+    expect(screen.getByTestId("factual-refused")).toBeTruthy()
+    expect(text).not.toMatch(/\$42,500|Comparable properties \(/)
+    expect(container.querySelectorAll('a[href^="/auth/signup"]')).toHaveLength(0)
+    expect(container.querySelectorAll('a[href^="/pricing"]')).toHaveLength(0)
   })
 
   it.each(DENIED_OUTCOMES)("fails closed on hostile payload %s", (_label, outcome) => {
     const { container } = render(<FreeCheckResult result={buildResult(outcome as ResultOutcome)} />)
-    expect(screen.getByText(CC_05)).toBeTruthy()
+    expect(screen.getByTestId("factual-refused")).toBeTruthy()
     expect(container.textContent ?? "").not.toMatch(/\$42,500/)
     expect(container.textContent ?? "").not.toMatch(/Comparable properties \(/)
     expect(container.querySelector("textarea")).toBeNull()
@@ -199,9 +224,9 @@ describe("free-check result rendering", () => {
     expect(container.querySelectorAll('a[href^="/pricing"]')).toHaveLength(0)
   })
 
-  it("falls back to CC-05 with no offer when the response carries no outcome", () => {
+  it("refuses an unbound legacy response without synthesizing an outcome", () => {
     const { container } = render(<FreeCheckResult result={buildResult(null)} />)
-    expect(screen.getByText(CC_05)).toBeTruthy()
+    expect(screen.getByTestId("factual-refused")).toBeTruthy()
     expect(container.querySelectorAll('a[href^="/auth/signup"]')).toHaveLength(0)
     expect(container.querySelectorAll('a[href^="/pricing"]')).toHaveLength(0)
   })

@@ -1,9 +1,8 @@
 "use client"
 
 import { useState, useRef, useCallback } from "react"
-import type { Result } from "./FreeCheckResult"
 import { analytics } from "@/lib/analytics/events"
-import { isPreviewFreeCheckResponse } from "@/lib/analytics/free-check-funnel"
+import { registerFactualCompletion } from "@/lib/analytics/factual-completion"
 
 /**
  * One public-record match offered back when an address resolves to more than
@@ -33,7 +32,8 @@ function isAddressCandidate(value: unknown): value is AddressCandidate {
 }
 
 interface Props {
-  onResult: (result: Result) => void
+  /** Receives the server lookup receipt; the shared renderer loads the result by its ID. */
+  onResult: (receipt: unknown) => void
   onReset?: () => void
 }
 
@@ -51,6 +51,10 @@ function formatPinDisplay(raw: string): string {
 export function FreeCheckForm({ onResult, onReset }: Props) {
   const [pin, setPin] = useState("")
   const pinInputRef = useRef<HTMLInputElement>(null)
+  // Latest-request guard: only the most recent submission may hand a receipt
+  // to the renderer, so a slow earlier lookup can never replace a later one.
+  const requestSeq = useRef(0)
+  const activeRequest = useRef<AbortController | null>(null)
   const [address, setAddress] = useState("")
   const [city, setCity] = useState("")
   const [mode, setMode] = useState<"pin" | "address">("pin")
@@ -94,7 +98,10 @@ export function FreeCheckForm({ onResult, onReset }: Props) {
       setCandidateTotal(0)
     }
     setLoading(true)
+    const seq = ++requestSeq.current
+    activeRequest.current?.abort()
     const controller = new AbortController()
+    activeRequest.current = controller
     const timeoutId = setTimeout(() => controller.abort(), 28_000)
     try {
       const res = await fetch("/api/free-check", {
@@ -112,6 +119,7 @@ export function FreeCheckForm({ onResult, onReset }: Props) {
         signal: controller.signal,
       })
       const data = await res.json()
+      if (seq !== requestSeq.current) return
       if (!res.ok) {
         // The route separates "we could not reach the county" from "the county
         // has no such address". They used to arrive as the same sentence, and
@@ -141,18 +149,11 @@ export function FreeCheckForm({ onResult, onReset }: Props) {
       }
       setCandidates([])
       setCandidateTotal(0)
-      // One completion per authoritative result, emitted from the response the
-      // renderer is about to be handed — not from what ends up on screen. The
-      // outcome tuple is passed through untouched so the funnel derives
-      // qualification from the same evaluation the page renders.
-      analytics.freeCheckCompleted({
-        surface: "check_page",
-        outcome: data?.outcome,
-        windowStatus: data?.appealWindowStatus?.status,
-        preview: isPreviewFreeCheckResponse(data),
-      })
+      // Register intent only. Completion waits for the bound GET adoption.
+      registerFactualCompletion(data, "check_page")
       onResult(data)
     } catch (err) {
+      if (seq !== requestSeq.current) return
       if (err instanceof Error && err.name === "AbortError") {
         setError("The request took too long. Property data may be slow — please try again.")
       } else {
@@ -160,7 +161,7 @@ export function FreeCheckForm({ onResult, onReset }: Props) {
       }
     } finally {
       clearTimeout(timeoutId)
-      setLoading(false)
+      if (seq === requestSeq.current) setLoading(false)
     }
   }
 

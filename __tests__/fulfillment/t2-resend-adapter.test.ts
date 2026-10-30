@@ -94,6 +94,7 @@ function harness(
     throws?: boolean
     hangs?: boolean
     issuanceBlocker?: string
+    env?: Record<string, string>
   } = {},
 ): Harness {
   const sent: Harness["sent"] = []
@@ -127,7 +128,7 @@ function harness(
   }) as never
 
   const adapter = createT2ResendAdapter({
-    env: ENV,
+    env: options.env ?? ENV,
     provider,
     reader,
     issue,
@@ -473,5 +474,48 @@ describe("authority is re-asserted after issuance and before the provider call",
       },
     })
     expect(await reader.load(SEND)).toEqual(bound ? context() : null)
+  })
+})
+
+describe("production provider context artifact projection", () => {
+  // The neutral QA predicate compares a."property_binding_fingerprint" and
+  // a."template_version"; the lateral artifact SELECT must expose both or
+  // PostgreSQL rejects the whole statement with 42703.
+  it.each([{}, { neutralOnly: true }, { legacyOnly: true }])("projects every artifact column it references (%o)", async (options) => {
+    let sql = ""
+    const reader = createPrismaT2SendContextReader({
+      async $queryRaw<T>(query: import("@prisma/client").Prisma.Sql): Promise<T> {
+        sql = query.sql
+        return [] as T
+      },
+    }, options)
+    await reader.load(SEND)
+    const lateral = /JOIN LATERAL \(\s*SELECT([\s\S]*?)FROM "ot_fulfillment_artifact"/.exec(sql)
+    expect(lateral).not.toBeNull()
+    const projected = new Set(Array.from(lateral![1].matchAll(/"([a-z_0-9]+)"/g), (m) => m[1]))
+    const referenced = new Set(Array.from(sql.matchAll(/\ba\."([a-z_0-9]+)"/g), (m) => m[1]))
+    expect(referenced).toEqual(new Set(["version", "artifact_sha256", "property_binding_fingerprint", "template_version"]))
+    for (const column of referenced) expect(projected).toContain(column)
+  })
+})
+
+describe("default issuance follows the fulfillment kind's capability policy", () => {
+  const NEUTRAL_ENV = { ...ENV, OT_NEUTRAL_DELIVERY_ENABLED: "true" }
+
+  it("mints a single-use capability for an approved neutral report by default", async () => {
+    const h = harness({ env: NEUTRAL_ENV })
+    const outcome = await h.send({ fulfillmentKind: "NEUTRAL_RECORDS_REPORT", neutralQaApproved: true })
+    expect(outcome.kind).toBe("ACCEPTED")
+    expect(h.issued).toEqual([
+      { fulfillmentId: FULFILLMENT_ID, attemptNumber: 1, provider: "resend", maxUses: 1 },
+    ])
+  })
+
+  it("leaves the T2 appeal evidence default untouched", async () => {
+    const h = harness()
+    await h.send()
+    expect(h.issued).toEqual([
+      { fulfillmentId: FULFILLMENT_ID, attemptNumber: 1, provider: "resend" },
+    ])
   })
 })

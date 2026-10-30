@@ -1,14 +1,15 @@
-import type { Config } from "jest"
+import type { Config } from "@jest/types"
 import nextJest from "next/jest.js"
 
 const createJestConfig = nextJest({ dir: "./" })
 
-const config: Config = {
+const config: Config.InitialOptions = {
   testEnvironment: "jsdom",
   testMatch: ["**/__tests__/**/*.[jt]s?(x)", "**/?(*.)+(spec|test).[jt]s?(x)"],
   testPathIgnorePatterns: ["/node_modules/", "/.next/", "/tests/visual/"],
   passWithNoTests: true,
   moduleNameMapper: {
+    "^server-only$": "<rootDir>/test-support/server-only.cjs",
     "^@/(.*)$": "<rootDir>/$1",
   },
 }
@@ -64,11 +65,19 @@ const ESM_DEPENDENCIES = [
   "is-hexadecimal",
   "web-namespaces",
   "trim-lines",
+  // next-auth v5 JWT chain (ESM only): lets tests mint/verify REAL sessions.
+  "next-auth",
+  "@auth",
+  "jose",
+  "@panva",
+  "oauth4webapi",
+  "preact",
+  "preact-render-to-string",
 ]
 
 const resolved = createJestConfig(config)
 
-export default async (): Promise<Config> => {
+export default async (): Promise<Config.InitialOptions> => {
   const next = await resolved()
   return {
     ...next,

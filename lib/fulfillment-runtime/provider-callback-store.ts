@@ -27,6 +27,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
+import { trustedPaymentAuthority } from "@/lib/fulfillment-runtime/payment-authority";
 import { prisma } from "@/lib/db";
 import { neutralDeliveryEnabled } from "@/lib/fulfillment/flag";
 import {
@@ -262,12 +263,17 @@ export function createPrismaProviderCallbackStore(
             AND q."artifact_sha256"=r."bundle_sha256"
             AND q."property_binding_fingerprint"=z."property_binding_fingerprint"
             AND q."policy_version"=z."template_version"
-            AND EXISTS (
+            AND (EXISTS (
               SELECT 1 FROM "ot_order" o
               JOIN "ot_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId"
               WHERE o."id"=q."order_id" AND o."status"='PAID' AND o."tier"='T2'
                 AND NOT EXISTS (SELECT 1 FROM "ot_settlement_reversal" x WHERE x."payment_intent"=b."payment_intent")
-            )
+            ) OR EXISTS (
+              -- Same order gate; shared authority also admits exact zero-total settlement.
+              SELECT 1 FROM "ot_order" o
+              WHERE o."id"=q."order_id" AND o."status"='PAID' AND o."tier"='T2'
+                AND ${trustedPaymentAuthority("o")}
+            ))
         ) AS "approved"
       `);
       callbackFulfillment = {...callbackFulfillment,neutralQaApproved:qa[0]?.approved===true};

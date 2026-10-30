@@ -1,5 +1,5 @@
 /**
- * @jest-environment jsdom
+ * @jest-environment ./test-support/factual-jsdom-environment.cjs
  *
  * What the two free-check surfaces may say about the comparison they render.
  *
@@ -27,6 +27,18 @@ import { render, screen } from "@testing-library/react"
 import { FreeCheckResult, type Result, type ResultOutcome } from "@/components/check/FreeCheckResult"
 import { evaluateFreeCheckOutcome, type FreeCheckAppealWindowStatus } from "@/lib/free-check-appeal-window"
 import { CC_02, CC_05, CC_06, CC_07 } from "@/lib/copy/canonical"
+import { createFactualLocalRuntime, SYNTHETIC_SUBJECT_PIN } from "@/test-support/factual-local-fixture"
+
+async function mountFactual(count = 3, rewrite?: (b: any) => any) {
+  const rt = createFactualLocalRuntime({ mutate: a => a.ok ? { ...a, parcels: a.parcels.slice(0, count + 1) } : a })
+  const receipt = await (await rt.route.POST(new Request('http://local/api/free-check', { method: 'POST', body: JSON.stringify({ pin: SYNTHETIC_SUBJECT_PIN }) }))).json()
+  global.fetch = jest.fn(async (url: any) => {
+    const res = await rt.route.GET(new Request(new URL(String(url), 'http://local')))
+    return rewrite ? new Response(JSON.stringify(rewrite(await res.json()))) : res
+  }) as any
+  render(<FreeCheckResult result={receipt} />)
+  return receipt
+}
 
 const NO_LEVEL: ResultOutcome = {
   code: "insufficient_evidence",
@@ -150,51 +162,59 @@ describe("the evaluator separates the level from the record", () => {
   })
 })
 
-describe("/check renders the assessed-value comparison without a market value", () => {
-  it("shows the subject value, the comparable average and the difference", () => {
-    render(<FreeCheckResult result={assessedOnlyResult(NO_LEVEL)} />)
-
-    expect(screen.getAllByText("$42,500").length).toBeGreaterThan(0)
-    expect(screen.getAllByText("$35,100").length).toBeGreaterThan(0)
-    expect(screen.getAllByText("$7,400").length).toBeGreaterThan(0)
-    // The verdict is unchanged: CC-05, no offer.
-    expect(screen.getByText(CC_05)).toBeTruthy()
+describe("/check renders factual assessments without a market value", () => {
+  it("shows subject and cohort totals, not a normalized average/gap verdict", async () => {
+    const receipt = await mountFactual()
+    const summary = await screen.findByTestId('factual-summary')
+    expect(summary.getAttribute('data-result-id')).toBe(receipt.resultId)
+    expect(summary.textContent).toContain('$42,500.00')
+    expect(summary.textContent).toContain('$105,300.00')
+    expect(summary.textContent).not.toMatch(/\$7,400|\$35,100|12\.1%/)
+    expect(summary.textContent).toContain('No conclusion about your assessment is drawn')
   })
-
-  it("renders every accepted comparable and no promised fourth", () => {
-    const { container } = render(<FreeCheckResult result={assessedOnlyResult(NO_LEVEL)} />)
-    expect(screen.getByText(/Comparable properties \(3\)/)).toBeTruthy()
-    expect(container.textContent).toMatch(/Avg of 3 comparables on record/)
+  it("renders every accepted cohort parcel and no promised fourth", async () => {
+    await mountFactual()
+    const summary = await screen.findByTestId('factual-summary')
+    expect(screen.getAllByRole('row')).toHaveLength(5)
+    expect(summary.textContent).toContain('across 3 parcels')
+    expect(summary.textContent).toContain('18-06-214-014-0000')
+    expect(summary.textContent).not.toMatch(/4 comparables|nearest/)
   })
-
-  it("labels a single surviving comparable in the singular, promising no three", () => {
-    const one = assessedOnlyResult(NO_LEVEL)
-    const { container } = render(
-      <FreeCheckResult result={{ ...one, compCount: 1, comps: one.comps.slice(0, 1), avgComparableAssessedValue: 36400 }} />,
-    )
-    expect(container.textContent).toMatch(/Avg of 1 comparable on record/)
-    expect(container.textContent).not.toMatch(/Avg of 1 comparables/)
-    expect(container.textContent).not.toMatch(/\b3 comparables\b/)
+  it("shows a single surviving cohort parcel without promising three", async () => {
+    await mountFactual(1)
+    const summary = await screen.findByTestId('factual-summary')
+    expect(screen.getAllByRole('row')).toHaveLength(3)
+    expect(summary.textContent).toContain('$36,400.00')
+    expect(summary.textContent).toContain('across 1 parcel')
+    expect(summary.textContent).not.toMatch(/across 3|3 comparables/)
   })
-
-  it("leaves the assessment-level row absent rather than filling it with the county's target", () => {
-    const { container } = render(<FreeCheckResult result={assessedOnlyResult(NO_LEVEL)} />)
-    expect(container.textContent).not.toMatch(/10\.0% \(target\)/)
-    expect(container.textContent).not.toMatch(/Equity ratio/)
+  it("leaves the assessment-level absent instead of supplying a county target", async () => {
+    await mountFactual()
+    const summary = await screen.findByTestId('factual-summary')
+    expect(summary.textContent).not.toMatch(/10\.0%|Equity ratio/)
+    expect(summary.textContent).toContain('$42,500.00')
   })
-
-  it("says how the comparables were selected, using the route's own label", () => {
-    const { container } = render(<FreeCheckResult result={assessedOnlyResult(NO_LEVEL)} />)
-    expect(container.textContent).toMatch(/same assessment cohort/i)
+  it("describes cohort membership without claiming selected comparables", async () => {
+    await mountFactual()
+    const summary = await screen.findByTestId('factual-summary')
+    expect(summary.textContent).toContain('Cohort parcels share a neighborhood code and class; they are not selected comparables.')
+    expect(summary.textContent).toContain('neighborhood 78-120, class 2-03, tax year 2025')
   })
-
-  it("renders none of it under the parent's single-gate outcome", () => {
-    // The mutation proof for this fix: flip the new capability back off and the
-    // whole comparison disappears again, exactly as it did on 1f2d7aae.
+  it("renders none of the retired parent's single-gate body", () => {
     const { container } = render(<FreeCheckResult result={assessedOnlyResult(PARENT_SHAPED)} />)
-    expect(container.textContent).not.toMatch(/\$35,100/)
-    expect(container.textContent).not.toMatch(/\$7,400/)
+    expect(screen.getByTestId('factual-refused')).toBeTruthy()
+    expect(container.textContent).not.toMatch(/\$35,100|\$7,400/)
     expect(screen.queryByText(/Comparable properties \(/)).toBeNull()
+  })
+  it.each([
+    ['omitted limitations', (b: any) => ({ ...b, limitations: [] })],
+    ['wrong binding', (b: any) => ({ ...b, snapshotId: 'snap_' + 'z'.repeat(24) })],
+    ['normalized claim', (b: any) => ({ ...b, equityRatio: 12.1 })],
+  ])('refuses %s rather than releasing raw or normalized figures', async (_n, rewrite) => {
+    await mountFactual(3, rewrite)
+    await screen.findByTestId('factual-refused')
+    expect(screen.queryByTestId('factual-summary')).toBeNull()
+    expect(document.body.textContent).not.toMatch(/\$42,500|12\.1%/)
   })
 })
 
@@ -215,7 +235,7 @@ describe("the outcome trust boundary requires the new capability", () => {
     const { container } = render(
       <FreeCheckResult result={withOutcome({ code, headline, allowCheckout, showFigures, reason })} />,
     )
-    expect(screen.getByText(CC_05)).toBeTruthy()
+    expect(screen.getByTestId("factual-refused")).toBeTruthy()
     expect(container.textContent).not.toMatch(/\$35,100/)
     expect(container.textContent).not.toMatch(/\$42,500/)
     expect(screen.queryByText(/Comparable properties \(/)).toBeNull()
@@ -234,7 +254,7 @@ describe("the outcome trust boundary requires the new capability", () => {
         result={withOutcome({ ...NO_LEVEL, showFigures: true, showRecordComparison: false })}
       />,
     )
-    expect(screen.getByText(CC_05)).toBeTruthy()
+    expect(screen.getByTestId("factual-refused")).toBeTruthy()
     expect(container.textContent).not.toMatch(/\$35,100/)
   })
 
@@ -253,7 +273,7 @@ describe("the outcome trust boundary requires the new capability", () => {
     )
     // Rejected, so the headline falls back to CC-05 rather than rendering CC-06
     // from an outcome the boundary did not accept.
-    expect(screen.getByText(CC_05)).toBeTruthy()
+    expect(screen.getByTestId("factual-refused")).toBeTruthy()
     expect(container.textContent).not.toMatch(/\$35,100/)
   })
 })

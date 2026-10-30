@@ -19,6 +19,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { CC_12 } from "@/lib/copy/canonical";
 import PricingPageClient from "@/components/ot-design/PricingPageClient";
 
+// Satisfy the new signing configuration prerequisite without replacing any
+// ownership validation or changing the source-unavailable assertions below.
+jest.mock("@/lib/evidence/server/free-result-access", () => {
+  const actual = jest.requireActual("@/lib/evidence/server/free-result-access")
+  return { ...actual, productionFreeResultAccess: () => actual.createFreeResultAccess({ secret: "test-only-free-report-config-0123456789abcdef" }) }
+})
+
+jest.mock("@/lib/rate-limit", () => ({
+  rateLimit: jest.fn(() => ({ allowed: true, remaining: 9 })),
+  getClientIdentifier: jest.fn(() => 'local-test'),
+}));
+
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
@@ -455,9 +467,21 @@ describe("OT v2 marketing — launch-blocker copy guards", () => {
     expect(contingency).not.toMatch(/22% of first-year tax savings/);
   });
 
-  it("free-check sample address returns an illustrative sample instead of a silent 400", () => {
-    const src = read("app/api/free-check/route.ts");
-    expect(src).toMatch(/PREVIEW_SAMPLE_ADDRESS_PATTERN/);
-    expect(src).toMatch(/sample-address/);
+  it("free-check sample-looking address is held, never silently substituted with an illustrative result", async () => {
+    const { POST } = await import('@/app/api/free-check/route');
+    const { NextRequest } = await import('next/server');
+    const res = await POST(new NextRequest('http://local/api/free-check', {
+      method: 'POST', body: JSON.stringify({ mode: 'address', address: '123 S Sample Ave, La Grange IL' }),
+    }));
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    // Real county adapter now attempts server address acquisition. In this
+    // no-network test environment the typed source-unavailable hold replaces
+    // the predecessor's blanket unsupported-adapter hold; never fabricate facts.
+    expect(body.code).toBe('ADDRESS_LOOKUP_UNAVAILABLE');
+    expect(body.error).toContain('unavailable on our side');
+    expect(body).not.toHaveProperty('resultId');
+    expect(body).not.toHaveProperty('subject');
+    expect(JSON.stringify(body)).not.toMatch(/equityRatio|overpayPerYear|sample-address/);
   });
 });

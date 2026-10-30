@@ -15,5 +15,6 @@ export async function produceNeutralReport(input: { orderId: string; propertyPin
   const authority = await resolveNeutralOrderAuthority(input.orderId)
   const pin = normalizePIN(authority?.propertyPin ?? "")
   if (!authority || !/^\d{14}$/.test(pin)) return { ok: false as const, blocker: "ORDER_NOT_ADMITTED_OR_SETTLED" }
-  return produce({ orderId: input.orderId, propertyPin: pin, deadline: input.deadline }, { active: true, repository: prismaNeutralReportRepository })
+  // The reservation's admitted data digest selects the immutable snapshot an unbound order was admitted with.
+  return produce({ orderId: input.orderId, propertyPin: pin, deadline: input.deadline, admittedDataEvidenceSha256: authority.dataEvidenceSha256 }, { active: true, repository: prismaNeutralReportRepository })
 }

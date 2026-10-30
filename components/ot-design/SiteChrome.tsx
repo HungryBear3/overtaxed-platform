@@ -5,7 +5,9 @@ import { buildTickerItems, TICKER_STANDING_ITEM, TOWNSHIPS } from "@/lib/townshi
 import { CC_12, CC_18 } from "@/lib/copy/canonical";
 import { NEUTRAL_REPORT_LIMITS, NEUTRAL_REPORT_NAME } from "@/lib/copy/neutral-report";
 import { analytics } from "@/lib/analytics/events";
-import { isPreviewFreeCheckResponse } from "@/lib/analytics/free-check-funnel";
+import { registerFactualCompletion } from "@/lib/analytics/factual-completion";
+import { LookupReceiptSchema } from "@/lib/evidence/public-factual-contract";
+import { useSharedIntent } from "@/components/check/SharedIntent";
 
 // Public-contact constants used by SiteChrome (footer text, contact CTAs).
 // Personal-name attribution is intentionally NOT in this shared chrome
@@ -307,10 +309,14 @@ export function StatusChip() {
  * hero check card.
  */
 export function StickyAddressBar() {
+  // Page-owned intent shared with the hero card: whichever surface began the
+  // latest check owns the result slot, so a slower earlier lookup is dropped.
+  const intent = useSharedIntent();
   const [visible, setVisible] = useState(false);
   const [addr, setAddr] = useState("");
   const [loading, setLoading] = useState(false);
   const [inlineError, setInlineError] = useState("");
+  useEffect(() => intent.subscribe(() => { setLoading(false); setInlineError(""); }), [intent]);
 
   useEffect(() => {
     const target = document.getElementById("hero-check");
@@ -329,6 +335,7 @@ export function StickyAddressBar() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (loading || !addr.trim()) return;
+    const owner = intent.begin();
     setInlineError("");
     setLoading(true);
     // The sticky bar is a third entry point into the same route, so it counts
@@ -341,36 +348,40 @@ export function StickyAddressBar() {
       const res = await fetch("/api/free-check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address: addr, mode: "address" }),
+        // Address mode only: the one identity channel this bar collects.
+        body: JSON.stringify({ mode: "address", address: submittedInput.replace(/\s+/g, " ") }),
       });
       const data = await res.json().catch(() => null);
+      if (!intent.owns(owner)) return;
       if (res.ok === false) {
         const message = data?.error ?? "We couldn't find a Cook County property for that address. Try your 14-digit PIN instead.";
         setInlineError(message);
         window.dispatchEvent(new CustomEvent("ot:free-check-result", {
-          detail: { error: message, submittedInput },
+          detail: { error: message, submittedInput, owner },
+        }));
+      } else if (!LookupReceiptSchema.safeParse(data).success) {
+        // The free check is factual-only: anything but a saved-analysis
+        // receipt is refused here, with no result and no completion recorded.
+        const message = "We couldn't verify that lookup result, so nothing is shown. Please try again, or enter your 14-digit PIN.";
+        setInlineError(message);
+        window.dispatchEvent(new CustomEvent("ot:free-check-result", {
+          detail: { error: message, submittedInput, owner },
         }));
       } else {
-        const payload = data?.result ?? data;
-        analytics.freeCheckCompleted({
-          surface: "sticky_bar",
-          outcome: payload?.outcome,
-          windowStatus: payload?.appealWindowStatus?.status,
-          preview: isPreviewFreeCheckResponse(data) || isPreviewFreeCheckResponse(payload),
-        });
+        // A saved-analysis receipt: completion is recorded only when the
+        // bound renderer adopts the stored result it names.
+        intent.bind(data, owner);
+        registerFactualCompletion(data, "sticky_bar");
         window.dispatchEvent(new CustomEvent("ot:free-check-result", {
-          detail: {
-            result: data?.result ?? data,
-            preview: Boolean(data?.preview || data?.mode === "preview_noop" || data?.source === "preview-noop"),
-            submittedInput,
-          },
+          detail: { owner, result: data, submittedInput },
         }));
       }
     } catch {
+      if (!intent.owns(owner)) return;
       const message = "We couldn't complete the lookup. Please try again, or enter your 14-digit PIN.";
       setInlineError(message);
       window.dispatchEvent(new CustomEvent("ot:free-check-result", {
-        detail: { error: message, submittedInput: addr.trim() },
+        detail: { error: message, submittedInput: addr.trim(), owner },
       }));
     }
     // Scroll to hero-check after surfacing the same preview result as the main form.
@@ -405,7 +416,7 @@ export function StickyAddressBar() {
             className="ot-sticky-bar-input"
             placeholder="123 S Sample Ave, La Grange IL"
             value={addr}
-            onChange={(e) => setAddr(e.target.value)}
+            onChange={(e) => { intent.begin(); setLoading(false); setInlineError(""); setAddr(e.target.value); }}
             aria-label="Property address"
             autoComplete="street-address"
           />

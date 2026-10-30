@@ -1,7 +1,12 @@
 /**
- * @jest-environment jsdom
+ * @jest-environment ./test-support/factual-jsdom-environment.cjs
  *
  * `/check` against the payload a returning visitor actually carries.
+ *
+ * Historical regression fixture below reproduces the old normalized cache.
+ * Under FACTUAL_ONLY, every legacy body is refused outright; no CC-02/CC-05
+ * repair is synthesized. Positive v3 controls reload actual server receipts,
+ * while the retained hostile rows ensure old capabilities cannot release data.
  *
  * The four-state contract was proven on `/check` with payloads built to the
  * *new* shape: `disclosure: CC_02`, `appealArgumentText: null`, an explicit
@@ -29,6 +34,8 @@ import { render, screen } from "@testing-library/react"
 
 import { FreeCheckResult, type Result, type ResultOutcome } from "@/components/check/FreeCheckResult"
 import { CC_02, CC_03, CC_04, CC_05, CC_06 } from "@/lib/copy/canonical"
+import { FreeCheckFormWrapper } from "@/components/check/FreeCheckFormWrapper"
+import { createFactualLocalRuntime, SYNTHETIC_SUBJECT_PIN } from "@/test-support/factual-local-fixture"
 
 /** Verbatim from the base build's `buildAppealArgument`. */
 const LEGACY_ARGUMENT = `The subject property at 123 Main St, Evanston (CCAO neighborhood 70) has been assessed at $42,500, resulting in an assessment level of 12.1% — above Cook County's 10% residential target.
@@ -105,18 +112,18 @@ const BANNED = [
 ]
 
 describe("the legacy `_v1` cached payload", () => {
-  it("renders CC-02 byte-exact above the headline even though it carries none", () => {
+  it("refuses the legacy body rather than supplying a missing disclosure", () => {
     render(<FreeCheckResult result={LEGACY_PAYLOAD} />)
-    const disclosure = screen.getByText(CC_02)
-    const headline = screen.getByText(CC_05)
-    expect(disclosure.textContent).toBe(CC_02)
-    expect(disclosure.compareDocumentPosition(headline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByTestId("factual-refused")).toBeTruthy()
+    expect(screen.queryByTestId("factual-summary")).toBeNull()
+    expect(screen.queryByText(CC_02)).toBeNull()
   })
 
-  it("resolves to CC-05 and nothing else", () => {
+  it("does not synthesize any retired outcome, including CC-05", () => {
     render(<FreeCheckResult result={LEGACY_PAYLOAD} />)
     const present = [CC_03, CC_04, CC_05, CC_06].filter((s) => screen.queryAllByText(s).length > 0)
-    expect(present).toEqual([CC_05])
+    expect(present).toEqual([])
+    expect(screen.getByTestId("factual-refused")).toBeTruthy()
   })
 
   it("renders no banned claim, including the legacy argument text", () => {
@@ -173,21 +180,22 @@ describe("a supplied disclosure is checked, not trusted", () => {
   }
 
   it.each(Object.entries(OUTCOMES))(
-    "renders exactly one CC-02, from the canonical module, in state %s",
+    "even a correct legacy disclosure cannot authorize state %s",
     (_key, outcome) => {
       const { container } = render(<FreeCheckResult result={build(outcome, CC_02)} />)
       const matches = Array.from(container.querySelectorAll("p")).filter(
         (p) => p.textContent === CC_02,
       )
-      expect(matches).toHaveLength(1)
+      expect(matches).toHaveLength(0)
+      expect(screen.getByTestId("factual-refused")).toBeTruthy()
     },
   )
 
-  it.each(Object.entries(OUTCOMES))("renders CC-02 with an absent disclosure in state %s", (_key, outcome) => {
+  it.each(Object.entries(OUTCOMES))("absent legacy disclosure does not authorize state %s", (_key, outcome) => {
     render(<FreeCheckResult result={build(outcome, undefined)} />)
-    expect(screen.getByText(CC_02).textContent).toBe(CC_02)
-    // Absence is not drift: the outcome still stands.
-    expect(screen.getByText(outcome.headline)).toBeTruthy()
+    expect(screen.queryByText(CC_02)).toBeNull()
+    expect(screen.queryByText(outcome.headline)).toBeNull()
+    expect(screen.getByTestId("factual-refused")).toBeTruthy()
   })
 
   it.each([
@@ -200,9 +208,9 @@ describe("a supplied disclosure is checked, not trusted", () => {
     // mandated. A response that disagrees with it did not come from a build
     // that agrees with the copy contract, so its verdict is not trusted either.
     const { container } = render(<FreeCheckResult result={build(OUTCOMES.A, drifted)} />)
-    expect(screen.getByText(CC_02).textContent).toBe(CC_02)
+    expect(screen.queryByText(CC_02)).toBeNull()
     expect(screen.queryAllByText(CC_03)).toHaveLength(0)
-    expect(screen.getByText(CC_05)).toBeTruthy()
+    expect(screen.getByTestId("factual-refused")).toBeTruthy()
     expect(container.querySelectorAll('a[href^="/auth/signup"]')).toHaveLength(0)
     expect(container.querySelectorAll('a[href^="/pricing"]')).toHaveLength(0)
     // The drifted string is never rendered as its own node. A truncation is a
@@ -214,17 +222,55 @@ describe("a supplied disclosure is checked, not trusted", () => {
     const disclosureParagraphs = Array.from(container.querySelectorAll("p")).filter((n) =>
       (n.textContent ?? "").includes("This free check compares"),
     )
-    expect(disclosureParagraphs.map((n) => n.textContent)).toEqual([CC_02])
+    expect(disclosureParagraphs).toHaveLength(0)
   })
 })
 
 describe("the session key retires the payloads that carry the claim", () => {
+  it.each(['freeCheckResult_v1', 'freeCheckResult_v2'])('removes %s unread in the actual wrapper', key => {
+    sessionStorage.clear()
+    sessionStorage.setItem(key, JSON.stringify(LEGACY_PAYLOAD))
+    global.fetch = jest.fn() as any
+    render(<FreeCheckFormWrapper />)
+    expect(sessionStorage.getItem(key)).toBeNull()
+    expect(global.fetch).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('factual-summary')).toBeNull()
+    for (const pattern of BANNED) expect(document.body.textContent).not.toMatch(pattern)
+  })
+  it.each(['valid', 'limitations omitted', 'wrong binding', 'normalized claim'])('reloads cached receipt with %s server body', async kind => {
+    sessionStorage.clear()
+    const rt = createFactualLocalRuntime()
+    const receipt = await (await rt.route.POST(new Request('http://local/api/free-check', { method: 'POST', body: JSON.stringify({ pin: SYNTHETIC_SUBJECT_PIN }) }))).json()
+    sessionStorage.setItem('freeCheckReceipt_v3', JSON.stringify(receipt))
+    global.fetch = jest.fn(async (url: any) => {
+      const res = await rt.route.GET(new Request(new URL(String(url), 'http://local')))
+      const b = await res.json()
+      if (kind === 'limitations omitted') b.limitations = []
+      if (kind === 'wrong binding') b.resultId = 'res_' + 'z'.repeat(24)
+      if (kind === 'normalized claim') b.potentialOverpaymentPerYear = 1420
+      return new Response(JSON.stringify(b))
+    }) as any
+    render(<FreeCheckFormWrapper />)
+    if (kind === 'valid') {
+      const summary = await screen.findByTestId('factual-summary')
+      expect(summary.getAttribute('data-result-id')).toBe(receipt.resultId)
+      expect(summary.textContent).toContain('$42,500.00')
+      expect(summary.textContent).toContain('No conclusion about your assessment is drawn')
+    } else {
+      await screen.findByTestId('factual-refused')
+      expect(screen.queryByTestId('factual-summary')).toBeNull()
+    }
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.getItem('freeCheckReceipt_v3')).toBe(JSON.stringify(receipt))
+    for (const pattern of BANNED) expect(document.body.textContent).not.toMatch(pattern)
+    sessionStorage.clear()
+  })
   it("is bumped past the version that wrote them", () => {
     const src = require("fs").readFileSync(
       require("path").resolve(__dirname, "../../components/check/FreeCheckFormWrapper.tsx"),
       "utf8",
     ) as string
-    expect(src).toContain('const SESSION_KEY = "freeCheckResult_v2"')
-    expect(src).not.toContain('"freeCheckResult_v1"')
+    expect(src).toContain('const SESSION_KEY = "freeCheckReceipt_v3"')
+    expect(src).toContain('const RETIRED_KEYS = ["freeCheckResult_v1", "freeCheckResult_v2"]')
   })
 })

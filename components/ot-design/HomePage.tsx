@@ -1,16 +1,17 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   StatusChip,
   StickyAddressBar,
   LiveTicker,
 } from "@/components/ot-design/SiteChrome";
 import { analytics } from "@/lib/analytics/events";
+import { registerFactualCompletion } from "@/lib/analytics/factual-completion";
+import { LookupReceiptSchema } from "@/lib/evidence/public-factual-contract";
+import { SharedIntentProvider, useSharedIntent, type Intent } from "@/components/check/SharedIntent";
+import { BoundFactualResult } from "@/components/check/SharedEvidenceSummary";
 import { CC_01, CC_10, CC_11, CC_12 } from "@/lib/copy/canonical";
-import {
-  isCanonicalFreeCheckOutcome,
-  type FreeCheckOutcome,
-} from "@/lib/free-check-outcome-contract";
+import { type FreeCheckOutcome } from "@/lib/free-check-outcome-contract";
 import { NEUTRAL_REPORT_LIMITS, NEUTRAL_REPORT_NAME, NEUTRAL_REPORT_PRICE, NEUTRAL_REPORT_QA, NEUTRAL_REPORT_REFUND, NEUTRAL_REPORT_SUMMARY, NEUTRAL_REPORT_TURNAROUND } from "@/lib/copy/neutral-report";
 
 /*
@@ -56,109 +57,21 @@ type Result = {
   source?: string;
 };
 
-type RawCheckResult = Partial<Result> & {
-  equityRatio?: number | null;
-  subject?: {
-    address?: string | null;
-    city?: string | null;
-    zipCode?: string | null;
-    township?: string | null;
-    assessedTotalValue?: number | null;
-    marketValue?: number | null;
-  };
-  avgComparableAssessedValue?: number | null;
-  assessmentGap?: number | null;
-  potentialOverpaymentPerYear?: number | null;
-  potentialOverpayment3Year?: number | null;
-  compCount?: number | null;
-  compSelection?: { basis?: string | null; distanceRanked?: boolean | null; label?: string | null } | null;
-  appealWindowStatus?: {
-    township?: string | null;
-    status?: WindowStatus | null;
-    openDate?: string | null;
-    closeDate?: string | null;
-    pendingReason?: string | null;
-    allowCheckout?: boolean | null;
-  } | null;
-  source?: string | null;
-  mode?: string | null;
-};
-
-/** Null, not a fallback. A number we do not have must not become one we do. */
-function asFiniteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function formatIsoDateLabel(iso?: string | null): string | null {
-  if (!iso) return null;
-  const d = new Date(`${iso}T12:00:00`);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
+const FREE_CHECK_RESULT_EVENT = "ot:free-check-result";
 
 /**
- * Days remaining, derived at render rather than trusted from the payload.
- *
- * Null when there is no verified close date. It used to return 0 in that case,
- * which the countdown rendered as "0 days left" — a deadline claim, and the most
- * alarming one available, produced by the absence of a deadline.
+ * The free check is factual-only. The route answers with a server-issued
+ * lookup receipt for a saved analysis, or with an error; the shared bound
+ * renderer is the only thing that shows a result. Legacy normalized bodies are
+ * no longer interpreted on this page — anything that is not a receipt is
+ * refused with this message, and nothing is rendered or recorded for it.
  */
-function daysUntilIso(iso?: string | null): number | null {
-  if (!iso) return null;
-  const close = new Date(`${iso}T23:59:59`);
-  if (Number.isNaN(close.getTime())) return null;
-  return Math.max(0, Math.ceil((close.getTime() - Date.now()) / 86_400_000));
+const UNVERIFIED_RESULT_MESSAGE =
+  "We couldn't verify that lookup result, so nothing is shown. Please try again, or enter your 14-digit PIN.";
+
+function isLookupReceipt(value: unknown): boolean {
+  return LookupReceiptSchema.safeParse(value).success;
 }
-
-function normalizeCheckResult(
-  raw?: RawCheckResult | null,
-  preview = true,
-  submittedInput = "",
-): Result {
-  const r = raw ?? {};
-  const subject = r.subject;
-  const aw = r.appealWindowStatus;
-  const township = aw?.township ?? subject?.township ?? r.township ?? null;
-  const closeLabel = formatIsoDateLabel(aw?.closeDate);
-  const openLabel = formatIsoDateLabel(aw?.openDate);
-
-  // Unrecognized statuses resolve to "unknown". This previously resolved to
-  // "open" — the one value that unlocks the deadline CTA — so a status the
-  // client did not recognize became the most permissive state it had.
-  const status: WindowStatus =
-    aw?.status === "open" || aw?.status === "closed" || aw?.status === "upcoming"
-      ? aw.status
-      : "unknown";
-
-  const verifiedOpen = status === "open" && Boolean(aw?.closeDate);
-
-  return {
-    address: subject
-      ? [subject.address, subject.city, subject.zipCode].filter(Boolean).join(", ")
-      : (r.address ?? "This property"),
-    township,
-    windowStatus: status,
-    windowCloses: closeLabel && township ? `${township} window closes ${closeLabel}` : null,
-    windowOpens: openLabel ? `Opens ${openLabel}` : null,
-    windowDaysRemaining: verifiedOpen ? daysUntilIso(aw?.closeDate) : null,
-    yourAssessed: asFiniteNumber(subject?.assessedTotalValue ?? r.yourAssessed),
-    compsAvg: asFiniteNumber(r.avgComparableAssessedValue ?? r.compsAvg),
-    assessmentLevel: asFiniteNumber(r.equityRatio ?? r.assessmentLevel),
-    overpayPerYear: asFiniteNumber(r.potentialOverpaymentPerYear ?? r.overpayPerYear),
-    overpay3Year: asFiniteNumber(r.potentialOverpayment3Year ?? r.overpay3Year),
-    comps: asFiniteNumber(r.compCount ?? r.comps) ?? 0,
-    compsLabel: typeof r.compSelection?.label === "string" ? r.compSelection.label : null,
-    // The homepage is a second consumer of the same response used by /check.
-    // It must not trust a capability tuple that the shared matrix rejects.
-    outcome: isCanonicalFreeCheckOutcome(r.outcome) ? r.outcome : null,
-    disclosure: typeof r.disclosure === "string" ? r.disclosure : null,
-    preview,
-    submittedInput: submittedInput.trim(),
-    source: typeof r.source === "string" ? r.source : undefined,
-  };
-}
-
-const FREE_CHECK_RESULT_EVENT = "ot:free-check-result";
 
 const fmtUSD = (n: number) =>
   n.toLocaleString("en-US", {
@@ -329,17 +242,16 @@ function isHeroAddressCandidate(value: unknown): value is HeroAddressCandidate {
 }
 
 function HeroCheckCard({
-  result,
+  receipt,
   error,
-  onResult,
+  onReceipt,
   onError,
-  neutralReport = false,
 }: {
-  result: Result | null;
+  /** A saved-analysis lookup receipt, rendered by the bound factual renderer. */
+  receipt: unknown;
   error: string;
-  onResult: (r: Result | null) => void;
+  onReceipt: (r: unknown) => void;
   onError: (message: string) => void;
-  neutralReport?: boolean;
 }) {
   const [pin, setPin] = useState("");
   const [mode, setMode] = useState<"address" | "pin">("address");
@@ -349,13 +261,33 @@ function HeroCheckCard({
   // address stands for more than one parcel. Empty on every other path.
   const [candidates, setCandidates] = useState<HeroAddressCandidate[]>([]);
   const [candidateTotal, setCandidateTotal] = useState(0);
+  // Stale-response protection. `generation` fences this card's own requests;
+  // the shared intent fences them against the sticky bar on the same page. A
+  // response is applied only if neither moved on while it was in flight.
+  const intent = useSharedIntent();
+  const generation = useRef(0);
+  useEffect(() => intent.subscribe(() => { setLoading(false); setCandidates([]); setCandidateTotal(0); }), [intent]);
+  const invalidate = useCallback(() => {
+    generation.current += 1;
+    intent.begin();
+    setLoading(false);
+    setCandidates([]);
+    setCandidateTotal(0);
+    onReceipt(null);
+    onError("");
+  }, [intent, onReceipt, onError]);
+  useEffect(() => () => { generation.current += 1; }, []);
 
   const handlePinChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    invalidate();
     setPin(formatPinDisplay(e.target.value));
-  }, []);
+  }, [invalidate]);
 
   const runCheck = useCallback(
     async (selectedPin?: string) => {
+      const owner = ++generation.current;
+      const sharedOwner = intent.begin();
+      onReceipt(null);
       setLoading(true);
       onError("");
       if (!selectedPin) {
@@ -363,16 +295,20 @@ function HeroCheckCard({
         setCandidateTotal(0);
       }
       try {
-        const submittedInput = mode === "pin" ? pin : address;
+        // Exactly one identity channel per request: the PIN in PIN mode, the
+        // address (with any parcel selection) in address mode — never both.
         const res = await fetch("/api/free-check", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ address, pin, mode, ...(selectedPin ? { selectedPin } : {}) }),
+          body: JSON.stringify(mode === "pin"
+            ? { mode, pin: pin.replace(/-/g, "").trim() }
+            : { mode, address: address.trim().replace(/\s+/g, " "), ...(selectedPin ? { selectedPin } : {}) }),
         });
         const data = await res.json().catch(() => null);
+        if (owner !== generation.current || !intent.owns(sharedOwner)) return;
         setLoading(false);
         if (res.ok === false) {
-          onResult(null);
+          onReceipt(null);
           // A building with several parcels is a question, not a failure. The
           // route refuses to answer it and hands back the public-record
           // fragments; picking one is the reader's call and only theirs.
@@ -405,27 +341,26 @@ function HeroCheckCard({
         }
         setCandidates([]);
         setCandidateTotal(0);
-        const isPreview = Boolean(data?.preview || data?.mode === "preview_noop" || data?.source === "preview-noop");
-        const normalized = normalizeCheckResult(data?.result ?? data, isPreview, submittedInput);
-        onResult(normalized);
-        // Qualification is read off the route's evaluated outcome, which
-        // `normalizeCheckResult` has already refused to accept unless the shared
-        // matrix recognizes it. It used to be inferred here from a positive
-        // `overpayPerYear` — a figure the route now computes on no path and
-        // sends as null, so the inference had quietly stopped firing at all.
-        analytics.freeCheckCompleted({
-          surface: "home_hero",
-          outcome: normalized.outcome,
-          windowStatus: normalized.windowStatus,
-          preview: normalized.preview === true,
-        });
+        if (!isLookupReceipt(data)) {
+          // Not a saved-analysis receipt: refuse. No result, offer, signup or
+          // completion is derived from a body this page cannot verify.
+          onReceipt(null);
+          onError(UNVERIFIED_RESULT_MESSAGE);
+          return;
+        }
+        // The server lookup receipt: the shared bound renderer fetches the
+        // saved result by its ID, and completion is recorded on adoption.
+        intent.bind(data, sharedOwner);
+        registerFactualCompletion(data, "home_hero");
+        onReceipt(data);
       } catch {
+        if (owner !== generation.current || !intent.owns(sharedOwner)) return;
         setLoading(false);
-        onResult(null);
+        onReceipt(null);
         onError("We couldn't complete the lookup. Please try again, or enter your 14-digit PIN.");
       }
     },
-    [address, pin, mode, onResult, onError],
+    [address, pin, mode, intent, onReceipt, onError],
   );
 
   const handleSubmit = useCallback(
@@ -439,17 +374,21 @@ function HeroCheckCard({
     [runCheck, mode],
   );
 
-  if (result) {
+  if (receipt) {
     return (
-      <HeroCheckResult
-        result={result}
-        neutralReport={neutralReport}
-        onReset={() => {
-          setPin("");
-          onError("");
-          onResult(null);
-        }}
-      />
+      <div className="ot-check-card">
+        <BoundFactualResult receipt={receipt} />
+        <button
+          type="button"
+          className="ot-result-reset"
+          onClick={() => {
+            invalidate();
+            setPin("");
+          }}
+        >
+          Check another property
+        </button>
+      </div>
     );
   }
 
@@ -491,7 +430,7 @@ function HeroCheckCard({
             type="text"
             placeholder="123 S Sample Ave, La Grange IL"
             value={address}
-            onChange={(e) => setAddress(e.target.value)}
+            onChange={(e) => { invalidate(); setAddress(e.target.value); }}
             className="ot-input"
           />
           {/* "automatically" is now conditional, and says so. Where a building
@@ -575,7 +514,7 @@ function HeroCheckCard({
       <button
         type="button"
         className="ot-pin-link"
-        onClick={() => setMode(mode === "pin" ? "address" : "pin")}
+        onClick={() => { invalidate(); setMode(mode === "pin" ? "address" : "pin"); }}
       >
         {mode === "pin"
           ? "← Look up by address instead"
@@ -1594,24 +1533,43 @@ function HeroPreviewCard() {
   );
 }
 
-export default function HomePage({ neutralReport = false }: { neutralReport?: boolean }) {
-  const [result, setResult] = useState<Result | null>(null);
+export default function HomePage(props: { neutralReport?: boolean }) {
+  // One intent per page, shared by the hero card and the sticky bar.
+  return <SharedIntentProvider><HomePageContent {...props} /></SharedIntentProvider>;
+}
+
+function HomePageContent({ neutralReport = false }: { neutralReport?: boolean }) {
+  const intent = useSharedIntent();
+  const [receipt, setReceipt] = useState<unknown>(null);
   const [checkError, setCheckError] = useState("");
 
+  // A newer check (from either surface) retires whatever is on screen.
+  useEffect(() => intent.subscribe(() => { setReceipt(null); setCheckError(""); }), [intent]);
   useEffect(() => {
     function handleStickyResult(event: Event) {
-      const detail = (event as CustomEvent<{ result?: RawCheckResult; preview?: boolean; submittedInput?: string; error?: string }>).detail;
+      const detail = (event as CustomEvent<{ result?: unknown; error?: string; owner?: Intent }>).detail;
+      // Producers carry the token acquired before their POST; an event without
+      // one acquires ownership on arrival.
+      const owner = detail?.owner ?? intent.begin();
+      if (!intent.owns(owner)) return;
       if (detail?.error) {
-        setResult(null);
+        setReceipt(null);
         setCheckError(detail.error);
         return;
       }
+      if (!isLookupReceipt(detail?.result)) {
+        // Only a saved-analysis receipt may reach the result slot.
+        setReceipt(null);
+        setCheckError(UNVERIFIED_RESULT_MESSAGE);
+        return;
+      }
       setCheckError("");
-      setResult(normalizeCheckResult(detail?.result, Boolean(detail?.preview ?? true), detail?.submittedInput ?? ""));
+      intent.bind(detail?.result, owner);
+      setReceipt(detail?.result ?? null);
     }
     window.addEventListener(FREE_CHECK_RESULT_EVENT, handleStickyResult);
     return () => window.removeEventListener(FREE_CHECK_RESULT_EVENT, handleStickyResult);
-  }, []);
+  }, [intent]);
 
   return (
     <>
@@ -1624,7 +1582,7 @@ export default function HomePage({ neutralReport = false }: { neutralReport?: bo
             <HeroNarrative neutralReport={neutralReport} />
           </div>
           <div className="ot-hero-r ot-hero-r-stack">
-            <HeroCheckCard result={result} error={checkError} onResult={setResult} onError={setCheckError} neutralReport={neutralReport} />
+            <HeroCheckCard receipt={receipt} error={checkError} onReceipt={setReceipt} onError={setCheckError} />
             <HeroPreviewCard />
           </div>
         </div>

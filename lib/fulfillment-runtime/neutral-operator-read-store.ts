@@ -2,6 +2,7 @@ import "server-only"
 
 import { createHash, randomUUID } from "node:crypto"
 import { Prisma } from "@prisma/client"
+import { neutralZeroTotalSettlementJoin } from "@/lib/fulfillment-runtime/payment-authority"
 import { neutralPrisma } from "@/lib/fulfillment-runtime/neutral-db"
 import { inNeutralTransaction, type NeutralDbExecutor } from "@/lib/fulfillment-runtime/neutral-db-executor"
 import {
@@ -32,6 +33,7 @@ const contextSql = (orderId: string) => Prisma.sql`
         r."customer_zip_sha256" AS "customerZipSha256",
         o."status" AS "orderStatus", o."stripeSessionId",
         b."payment_intent" AS "paymentIntent", x."payment_intent" AS "reversalIntent",
+        zt."promotion_code" AS "zeroTotalPromotionCode",
         q."status"::text AS "qaStatus", q."reviewer_key" AS "qaReviewerKey",
         q."artifact_sha256" AS "qaArtifactSha256",
         q."customer_artifact_sha256" AS "qaCustomerArtifactSha256",
@@ -44,6 +46,7 @@ const contextSql = (orderId: string) => Prisma.sql`
  JOIN "ot_neutral_runtime_order" o ON o."id"=r."order_id"
  LEFT JOIN "ot_neutral_runtime_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId"
  LEFT JOIN "ot_neutral_runtime_settlement_reversal" x ON x."payment_intent"=b."payment_intent"
+ ${neutralZeroTotalSettlementJoin("o")}
  LEFT JOIN "ot_neutral_qa_review" q ON q."reservation_id"=r."id"
  LEFT JOIN "ot_fulfillment" f ON f."id"=q."fulfillment_id"
  WHERE r."order_id"=${orderId}`
@@ -54,6 +57,7 @@ type ContextRow = {
   pdfSha256: string | null; csvSha256: string | null; customerZipSha256: string | null
   orderStatus: string; stripeSessionId: string | null
   paymentIntent: string | null; reversalIntent: string | null
+  zeroTotalPromotionCode: string | null
   qaStatus: string | null; qaReviewerKey: string | null
   qaArtifactSha256: string | null; qaCustomerArtifactSha256: string | null
   fulfillmentStatus: string | null; latestArtifactSha256: string | null
@@ -70,7 +74,7 @@ function toContext(
     expectedSha256: input.expectedSha256,
     orderStatus: row.orderStatus,
     paymentAuthoritative:
-      row.orderStatus === "PAID" && !!row.stripeSessionId && !!row.paymentIntent,
+      row.orderStatus === "PAID" && !!row.stripeSessionId && (!!row.paymentIntent || !!row.zeroTotalPromotionCode),
     settlementReversed: !!row.reversalIntent,
     reservationStatus: row.reservationStatus,
     bundleSha256: row.bundleSha256,

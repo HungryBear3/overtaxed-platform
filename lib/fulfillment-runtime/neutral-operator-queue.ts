@@ -1,6 +1,7 @@
 import "server-only"
 
 import { Prisma } from "@prisma/client"
+import { neutralZeroTotalSettlementJoin } from "@/lib/fulfillment-runtime/payment-authority"
 import { neutralPrisma } from "@/lib/fulfillment-runtime/neutral-db"
 import type { NeutralDbExecutor } from "@/lib/fulfillment-runtime/neutral-db-executor"
 import {
@@ -28,6 +29,7 @@ const queueSql = Prisma.sql`
  SELECT r."order_id" AS "orderId", r."id" AS "reservationId",
         o."status" AS "orderStatus", o."stripeSessionId",
         b."payment_intent" AS "paymentIntent", x."payment_intent" AS "reversalIntent",
+        zt."promotion_code" AS "zeroTotalPromotionCode",
         w."status"::text AS "generationStatus",
         r."status"::text AS "reservationStatus",
         r."bundle_sha256" AS "bundleSha256", r."manifest_sha256" AS "manifestSha256",
@@ -47,6 +49,7 @@ const queueSql = Prisma.sql`
  JOIN "ot_neutral_runtime_order" o ON o."id"=r."order_id"
  LEFT JOIN "ot_neutral_runtime_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId"
  LEFT JOIN "ot_neutral_runtime_settlement_reversal" x ON x."payment_intent"=b."payment_intent"
+ ${neutralZeroTotalSettlementJoin("o")}
  LEFT JOIN "ot_neutral_generation_work" w ON w."reservation_id"=r."id"
  LEFT JOIN "ot_neutral_qa_review" q ON q."reservation_id"=r."id"
  LEFT JOIN "ot_neutral_refund_work" n ON n."qa_review_id"=q."id"
@@ -60,6 +63,7 @@ type QueueRow = {
   orderId: string; reservationId: string
   orderStatus: string; stripeSessionId: string | null
   paymentIntent: string | null; reversalIntent: string | null
+  zeroTotalPromotionCode: string | null
   generationStatus: string | null; reservationStatus: string
   bundleSha256: string | null; manifestSha256: string | null
   customerZipSha256: string | null; promotedAt: Date | null
@@ -82,7 +86,7 @@ export async function listNeutralOperatorQueue(
       toNeutralOperatorQueueItem({
         ...row,
         paymentAuthoritative:
-          row.orderStatus === "PAID" && !!row.stripeSessionId && !!row.paymentIntent,
+          row.orderStatus === "PAID" && !!row.stripeSessionId && (!!row.paymentIntent || !!row.zeroTotalPromotionCode),
         settlementReversed: !!row.reversalIntent,
       }),
     ),

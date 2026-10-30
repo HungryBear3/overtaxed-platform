@@ -17,6 +17,8 @@ const ref = (row: Row): { locator: string; receipt: NeutralReportReceipt } | nul
   const value = row.privateReferences as { locator?: unknown; receipt?: unknown }
   return typeof value.locator === "string" && value.receipt && typeof value.receipt === "object" ? { locator: value.locator, receipt: value.receipt as NeutralReportReceipt } : null
 }
+// jsonb does not preserve key order: compare stored receipts by sorted keys, never by insertion order.
+const sortedJson = (value: object) => JSON.stringify(Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))))
 async function byReservation(key: string): Promise<Row | null> {
   const rows = await db.$queryRaw<Row[]>(Prisma.sql`SELECT "id", "order_id" AS "orderId", "reservation_key" AS "reservationKey", "property_fingerprint" AS "propertyFingerprint", "status"::text AS "status", "bundle_sha256" AS "bundleSha256", "private_references" AS "privateReferences" FROM "ot_neutral_report_reservation" WHERE "reservation_key"=${key} LIMIT 1`)
   return rows[0] ?? null
@@ -34,7 +36,8 @@ export const prismaNeutralReportRepository: NeutralReportRepository = {
   async reserve(orderId, key) {
     const rows = await db.$queryRaw<Row[]>(Prisma.sql`SELECT r."id", r."order_id" AS "orderId", r."reservation_key" AS "reservationKey", r."property_fingerprint" AS "propertyFingerprint", o."propertyPin", r."status"::text AS "status", r."bundle_sha256" AS "bundleSha256", r."private_references" AS "privateReferences" FROM "ot_neutral_report_reservation" r JOIN "ot_neutral_runtime_order" o ON o."id"=r."order_id" WHERE r."order_id"=${orderId} LIMIT 1`)
     if (!rows[0]) return {outcome:"UNKNOWN"}
-    const expectedKey=`neutral-order/${neutralReportDigest(JSON.stringify({orderId,propertyPin:rows[0].propertyPin,productPolicyVersion:NEUTRAL_REPORT_COMMERCE_POLICY.version}))}`
+    // Same canonical (sorted-key) form the producer hashes: orderId, productPolicyVersion, propertyPin.
+    const expectedKey=`neutral-order/${neutralReportDigest(JSON.stringify({orderId,productPolicyVersion:NEUTRAL_REPORT_COMMERCE_POLICY.version,propertyPin:rows[0].propertyPin}))}`
     if (key!==expectedKey || rows[0].reservationKey!==neutralOrderReservationKey(orderId) || !["RESERVED","STAGED","PROMOTED"].includes(rows[0].status)) return {outcome:"CONFLICT"}
     const value = rows[0]?.status === "PROMOTED" ? ref(rows[0]) : null
     return { outcome: "CONFIRMED", value: value?.receipt ?? null }
@@ -47,8 +50,11 @@ export const prismaNeutralReportRepository: NeutralReportRepository = {
     if (!reservation || !["RESERVED","STAGED"].includes(reservation.status)) return { outcome:"CONFLICT" }
     const generatedSourceContent=stableSourceContentSha256(write.manifestJson)
     const generatedDeadlineIdentity=stableDeadlineIdentitySha256(write.deadline)
-    const expectedAdmission=neutralReportDigest(JSON.stringify({pin:reservation.propertyPin,policy:NEUTRAL_REPORT_COMMERCE_POLICY.version,data:receipt.dataEvidenceSha256,deadline:receipt.deadlineEvidenceSha256}))
-    if (reservation.sourceContentSha256!==generatedSourceContent || reservation.deadlineIdentitySha256!==generatedDeadlineIdentity || reservation.dataEvidenceSha256!==receipt.dataEvidenceSha256 || reservation.deadlineEvidenceSha256!==receipt.deadlineEvidenceSha256 || reservation.admissionSha256!==expectedAdmission) {
+    // Admission digests the checkout window snapshot; generation digests a later calendar read (its own
+    // retrievedAt). The two deadline evidence digests never share a formula, so the calendar is compared by
+    // identity (close date, source, status, township): unchanged stages, any change fails closed below.
+    const expectedAdmission=neutralReportDigest(JSON.stringify({pin:reservation.propertyPin,policy:NEUTRAL_REPORT_COMMERCE_POLICY.version,data:receipt.dataEvidenceSha256,deadline:reservation.deadlineEvidenceSha256}))
+    if (reservation.sourceContentSha256!==generatedSourceContent || reservation.deadlineIdentitySha256!==generatedDeadlineIdentity || reservation.dataEvidenceSha256!==receipt.dataEvidenceSha256 || reservation.admissionSha256!==expectedAdmission) {
       await db.$executeRaw(Prisma.sql`UPDATE "ot_neutral_report_reservation" SET "status"='SUPERSEDED',"superseded_by_sha256"=${receipt.dataEvidenceSha256},"incident_code"='GENERATION_EVIDENCE_CHANGED',"updated_at"=CURRENT_TIMESTAMP WHERE "id"=${reservation.id} AND "status"='RESERVED'`)
       return { outcome:"CONFLICT" }
     }
@@ -88,13 +94,62 @@ export const prismaNeutralReportRepository: NeutralReportRepository = {
   async readStaged(key) { const row = await findByBundleKey(key); const reference = row && ref(row); return row?.bundleSha256 && reference && row.status === "STAGED" ? readNeutralBundle(reference.locator, row.bundleSha256) : null },
   async promote(key, receipt) {
     const row = await findByBundleKey(key), reference = row && ref(row)
-    if (!row || !reference || JSON.stringify(reference.receipt) !== JSON.stringify(receipt)) return { outcome: "CONFLICT" }
+    if (!row || !reference || sortedJson(reference.receipt) !== sortedJson(receipt)) return { outcome: "CONFLICT" }
     const count = await db.$executeRaw(Prisma.sql`UPDATE "ot_neutral_report_reservation" SET "status"='PROMOTED', "promoted_at"=CURRENT_TIMESTAMP, "updated_at"=CURRENT_TIMESTAMP WHERE "order_id"=${row.orderId} AND "status"='STAGED'`)
     return count === 1 || row.status === "PROMOTED" ? { outcome: "CONFIRMED", value: receipt } : { outcome: "UNKNOWN" }
   },
   async readConfirmed(key) { const row = await findByBundleKey(key), reference = row && ref(row); if (!row?.bundleSha256 || !reference || row.status !== "PROMOTED") return null; try { return { write: await readNeutralBundle(reference.locator, row.bundleSha256), receipt: reference.receipt } } catch { await db.$executeRaw(Prisma.sql`UPDATE "ot_neutral_report_reservation" SET "status"='COMPROMISED',"incident_code"='PROMOTED_STORAGE_CORRUPTION',"reconciliation_code"='OPERATOR_INCIDENT_REQUIRED',"updated_at"=CURRENT_TIMESTAMP WHERE "id"=${row.id} AND "status"='PROMOTED'`).catch(()=>{}); return null } },
   async quarantine(key) { const row = await findByBundleKey(key); if (row) await db.$executeRaw(Prisma.sql`UPDATE "ot_neutral_report_reservation" SET "status"='QUARANTINED', "reconciliation_code"='CONTENT_OR_BINDING_AMBIGUOUS', "updated_at"=CURRENT_TIMESTAMP WHERE "order_id"=${row.orderId} AND "status" <> 'PROMOTED'`) },
 }
+class AdmissionRollback extends Error {
+  constructor(readonly blocker: string) { super(blocker) }
+}
+
+/** Binding refusal must escape the local transaction, including a joined/revived row.
+ * An unacknowledged COMMIT is unknown: never compensate or dispatch this request. */
+export async function prepareNeutralCheckoutAdmissionOrder(
+  input: Parameters<typeof reserveNeutralCheckoutOrder>[0],
+  bind: () => Promise<{ ok: true } | { ok: false; blocker: string }>,
+) {
+  // This is a request deadline, not cancellation of the immutable binder.
+  // Expire before the 10s server idle limit / 15s Prisma timer so the callback
+  // rejects and Prisma can roll back normally, rather than timing out detached.
+  let expired = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      expired = true
+      reject(new AdmissionRollback('NEUTRAL_RESERVATION_UNKNOWN'))
+    }, 8000)
+  })
+  const checkDeadline = () => {
+    if (expired) throw new AdmissionRollback('NEUTRAL_RESERVATION_UNKNOWN')
+  }
+  try {
+    const transaction = db.$transaction(tx => Promise.race([(async () => {
+      checkDeadline()
+      await tx.$executeRaw(Prisma.sql`SET LOCAL lock_timeout = '2s'`)
+      await tx.$executeRaw(Prisma.sql`SET LOCAL statement_timeout = '3s'`)
+      await tx.$executeRaw(Prisma.sql`SET LOCAL idle_in_transaction_session_timeout = '10s'`)
+      const reserved = await reserveNeutralCheckoutOrder(input, { db: tx })
+      checkDeadline()
+      if (!reserved.ok) throw new AdmissionRollback(reserved.blocker)
+      const bound = await bind()
+      checkDeadline()
+      if (!bound.ok) throw new AdmissionRollback(bound.blocker)
+      return reserved
+    })(), deadline]), { timeout: 15000, maxWait: 5000 })
+    // Observe late transaction/rollback rejection without delaying the response.
+    // The inner race also settles the callback; racing only the transaction
+    // would leave it pending. Neither race deletes or compensates a late bind.
+    return await Promise.race([transaction, deadline])
+  } catch (error) {
+    return { ok: false as const, blocker: error instanceof AdmissionRollback ? error.blocker : 'NEUTRAL_RESERVATION_UNKNOWN' }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function reserveNeutralCheckoutOrder(input: { orderId: string; propertyPin: string; dataEvidenceSha256: string; sourceContentSha256: string; officialRetrievedAt: string; officialOldestRetrievedAt:string; deadlineEvidenceSha256: string; deadlineIdentitySha256: string; deadlineRetrievedAt: string; admissionSha256: string },options:{db?:Db}={}) {
   if (process.env.OT_NEUTRAL_REPORT_CHECKOUT_ENABLED !== "true") return { ok: false as const, blocker: "NEUTRAL_CHECKOUT_DISABLED" }
   const key = neutralOrderReservationKey(input.orderId)
@@ -110,7 +165,15 @@ export async function reserveNeutralCheckoutOrder(input: { orderId: string; prop
   try {
     return await inNeutralTransaction(db,options.db,async tx => {
       await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(684921337)::text AS "locked"`)
-      await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_report_reservation" r SET "status"='RESERVED',"cohort_position"=(SELECT slot FROM generate_series(1,10) slot WHERE NOT EXISTS(SELECT 1 FROM "ot_neutral_report_reservation" x WHERE x."cohort_position"=slot AND x."status"<>'ABANDONED') ORDER BY slot LIMIT 1),"precheckout_lease_expires_at"=${leaseExpiresAt},"admission_sha256"=${input.admissionSha256},"data_evidence_sha256"=${input.dataEvidenceSha256},"deadline_evidence_sha256"=${input.deadlineEvidenceSha256},"source_content_sha256"=${input.sourceContentSha256},"deadline_identity_sha256"=${input.deadlineIdentitySha256},"official_retrieved_at"=${officialAt},"official_oldest_retrieved_at"=${oldestAt},"official_max_age_seconds"=${derivedMaxAgeSeconds},"deadline_retrieved_at"=${deadlineAt},"reconciliation_code"=NULL,"updated_at"=${reservedAt} FROM "ot_neutral_runtime_order" o WHERE r."order_id"=o."id" AND r."order_id"=${input.orderId} AND r."status"='ABANDONED' AND r."reservation_key"=${key} AND r."property_fingerprint"=${propertyFingerprint} AND o."propertyPin"=${input.propertyPin} AND o."status" IN ('CHECKOUT_PENDING','CHECKOUT_FAILED') AND o."stripeSessionId" IS NULL AND o."amountPaid"=0`)
+      // An order's admitted evidence identity is immutable once written (any status, including
+      // ABANDONED): a different evidence pair is refused here, atomically, whichever request won.
+      const prior = (await tx.$queryRaw<Array<{ data: string; source: string }>>(Prisma.sql`SELECT "data_evidence_sha256" AS "data","source_content_sha256" AS "source" FROM "ot_neutral_report_reservation" WHERE "order_id"=${input.orderId} FOR UPDATE`))[0]
+      if (prior && (prior.data !== input.dataEvidenceSha256 || prior.source !== input.sourceContentSha256)) return { ok:false as const, blocker:"NEUTRAL_EVIDENCE_CONFLICT" }
+      const revived = await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_report_reservation" r SET "status"='RESERVED',"reviewer_key"='pilot-primary',"reviewer_week_start"=(CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date - ((extract(isodow from CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::int)-1),"cohort_position"=(SELECT slot FROM generate_series(1,10) slot WHERE NOT EXISTS(SELECT 1 FROM "ot_neutral_report_reservation" x WHERE x."cohort_position"=slot AND x."status"<>'ABANDONED') ORDER BY slot LIMIT 1),"precheckout_lease_expires_at"=${leaseExpiresAt},"admission_sha256"=${input.admissionSha256},"data_evidence_sha256"=${input.dataEvidenceSha256},"deadline_evidence_sha256"=${input.deadlineEvidenceSha256},"source_content_sha256"=${input.sourceContentSha256},"deadline_identity_sha256"=${input.deadlineIdentitySha256},"official_retrieved_at"=${officialAt},"official_oldest_retrieved_at"=${oldestAt},"official_max_age_seconds"=${derivedMaxAgeSeconds},"deadline_retrieved_at"=${deadlineAt},"reconciliation_code"=NULL,"updated_at"=${reservedAt} FROM "ot_neutral_runtime_order" o WHERE r."order_id"=o."id" AND r."order_id"=${input.orderId} AND r."status"='ABANDONED' AND r."reservation_key"=${key} AND r."property_fingerprint"=${propertyFingerprint} AND o."propertyPin"=${input.propertyPin} AND o."status" IN ('CHECKOUT_PENDING','CHECKOUT_FAILED') AND o."stripeSessionId" IS NULL AND o."amountPaid"=0
+          AND o."tier"='T2' AND o."checkoutAmountCents"=6900 AND lower(o."checkoutCurrency")='usd' AND o."checkoutPriceId" IS NOT NULL AND o."checkoutProductId" IS NOT NULL
+          AND o."eligibilitySnapshot"->>'policyVersion'=${NEUTRAL_REPORT_COMMERCE_POLICY.version}
+          AND (SELECT count(*) FROM "ot_neutral_report_reservation" WHERE "status"<>'ABANDONED') < 10
+          AND (SELECT count(*) FROM "ot_neutral_report_reservation" WHERE "reviewer_key"='pilot-primary' AND "reviewer_week_start"=(CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date - ((extract(isodow from CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::int)-1) AND "status"<>'ABANDONED') < 25`)
       const inserted = await tx.$queryRaw<Row[]>(Prisma.sql`
         INSERT INTO "ot_neutral_report_reservation" ("id","order_id","policy_version","property_fingerprint","reservation_key","checkout_price_id","checkout_product_id","admission_sha256","data_evidence_sha256","deadline_evidence_sha256","source_content_sha256","deadline_identity_sha256","official_retrieved_at","official_oldest_retrieved_at","official_max_age_seconds","deadline_retrieved_at","cohort_position","precheckout_lease_expires_at","reviewer_key","reviewer_week_start","created_at","updated_at")
         SELECT ${id},o."id",${NEUTRAL_REPORT_COMMERCE_POLICY.version},${propertyFingerprint},${key},o."checkoutPriceId",o."checkoutProductId",${input.admissionSha256},${input.dataEvidenceSha256},${input.deadlineEvidenceSha256},${input.sourceContentSha256},${input.deadlineIdentitySha256},${officialAt},${oldestAt},${derivedMaxAgeSeconds},${deadlineAt},
@@ -125,7 +188,8 @@ export async function reserveNeutralCheckoutOrder(input: { orderId: string; prop
         ON CONFLICT ("order_id") DO NOTHING RETURNING "id","order_id" AS "orderId","reservation_key" AS "reservationKey","property_fingerprint" AS "propertyFingerprint","status"::text AS "status","bundle_sha256" AS "bundleSha256","private_references" AS "privateReferences"`)
       const row = inserted[0] ?? (await tx.$queryRaw<Row[]>(Prisma.sql`SELECT "id","order_id" AS "orderId","reservation_key" AS "reservationKey","property_fingerprint" AS "propertyFingerprint","status"::text AS "status","bundle_sha256" AS "bundleSha256","private_references" AS "privateReferences" FROM "ot_neutral_report_reservation" WHERE "order_id"=${input.orderId} FOR UPDATE`))[0]
       if (!row || row.reservationKey!==key || row.propertyFingerprint!==propertyFingerprint || row.status!=="RESERVED") return { ok:false as const, blocker:"NEUTRAL_RESERVATION_CONFLICT" }
-      return { ok:true as const }
+      // `created`: this call inserted or revived the row (it did not join another request's live row).
+      return { ok:true as const, created: Boolean(inserted[0]) || revived === 1 }
     })
   } catch (error) {
     if (process.env.OT_NEUTRAL_TEST_RUNTIME_URL) throw error
@@ -135,7 +199,7 @@ export async function reserveNeutralCheckoutOrder(input: { orderId: string; prop
 function receiptFromWrite(write: NeutralReportWrite): NeutralReportReceipt { const manifest = JSON.parse(write.manifestJson) as { dataEvidenceSha256: string; deadlineEvidenceSha256: string }; return { key: write.key, manifestSha256: neutralReportDigest(write.manifestJson), pdfSha256: neutralReportDigest(write.pdf), csvSha256: neutralReportDigest(write.csv), dataEvidenceSha256: manifest.dataEvidenceSha256, deadlineEvidenceSha256: manifest.deadlineEvidenceSha256 } }
 function strictInstant(value: string): Date | null { if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return null; const ms=Date.parse(value); return Number.isFinite(ms) ? new Date(ms) : null }
 function stableSourceContentSha256(manifestJson:string):string { try { const m=JSON.parse(manifestJson) as {sources:Array<{datasetId:string;url:string;contentSha256:string}>}; return neutralReportDigest(JSON.stringify(m.sources.map(s=>({datasetId:s.datasetId,url:s.url,contentSha256:s.contentSha256})).sort((a,b)=>a.url.localeCompare(b.url)))) } catch { return "" } }
-function stableDeadlineIdentitySha256(value:unknown):string { const d=value as Record<string,unknown>; return neutralReportDigest(JSON.stringify({closeDate:d?.closeDate,sourceUrl:d?.sourceUrl,status:d?.status,townshipKey:d?.townshipKey})) }
+function stableDeadlineIdentitySha256(value:unknown):string { const d=value as Record<string,unknown>; return neutralReportDigest(JSON.stringify({closeDate:d?.closeDate,openDate:d?.openDate,sourceUrl:d?.sourceUrl,status:d?.status,townshipKey:d?.townshipKey})) }
 async function findByBundleKey(key: string): Promise<Row | null> { const rows = await db.$queryRaw<Row[]>(Prisma.sql`SELECT "id", "order_id" AS "orderId", "reservation_key" AS "reservationKey", "property_fingerprint" AS "propertyFingerprint", "status"::text AS "status", "bundle_sha256" AS "bundleSha256", "private_references" AS "privateReferences" FROM "ot_neutral_report_reservation" WHERE "private_references"->'receipt'->>'key'=${key} LIMIT 1`); return rows[0] ?? null }
 
 export async function abandonNeutralCheckoutReservation(orderId: string,options:{db?:Db}={}): Promise<boolean> {

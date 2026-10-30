@@ -1,5 +1,5 @@
 /**
- * @jest-environment jsdom
+ * @jest-environment ./test-support/factual-jsdom-environment.cjs
  */
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 
@@ -16,9 +16,13 @@ import { canonicalFreeCheckOutcome } from "@/lib/free-check-outcome-contract"
  * as a count that is not 1.
  */
 
-const SESSION_KEY = "freeCheckResult_v2"
+import { createFactualLocalRuntime, SYNTHETIC_SUBJECT_PIN } from "@/test-support/factual-local-fixture"
+const SESSION_KEY = "freeCheckReceipt_v3"
+let runtime: ReturnType<typeof createFactualLocalRuntime>
+let receipt: unknown
 
-function supportiveResponse() {
+
+function legacyResponse() {
   return {
     success: true,
     subject: {
@@ -57,18 +61,17 @@ function supportiveResponse() {
   }
 }
 
-function insufficientResponse() {
-  return {
-    ...supportiveResponse(),
-    outcome: canonicalFreeCheckOutcome("insufficient_evidence", "no_comparables"),
-  }
-}
+function supportiveResponse() { return receipt }
+function insufficientResponse() { return receipt }
 
 describe("free-check funnel across both surfaces", () => {
   let gtag: jest.Mock
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    runtime = createFactualLocalRuntime()
+    receipt = await (await runtime.route.POST(new Request('http://local/api/free-check', { method: 'POST', body: JSON.stringify({pin:SYNTHETIC_SUBJECT_PIN}) }))).json()
     jest.clearAllMocks()
+    window.scrollTo = jest.fn()
     window.sessionStorage.clear()
     window.localStorage.clear()
     window.history.replaceState({}, "", "/check")
@@ -90,14 +93,45 @@ describe("free-check funnel across both surfaces", () => {
   }
 
   function stubRoute(response: unknown, init: { ok?: boolean; status?: number } = {}) {
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: init.ok ?? true,
-      status: init.status ?? 200,
-      json: async () => response,
-    }) as unknown as typeof fetch
+    global.fetch = jest.fn(async (url, options) => options?.method === 'POST'
+      ? new Response(JSON.stringify(response), {status: init.status ?? (init.ok === false ? 503 : 200)})
+      : runtime.route.GET(new Request(new URL(String(url), 'http://local')))) as typeof fetch
   }
 
   describe("/check page", () => {
+    it.each(['absent', 'throwing'])('analytics %s cannot block canonical adoption', async kind => {
+      stubRoute(receipt)
+      if (kind === 'absent') delete (window as {gtag?: unknown}).gtag
+      else window.gtag = (() => { throw new Error('blocked tag') }) as any
+      render(<FreeCheckFormWrapper />)
+      submitPin()
+      await screen.findByTestId('factual-summary')
+    })
+    it('waits for the actual GET adoption, not the receipt HTTP 200', async () => {
+      let release!: (r: Response) => void
+      global.fetch = jest.fn(async (_url, options) => options?.method === 'POST'
+        ? new Response(JSON.stringify(receipt))
+        : new Promise<Response>(resolve => {release = resolve})) as typeof fetch
+      render(<FreeCheckFormWrapper />)
+      submitPin()
+      await screen.findByTestId('factual-loading')
+      expect(countOf('free_check_completed')).toBe(0)
+      release(await runtime.route.GET(new Request('http://local?id='+(receipt as any).resultId)))
+      await screen.findByTestId('factual-summary')
+      await waitFor(() => expect(countOf('free_check_completed')).toBe(1))
+    })
+
+    it.each(['legacy', 'bad-get', 'wrong-binding'])('never completes a 200 with %s', async kind => {
+      stubRoute(kind === 'legacy' ? legacyResponse() : receipt)
+      if (kind !== 'legacy') global.fetch = jest.fn(async (_url, options) => options?.method === 'POST'
+        ? new Response(JSON.stringify(receipt))
+        : new Response(kind === 'bad-get' ? '{}' : JSON.stringify({...runtime.store.getResult((receipt as any).resultId), snapshotId: 'snap_' + 'z'.repeat(24)}))) as typeof fetch
+      render(<FreeCheckFormWrapper />)
+      submitPin()
+      await screen.findByTestId('factual-refused')
+      expect(countOf('free_check_completed')).toBe(0)
+    })
+
     function submitPin(value = "16012160010000") {
       fireEvent.change(screen.getByLabelText(/Cook County PIN/i), { target: { value } })
       fireEvent.click(screen.getByRole("button", { name: /check my assessment/i }))
@@ -117,13 +151,15 @@ describe("free-check funnel across both surfaces", () => {
       })
       expect(paramsOf("free_check_completed")).toMatchObject({
         surface: "check_page",
-        outcome_code: "supportive",
-        allow_checkout: true,
-        window_status: "open",
+        result_kind: "FACTUAL_ONLY",
+        data_origin: "SYNTHETIC_PREVIEW",
+        qualified: false,
+        allow_checkout: false,
+        window_status: "unknown",
       })
     })
 
-    it("binds the qualified event to the route's outcome, not to the figures on screen", async () => {
+    it("never qualifies an adopted factual result from raw figures", async () => {
       stubRoute(insufficientResponse())
       render(<FreeCheckFormWrapper />)
 
@@ -132,8 +168,8 @@ describe("free-check funnel across both surfaces", () => {
       await waitFor(() => expect(countOf("free_check_completed")).toBe(1))
       expect(countOf("free_check_qualified")).toBe(0)
       expect(paramsOf("free_check_completed")).toMatchObject({
-        outcome_code: "insufficient_evidence",
-        outcome_reason: "no_comparables",
+        result_kind: "FACTUAL_ONLY",
+        validation: "UNVALIDATED",
         qualified: false,
       })
     })
@@ -184,7 +220,8 @@ describe("free-check funnel across both surfaces", () => {
       global.fetch = jest
         .fn()
         .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ambiguous })
-        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => supportiveResponse() }) as unknown as typeof fetch
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => supportiveResponse() })
+        .mockImplementation((url: string) => runtime.route.GET(new Request(new URL(url, 'http://local')))) as unknown as typeof fetch
 
       render(<FreeCheckFormWrapper />)
 
@@ -209,8 +246,8 @@ describe("free-check funnel across both surfaces", () => {
       render(<FreeCheckFormWrapper />)
 
       // The restored result renders — this is the rehydration path, not a no-op.
-      await screen.findByText(CC_02)
-      expect(global.fetch).not.toHaveBeenCalled()
+      await screen.findByTestId('factual-summary')
+      expect(global.fetch).toHaveBeenCalledTimes(1)
       expect(gtag).not.toHaveBeenCalled()
     })
 
@@ -224,7 +261,7 @@ describe("free-check funnel across both surfaces", () => {
       rerender(<FreeCheckFormWrapper />)
 
       expect(countOf("free_check_completed")).toBe(1)
-      expect(countOf("free_check_qualified")).toBe(1)
+      expect(countOf("free_check_qualified")).toBe(0)
     })
 
     it("carries no stored UTM value into any payload, however hostile the stored attribution", async () => {
@@ -245,7 +282,7 @@ describe("free-check funnel across both surfaces", () => {
 
       submitPin()
 
-      await waitFor(() => expect(countOf("free_check_qualified")).toBe(1))
+      await waitFor(() => expect(countOf("free_check_completed")).toBe(1))
       const serialized = JSON.stringify(gtag.mock.calls)
       for (const value of Object.values(hostile)) {
         expect(serialized).not.toContain(value)
@@ -267,7 +304,7 @@ describe("free-check funnel across both surfaces", () => {
         "Chicago",
         "60601",
         "Stickney",
-        "071",
+        "071", "18062140110000", "18-06-214-011-0000", "Cicero", "4250000", "res_", "snap_",
       ]) {
         expect(serialized).not.toContain(forbidden)
       }
@@ -304,11 +341,9 @@ describe("free-check funnel across both surfaces", () => {
         surface: "home_hero",
         input_mode: "address",
       })
-      expect(countOf("free_check_qualified")).toBe(1)
-      expect(paramsOf("free_check_qualified")).toMatchObject({
-        surface: "home_hero",
-        outcome_code: "supportive",
-        window_status: "open",
+      expect(countOf("free_check_qualified")).toBe(0)
+      expect(paramsOf("free_check_completed")).toMatchObject({
+        surface: "home_hero", result_kind: "FACTUAL_ONLY", window_status: "unknown",
       })
     })
 
@@ -338,8 +373,8 @@ describe("free-check funnel across both surfaces", () => {
         surface: "sticky_bar",
         input_mode: "address",
       })
-      expect(countOf("free_check_qualified")).toBe(1)
-      expect(paramsOf("free_check_qualified")).toMatchObject({ surface: "sticky_bar" })
+      expect(countOf("free_check_qualified")).toBe(0)
+      expect(paramsOf("free_check_completed")).toMatchObject({ surface: "sticky_bar" })
     })
 
     it("does not double-count when the sticky-bar result reaches the hero listener", async () => {
@@ -350,7 +385,7 @@ describe("free-check funnel across both surfaces", () => {
 
       await waitFor(() => expect(countOf("free_check_completed")).toBe(1))
       // Let the dispatched result settle through the homepage listener.
-      await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2))
       expect(countOf("free_check_completed")).toBe(1)
       expect(countOf("free_check_started")).toBe(1)
     })

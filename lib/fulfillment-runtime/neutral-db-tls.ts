@@ -1,3 +1,4 @@
+import { X509Certificate } from "node:crypto"
 import type { PoolConfig } from "pg"
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1", "[::1]"])
@@ -18,7 +19,24 @@ const PEM_CERTIFICATE = /-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-
  * passed to pg and supply the reviewed CA explicitly. TLS certificate and
  * hostname verification remain enabled.
  */
-export function buildNeutralPoolConfig(rawUrl: string, rawCa: string | undefined): Pick<PoolConfig, "connectionString" | "host" | "port" | "user" | "password" | "database" | "ssl"> {
+export type NeutralPoolTrustOptions = {
+  /**
+   * Explicit code-level opt-in for a TLS-only loopback server (for example an
+   * owned hostssl fixture). Never inferred from a CA or from the environment.
+   */
+  loopbackTls?: "verify-full"
+}
+
+export function buildNeutralPoolConfig(
+  rawUrl: string,
+  rawCa: string | undefined,
+  options: NeutralPoolTrustOptions = {},
+): Pick<PoolConfig, "connectionString" | "host" | "port" | "user" | "password" | "database" | "ssl"> {
+  const loopbackTls = options.loopbackTls
+  if (loopbackTls !== undefined && loopbackTls !== "verify-full")
+    throw new Error("NEUTRAL_DATABASE_TLS_OPTION_INVALID")
+
+
   let parsed: URL
   try {
     parsed = new URL(rawUrl)
@@ -45,6 +63,10 @@ export function buildNeutralPoolConfig(rawUrl: string, rawCa: string | undefined
     // ssl=false setting. An explicit host also removes WHATWG's IPv6 brackets
     // before node-postgres hands the value to net.connect.
     if (seen.size > 0) throw new Error("NEUTRAL_DATABASE_URL_OPTION_FORBIDDEN")
+    // Only the explicit opt-in enables TLS here; a CA alone keeps plaintext.
+    // The opt-in demands a parsed CA certificate and leaves Node's default
+    // chain and hostname/IP-SAN verification in place (no identity override).
+    const ssl = loopbackTls === "verify-full" ? { rejectUnauthorized: true, ca: validatedCa(rawCa, true) } : false
     try {
       return {
         host: parsed.hostname === "[::1]" ? "::1" : parsed.hostname,
@@ -52,7 +74,7 @@ export function buildNeutralPoolConfig(rawUrl: string, rawCa: string | undefined
         user: decodeURIComponent(parsed.username),
         password: decodeURIComponent(parsed.password),
         database: decodeURIComponent(parsed.pathname.slice(1)),
-        ssl: false,
+        ssl,
       }
     } catch {
       throw new Error("NEUTRAL_DATABASE_URL_INVALID")
@@ -62,14 +84,7 @@ export function buildNeutralPoolConfig(rawUrl: string, rawCa: string | undefined
   if (parsed.searchParams.get("sslmode")?.toLowerCase() !== "verify-full")
     throw new Error("NEUTRAL_DATABASE_VERIFY_FULL_REQUIRED")
 
-  const ca = rawCa?.trim() ?? ""
-  if (!ca) throw new Error("NEUTRAL_DATABASE_CA_REQUIRED")
-  if (
-    Buffer.byteLength(ca, "utf8") > MAX_CA_BYTES ||
-    ca.includes("\0") ||
-    !PEM_CERTIFICATE.test(ca)
-  )
-    throw new Error("NEUTRAL_DATABASE_CA_INVALID")
+  const ca = validatedCa(rawCa, false)
 
   // Neither option belongs in node-postgres once this helper has validated it.
   // Removing both guarantees pg-connection-string cannot replace the explicit
@@ -80,4 +95,27 @@ export function buildNeutralPoolConfig(rawUrl: string, rawCa: string | undefined
     connectionString: parsed.toString(),
     ssl: { rejectUnauthorized: true, ca },
   }
+}
+
+function validatedCa(rawCa: string | undefined, requireCaCertificate: boolean): string {
+  const ca = rawCa?.trim() ?? ""
+  if (!ca) throw new Error("NEUTRAL_DATABASE_CA_REQUIRED")
+  if (
+    Buffer.byteLength(ca, "utf8") > MAX_CA_BYTES ||
+    ca.includes("\0") ||
+    !PEM_CERTIFICATE.test(ca)
+  )
+    throw new Error("NEUTRAL_DATABASE_CA_INVALID")
+  // The remote path keeps its historical PEM-shape check. The loopback opt-in
+  // is new, so it additionally requires a parseable certificate marked CA.
+  if (requireCaCertificate) {
+    let isCa = false
+    try {
+      isCa = new X509Certificate(ca).ca
+    } catch {
+      isCa = false
+    }
+    if (!isCa) throw new Error("NEUTRAL_DATABASE_CA_INVALID")
+  }
+  return ca
 }

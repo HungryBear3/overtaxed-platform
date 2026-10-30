@@ -47,6 +47,7 @@ import { sanitizeAnonymousGaIdentifiers } from "@/lib/analytics/ga4"
 import { resolveAttributionCodes, shippedAttributionRegistry } from "@/lib/attribution/registry"
 import { revalidateCheckoutAttribution, touchesToStripeMetadata } from "@/lib/attribution/touch-contract"
 import { authorizeNeutralSnapshot, evaluateNeutralCheckout, NEUTRAL_CHECKOUT_FLAG } from "@/lib/commerce/neutral-checkout-gate"
+import { resolveCheckoutFullDiscount, type FullDiscount } from "@/lib/checkout/ot-full-discount"
 import {
   type AttributionBindingFailureReason,
   type AttributionState,
@@ -201,6 +202,9 @@ const CheckoutInput = z.object({
   // revalidated against lib/attribution/touch-contract below; a malformed value
   // degrades to "no attribution" and never refuses the checkout.
   attribution: z.unknown().optional(),
+  // A customer-entered promotion code string only. It is honoured solely as a
+  // server-allowlisted, product-scoped full discount resolved with Stripe.
+  promotionCode: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9]+$/).optional(),
 })
 
 type AddressCandidate = {
@@ -310,7 +314,35 @@ async function findOtOrderByCheckoutKey(checkoutKey: string) {
   return prisma.oTOrder.findUnique({ where: { checkoutKey } as any })
 }
 
-async function resolveLostCheckoutClaim(orderId: string, stripe: Stripe) {
+/**
+ * Durable "no promotion" binding in `checkoutDiscountPromotionCodeId`. A real
+ * Stripe id is always `promo_…`, so this can never satisfy the zero-total
+ * settlement check, which requires the provider's promotion id to equal it.
+ */
+const OT_NO_PROMOTION_BINDING = "none"
+
+/** Written only by earlier versions of this route; never written now. */
+const LEGACY_NEUTRAL_RESERVATION_REASON = "NEUTRAL_RESERVATION_FAILED"
+
+/**
+ * The promotion terms an order is already bound to, or null if it has none yet.
+ * A legacy CHECKOUT_CREATED row with a null column was finalized by code that
+ * always wrote the applied promotion there, so null there means no promotion.
+ */
+function boundPromotion(order: { status?: unknown; stripeSessionId?: unknown; checkoutDiscountPromotionCodeId?: unknown }): string | null {
+  const stored = order.checkoutDiscountPromotionCodeId
+  if (typeof stored === "string" && stored) return stored
+  return order.status === "CHECKOUT_CREATED" && order.stripeSessionId ? OT_NO_PROMOTION_BINDING : null
+}
+
+function promotionConflict() {
+  return NextResponse.json(
+    { error: "This checkout was already started with different promotion terms. Start a new checkout.", code: "CHECKOUT_PROMOTION_CONFLICT" },
+    { status: 409 },
+  )
+}
+
+async function resolveLostCheckoutClaim(orderId: string, stripe: Stripe, promotionBinding: string) {
   if (typeof prisma.oTOrder.findUnique !== "function") {
     return NextResponse.json(
       { error: "A checkout session is already being created. Refresh in a moment.", code: "CHECKOUT_ALREADY_STARTED" },
@@ -330,6 +362,8 @@ async function resolveLostCheckoutClaim(orderId: string, stripe: Stripe) {
       { status: 409 },
     )
   }
+  const currentBinding = boundPromotion(current)
+  if (currentBinding !== null && currentBinding !== promotionBinding) return promotionConflict()
   if (current.status === "CHECKOUT_CREATED" && current.stripeSessionId) {
     const prior = await stripe.checkout.sessions.retrieve(current.stripeSessionId)
     if (prior?.status === "open" && prior.url) return NextResponse.json({ url: prior.url })
@@ -430,6 +464,13 @@ async function snapshotFor(property: Record<string, unknown>, now: Date = new Da
     projection,
     policyVersion: signedPolicyVersion(),
   })
+}
+
+/** A bound order needs its own transfer; an unreadable binding authority fails closed. Order state is untouched. */
+function snapshotBindingRefusal(blocker: "ORDER_ALREADY_BOUND" | "BINDING_UNAVAILABLE") {
+  return blocker === "BINDING_UNAVAILABLE"
+    ? NextResponse.json({ error: "Checkout is temporarily unavailable.", code: "SNAPSHOT_BINDING_UNAVAILABLE" }, { status: 503 })
+    : NextResponse.json({ error: "This checkout is tied to an earlier free result. Return to that result to continue.", code: "SNAPSHOT_TRANSFER_REQUIRED" }, { status: 409 })
 }
 
 function publicWindow(snapshot: CheckoutWindowSnapshot) {
@@ -541,6 +582,7 @@ export async function POST(req: NextRequest) {
   if (resolved.error) return resolved.error
   const property = resolved.property as unknown as Record<string, unknown>
   let snapshot = await snapshotFor(property)
+  let snapshotTransferClaim: import("@/lib/commerce/snapshot-checkout-transfer").SnapshotTransferClaim | null = null
   let neutralEvidence: null | { dataEvidenceSha256: string; sourceContentSha256: string; officialRetrievedAt: string; officialOldestRetrievedAt:string; deadlineEvidenceSha256: string; deadlineIdentitySha256: string; deadlineRetrievedAt: string; admissionSha256: string } = null
   // Default-off alternative commerce authority. This does not sign or reuse the
   // strict merits policy: it admits only the owner-approved neutral records
@@ -549,8 +591,29 @@ export async function POST(req: NextRequest) {
   if (!snapshot.allowCheckout && input.tier === "T2") {
     let neutralProperty: Record<string, unknown> = {}
     if (process.env[NEUTRAL_CHECKOUT_FLAG] === "true") {
-      const { loadNeutralCheckoutOfficialProperty, neutralDeadlineEvidence, neutralAdmissionSha256 } = await import("@/lib/commerce/neutral-checkout-runtime")
-      const official = await loadNeutralCheckoutOfficialProperty(snapshot.pin)
+      const { loadNeutralCheckoutOfficialProperty, loadNeutralCheckoutFromTransfer, neutralDeadlineEvidence, neutralAdmissionSha256 } = await import("@/lib/commerce/neutral-checkout-runtime")
+      // A free result carried here via its signed checkout-scoped transfer cookie
+      // admits from that persisted snapshot only: no county refetch, no fallback.
+      const { productionSnapshotTransferAuthority } = await import("@/lib/commerce/snapshot-checkout-transfer")
+      const transfer = productionSnapshotTransferAuthority().readClaim(req)
+      if (transfer.status === "INVALID" || (transfer.status === "VALID" && transfer.claim.pin !== snapshot.pin)) {
+        return NextResponse.json({ error: "This free result can no longer be carried to checkout. Run the free check again.", code: "SNAPSHOT_TRANSFER_REJECTED" }, { status: 409 })
+      }
+      // An order already bound to a transferred snapshot never falls back to a
+      // live refetch: that would re-reserve it under different evidence.
+      if (transfer.status === "ABSENT") {
+        const existing = await prisma.oTOrder.findUnique({ where: { checkoutKey: input.checkoutKey }, select: { id: true } })
+        if (existing) {
+          const { neutralCheckoutUnboundOrRefuse } = await import("@/lib/commerce/neutral-checkout-runtime")
+          const unbound = await neutralCheckoutUnboundOrRefuse(existing.id)
+          if (!unbound.ok) return snapshotBindingRefusal(unbound.blocker)
+        }
+      }
+      const official = transfer.status === "VALID" ? await loadNeutralCheckoutFromTransfer(transfer.claim) : await loadNeutralCheckoutOfficialProperty(snapshot.pin)
+      if (transfer.status === "VALID" && !official) {
+        return NextResponse.json({ error: "This free result can no longer be carried to checkout. Run the free check again.", code: "SNAPSHOT_TRANSFER_REJECTED" }, { status: 409 })
+      }
+      if (transfer.status === "VALID") snapshotTransferClaim = transfer.claim
       const deadline = neutralDeadlineEvidence(snapshot)
       if (official && deadline) {
         neutralProperty = official.property
@@ -816,6 +879,23 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  let fullDiscount: FullDiscount | null = null
+  if (input.promotionCode) {
+    try {
+      fullDiscount = await resolveCheckoutFullDiscount(stripe, input.promotionCode, {
+        productId: checkoutProductId,
+        amountCents: checkoutAmountCents,
+        currency: checkoutCurrency,
+      })
+    } catch (error) {
+      console.error("[checkout/session] promotion code lookup failed", error)
+      return NextResponse.json({ error: "Checkout is temporarily unavailable.", code: "CHECKOUT_PROVIDER_ERROR" }, { status: 502 })
+    }
+    if (!fullDiscount) {
+      return NextResponse.json({ error: "That promotion code is not valid for this report.", code: "INVALID_PROMOTION_CODE" }, { status: 400 })
+    }
+  }
+
   const contractKey = buildOtContractKey({
     tier: input.tier,
     email: normalizedEmail,
@@ -944,11 +1024,20 @@ export async function POST(req: NextRequest) {
       if (!attributionBindingEnabled()) {
         // Gate off: byte-for-byte the pre-attribution path, and not one
         // statement against `ot_order_attribution` — not even a read.
-        order = await prisma.oTOrder.upsert({
-          where: { contractKey } as any,
-          create: canonicalOrderCreateData as any,
-          update: {},
-        })
+        try {
+          order = await prisma.oTOrder.upsert({
+            where: { contractKey } as any,
+            create: canonicalOrderCreateData as any,
+            update: {},
+          })
+        } catch (createError) {
+          // Non-atomic upsert lost a concurrent create (P2002): a deliberate refusal, not a provider error.
+          if ((createError as { code?: string })?.code !== "P2002") throw createError
+          const raced = await findOtOrderByContractKey(contractKey)
+          return NextResponse.json(raced
+            ? { error: "A checkout session is already being created. Refresh in a moment.", code: "CHECKOUT_ALREADY_STARTED" }
+            : { error: "This checkout key belongs to a different property or service request. Start a new checkout.", code: "CHECKOUT_KEY_CONFLICT" }, { status: 409 })
+        }
       } else {
         const creation = await createCanonicalOrderBindingFirstTouch({
           contractKey,
@@ -996,21 +1085,56 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       )
     }
+    // Promotion terms are bound to the order (not the contract key) before any
+    // checkout-session retrieve or create (the read-only price and promotion
+    // lookups above have already run); a reuse or retry under different terms
+    // is refused rather than handed the existing session or minted a new one.
+    const promotionBinding = fullDiscount?.promotionCodeId ?? OT_NO_PROMOTION_BINDING
+    const storedPromotionBinding = boundPromotion(order)
+    if (storedPromotionBinding !== null && storedPromotionBinding !== promotionBinding) return promotionConflict()
+    // An unbound pre-existing row that may already have reached Stripe under
+    // its attempt key (failed, creating, or holding a session) has unknowable
+    // request terms, so no terms may claim it.
+    if (storedPromotionBinding === null && !canonicalOrderCreatedHere && (
+      ["CHECKOUT_FAILED", "CHECKOUT_CREATING"].includes(String(order.status ?? "")) || order.stripeSessionId
+    )) return promotionConflict()
     if (snapshot.policyVersion === "ot-neutral-records-report/2026-09-15") {
       if (!neutralEvidence) return NextResponse.json({ error: "Checkout is temporarily unavailable.", code: "NEUTRAL_EVIDENCE_UNAVAILABLE" }, { status: 503 })
-      try {
+      if (snapshotTransferClaim) {
+        try {
+          const { prepareNeutralCheckoutAdmission } = await import("@/lib/commerce/neutral-checkout-runtime")
+          const prepared = await prepareNeutralCheckoutAdmission({ orderId: order.id, propertyPin: snapshot.pin, ...neutralEvidence }, snapshotTransferClaim)
+          if (!prepared.ok) {
+            if (prepared.blocker === "NEUTRAL_EVIDENCE_CONFLICT") return NextResponse.json({ error: "This checkout was already started with different records. Start a new checkout.", code: "SNAPSHOT_TRANSFER_TOO_LATE" }, { status: 409 })
+            if (["ORDER_SNAPSHOT_CONFLICT", "TRANSFER_REPLAYED", "BINDING_UNAVAILABLE"].includes(prepared.blocker)) return NextResponse.json({ error: "This free result can no longer be carried to checkout. Run the free check again.", code: prepared.blocker === "BINDING_UNAVAILABLE" ? "SNAPSHOT_BINDING_UNAVAILABLE" : "SNAPSHOT_TRANSFER_REJECTED" }, { status: prepared.blocker === "BINDING_UNAVAILABLE" ? 503 : 409 })
+            return NextResponse.json({ error: "Checkout is temporarily unavailable.", code: "NEUTRAL_RESERVATION_UNAVAILABLE" }, { status: 503 })
+          }
+        } catch {
+          // Unknown admission/COMMIT: no order write, abandon, or provider permission.
+          return NextResponse.json({ error: "Checkout is temporarily unavailable.", code: "NEUTRAL_RESERVATION_UNAVAILABLE" }, { status: 503 })
+        }
+      } else try {
         const { reserveNeutralCheckout } = await import("@/lib/commerce/neutral-checkout-runtime")
+        if (!snapshotTransferClaim) {
+          // Re-checked at the order itself: a concurrent request may have bound it after the early check.
+          const { neutralCheckoutUnboundOrRefuse } = await import("@/lib/commerce/neutral-checkout-runtime")
+          const unbound = await neutralCheckoutUnboundOrRefuse(order.id)
+          if (!unbound.ok) return snapshotBindingRefusal(unbound.blocker)
+        }
+        // The reservation (app DB, serialized, evidence-immutable per order) is the single
+        // admission authority. It is taken BEFORE any binding, so a binding can only ever be
+        // written for evidence that the order's reservation already holds.
         const reserved = await reserveNeutralCheckout({ orderId: order.id, propertyPin: snapshot.pin, ...neutralEvidence })
         if (!reserved.ok) {
-          await prisma.oTOrder.updateMany({ where: { id: order.id, status: "CHECKOUT_PENDING" } as any, data: { status: "CHECKOUT_FAILED", recoveryReason: "NEUTRAL_RESERVATION_FAILED" } as any }).catch(() => {})
-          const { abandonNeutralCheckout } = await import("@/lib/commerce/neutral-checkout-runtime")
-          await abandonNeutralCheckout(order.id).catch(() => false)
+          // Admitted under different evidence: refuse with no state write and no abandon.
+          if (reserved.blocker === "NEUTRAL_EVIDENCE_CONFLICT") return NextResponse.json({ error: "This checkout was already started with different records. Start a new checkout.", code: snapshotTransferClaim ? "SNAPSHOT_TRANSFER_TOO_LATE" : "NEUTRAL_EVIDENCE_CONFLICT" }, { status: 409 })
+          // No order write and no abandon: the row stays exactly as read (fresh
+          // PENDING stays fresh), so a stale request can never clobber it and a
+          // retry re-runs admission. The claim below is the only exit from PENDING.
           return NextResponse.json({ error: "Checkout is temporarily unavailable.", code: "NEUTRAL_RESERVATION_UNAVAILABLE" }, { status: 503 })
         }
       } catch {
-        await prisma.oTOrder.updateMany({ where: { id: order.id, status: "CHECKOUT_PENDING" } as any, data: { status: "CHECKOUT_FAILED", recoveryReason: "NEUTRAL_RESERVATION_FAILED" } as any }).catch(() => {})
-        const { abandonNeutralCheckout } = await import("@/lib/commerce/neutral-checkout-runtime")
-        await abandonNeutralCheckout(order.id).catch(() => false)
+        // Outcome unknown: same as a denial, no order write and no abandon.
         return NextResponse.json({ error: "Checkout is temporarily unavailable.", code: "NEUTRAL_RESERVATION_UNAVAILABLE" }, { status: 503 })
       }
     }
@@ -1043,7 +1167,7 @@ export async function POST(req: NextRequest) {
         })
       } catch (attributionError) {
         // Fail closed, and do it here: no `CHECKOUT_CREATING` claim has been
-        // taken yet and no provider call has been made, so refusing leaves no
+        // taken yet and no checkout session has been retrieved or created, so refusing leaves no
         // half-claimed order and no orphaned Stripe session behind.
         return attributionUnavailable(attributionFailureReason(attributionError), order.id as string)
       }
@@ -1158,18 +1282,32 @@ export async function POST(req: NextRequest) {
     }
     const observedStatus = order.status
     const observedAttempt = (order as { attempt?: number }).attempt ?? 0
+    const observedBindingColumn = (order as { checkoutDiscountPromotionCodeId?: string | null }).checkoutDiscountPromotionCodeId ?? null
+    // A legacy reservation-failure reason on a row already bound to these terms
+    // is cleared by this same-term claim (fenced on the exact value as read), or
+    // artifact binding would refuse the order. Nothing else touches the reason.
+    const clearsLegacyReservationReason =
+      (order as { recoveryReason?: string | null }).recoveryReason === LEGACY_NEUTRAL_RESERVATION_REASON &&
+      observedBindingColumn !== null && observedBindingColumn === promotionBinding
     const claimWhere = {
       ...claimedCheckoutContract,
       attempt: observedAttempt,
       status: observedStatus,
       ...(observedStatus === "CHECKOUT_CREATING" ? { updatedAt: order.updatedAt } : {}),
+      // As read: unbound (null) or already this request's terms.
+      checkoutDiscountPromotionCodeId: observedBindingColumn,
+      ...(clearsLegacyReservationReason ? { recoveryReason: LEGACY_NEUTRAL_RESERVATION_REASON } : {}),
     }
     const claimed = await prisma.oTOrder.updateMany({
       where: claimWhere as any,
-      data: { status: "CHECKOUT_CREATING" },
+      data: {
+        status: "CHECKOUT_CREATING",
+        checkoutDiscountPromotionCodeId: promotionBinding,
+        ...(clearsLegacyReservationReason ? { recoveryReason: null } : {}),
+      } as any,
     })
     if (claimed.count !== 1) {
-      return resolveLostCheckoutClaim(order.id, stripe)
+      return resolveLostCheckoutClaim(order.id, stripe, promotionBinding)
     }
 
     const baseUrl = process.env.NEXTAUTH_URL || "https://www.overtaxed-il.com"
@@ -1183,6 +1321,7 @@ export async function POST(req: NextRequest) {
       mode: "payment",
       payment_method_types: ["card"],
       line_items: [{ price: priceId, quantity: 1 }],
+      ...(fullDiscount ? { discounts: [{ promotion_code: fullDiscount.promotionCodeId }] } : {}),
       expires_at: expiresAt,
       success_url: `${baseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${baseUrl}/pricing`,
@@ -1205,7 +1344,7 @@ export async function POST(req: NextRequest) {
     if (!session.url) throw new Error("Stripe Checkout session returned no hosted URL")
 
     const finalized = await prisma.oTOrder.updateMany({
-      where: { ...claimedCheckoutContract, attempt: observedAttempt, status: "CHECKOUT_CREATING" } as any,
+      where: { ...claimedCheckoutContract, attempt: observedAttempt, status: "CHECKOUT_CREATING", checkoutDiscountPromotionCodeId: promotionBinding } as any,
       data: {
         stripeSessionId: session.id,
         checkoutSessionExpiresAt: new Date(expiresAt * 1000),

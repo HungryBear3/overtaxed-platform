@@ -732,15 +732,20 @@ describe("source contract: no URL-borne capability, no unverified ownership", ()
     join(ROOT, "lib/fulfillment-runtime/packet-download-store.ts"),
     "utf8",
   )
+  // The route is a thin binding; the request boundary itself lives here.
+  const handlerSource = readFileSync(
+    join(ROOT, "lib/fulfillment-runtime/packet-download-handler.ts"),
+    "utf8",
+  )
 
   it("never reads a capability from the URL, query string, or path params", () => {
-    for (const source of [routeSource, serviceSource]) {
+    for (const source of [routeSource, serviceSource, handlerSource]) {
       expect(source).not.toMatch(/searchParams|nextUrl\.search|context\.params/)
     }
   })
 
   it("never derives ownership from an email, session, or customer identity", () => {
-    for (const source of [routeSource, serviceSource, storeSource]) {
+    for (const source of [routeSource, serviceSource, storeSource, handlerSource]) {
       expect(source.toLowerCase()).not.toMatch(
         /getsession|getserversession|auth\(\)|"email"|\.email\b/,
       )
@@ -748,9 +753,17 @@ describe("source contract: no URL-borne capability, no unverified ownership", ()
   })
 
   it("never constructs, signs, or returns a storage URL", () => {
-    for (const source of [routeSource, serviceSource, storeSource]) {
+    for (const source of [routeSource, serviceSource, storeSource, handlerSource]) {
       expect(source).not.toMatch(/getSignedUrl|createSignedUrl|blobUrl|publicUrl|@vercel\/blob/)
     }
+  })
+
+  it("the handler reaches storage and SQL only through the service, never directly", () => {
+    expect(handlerSource.startsWith('import "server-only"', handlerSource.indexOf("import "))).toBe(true)
+    expect(handlerSource).toContain('from "@/lib/fulfillment-runtime/packet-download"')
+    expect(handlerSource).not.toMatch(
+      /\$queryRaw|\$executeRaw|\$transaction|Prisma\.sql|@prisma\/client|@\/lib\/db\b|neutral-delivery-db|packet-download-store|t2-artifact-storage|neutral-customer-zip-storage/,
+    )
   })
 
   it("keeps the capability value out of every persisted column", () => {

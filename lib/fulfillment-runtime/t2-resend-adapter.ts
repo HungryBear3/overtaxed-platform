@@ -219,7 +219,7 @@ export function createPrismaT2SendContextReader(
           FROM "ot_fulfillment" f
           JOIN ${options.neutralOnly?Prisma.raw('"ot_neutral_delivery_order"'):Prisma.raw('"ot_order"')} o ON o."id" = f."order_id"
           JOIN LATERAL (
-            SELECT "version", "artifact_sha256"
+            SELECT "version", "artifact_sha256", "property_binding_fingerprint", "template_version"
             FROM "ot_fulfillment_artifact"
             WHERE "fulfillment_id" = f."id"
             ORDER BY "version" DESC
@@ -479,6 +479,8 @@ export function createT2ResendAdapter(
           fulfillmentId: input.fulfillmentId,
           attemptNumber: input.attemptNumber,
           provider: RESEND_PROVIDER,
+          // Neutral reports are single-use by policy; the store refuses any other count.
+          ...(context.fulfillmentKind === "NEUTRAL_RECORDS_REPORT" ? { maxUses: 1 } : {}),
         },
         deps.issuanceDeps ?? {},
       );

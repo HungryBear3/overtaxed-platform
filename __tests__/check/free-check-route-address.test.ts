@@ -11,6 +11,11 @@
  * and the log assertions at the bottom prove the route does not put any of it
  * into a console line either.
  *
+ * Migrated through the REAL createFreeCheckRoute and bounded Request.text().
+ * Only authoritative source I/O and synthetic raw acquisition are injected.
+ * Retired estimator assertions below now assert factual GET records and reject
+ * all legacy normalized/savings claims. Scenario names retained for coverage map.
+ *
  * Against `1f2d7aae`:
  *   - a provider outage and an address that is not on file produced the same
  *     400 telling the reader to go find their PIN;
@@ -41,7 +46,32 @@ jest.mock("@/lib/rate-limit", () => ({
   getClientIdentifier: jest.fn(() => "test-client"),
 }))
 
-import { POST } from "@/app/api/free-check/route"
+import { createAddressFixture } from "@/test-support/address-local-fixture"
+let runtime: ReturnType<typeof createAddressFixture>
+let put: jest.SpyInstance
+let version: jest.SpyInstance
+const POST = async (request: Request) => {
+  const writes=put.mock.calls.length; const versions=version.mock.calls.length
+  const response=await runtime.POST(request)
+  if (response.status!==200) {
+    expect(put.mock.calls.length).toBe(writes)
+    expect(version.mock.calls.length).toBe(versions)
+  }
+  return response
+}
+async function factualBody(response: Response) {
+  const receipt = await response.json()
+  expect(response.status).toBe(200)
+  expect(receipt.resultId).toMatch(/^res_[a-z0-9]{24}$/)
+  const result = await (await runtime.GET(new Request(`http://local?id=${receipt.resultId}`))).json()
+  expect(result.kind).toBe('FACTUAL_ONLY')
+  expect(result.validation).toBe('UNVALIDATED')
+  expect(result.dataOrigin).toBe('SYNTHETIC_PREVIEW')
+  for (const field of ['outcome','comps','avgComparableAssessedValue','assessmentGap','equityRatio','avgCompEquityRatio','compSelection','potentialOverpaymentPerYear','potentialOverpayment3Year']) {
+    expect(result).not.toHaveProperty(field)
+  }
+  return result
+}
 
 const cookCounty = jest.requireMock("@/lib/cook-county") as {
   getPropertyByPIN: jest.Mock
@@ -72,16 +102,17 @@ afterAll(() => {
   }
 })
 
-beforeEach(() => jest.clearAllMocks())
+beforeEach(() => {
+  jest.resetAllMocks(); runtime = createAddressFixture(cookCounty)
+  put=jest.spyOn(runtime.store,'putResult')
+  version=jest.spyOn(runtime.store,'persistResult')
+})
 
 const SUBJECT_ADDRESS = "1234 N Sample St, Chicago IL 60600"
 const pinAt = (n: number) => `1806214${String(n).padStart(3, "0")}0000`
 
 function req(body: unknown) {
-  return {
-    headers: { get: () => "overtaxed-il.com" },
-    json: async () => body,
-  } as unknown as Parameters<typeof POST>[0]
+  return new Request("http://local", {method:"POST", body:JSON.stringify(body)})
 }
 
 function searchRow(over: Partial<Record<string, unknown>> & { pin: string }) {
@@ -96,7 +127,7 @@ function propertyRecord(over: Record<string, unknown> = {}) {
     zipCode: "60600",
     county: "Cook",
     township: "Lake View",
-    neighborhood: "70",
+    neighborhood: "70-100", // synthetic factual cohort identity, not legacy estimator code
     buildingClass: "2-03",
     assessedTotalValue: 42500,
     marketValue: 425000,
@@ -119,6 +150,7 @@ function equityComp(n: number, assessedMarketValue: number | null) {
     address: `12${n} N SAMPLE ST`,
     city: "Chicago",
     assessedMarketValue,
+    syntheticRawCents: assessedMarketValue === null || assessedMarketValue === 0 ? null : 3_500_000 + n * 100,
     livingArea: 1180,
     yearBuilt: 1924,
     buildingClass: "2-03",
@@ -206,7 +238,7 @@ describe("address lookup — the widened query and the ranker", () => {
     const body = await res.json()
 
     expect(res.status).toBe(200)
-    expect(body.success).toBe(true)
+    expect(body.resultId).toMatch(/^res_/)
     expect(cookCounty.searchPropertiesByAddress).toHaveBeenNthCalledWith(
       1,
       "1234 N SAMPLE ST",
@@ -275,7 +307,7 @@ describe("address lookup — the widened query and the ranker", () => {
     const body = await res.json()
 
     expect(res.status).toBe(200)
-    expect(body.success).toBe(true)
+    expect(body.resultId).toMatch(/^res_/)
     expect(cookCounty.getPropertyByPIN).toHaveBeenCalledWith(pinAt(1))
   })
 
@@ -767,12 +799,9 @@ describe("address lookup — failing closed", () => {
     stubComps([equityComp(2, 364000), equityComp(3, 348000)])
 
     const body = await (await POST(req({ address: SUBJECT_ADDRESS }))).json()
-    expect(body.outcome.code).toBe("unsupported_property")
-    expect(body.outcome.showFigures).toBe(false)
-    expect(body.outcome.showRecordComparison).toBe(false)
-    expect(body.comps).toEqual([])
-    expect(body.avgComparableAssessedValue).toBeNull()
-    expect(body.compCount).toBe(0)
+    expect(body.code).toBe('ADDRESS_EVIDENCE_MISMATCH')
+    expect(body).not.toHaveProperty('subject')
+    expect(cookCounty.getComparableEquity).not.toHaveBeenCalled()
   })
 })
 
@@ -792,22 +821,13 @@ describe("the assessed-value comparison survives a missing market value", () => 
       data: propertyRecord({ marketValue: null }),
       error: null,
     })
-    // 364000/10, 348000/10, 341000/10 → 36400, 34800, 34100 → avg 35100.
+    // Historical market values remain adversarial inputs, not authority for raw facts.
     stubComps([equityComp(2, 364000), equityComp(3, 348000), equityComp(4, 341000)])
 
-    const body = await (await POST(req({ address: SUBJECT_ADDRESS }))).json()
-
-    expect(body.outcome.code).toBe("insufficient_evidence")
-    expect(body.outcome.reason).toBe("no_comparable_level")
-    // The level is withheld — it cannot be computed — but the record is not.
-    expect(body.outcome.showFigures).toBe(false)
-    expect(body.outcome.showRecordComparison).toBe(true)
-    expect(body.equityRatio).toBeNull()
-    expect(body.avgCompEquityRatio).toBeNull()
-    expect(body.compCount).toBe(3)
-    expect(body.comps).toHaveLength(3)
-    expect(body.avgComparableAssessedValue).toBe(35100)
-    expect(body.assessmentGap).toBe(42500 - 35100)
+    const result = await factualBody(await POST(req({ address: SUBJECT_ADDRESS })))
+    expect(result.cohort.count).toBe(3)
+    expect(result.finding.subjectAssessedTotalCents).toBe(4_250_000)
+    expect(result.finding.cohortAssessedTotalCents).toBe(10_500_900)
   })
 
   it("averages only the comps that validated, and reports that count", async () => {
@@ -816,7 +836,7 @@ describe("the assessed-value comparison survives a missing market value", () => 
       data: propertyRecord({ marketValue: null }),
       error: null,
     })
-    // Two usable, two with nothing to read. 36400 and 34800 → 35600.
+    // Two independent synthetic raw records, two without a usable raw value.
     stubComps([
       equityComp(2, 364000),
       equityComp(3, null),
@@ -824,12 +844,9 @@ describe("the assessed-value comparison survives a missing market value", () => 
       equityComp(5, 0),
     ])
 
-    const body = await (await POST(req({ address: SUBJECT_ADDRESS }))).json()
-
-    expect(body.compCount).toBe(2)
-    expect(body.comps).toHaveLength(2)
-    expect(body.avgComparableAssessedValue).toBe(35600)
-    expect(body.comps.map((c: { assessedValue: number }) => c.assessedValue)).toEqual([36400, 34800])
+    const result = await factualBody(await POST(req({ address: SUBJECT_ADDRESS })))
+    expect(result.cohort.count).toBe(2)
+    expect(result.records.filter((r: {role:string})=>r.role==='cohort').map((r:{assessedTotalCents:number})=>r.assessedTotalCents)).toEqual([3_500_200,3_500_400])
   })
 
   it("says nothing about three when fewer than three survive", async () => {
@@ -840,10 +857,9 @@ describe("the assessed-value comparison survives a missing market value", () => 
     })
     stubComps([equityComp(2, 364000)])
 
-    const body = await (await POST(req({ address: SUBJECT_ADDRESS }))).json()
-    expect(body.compCount).toBe(1)
-    expect(body.comps).toHaveLength(1)
-    expect(body.avgComparableAssessedValue).toBe(36400)
+    const result = await factualBody(await POST(req({ address: SUBJECT_ADDRESS })))
+    expect(result.cohort.count).toBe(1)
+    expect(result.finding.cohortAssessedTotalCents).toBe(3_500_200)
   })
 
   it("withholds the comparison when there is nothing to compare", async () => {
@@ -854,11 +870,9 @@ describe("the assessed-value comparison survives a missing market value", () => 
     })
     stubComps([])
 
-    const body = await (await POST(req({ address: SUBJECT_ADDRESS }))).json()
-    expect(body.outcome.reason).toBe("no_comparables")
-    expect(body.outcome.showRecordComparison).toBe(false)
-    expect(body.compCount).toBe(0)
-    expect(body.avgComparableAssessedValue).toBeNull()
+    const result = await factualBody(await POST(req({ address: SUBJECT_ADDRESS })))
+    expect(result.cohort.count).toBe(0)
+    expect(result.finding.cohortAssessedTotalCents).toBe(0)
   })
 })
 
@@ -873,12 +887,9 @@ describe("the response describes how comparables were chosen, truthfully", () =>
     cookCounty.getPropertyByPIN.mockResolvedValue({ success: true, data: propertyRecord(), error: null })
     stubComps([equityComp(2, 364000), equityComp(3, 348000)])
 
-    const body = await (await POST(req({ address: SUBJECT_ADDRESS }))).json()
-
-    expect(body.compSelection.distanceRanked).toBe(false)
-    expect(body.compSelection.basis).toBe("cohort_recency")
-    expect(body.compSelection.label).not.toMatch(/nearest|nearby|closest/i)
-    expect(JSON.stringify(body)).not.toMatch(/\bnearest\b|\bnearby\b/i)
+    const result = await factualBody(await POST(req({ address: SUBJECT_ADDRESS })))
+    expect(result.limitations).toContain('cohort_not_comparables')
+    expect(JSON.stringify(result)).not.toMatch(/\bnearest\b|\bnearby\b/i)
   })
 
   it("still projects no overpayment on any path", async () => {
@@ -891,9 +902,7 @@ describe("the response describes how comparables were chosen, truthfully", () =>
     cookCounty.getPropertyByPIN.mockResolvedValue({ success: true, data: propertyRecord(), error: null })
     stubComps([equityComp(2, 364000), equityComp(3, 348000)])
 
-    const body = await (await POST(req({ address: SUBJECT_ADDRESS }))).json()
-    expect(body.potentialOverpaymentPerYear).toBeNull()
-    expect(body.potentialOverpayment3Year).toBeNull()
+    await factualBody(await POST(req({ address: SUBJECT_ADDRESS })))
   })
 })
 

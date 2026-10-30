@@ -22,7 +22,8 @@ import { enqueueAndScheduleNeutralReportProduction } from "@/lib/fulfillment-run
 import { NEUTRAL_GENERATION_INVOCATION_BUDGET_MS } from "@/lib/fulfillment-runtime/neutral-generation-worker"
 import { NEUTRAL_REPORT_COMMERCE_POLICY } from "@/lib/commerce/neutral-report-policy"
 
-import { bindPayment, providerId, recordReversal, reversalTypes } from "@/lib/checkout/ot-reversal"
+import { bindPayment, bindZeroTotalSettlement, providerId, recordReversal, reversalTypes, type ZeroTotalSettlement } from "@/lib/checkout/ot-reversal"
+import { verifySettlementFullDiscount } from "@/lib/checkout/ot-full-discount"
 import { normalizeReferralCode } from "@/lib/referrals/code"
 
 // The neutral report production scheduled by this route runs in `after()`,
@@ -114,6 +115,7 @@ export async function POST(request: NextRequest) {
               tier: true,
               settledAmountCents: true,
               settledCurrency: true,
+              checkoutAmountCents: true,
               eligibilitySnapshot: true,
             },
           })
@@ -125,7 +127,10 @@ export async function POST(request: NextRequest) {
               NEUTRAL_REPORT_COMMERCE_POLICY.version
           const neutralRetry =
             process.env.OT_NEUTRAL_REPORT_PRODUCTION_ENABLED === "true" &&
-            settledOrder?.settledAmountCents === 6900 &&
+            (settledOrder?.settledAmountCents === 6900 ||
+              // Zero-total full discount of the same product; delivery still requires
+              // the zero-total settlement authority downstream.
+              (settledOrder?.settledAmountCents === 0 && settledOrder.checkoutAmountCents === 6900)) &&
             settledOrder.settledCurrency?.toLowerCase() === "usd" &&
             neutralPolicy
           if (
@@ -268,7 +273,11 @@ export async function POST(request: NextRequest) {
         const customerName = String(customerDetails?.name ?? "")
         const amountPaid = Number.isSafeInteger(amountCents) ? amountCents / 100 : 0
 
-        if (paymentStatus !== "paid") {
+        // A legitimate 100% discount completes as `no_payment_required` with no
+        // PaymentIntent. It is admitted only through the zero-total evidence
+        // checks below; everything else unsettled is ignored as before.
+        const zeroTotal = paymentStatus === "no_payment_required"
+        if (paymentStatus !== "paid" && !zeroTotal) {
           console.error(`[webhook] Ignoring unsettled OT checkout ${sessionId}`)
           break
         }
@@ -344,7 +353,9 @@ export async function POST(request: NextRequest) {
               current.tier === tier &&
               current.email.trim().toLowerCase() === customerEmail &&
               current.stripeSessionId === sessionId &&
-              current.checkoutAmountCents === amountCents &&
+              (zeroTotal
+                ? amountCents === 0 && Number(data.amount_subtotal) === current.checkoutAmountCents
+                : current.checkoutAmountCents === amountCents) &&
               current.checkoutCurrency === currency,
             )
             if (!current || !exactBinding) {
@@ -352,7 +363,7 @@ export async function POST(request: NextRequest) {
             } else {
               const lineItems = await stripe.checkout.sessions.listLineItems(sessionId, {
                 limit: 2,
-                expand: ["data.price.product"],
+                expand: zeroTotal ? ["data.price.product", "data.discounts"] : ["data.price.product"],
               })
               const line = lineItems.data[0]
               const product = line?.price?.product
@@ -374,10 +385,62 @@ export async function POST(request: NextRequest) {
                   : await validateCurrentT3Settlement(current)
               }
 
+              let zeroTotalEvidence: ZeroTotalSettlement | null = null
+              if (!recoveryReason && zeroTotal) {
+                const promotionCodeId = current.checkoutDiscountPromotionCodeId ?? null
+                const subtotal = current.checkoutAmountCents
+                const sessionDiscount = Number((data.total_details as { amount_discount?: unknown } | null)?.amount_discount)
+                const discounts = line?.discounts ?? []
+                const applied = discounts[0]
+                const exactDiscount = Boolean(
+                  String(data.status ?? "") === "complete" &&
+                  amountCents === 0 &&
+                  !providerId(data.payment_intent) &&
+                  promotionCodeId &&
+                  subtotal &&
+                  Number(data.amount_subtotal) === subtotal &&
+                  sessionDiscount === subtotal &&
+                  line?.amount_subtotal === subtotal &&
+                  line?.amount_discount === subtotal &&
+                  discounts.length === 1 &&
+                  applied?.amount === subtotal &&
+                  providerId(applied?.discount?.promotion_code) === promotionCodeId &&
+                  applied?.discount?.checkout_session === sessionId,
+                )
+                if (!exactDiscount) {
+                  recoveryReason = "Zero-total OT checkout lacks exact full-discount evidence for the durable order"
+                } else {
+                  const verified = await verifySettlementFullDiscount(stripe, promotionCodeId!, {
+                    productId: current.checkoutProductId ?? "",
+                    amountCents: subtotal!,
+                    currency: current.checkoutCurrency ?? "",
+                  })
+                  if (!verified) {
+                    recoveryReason = "Zero-total OT checkout discount is not an allowlisted product-scoped full discount"
+                  } else {
+                    zeroTotalEvidence = {
+                      orderId: current.id,
+                      sessionId,
+                      eventId: String(event.id),
+                      promotionCodeId: verified.promotionCodeId,
+                      couponId: verified.couponId,
+                      subtotalCents: subtotal!,
+                      discountCents: subtotal!,
+                      currency,
+                    }
+                  }
+                }
+              }
+
               if (!recoveryReason) {
-                const paymentIntent = providerId(data.payment_intent)
-                if (!paymentIntent) throw new Error("OT settlement missing PaymentIntent")
-                await prisma.$transaction(tx => bindPayment(tx, current.id, sessionId, paymentIntent))
+                if (zeroTotalEvidence) {
+                  const evidence = zeroTotalEvidence
+                  await prisma.$transaction(tx => bindZeroTotalSettlement(tx, evidence))
+                } else {
+                  const paymentIntent = providerId(data.payment_intent)
+                  if (!paymentIntent) throw new Error("OT settlement missing PaymentIntent")
+                  await prisma.$transaction(tx => bindPayment(tx, current.id, sessionId, paymentIntent))
+                }
                 // Binding may consume an earlier reversal; never use stale PAID.
                 const settlementState = await prisma.oTOrder.findUnique({ where: { id: current.id } })
                 if (!settlementState) throw new Error("OT settlement order missing")
@@ -412,8 +475,9 @@ export async function POST(request: NextRequest) {
                     acknowledgmentVersion: current.acknowledgmentVersion,
                     reassessmentNoticeDate: current.reassessmentNoticeDate,
                     reassessmentNoticeAddress: current.reassessmentNoticeAddress,
-                    checkoutAmountCents: amountCents,
+                    checkoutAmountCents: zeroTotal ? current.checkoutAmountCents : amountCents,
                     checkoutCurrency: currency,
+                    ...(zeroTotal ? { checkoutDiscountPromotionCodeId: current.checkoutDiscountPromotionCodeId } : {}),
                     status: "CHECKOUT_CREATED",
                   },
                   data: { settledAmountCents: amountCents, settledCurrency: currency, amountPaid, status: "PAID" },
@@ -489,12 +553,20 @@ export async function POST(request: NextRequest) {
             persistedOrder.checkoutCurrency?.toLowerCase() === "usd" &&
             neutralPolicy
           ) {
+            let scheduled: Awaited<ReturnType<typeof enqueueAndScheduleNeutralReportProduction>>
             try {
-              await enqueueAndScheduleNeutralReportProduction(persistedOrder.id, { deadline: neutralGenerationDeadline })
+              scheduled = await enqueueAndScheduleNeutralReportProduction(persistedOrder.id, { deadline: neutralGenerationDeadline })
             } catch {
               console.error("[ot-neutral-generation-scheduling] outcome=THREW")
               await releaseEventClaim()
               return NextResponse.json({ error: "Neutral production scheduling error" }, { status: 500 })
+            }
+            // A refused enqueue must not be acknowledged: release the claim so the
+            // provider retries. DISABLED stays the deliberate acknowledged path.
+            if (scheduled?.outcome === "REFUSED") {
+              console.error("[ot-neutral-generation-scheduling] outcome=REFUSED")
+              await releaseEventClaim()
+              return NextResponse.json({ error: "Neutral production scheduling refused" }, { status: 500 })
             }
           }
           try {

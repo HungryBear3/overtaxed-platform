@@ -63,9 +63,17 @@ export class TestNeutralRepository {
   async quarantine(key: string): Promise<void> { this.staged.delete(key); this.confirmed.delete(key); this.quarantined.add(key) }
 }
 
-export function installNeutralTestRuntime(repository: TestNeutralRepository, active = true): () => void {
+/** Explicit legacy-order stores: the binding lookup succeeds and proves no row; the snapshot store must never be reached. */
+export function provenUnboundSnapshotBinding() {
+  return {
+    bindingStore: { read: async () => undefined, bind: async () => { throw new Error("test: binding not permitted") } },
+    snapshotStore: { readPrivileged: async () => { throw new Error("test: unbound order must not read a snapshot") }, persist: async () => { throw new Error("test: persist not permitted") } },
+  }
+}
+
+export function installNeutralTestRuntime(repository: TestNeutralRepository, active = true, snapshotBinding?: ReturnType<typeof provenUnboundSnapshotBinding>): () => void {
   if (process.env.NODE_ENV !== "test") throw new Error("test-only helper")
   const prior = (globalThis as any).__OT_NEUTRAL_REPORT_TEST_RUNTIME__
-  ;(globalThis as any).__OT_NEUTRAL_REPORT_TEST_RUNTIME__ = { active, repository }
+  ;(globalThis as any).__OT_NEUTRAL_REPORT_TEST_RUNTIME__ = { active, repository, snapshotBinding }
   return () => { (globalThis as any).__OT_NEUTRAL_REPORT_TEST_RUNTIME__ = prior }
 }

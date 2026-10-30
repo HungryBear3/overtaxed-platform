@@ -1,7 +1,7 @@
 export type NeutralDbExecutor = {
   $queryRaw<T>(query: unknown): Promise<T>
   $executeRaw(query: unknown): Promise<number>
-  $transaction<T>(work: (tx: NeutralDbExecutor) => Promise<T>): Promise<T>
+  $transaction<T>(work: (tx: NeutralDbExecutor) => Promise<T>, options?: { timeout?: number; maxWait?: number }): Promise<T>
 }
 
 /**

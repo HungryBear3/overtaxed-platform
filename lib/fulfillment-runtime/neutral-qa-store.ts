@@ -2,6 +2,7 @@ import "server-only"
 
 import { createHash, randomUUID } from "node:crypto"
 import { Prisma } from "@prisma/client"
+import { neutralPaymentBindingInput, neutralZeroTotalSettlementJoin, trustedPaymentAuthority } from "@/lib/fulfillment-runtime/payment-authority"
 import { neutralPrisma } from "@/lib/fulfillment-runtime/neutral-db"
 import { NEUTRAL_REPORT_COMMERCE_POLICY } from "@/lib/commerce/neutral-report-policy"
 import { decideNeutralQa, type NeutralQaDecision } from "@/lib/fulfillment/neutral-qa"
@@ -18,7 +19,7 @@ type Context = {
   propertyFingerprint:string; bundleSha256:string|null; dataEvidenceSha256:string;
   deadlineEvidenceSha256:string; manifestSha256:string|null; privateReferences:unknown;
   orderStatus:string; stripeSessionId:string|null; paymentIntent:string|null;
-  reversalIntent:string|null; reviewId:string|null; reviewStatus:string|null;
+  reversalIntent:string|null; zeroTotalPromotionCode:string|null; reviewId:string|null; reviewStatus:string|null;
   reviewReviewerKey:string|null; reviewArtifactSha256:string|null; reviewEvidenceSha256:string|null;
   reviewPaymentSha256:string|null; reviewPropertyFingerprint:string|null;
   reviewPolicyVersion:string|null; reviewWeekStart:Date|null; reviewStartedAt:Date|null;
@@ -30,7 +31,7 @@ const contextSql = (orderId:string) => Prisma.sql`
  r."bundle_sha256" AS "bundleSha256",r."data_evidence_sha256" AS "dataEvidenceSha256",
  r."deadline_evidence_sha256" AS "deadlineEvidenceSha256",r."manifest_sha256" AS "manifestSha256",
  r."private_references" AS "privateReferences",o."status" AS "orderStatus",o."stripeSessionId",
- b."payment_intent" AS "paymentIntent",x."payment_intent" AS "reversalIntent",
+ b."payment_intent" AS "paymentIntent",x."payment_intent" AS "reversalIntent",zt."promotion_code" AS "zeroTotalPromotionCode",
  q."id" AS "reviewId",q."status"::text AS "reviewStatus",q."reviewer_key" AS "reviewReviewerKey",
  q."artifact_sha256" AS "reviewArtifactSha256",q."evidence_digest_sha256" AS "reviewEvidenceSha256",
  q."payment_binding_sha256" AS "reviewPaymentSha256",q."property_binding_fingerprint" AS "reviewPropertyFingerprint",
@@ -39,6 +40,7 @@ const contextSql = (orderId:string) => Prisma.sql`
  FROM "ot_neutral_report_reservation" r JOIN "ot_neutral_runtime_order" o ON o."id"=r."order_id"
  LEFT JOIN "ot_neutral_runtime_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId"
  LEFT JOIN "ot_neutral_runtime_settlement_reversal" x ON x."payment_intent"=b."payment_intent"
+ ${neutralZeroTotalSettlementJoin("o")}
  LEFT JOIN "ot_neutral_qa_review" q ON q."reservation_id"=r."id"
  WHERE r."order_id"=${orderId}`
 
@@ -78,9 +80,10 @@ export async function openNeutralQaReview(input:{orderId:string;reviewerKey:stri
     await lockReservation(tx,input.orderId)
     const row=(await tx.$queryRaw<Context[]>(contextSql(input.orderId)))[0]
     if (!row || row.reservationStatus!=="PROMOTED" || !row.bundleSha256 || !row.manifestSha256) return {ok:false as const,blocker:"ARTIFACT_NOT_PROMOTED"}
-    if (row.orderStatus!=="PAID" || !row.stripeSessionId || !row.paymentIntent || row.reversalIntent) return {ok:false as const,blocker:"PAYMENT_NOT_AUTHORITATIVE"}
+    const paymentBinding=neutralPaymentBindingInput({orderId:row.orderId,sessionId:row.stripeSessionId,paymentIntent:row.paymentIntent,zeroTotalPromotionCode:row.zeroTotalPromotionCode})
+    if (row.orderStatus!=="PAID" || !row.stripeSessionId || !paymentBinding || row.reversalIntent) return {ok:false as const,blocker:"PAYMENT_NOT_AUTHORITATIVE"}
     const evidence=digest(`neutral-evidence/v1\0${row.dataEvidenceSha256}\0${row.deadlineEvidenceSha256}\0${row.manifestSha256}`)
-    const payment=digest(`neutral-payment/v1\0${row.orderId}\0${row.stripeSessionId}\0${row.paymentIntent}`)
+    const payment=digest(paymentBinding)
     const proposedId=randomUUID()
     await tx.$queryRaw<Array<{id:string}>>(Prisma.sql`INSERT INTO "ot_neutral_qa_review" ("id","reservation_id","order_id","status","reviewer_key","reviewer_week_start","started_at","policy_version","artifact_sha256","evidence_digest_sha256","payment_binding_sha256","property_binding_fingerprint","updated_at") VALUES (${proposedId},${row.reservationId},${row.orderId},'IN_REVIEW',${input.reviewerKey},${week},clock_timestamp(),${row.policyVersion},${row.bundleSha256},${evidence},${payment},${row.propertyFingerprint},clock_timestamp()) ON CONFLICT ("reservation_id") DO NOTHING RETURNING "id"`)
     await lockReview(tx,input.orderId)
@@ -102,9 +105,10 @@ export async function decideNeutralQaReview(input:{orderId:string;reviewerKey:st
     const row=(await tx.$queryRaw<Context[]>(contextSql(input.orderId)))[0]
     if (!row?.reviewId || !row.reviewStatus) return {ok:false as const,blocker:"QA_NOT_OPEN"}
     if (!row.bundleSha256 || !row.manifestSha256 || row.reservationStatus!=="PROMOTED") return {ok:false as const,blocker:"ARTIFACT_NOT_PROMOTED"}
-    if (row.orderStatus!=="PAID" || !row.paymentIntent || row.reversalIntent) return {ok:false as const,blocker:"PAYMENT_NOT_AUTHORITATIVE"}
+    const currentBinding=neutralPaymentBindingInput({orderId:row.orderId,sessionId:row.stripeSessionId,paymentIntent:row.paymentIntent,zeroTotalPromotionCode:row.zeroTotalPromotionCode})
+    if (row.orderStatus!=="PAID" || !currentBinding || row.reversalIntent) return {ok:false as const,blocker:"PAYMENT_NOT_AUTHORITATIVE"}
     const currentEvidence=digest(`neutral-evidence/v1\0${row.dataEvidenceSha256}\0${row.deadlineEvidenceSha256}\0${row.manifestSha256}`)
-    const currentPayment=digest(`neutral-payment/v1\0${row.orderId}\0${row.stripeSessionId}\0${row.paymentIntent}`)
+    const currentPayment=digest(currentBinding)
     if (row.reviewReviewerKey!==input.reviewerKey || row.reviewArtifactSha256!==row.bundleSha256 || row.reviewEvidenceSha256!==currentEvidence || row.reviewPaymentSha256!==currentPayment || row.reviewPropertyFingerprint!==row.propertyFingerprint)
       return {ok:false as const,blocker:"QA_BINDING_DRIFT"}
     if (!row.reviewWeekStart || !row.reviewStartedAt) return {ok:false as const,blocker:"QA_BINDING_DRIFT"}
@@ -133,7 +137,7 @@ export async function decideNeutralQaReview(input:{orderId:string;reviewerKey:st
         return {ok:false as const,blocker:"QA_READ_AUDIT_REQUIRED"}
     }
     const changed=decision.status==="APPROVED"
-      ? await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_qa_review" q SET "status"='APPROVED',"minutes_spent"=${timing.minutes},"reason_code"=${input.reasonCode},"decided_at"=clock_timestamp(),"updated_at"=clock_timestamp() WHERE q."id"=${row.reviewId} AND q."reviewer_key"=${input.reviewerKey} AND q."status" IN ('PENDING','IN_REVIEW') AND EXISTS (SELECT 1 FROM "ot_neutral_runtime_order" o JOIN "ot_neutral_runtime_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId" WHERE o."id"=q."order_id" AND o."status"='PAID' AND o."tier"='T2' AND NOT EXISTS (SELECT 1 FROM "ot_neutral_runtime_settlement_reversal" x WHERE x."payment_intent"=b."payment_intent"))`)
+      ? await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_qa_review" q SET "status"='APPROVED',"minutes_spent"=${timing.minutes},"reason_code"=${input.reasonCode},"decided_at"=clock_timestamp(),"updated_at"=clock_timestamp() WHERE q."id"=${row.reviewId} AND q."reviewer_key"=${input.reviewerKey} AND q."status" IN ('PENDING','IN_REVIEW') AND (EXISTS (SELECT 1 FROM "ot_neutral_runtime_order" o JOIN "ot_neutral_runtime_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId" WHERE o."id"=q."order_id" AND o."status"='PAID' AND o."tier"='T2' AND NOT EXISTS (SELECT 1 FROM "ot_neutral_runtime_settlement_reversal" x WHERE x."payment_intent"=b."payment_intent")) OR EXISTS (SELECT 1 FROM "ot_neutral_runtime_order" o WHERE o."id"=q."order_id" AND o."status"='PAID' AND o."tier"='T2' AND ${trustedPaymentAuthority("o", true)}))`)
       : await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_qa_review" SET "status"=${decision.status}::"OTNeutralQaStatus","minutes_spent"=${timing.minutes},"reason_code"=${input.reasonCode},"decided_at"=clock_timestamp(),"updated_at"=clock_timestamp() WHERE "id"=${row.reviewId} AND "reviewer_key"=${input.reviewerKey} AND "status" IN ('PENDING','IN_REVIEW')`)
     if(changed!==1 && decision.status==="APPROVED") {
       const held=await tx.$executeRaw(Prisma.sql`UPDATE "ot_neutral_qa_review" q SET "status"='HELD',"minutes_spent"=${timing.minutes},"reason_code"='PAYMENT_REVERSED',"decided_at"=clock_timestamp(),"updated_at"=clock_timestamp() WHERE q."id"=${row.reviewId} AND q."status" IN ('PENDING','IN_REVIEW') AND EXISTS (SELECT 1 FROM "ot_neutral_runtime_order" o JOIN "ot_neutral_runtime_payment_binding" b ON b."order_id"=o."id" AND b."session_id"=o."stripeSessionId" JOIN "ot_neutral_runtime_settlement_reversal" x ON x."payment_intent"=b."payment_intent" WHERE o."id"=q."order_id")`)

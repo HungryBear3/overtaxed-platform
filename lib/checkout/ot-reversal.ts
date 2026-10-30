@@ -27,3 +27,33 @@ export async function bindPayment(tx: Tx, orderId: string, sessionId: string, pa
   if (binding[0]?.session_id !== sessionId || binding[0]?.payment_intent !== paymentIntent) throw new Error("OT payment binding mismatch")
   await tx.$executeRaw`UPDATE ot_order SET status = 'SETTLEMENT_HOLD' WHERE id = ${orderId} AND status NOT IN ('CANCELLED', 'REFUNDED') AND EXISTS (SELECT 1 FROM ot_settlement_reversal WHERE payment_intent = ${paymentIntent})`
 }
+export type ZeroTotalSettlement = {
+  orderId: string
+  sessionId: string
+  eventId: string
+  promotionCodeId: string
+  couponId: string
+  subtotalCents: number
+  discountCents: number
+  currency: string
+}
+// Legitimate full-discount settlement has no PaymentIntent and is never written
+// to the PI ledger. Called only after signed session + exact persisted contract
+// + line-item discount + allowlisted product-scoped coupon validation. The row
+// binds only the order whose durable price/currency/promotion code match.
+export async function bindZeroTotalSettlement(tx: Tx, s: ZeroTotalSettlement) {
+  if (
+    !s.sessionId.startsWith("cs_") ||
+    !s.promotionCodeId.startsWith("promo_") ||
+    !s.couponId || !s.eventId || !s.currency ||
+    !Number.isSafeInteger(s.subtotalCents) || s.subtotalCents <= 0 ||
+    s.discountCents !== s.subtotalCents
+  ) throw new Error("Invalid OT zero-total settlement evidence")
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(7012091219)::text`
+  await tx.$executeRaw`INSERT INTO ot_zero_total_settlement (order_id, session_id, event_id, promotion_code, coupon, subtotal_cents, discount_cents, currency) SELECT id, ${s.sessionId}, ${s.eventId}, ${s.promotionCodeId}, ${s.couponId}, ${s.subtotalCents}, ${s.discountCents}, ${s.currency} FROM ot_order WHERE id = ${s.orderId} AND "stripeSessionId" = ${s.sessionId} AND "checkoutAmountCents" = ${s.subtotalCents} AND "checkoutCurrency" = ${s.currency} AND "checkoutDiscountPromotionCodeId" = ${s.promotionCodeId} ON CONFLICT (order_id) DO NOTHING`
+  const binding = await tx.$queryRaw<Array<{session_id: string, promotion_code: string, subtotal_cents: number, discount_cents: number, currency: string}>>`SELECT session_id, promotion_code, subtotal_cents, discount_cents, currency FROM ot_zero_total_settlement WHERE order_id = ${s.orderId}`
+  const b = binding[0]
+  if (b?.session_id !== s.sessionId || b?.promotion_code !== s.promotionCodeId || b?.subtotal_cents !== s.subtotalCents || b?.discount_cents !== s.discountCents || b?.currency !== s.currency) {
+    throw new Error("OT zero-total settlement binding mismatch")
+  }
+}

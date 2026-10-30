@@ -69,9 +69,11 @@ jest.mock("stripe", () => {
     product: id === "price_t2" ? "prod_t2" : "prod_t3",
   }))
   const retrieveSession = jest.fn(async (id: string) => state.stripeSessions.get(id) ?? null)
+  const listPromotionCodes = jest.fn(async (_params: Record<string, unknown>) => ({ data: [] as unknown[] }))
   const Stripe = jest.fn().mockImplementation(() => ({
     checkout: { sessions: { create, retrieve: retrieveSession } },
     prices: { retrieve: retrievePrice },
+    promotionCodes: { list: listPromotionCodes },
   }))
   return {
     __esModule: true,
@@ -79,6 +81,7 @@ jest.mock("stripe", () => {
     __create: create,
     __retrievePrice: retrievePrice,
     __retrieveSession: retrieveSession,
+    __listPromotionCodes: listPromotionCodes,
   }
 })
 
@@ -210,6 +213,8 @@ process.env.OT_CHECKOUT_GATE_SECRET = "test-gate-secret-at-least-32-characters"
 
 const stripeModule = jest.requireMock("stripe") as {
   __create: jest.Mock
+  __listPromotionCodes: jest.Mock
+  __retrieveSession: jest.Mock
 }
 const { POST } = require("@/app/api/checkout/session/route") as typeof import("@/app/api/checkout/session/route")
 
@@ -498,5 +503,281 @@ describe("POST /api/checkout/session server-authoritative OT contract reuse", ()
     // release would find half-formed rows waiting to be reused.
     expect(state.orders.size).toBe(0)
     expect(stripeModule.__create).not.toHaveBeenCalled()
+  })
+})
+
+describe("POST /api/checkout/session scoped full-discount promotion codes", () => {
+  const fullPromo = (coupon: Record<string, unknown> = {}, promo: Record<string, unknown> = {}) => ({
+    id: "promo_full",
+    code: "FREEREPORT",
+    active: true,
+    promotion: { type: "coupon", coupon: { id: "coupon_full", valid: true, percent_off: 100, amount_off: null, currency: null, applies_to: { products: ["prod_t2"] }, ...coupon } },
+    ...promo,
+  })
+  beforeEach(() => {
+    process.env.OT_FULL_DISCOUNT_PROMOTION_CODE_IDS = "promo_full"
+  })
+  afterAll(() => {
+    delete process.env.OT_FULL_DISCOUNT_PROMOTION_CODE_IDS
+  })
+
+  it("keeps the ordinary paid session unchanged when no code is entered", async () => {
+    const res = await postT2("11111111-1111-4111-8111-111111111111")
+    expect(res.status).toBe(200)
+    const params = stripeModule.__create.mock.calls[0][0]
+    expect(params).not.toHaveProperty("discounts")
+    expect(params).not.toHaveProperty("allow_promotion_codes")
+    expect(params.line_items).toEqual([{ price: "price_t2", quantity: 1 }])
+    expect(stripeModule.__listPromotionCodes).not.toHaveBeenCalled()
+    // Explicit "none" binding: never a `promo_…` id, so zero-total settlement still fails closed.
+    expect(Array.from(state.orders.values())[0].checkoutDiscountPromotionCodeId).toBe("none")
+  })
+
+  it("applies an allowlisted product-scoped full discount server-side and persists it on the durable order", async () => {
+    stripeModule.__listPromotionCodes.mockResolvedValue({ data: [fullPromo()] })
+    const res = await postT2("11111111-1111-4111-8111-111111111111", { promotionCode: "FREEREPORT" })
+    expect(res.status).toBe(200)
+    expect(stripeModule.__listPromotionCodes).toHaveBeenCalledWith(expect.objectContaining({ code: "FREEREPORT", active: true }))
+    const params = stripeModule.__create.mock.calls[0][0]
+    expect(params.discounts).toEqual([{ promotion_code: "promo_full" }])
+    expect(params.line_items).toEqual([{ price: "price_t2", quantity: 1 }])
+    const order = Array.from(state.orders.values())[0]
+    expect(order.checkoutAmountCents).toBe(6900)
+    expect(order.checkoutDiscountPromotionCodeId).toBe("promo_full")
+    expect(order.status).toBe("CHECKOUT_CREATED")
+  })
+
+  it.each([
+    ["not allowlisted", fullPromo({}, { id: "promo_other" })],
+    ["partial discount", fullPromo({ percent_off: 50 })],
+    ["scoped to a different product", fullPromo({ applies_to: { products: ["prod_t3"] } })],
+  ])("refuses a code that is %s before any provider session or order claim", async (_n, promo) => {
+    stripeModule.__listPromotionCodes.mockResolvedValue({ data: [promo] })
+    const res = await postT2("11111111-1111-4111-8111-111111111111", { promotionCode: "FREEREPORT" })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ code: "INVALID_PROMOTION_CODE" })
+    expect(stripeModule.__create).not.toHaveBeenCalled()
+  })
+})
+
+describe("POST /api/checkout/session promotion binding on reuse and retry", () => {
+  const promoWith = (id: string, code: string) => ({
+    id,
+    code,
+    active: true,
+    promotion: { type: "coupon", coupon: { id: `coupon_${id}`, valid: true, percent_off: 100, amount_off: null, currency: null, applies_to: { products: ["prod_t2"] } } },
+  })
+  const KEY_A = "11111111-1111-4111-8111-111111111111"
+  const KEY_B = "22222222-2222-4222-8222-222222222222"
+  beforeEach(() => {
+    process.env.OT_FULL_DISCOUNT_PROMOTION_CODE_IDS = "promo_full,promo_other"
+    stripeModule.__listPromotionCodes.mockImplementation(async (params: { code?: string }) => ({
+      data: params.code === "FREEREPORT" ? [promoWith("promo_full", "FREEREPORT")]
+        : params.code === "OTHERFREE" ? [promoWith("promo_other", "OTHERFREE")]
+        : [],
+    }))
+  })
+  afterAll(() => {
+    delete process.env.OT_FULL_DISCOUNT_PROMOTION_CODE_IDS
+    stripeModule.__listPromotionCodes.mockReset()
+  })
+
+  const onlyOrder = () => {
+    expect(state.orders.size).toBe(1)
+    return Array.from(state.orders.values())[0]
+  }
+  const onlyOrderStatus = () => Array.from(state.orders.values())[0]?.status
+
+  it.each([
+    ["paid/no coupon then coupon", {}, { promotionCode: "FREEREPORT" }],
+    ["coupon then no coupon", { promotionCode: "FREEREPORT" }, {}],
+    ["coupon then a different allowlisted code", { promotionCode: "FREEREPORT" }, { promotionCode: "OTHERFREE" }],
+  ])("refuses %s against the open session without a second order or provider session", async (_n, firstTerms, secondTerms) => {
+    const first = await postT2(KEY_A, firstTerms)
+    expect(first.status).toBe(200)
+    const { url } = await first.json()
+    const before = { ...onlyOrder() }
+
+    const second = await postT2(KEY_B, secondTerms)
+    expect(second.status).toBe(409)
+    const body = await second.json()
+    expect(body).toMatchObject({ code: "CHECKOUT_PROMOTION_CONFLICT" })
+    expect(JSON.stringify(body)).not.toContain(url)
+    expect(stripeModule.__create).toHaveBeenCalledTimes(1)
+    const after = onlyOrder()
+    expect(after.stripeSessionId).toBe(before.stripeSessionId)
+    expect(after.attempt).toBe(before.attempt)
+    expect(after.checkoutDiscountPromotionCodeId ?? null).toBe(before.checkoutDiscountPromotionCodeId ?? null)
+  })
+
+  it.each([
+    ["no coupon", {}],
+    ["the same coupon", { promotionCode: "FREEREPORT" }],
+  ])("reuses the same order, session and URL for a same-terms retry with %s", async (_n, terms) => {
+    const first = await postT2(KEY_A, terms)
+    const second = await postT2(KEY_B, terms)
+    expect(second.status).toBe(200)
+    expect(await second.json()).toEqual(await first.json())
+    expect(stripeModule.__create).toHaveBeenCalledTimes(1)
+    onlyOrder()
+  })
+
+  it.each([
+    ["no coupon", {}, "none"],
+    ["a coupon", { promotionCode: "FREEREPORT" }, "promo_full"],
+  ])("durably binds %s on the order BEFORE the provider create call", async (_n, terms, binding) => {
+    const seen: Array<{ status: unknown; binding: unknown }> = []
+    stripeModule.__create.mockImplementationOnce(async (params: Record<string, unknown>, options?: { idempotencyKey?: string }) => {
+      const row = Array.from(state.orders.values())[0]
+      seen.push({ status: row?.status, binding: row?.checkoutDiscountPromotionCodeId ?? null })
+      const id = `cs_contract_${++createCount}`
+      const url = `https://checkout.stripe.test/${id}`
+      state.stripeSessions.set(id, { id, url, status: "open", idempotencyKey: options?.idempotencyKey ?? null, params })
+      return { id, url }
+    })
+    const res = await postT2(KEY_A, terms)
+    expect(res.status).toBe(200)
+    expect(seen).toEqual([{ status: "CHECKOUT_CREATING", binding }])
+    expect(onlyOrder().checkoutDiscountPromotionCodeId).toBe(binding)
+  })
+
+  it("after an ambiguous provider-create failure, retries same terms under the same idempotency key and refuses changed terms", async () => {
+    stripeModule.__create.mockImplementationOnce(async () => {
+      throw new Error("socket hang up after request was sent")
+    })
+    const first = await postT2(KEY_A, { promotionCode: "FREEREPORT" })
+    expect(first.status).toBe(502)
+    const failed = onlyOrder()
+    expect(failed.status).toBe("CHECKOUT_FAILED")
+    expect(failed.checkoutDiscountPromotionCodeId).toBe("promo_full")
+    const firstKey = stripeModule.__create.mock.calls[0][1]
+
+    for (const changed of [{}, { promotionCode: "OTHERFREE" }]) {
+      const refused = await postT2(KEY_B, changed)
+      expect(refused.status).toBe(409)
+      expect(await refused.json()).toMatchObject({ code: "CHECKOUT_PROMOTION_CONFLICT" })
+    }
+    expect(stripeModule.__create).toHaveBeenCalledTimes(1)
+    expect(onlyOrder().status).toBe("CHECKOUT_FAILED")
+
+    const retry = await postT2(KEY_B, { promotionCode: "FREEREPORT" })
+    expect(retry.status).toBe(200)
+    expect(stripeModule.__create).toHaveBeenCalledTimes(2)
+    expect(stripeModule.__create.mock.calls[1][1]).toEqual(firstKey)
+    expect(stripeModule.__create.mock.calls[1][0].discounts).toEqual([{ promotion_code: "promo_full" }])
+    expect(onlyOrder()).toMatchObject({ status: "CHECKOUT_CREATED", checkoutDiscountPromotionCodeId: "promo_full", attempt: 0 })
+  })
+
+  it("refuses changed terms on a stale CHECKOUT_CREATING lease without reclaiming it", async () => {
+    stripeModule.__create.mockImplementationOnce(async () => new Promise(() => {}) as never)
+    void postT2(KEY_A, { promotionCode: "FREEREPORT" })
+    for (let i = 0; i < 100 && onlyOrderStatus() !== "CHECKOUT_CREATING"; i++) await new Promise((r) => setTimeout(r, 5))
+    const row = onlyOrder()
+    expect(row.status).toBe("CHECKOUT_CREATING")
+    row.updatedAt = new Date(Date.now() - 20 * 60 * 1000)
+
+    const refused = await postT2(KEY_B, {})
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({ code: "CHECKOUT_PROMOTION_CONFLICT" })
+    expect(stripeModule.__create).toHaveBeenCalledTimes(1)
+    expect(onlyOrder()).toMatchObject({ status: "CHECKOUT_CREATING", checkoutDiscountPromotionCodeId: "promo_full" })
+  })
+
+  it("refuses changed terms after the bound session expired, without advancing the attempt", async () => {
+    await postT2(KEY_A, {})
+    const order = onlyOrder()
+    state.stripeSessions.set(String(order.stripeSessionId), { id: order.stripeSessionId, url: "https://checkout.stripe.test/expired", status: "expired" })
+
+    const refused = await postT2(KEY_B, { promotionCode: "FREEREPORT" })
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({ code: "CHECKOUT_PROMOTION_CONFLICT" })
+    expect(onlyOrder()).toMatchObject({ attempt: 0, status: "CHECKOUT_CREATED" })
+    expect(stripeModule.__create).toHaveBeenCalledTimes(1)
+  })
+
+  it("treats a legacy CHECKOUT_CREATED row with a null binding as explicit none", async () => {
+    await postT2(KEY_A, {})
+    const order = onlyOrder()
+    order.checkoutDiscountPromotionCodeId = null
+
+    const refused = await postT2(KEY_B, { promotionCode: "FREEREPORT" })
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({ code: "CHECKOUT_PROMOTION_CONFLICT" })
+    const reused = await postT2(KEY_B, {})
+    expect(reused.status).toBe(200)
+    expect(stripeModule.__create).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ["legacy FAILED", { status: "CHECKOUT_FAILED", stripeSessionId: null }],
+    ["legacy stale CREATING", { status: "CHECKOUT_CREATING", stripeSessionId: null, updatedAt: new Date(Date.now() - 20 * 60 * 1000) }],
+    ["questionable PENDING holding a session", { status: "CHECKOUT_PENDING" }],
+  ])("refuses a %s row with a null binding for any terms before any Stripe call, leaving it unchanged", async (_n, legacy) => {
+    await postT2(KEY_A, {})
+    const order = onlyOrder()
+    Object.assign(order, legacy, { checkoutDiscountPromotionCodeId: null })
+    const before = { ...order }
+    stripeModule.__create.mockClear()
+    stripeModule.__retrieveSession.mockClear()
+
+    for (const terms of [{}, { promotionCode: "FREEREPORT" }]) {
+      const refused = await postT2(KEY_B, terms)
+      expect(refused.status).toBe(409)
+      expect(await refused.json()).toMatchObject({ code: "CHECKOUT_PROMOTION_CONFLICT" })
+    }
+    expect(stripeModule.__create).not.toHaveBeenCalled()
+    expect(stripeModule.__retrieveSession).not.toHaveBeenCalled()
+    expect(state.orders.size).toBe(1)
+    expect(onlyOrder()).toEqual(before)
+  })
+
+  it("binds a never-attempted unbound PENDING row to the first claimant's terms before the provider call", async () => {
+    await postT2(KEY_A, {})
+    const order = onlyOrder()
+    Object.assign(order, { status: "CHECKOUT_PENDING", stripeSessionId: null, checkoutDiscountPromotionCodeId: null })
+
+    const res = await postT2(KEY_B, { promotionCode: "FREEREPORT" })
+    expect(res.status).toBe(200)
+    expect(onlyOrder().checkoutDiscountPromotionCodeId).toBe("promo_full")
+    const refused = await postT2(KEY_A, {})
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({ code: "CHECKOUT_PROMOTION_CONFLICT" })
+    expect(stripeModule.__create).toHaveBeenCalledTimes(2)
+  })
+
+  it("a racing claim loser with different terms never receives the winner's session URL", async () => {
+    const first = await postT2(KEY_A, {})
+    expect(first.status).toBe(200)
+    const order = onlyOrder()
+    Object.assign(order, { status: "CHECKOUT_PENDING", stripeSessionId: null, checkoutDiscountPromotionCodeId: null })
+    stripeModule.__create.mockClear()
+
+    const db = jest.requireMock("@/lib/db") as { prisma: { oTOrder: { updateMany: jest.Mock } } }
+    const realUpdateMany = db.prisma.oTOrder.updateMany.getMockImplementation() as (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => Promise<{ count: number }>
+    let claimCalls = 0
+    let releaseClaims!: () => void
+    const claimBarrier = new Promise<void>((resolve) => { releaseClaims = resolve })
+    db.prisma.oTOrder.updateMany.mockImplementation(async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      if (args.data.status === "CHECKOUT_CREATING") {
+        claimCalls += 1
+        if (claimCalls <= 2) {
+          if (claimCalls === 2) releaseClaims()
+          await claimBarrier
+        }
+      }
+      return realUpdateMany(args)
+    })
+    try {
+      const [left, right] = await Promise.all([
+        postT2(KEY_A, { promotionCode: "FREEREPORT" }),
+        postT2(KEY_B, {}),
+      ])
+      expect(stripeModule.__create).toHaveBeenCalledTimes(1)
+      const bodies = await Promise.all([left.json(), right.json()])
+      expect(bodies.filter((b) => typeof b?.url === "string")).toHaveLength(1)
+      expect(bodies.filter((b) => b?.code === "CHECKOUT_PROMOTION_CONFLICT")).toHaveLength(1)
+    } finally {
+      db.prisma.oTOrder.updateMany.mockImplementation(realUpdateMany)
+    }
   })
 })

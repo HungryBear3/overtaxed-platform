@@ -1,7 +1,8 @@
+/** @jest-environment node */
 import { ASSESSOR_CONTEXT } from "@/lib/deadlines/assessor-calendar-context"
 import { TOWNSHIPS } from "@/lib/townships"
 import { produceNeutralReport } from "@/lib/fulfillment-runtime/neutral-report-producer"
-import { installNeutralTestRuntime, TestNeutralRepository } from "@/test-support/neutral-report-runtime"
+import { installNeutralTestRuntime, provenUnboundSnapshotBinding, TestNeutralRepository } from "@/test-support/neutral-report-runtime"
 
 const pin = "14000000000000", other = "14000000000001"
 const field = (label: string, key: string) => `<div><span class="label-a">${label}</span><div class="field--name-field-${key}"><time datetime="2026-09-${key === "last-file-date" ? "24" : "01"}T12:00:00Z">9/${key === "last-file-date" ? "24" : "01"}/2026</time></div></div>`
@@ -23,7 +24,7 @@ function fake(body: string, url: string, type: string) { const bytes = Buffer.fr
 async function withRuntimeFetch(run: (repo: TestNeutralRepository) => Promise<void>, mutate?: (url: string, response: any) => any, repo = new TestNeutralRepository()) {
   jest.useFakeTimers(); jest.setSystemTime(new Date("2026-09-15T15:00:00Z"))
   const prior = globalThis.fetch
-  const uninstall = installNeutralTestRuntime(repo)
+  const uninstall = installNeutralTestRuntime(repo, true, provenUnboundSnapshotBinding())
   ;(globalThis as any).fetch = async (url: string) => { const base = url.includes("assessment-calendar") ? fake(calendarHtml(), url, "text/html; charset=utf-8") : fake(JSON.stringify(countyRows(url)), url, "application/json; charset=utf-8"); return mutate?.(url, base) ?? base }
   try { await run(repo) } finally { uninstall(); (globalThis as any).fetch = prior; jest.useRealTimers() }
 }

@@ -185,7 +185,14 @@ export function isServerOnlyEventName(name: unknown): boolean {
 /** Validate one event exactly as the sensitive browser boundary hands it to gtag. */
 export function validateBrowserFunnelEvent(name: unknown, params: unknown): BrowserValidation {
   if (isServerOnlyEventName(name)) return { ok: false, violations: ["SERVER_ONLY_EVENT"] }
-  const spec = typeof name === "string" && hasOwn(BROWSER_EVENTS, name) ? BROWSER_EVENTS[name] : undefined
+  const factual = name === "free_check_completed" && isPlainObject(params) && params.result_kind === "FACTUAL_ONLY"
+  const spec: BrowserEventSpec | undefined = factual ? {
+    grade: "diagnostic",
+    required: { surface: oneOf(FREE_CHECK_SURFACES), result_kind: oneOf(["FACTUAL_ONLY"]),
+      validation: oneOf(["UNVALIDATED"]), data_origin: oneOf(["SYNTHETIC_PREVIEW", "COUNTY_RECORD"]),
+      allow_checkout: oneOf([false]), qualified: oneOf([false]), window_status: oneOf(["unknown"]), ...PAGE_CONTEXT },
+    optional: {},
+  } : typeof name === "string" && hasOwn(BROWSER_EVENTS, name) ? BROWSER_EVENTS[name] : undefined
   if (!spec) return { ok: false, violations: ["UNKNOWN_EVENT"] }
   if (!isPlainObject(params)) return { ok: false, violations: ["NOT_AN_OBJECT"] }
 

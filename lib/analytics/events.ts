@@ -3,6 +3,7 @@
  * GA4, Meta Pixel, and Google Ads
  */
 
+import { FactualResultSchema } from "@/lib/evidence/public-factual-contract"
 import { trackMetaEvent, trackMetaCustomEvent } from "@/components/analytics/meta-pixel"
 import { trackGoogleAdsConversion } from "@/components/analytics/google-analytics"
 import { buildSanitizedPageContext, sanitizeGaEventParams } from "./ga4"
@@ -247,6 +248,17 @@ export const analytics = {
    * derivation rather than from a separate call, so the two can never disagree
    * about a single result and no call site can emit one without the other.
    */
+  factualCheckCompleted: (params: { surface: FreeCheckSurface; result: unknown }) => {
+    safely(() => {
+      const parsed = FactualResultSchema.safeParse(params.result)
+      if (!parsed.success) return
+      trackFreeCheckEvent("free_check_completed", {
+        surface: params.surface, result_kind: "FACTUAL_ONLY", validation: "UNVALIDATED",
+        data_origin: parsed.data.dataOrigin, allow_checkout: false, qualified: false, window_status: "unknown",
+      })
+    })
+  },
+
   freeCheckCompleted: (params: {
     surface: FreeCheckSurface
     outcome: unknown

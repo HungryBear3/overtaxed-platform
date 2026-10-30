@@ -4,6 +4,7 @@ import { useState } from "react"
 import Link from "next/link"
 
 import { CC_02, CC_05, CC_12 } from "@/lib/copy/canonical"
+import { BoundFactualResult } from "./SharedEvidenceSummary"
 import {
   isCanonicalFreeCheckOutcome,
   type FreeCheckOutcome as SharedResultOutcome,
@@ -134,7 +135,21 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
 }
 
-export function FreeCheckResult({ result }: Props) {
+/**
+ * /check consumer: renders only the server-bound FACTUAL_ONLY result for the
+ * lookup receipt the route issued. Any other value — including a legacy
+ * normalized body restored from an old cache — is refused by the shared
+ * renderer, never interpreted, so no legacy figure or offer can reach /check.
+ */
+export function FreeCheckResult({ result }: { result: unknown }) {
+  return <BoundFactualResult receipt={result} />
+}
+
+/**
+ * The legacy normalized-result renderer, retained unchanged for the legacy
+ * wire shape. `/check` no longer mounts it: the route now issues receipts.
+ */
+export function LegacyFreeCheckResult({ result }: Props) {
   const [email, setEmail] = useState("")
   const [township, setTownship] = useState(
     result.subject.township?.replace(/\s*Township$/i, "").trim() || "Free Check"

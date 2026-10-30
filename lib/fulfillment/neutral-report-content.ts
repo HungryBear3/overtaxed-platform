@@ -21,7 +21,9 @@ import { townshipKeyFromName } from "@/lib/deadlines/township-resolution"
 import { canonicalNeutralSourceOrder } from "@/lib/fulfillment-runtime/neutral-evidence-envelope"
 import { renderDeterministicTextPdf } from "@/lib/fulfillment/neutral-report-pdf"
 import { loadNeutralOfficialCalendarRuntime, verifyAndCopyNeutralDeadlineEvidence } from "@/lib/fulfillment-runtime/neutral-deadline-gateway"
-import { readNeutralOfficialBytesRuntime, verifyAndCopyNeutralEvidence } from "@/lib/fulfillment-runtime/neutral-raw-gateway"
+import { readNeutralOfficialBytesRuntime, verifyAndCopyNeutralEvidence, type NeutralRawEvidence } from "@/lib/fulfillment-runtime/neutral-raw-gateway"
+import type { AcquisitionSnapshotStore, SharedComparisonMetric } from "@/lib/evidence/server/acquisition-snapshot"
+import type { OrderSnapshotBindingStore } from "@/lib/commerce/snapshot-checkout-transfer"
 import { NEUTRAL_REPORT_COMMERCE_POLICY, neutralOrderReservationKey } from "@/lib/commerce/neutral-report-policy"
 
 export const NEUTRAL_REPORT_PRODUCER_VERSION = "ot-neutral-records-report/1.0.0"
@@ -53,9 +55,13 @@ export type NeutralReportInputs = {
   deadlineEvidenceSha256: string
   dataEvidenceVersion: "ot-neutral-data-evidence/v1"
   deadlineEvidenceVersion: "ot-neutral-deadline-evidence/v1"
+  /** The saved shared metric of the order-bound analysis (never recomputed here). Absent for unbound orders. */
+  sharedMetric?: SharedComparisonMetric
 }
 
 export type NeutralDeadlineAuthoritySnapshot = DeadlineAuthoritySnapshot & {
+  /** Parsed official open date; part of the admitted deadline identity. */
+  openDate?: string
   townshipName: string
   townshipKey: string
   taxYear: 2026
@@ -102,6 +108,7 @@ export type NeutralReportManifest = {
   deadlineEvidenceSha256: string
   dataEvidenceVersion: "ot-neutral-data-evidence/v1"
   deadlineEvidenceVersion: "ot-neutral-deadline-evidence/v1"
+  sharedMetric?: SharedComparisonMetric
 }
 
 export type NeutralReportContentResult =
@@ -125,6 +132,8 @@ function officialDatasetUrl(value: string, datasetId: string): boolean {
     const url = new URL(value)
     const keys = [...url.searchParams.keys()]
     const sorted = [...keys].sort()
+    // Exact dataset metadata page retained by the shared-snapshot epoch checks.
+    if (value === `https://datacatalog.cookcountyil.gov/api/views/${datasetId}.json`) return true
     return url.protocol === "https:" && url.hostname === "datacatalog.cookcountyil.gov" &&
       url.pathname === `/resource/${datasetId}.json` && url.username === "" && url.password === "" && url.hash === "" &&
       keys.length > 0 && keys.join("\0") === sorted.join("\0") && new Set(keys).size === keys.length
@@ -259,6 +268,7 @@ function formatNeutralReportContent(input: NeutralReportInputs): NeutralReportCo
     deadlineEvidenceSha256: input.deadlineEvidenceSha256,
     dataEvidenceVersion: input.dataEvidenceVersion,
     deadlineEvidenceVersion: input.deadlineEvidenceVersion,
+    ...(input.sharedMetric ? { sharedMetric: input.sharedMetric } : {}),
   }
 
   const header = ["pin", "address", "neighborhood", "property_class", "residential_subtype", "building_sqft", "year_built", "assessed_total", "assessed_per_sqft"]
@@ -298,7 +308,7 @@ function formatNeutralReportContent(input: NeutralReportInputs): NeutralReportCo
     "3. MATCHING PROPERTIES AND VISIBLE ARITHMETIC",
   ]
   for (const row of attached.valued) lines.push(`${row.pin} | ${clean(input.addresses.get(row.pin))} | ${row.buildingSqft} sq ft | ${row.yearBuilt} | $${row.assessedTotalValue} / ${row.buildingSqft} = $${fixed(row.assessedPerSqft)} per sq ft`)
-  lines.push("", "No median, relative gap, merits threshold, or conclusion is applied.", "", "4. OFFICIAL FILING WINDOW", `Status: ${deadline.status}; closes: ${clean(deadline.closeDate) || "not published"}`, `Source: ${clean(deadline.sourceName)} - ${clean(deadline.sourceUrl)}`, `Retrieved: ${deadline.retrievedAt}`, "", "5. SOURCE RECEIPTS")
+  lines.push("", ...sharedMetricLines(input.sharedMetric), "", "4. OFFICIAL FILING WINDOW", `Status: ${deadline.status}; closes: ${clean(deadline.closeDate) || "not published"}`, `Source: ${clean(deadline.sourceName)} - ${clean(deadline.sourceUrl)}`, `Retrieved: ${deadline.retrievedAt}`, "", "5. SOURCE RECEIPTS")
   for (const source of sources) lines.push(`${clean(source.datasetTitle)} (${clean(source.datasetId)})`, `  ${clean(source.url)}`, `  retrieved ${source.retrievedAt}`, `  content sha256 ${source.contentSha256 ?? "not available from source"}`)
   lines.push("", "6. PROVENANCE MANIFEST", canonicalJson(manifest), "")
   return { ok: true, text: lines.join("\n"), csv, manifest }
@@ -317,10 +327,10 @@ type Receipt = NeutralReportReceipt
 type Write = NeutralReportWrite
 type Outcome<T = never> = NeutralRepositoryOutcome<T>
 type Repository = NeutralReportRepository
-type TestRuntime = { active: boolean; repository: Repository } | undefined
+type TestRuntime = { active: boolean; repository: Repository; snapshotBinding?: NeutralSnapshotBindingStores } | undefined
 declare global { var __OT_NEUTRAL_REPORT_TEST_RUNTIME__: TestRuntime }
 
-function runtime(): { active: boolean; repository: Repository | null } {
+function runtime(): { active: boolean; repository: Repository | null; snapshotBinding?: NeutralSnapshotBindingStores } {
   if (process.env.NODE_ENV === "test") return globalThis.__OT_NEUTRAL_REPORT_TEST_RUNTIME__ ?? { active: false, repository: null }
   return { active: false, repository: null }
 }
@@ -346,13 +356,60 @@ async function reconcile(repo: Repository, key: string, receipt: Receipt, staged
   return null
 }
 
+export type NeutralSnapshotBindingStores = { bindingStore: OrderSnapshotBindingStore; snapshotStore: AcquisitionSnapshotStore }
+/**
+ * Snapshot-bound orders use only their bound exact pages, never a county refetch.
+ * UNBOUND only when a successful binding lookup proves no row for this order.
+ * Missing snapshot store config is BLOCKED, never inferred as unbound.
+ * An unbound order with an authority-admitted data digest replays exactly the
+ * snapshot its checkout admission persisted (PIN + digest, one row), never a refetch.
+ */
+async function readBoundEvidence(orderId: string, propertyPin: string, injected?: NeutralSnapshotBindingStores, admittedDataEvidenceSha256?: string): Promise<{ state: "UNBOUND" } | { state: "BOUND"; evidence: NeutralRawEvidence; sharedMetric: SharedComparisonMetric } | { state: "BLOCKED"; blocker: string }> {
+  let modules: [typeof import("@/lib/commerce/neutral-checkout-runtime"), typeof import("@/lib/evidence/server/acquisition-snapshot")]
+  try { modules = await Promise.all([import("@/lib/commerce/neutral-checkout-runtime"), import("@/lib/evidence/server/acquisition-snapshot")]) } catch { return { state: "BLOCKED", blocker: "NEUTRAL_SNAPSHOT_BINDING_UNAVAILABLE" } }
+  const [{ readOrderBoundSnapshot }, { replayStoredAcquisitionEvidence, createAcquisitionSnapshotStoreFromEnv }] = modules
+  let stored: Awaited<ReturnType<typeof readOrderBoundSnapshot>>
+  try { stored = await readOrderBoundSnapshot(orderId, injected ?? {}) } catch { return { state: "BLOCKED", blocker: "NEUTRAL_SNAPSHOT_BINDING_UNAVAILABLE" } }
+  const admitted = !stored
+  if (!stored) {
+    if (admittedDataEvidenceSha256 === undefined) return { state: "UNBOUND" }
+    const owned = injected?.snapshotStore ? null : createAcquisitionSnapshotStoreFromEnv()
+    const store = injected?.snapshotStore ?? owned
+    try {
+      if (!store?.readAdmittedPrivileged) return { state: "BLOCKED", blocker: "NEUTRAL_ADMITTED_SNAPSHOT_UNAVAILABLE" }
+      stored = await store.readAdmittedPrivileged(propertyPin, admittedDataEvidenceSha256)
+    } catch { return { state: "BLOCKED", blocker: "NEUTRAL_ADMITTED_SNAPSHOT_UNAVAILABLE" } } finally { await owned?.close() }
+    if (!stored) return { state: "BLOCKED", blocker: "NEUTRAL_ADMITTED_SNAPSHOT_UNAVAILABLE" }
+    if (stored.snapshot.subject?.pin !== propertyPin || stored.snapshot.dataEvidenceSha256 !== admittedDataEvidenceSha256) return { state: "BLOCKED", blocker: "NEUTRAL_SNAPSHOT_EVIDENCE_INVALID" }
+  }
+  if (stored.snapshot.subject.pin !== propertyPin) return { state: "BLOCKED", blocker: "NEUTRAL_REPLAY_CONFLICT" }
+  const evidence = await replayStoredAcquisitionEvidence(stored).catch(() => null)
+  if (admitted && evidence?.dataEvidenceSha256 !== admittedDataEvidenceSha256) return { state: "BLOCKED", blocker: "NEUTRAL_SNAPSHOT_EVIDENCE_INVALID" }
+  return evidence && evidence.subject.pin === propertyPin ? { state: "BOUND", evidence, sharedMetric: stored.snapshot.sharedMetric } : { state: "BLOCKED", blocker: "NEUTRAL_SNAPSHOT_EVIDENCE_INVALID" }
+}
+
+const dollarsPerSqft = (cents: number) => `$${(cents / 100).toFixed(2)}`
+/** Renders the saved shared metric verbatim; no threshold, gap or conclusion is derived from it. */
+function sharedMetricLines(metric: SharedComparisonMetric | undefined): string[] {
+  if (!metric) return ["No median, relative gap, merits threshold, or conclusion is applied."]
+  const median = metric.comparableMedian
+  return [
+    median.status === "COMPUTED"
+      ? `Median assessed value per building sq ft (comparable cohort, subject excluded): ${dollarsPerSqft(median.value)} across ${median.count} properties`
+      : "Median assessed value per building sq ft (comparable cohort, subject excluded): unavailable - no computable comparable cohort",
+    `Subject assessed value per building sq ft (shown separately): ${dollarsPerSqft(metric.subjectAssessedCentsPerBuildingSqft)}`,
+    `Sample adequacy: NOT QUALIFIED (minimum count ${median.minimumCount}; no adequacy threshold is applied)`,
+    "Assessed values only; not market value and not a savings estimate. No relative gap, merits threshold, or conclusion is applied.",
+  ]
+}
+
 /** Only trusted neutral-report constructor. Returns a durable immutable receipt. */
-export async function produceNeutralReport(input: { orderId: string; propertyPin: string; deadline?: number }, trustedRuntime?: { active: boolean; repository: NeutralReportRepository }): Promise<{ ok: true; receipt: Receipt } | { ok: false; blocker: string }> {
+export async function produceNeutralReport(input: { orderId: string; propertyPin: string; deadline?: number; admittedDataEvidenceSha256?: string }, trustedRuntime?: { active: boolean; repository: NeutralReportRepository; snapshotBinding?: NeutralSnapshotBindingStores }):Promise<{ ok: true; receipt: Receipt } | { ok: false; blocker: string }> {
   const resolveRuntime = () => trustedRuntime ?? runtime()
   const first = resolveRuntime()
   if (!first.active) return { ok: false, blocker: "NEUTRAL_REPORT_INACTIVE" }
   if (!first.repository) return { ok: false, blocker: "NEUTRAL_REPOSITORY_UNAVAILABLE" }
-  if (!input.orderId || input.orderId.length > 128 || !/^\d{14}$/.test(input.propertyPin)) return { ok: false, blocker: "NEUTRAL_INPUT_INVALID" }
+  if (!input.orderId || input.orderId.length > 128 || !/^\d{14}$/.test(input.propertyPin) || (input.admittedDataEvidenceSha256 !== undefined && !SHA256.test(input.admittedDataEvidenceSha256))) return { ok: false, blocker: "NEUTRAL_INPUT_INVALID" }
   // Checkout integration must supply the server-authoritative order PIN. This
   // durable order-level reservation prevents one order from ever changing PIN.
   const orderKey = neutralOrderReservationKey(input.orderId)
@@ -377,11 +434,12 @@ export async function produceNeutralReport(input: { orderId: string; propertyPin
     } catch { /* bounded below */ }
     await first.repository.quarantine(key).catch(() => {}); return { ok: false, blocker: "NEUTRAL_REPLAY_CONFLICT" }
   }
-  const raw = await readNeutralOfficialBytesRuntime({ propertyPin: input.propertyPin, deadline: input.deadline }); if (!raw.ok) return raw
+  const bound = await readBoundEvidence(input.orderId, input.propertyPin, trustedRuntime ? trustedRuntime.snapshotBinding : first.snapshotBinding, input.admittedDataEvidenceSha256); if (bound.state === "BLOCKED") return { ok: false, blocker: bound.blocker }
+  const raw = bound.state === "BOUND" ? { ok: true as const, evidence: bound.evidence } : await readNeutralOfficialBytesRuntime({ propertyPin: input.propertyPin, deadline: input.deadline }); if (!raw.ok) return raw
   const calendar = await loadNeutralOfficialCalendarRuntime({ subjectPin: raw.evidence.subject.pin, subjectTownship: raw.evidence.subject.township, deadline: input.deadline }); if (!calendar.ok) return calendar
   const pages = verifyAndCopyNeutralEvidence(raw.evidence), calendarBytes = verifyAndCopyNeutralDeadlineEvidence(calendar.evidence)
   if (!pages || !calendarBytes) return { ok: false, blocker: "NEUTRAL_EVIDENCE_MUTATED" }
-  const formatted = formatNeutralReportContent({ orderId: input.orderId, orderPropertyPin: input.propertyPin, subject: raw.evidence.subject, subjectProration: raw.evidence.subjectProration, candidatePool: raw.evidence.candidatePool, assessedValues: raw.evidence.assessedValues, addresses: raw.evidence.addresses, deadline: calendar.evidence.deadline, sources: raw.evidence.sources, generatedAt: calendar.evaluatedAt, dataEvidenceSha256: raw.evidence.dataEvidenceSha256, deadlineEvidenceSha256: calendar.evidence.deadlineEvidenceSha256, dataEvidenceVersion: "ot-neutral-data-evidence/v1", deadlineEvidenceVersion: "ot-neutral-deadline-evidence/v1" })
+  const formatted = formatNeutralReportContent({ orderId: input.orderId, orderPropertyPin: input.propertyPin, subject: raw.evidence.subject, subjectProration: raw.evidence.subjectProration, candidatePool: raw.evidence.candidatePool, assessedValues: raw.evidence.assessedValues, addresses: raw.evidence.addresses, deadline: calendar.evidence.deadline, sources: raw.evidence.sources, generatedAt: calendar.evaluatedAt, dataEvidenceSha256: raw.evidence.dataEvidenceSha256, deadlineEvidenceSha256: calendar.evidence.deadlineEvidenceSha256, dataEvidenceVersion: "ot-neutral-data-evidence/v1", deadlineEvidenceVersion: "ot-neutral-deadline-evidence/v1", sharedMetric: bound.state === "BOUND" ? bound.sharedMetric : undefined })
   if (!formatted.ok) return formatted
   const pdf = await renderDeterministicTextPdf(formatted.text, formatted.manifest.generatedAt, { title: "OverTaxed IL - Assessment Records & Matching Property Report", heading: "OVERTAXED IL  |  ASSESSMENT RECORDS & MATCHING PROPERTIES", disclaimer: "Official-record compilation only. No eligibility, valuation, savings, or filing conclusion." })
   const csv = Buffer.from(formatted.csv), manifestJson = JSON.stringify(formatted.manifest), receipt = receiptFor(key, formatted.manifest, pdf, csv)
