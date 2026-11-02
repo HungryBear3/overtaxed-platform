@@ -10,5 +10,10 @@
     {"path":"/api/cron/invoice-collections","schedule":"0 9 * * *"},
     {"path":"/api/cron/neutral-checkout-reconciliation","schedule":"*/30 * * * *"},
     {"path":"/api/cron/neutral-report-production","schedule":"*/10 * * * *"}
-  ]
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "feat/ot-factual-saved-analysis-integration-20261030": false
+    }
+  }
 }
