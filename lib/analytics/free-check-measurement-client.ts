@@ -1,6 +1,7 @@
 /** Only approved code references or a fixed observation marker leave the browser. */
 import {
   getApprovedAttributionCodesForRequest,
+  hasStoredAttributionRecord,
   ATTRIBUTION_CAMPAIGN_PARAM,
   ATTRIBUTION_CREATIVE_PARAM,
 } from "@/lib/attribution/client-codes";
@@ -37,7 +38,12 @@ export function freeCheckMeasurementRequestFields(): Record<string, string> {
     }
     const stored = getApprovedAttributionCodesForRequest();
     if (stored.attributionCampaignCode) return { ...stored };
-    // This is NOT organic/first-touch attribution: only this request was untagged.
+    // A record that did not resolve is a touch we can no longer read, not an
+    // untagged request. Expired records were removed above, so they read absent.
+    if (hasStoredAttributionRecord())
+      return { freeCheckAttributionObservation: "unknown" };
+    // This is NOT organic/first-touch attribution: nothing readable says this
+    // request was tagged. Traceless capture losses also land here.
     return { freeCheckAttributionObservation: "untagged" };
   } catch {
     return { freeCheckAttributionObservation: "unknown" };

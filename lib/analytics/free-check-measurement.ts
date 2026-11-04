@@ -74,7 +74,8 @@ export async function recordFreeCheckCompletion(
   client?: AttributionSqlClient,
 ): Promise<MeasurementStatus> {
   if (!freeCheckMeasurementEnabled()) return "disabled";
-  // Vercel Preview may use real county reads; it must still never enter the ledger.
+  // Vercel Preview and non-canonical hosts may use real county reads; neither
+  // may enter the ledger. `preview` carries the route's host decision.
   if (process.env.VERCEL_ENV !== "production" || input.preview)
     return "excluded";
   const params = deriveFreeCheckOutcomeParams(input);

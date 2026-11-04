@@ -137,3 +137,77 @@ it("main successful branch records only its evaluated outcome", async () => {
   expect(write.mock.calls[0].slice(1)).toContain(body.outcome.code);
   expect(write.mock.calls[0].slice(1)).toContain("untagged_request");
 });
+
+describe("non-canonical Production hosts", () => {
+  const reqFrom = (headers: Record<string, string>, body: unknown) =>
+    ({
+      headers: { get: (name: string) => headers[name] ?? null },
+      json: async () => body,
+    }) as unknown as Parameters<typeof POST>[0];
+  const branches = {
+    "no-assessed-value": async () => undefined,
+    main: async () => {
+      const record = (await lookup()).data;
+      lookup.mockResolvedValue({
+        success: true,
+        data: { ...record, assessedTotalValue: 42500, marketValue: 425000 },
+      });
+      (getComparableSales as jest.Mock).mockResolvedValue({
+        success: true,
+        data: [],
+      });
+      (getComparableEquity as jest.Mock).mockResolvedValue({
+        success: true,
+        data: [],
+      });
+    },
+  };
+  const cases = Object.keys(branches) as (keyof typeof branches)[];
+  const outcomeOf = async (headers: Record<string, string>) => {
+    const response = await POST(
+      reqFrom(headers, {
+        pin: "18062140010000",
+        freeCheckAttributionObservation: "untagged",
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.outcome).toBeDefined();
+    return body.measurement;
+  };
+
+  describe.each(cases)("%s success branch", (branch) => {
+    beforeEach(() => branches[branch]());
+    it.each([
+      [{ host: "ot-abc123.vercel.app" }],
+      [{ "x-forwarded-host": "ot-abc123.vercel.app" }],
+      [{ "x-forwarded-host": "ot-abc123.vercel.app", host: "overtaxed-il.com" }],
+      [{ host: "overtaxed-il.com.evil.example" }],
+      [{}],
+    ])("excludes %j and writes nothing", async (headers) => {
+      expect(await outcomeOf(headers)).toBe("excluded");
+      expect(write).not.toHaveBeenCalled();
+    });
+    it.each([
+      [{ host: "overtaxed-il.com" }],
+      [{ host: "www.overtaxed-il.com" }],
+      [{ "x-forwarded-host": "WWW.OVERTAXED-IL.COM:443" }],
+    ])("records canonical %j", async (headers) => {
+      expect(await outcomeOf(headers)).toBe("recorded");
+      expect(write).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("a fixed unknown client observation is stored as unknown, not untagged", async () => {
+    await POST(
+      reqFrom(
+        { host: "overtaxed-il.com" },
+        { pin: "18062140010000", freeCheckAttributionObservation: "unknown" },
+      ),
+    );
+    const values = write.mock.calls[0].slice(1);
+    expect(values).toContain("unknown");
+    expect(values).not.toContain("untagged_request");
+  });
+});

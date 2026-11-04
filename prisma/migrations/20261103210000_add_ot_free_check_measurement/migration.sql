@@ -19,12 +19,13 @@ CREATE INDEX ot_free_check_completion_time ON ot_free_check_completion(completed
 ALTER TABLE ot_free_check_completion ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE ot_free_check_completion FROM PUBLIC;
 DO $$ DECLARE api_role TEXT; BEGIN
-  FOREACH api_role IN ARRAY ARRAY['anon','authenticated'] LOOP
+  FOREACH api_role IN ARRAY ARRAY['anon','authenticated','service_role'] LOOP
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = api_role) THEN
       EXECUTE format('REVOKE ALL ON TABLE ot_free_check_completion FROM %I', api_role);
     END IF;
   END LOOP;
 END $$;
--- API roles have no policies. Application owning role bypasses RLS.
+-- API roles have no policies and no grants. service_role is BYPASSRLS, so only
+-- this REVOKE keeps it out. Application owning role bypasses RLS.
 -- Application writes INSERT only; no UPDATE/DELETE path. Owner retention cleanup
 -- remains a separate operational approval, not an automatic task here.
