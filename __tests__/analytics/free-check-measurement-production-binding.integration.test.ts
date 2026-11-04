@@ -64,7 +64,7 @@ suite("production-only measurement runtime binding", () => {
         "-D",
         data,
         "-o",
-        `-F -c listen_addresses='' -k ${socket} -p ${port}`,
+        `-F -c listen_addresses='127.0.0.1' -k ${socket} -p ${port}`,
         "-w",
         "start",
       ],
@@ -155,7 +155,7 @@ suite("production-only measurement runtime binding", () => {
       session_user: "ot_prod_app",
     });
     const prior = { ...process.env };
-    process.env.OT_FREE_CHECK_MEASUREMENT_DATABASE_URL = `postgresql://ot_prod_app@localhost:${port}/postgres?host=${encodeURIComponent(socket)}`;
+    process.env.OT_FREE_CHECK_MEASUREMENT_DATABASE_URL = `postgresql://ot_prod_app@127.0.0.1:${port}/postgres?host=${encodeURIComponent(socket)}`;
     process.env.VERCEL_ENV = "production";
     process.env.OT_FREE_CHECK_MEASUREMENT_ENABLED = "1";
     const { withMeasurementClient } =

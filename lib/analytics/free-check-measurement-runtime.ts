@@ -1,5 +1,5 @@
 /** Purpose-bound measurement connection. Never imports the shared Prisma client. */
-import { Client } from "pg";
+import { Client, type ClientConfig } from "pg";
 import type { AttributionSqlClient } from "@/lib/attribution/record";
 
 export const MEASUREMENT_ROLE = "ot_prod_app";
@@ -16,9 +16,7 @@ export function validMeasurementLogin(url: URL): boolean {
     username === `${MEASUREMENT_ROLE}.${project}`
   );
 }
-export async function withMeasurementClient<T>(
-  run: (client: AttributionSqlClient) => Promise<T>,
-): Promise<T> {
+export function measurementClientConfig(): ClientConfig {
   const connectionString = process.env.OT_FREE_CHECK_MEASUREMENT_DATABASE_URL;
   if (!connectionString) throw new Error("measurement_configuration_missing");
   const url = new URL(connectionString);
@@ -28,21 +26,29 @@ export async function withMeasurementClient<T>(
   )
     throw new Error("measurement_identity_invalid");
   // Dedicated connection per operation: no stale secret cache, shared pool, or fallback.
-  const ca = process.env.SUPABASE_CA_PEM;
+  const ca =
+    process.env.OT_FREE_CHECK_MEASUREMENT_CA_PEM ?? process.env.SUPABASE_CA_PEM;
   const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
   if (!local && !ca) throw new Error("measurement_tls_ca_missing");
-  if (!local) {
-    for (const key of ["sslmode", "sslrootcert", "sslcert", "sslkey"])
-      url.searchParams.delete(key);
-  }
-  const client = new Client({
-    connectionString: url.toString(),
-    ...(!local ? { ssl: { ca, rejectUnauthorized: true } } : {}),
+  // Never pass connectionString to pg: its query parameters override explicit
+  // user/host/TLS/timeouts during parsing. Only authority/path fields are used.
+  return {
+    user: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
+    host: url.hostname,
+    port: url.port ? Number(url.port) : 5432,
+    database: decodeURIComponent(url.pathname.slice(1)) || "postgres",
+    ssl: local ? false : { ca, rejectUnauthorized: true },
     connectionTimeoutMillis: 500,
     statement_timeout: 500,
     query_timeout: 600,
     application_name: "ot_free_check_measurement",
-  });
+  };
+}
+export async function withMeasurementClient<T>(
+  run: (client: AttributionSqlClient) => Promise<T>,
+): Promise<T> {
+  const client = new Client(measurementClientConfig());
   try {
     await client.connect();
     const identity =
