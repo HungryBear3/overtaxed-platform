@@ -16,6 +16,10 @@ jest.mock("@/lib/rate-limit", () => ({
 jest.mock("@/lib/db/prisma", () => ({
   prisma: { $executeRaw: jest.fn(), $queryRaw: jest.fn() },
 }));
+jest.mock("@/lib/analytics/free-check-measurement-runtime", () => ({
+  withMeasurementClient: async (run: (db: unknown) => Promise<unknown>) =>
+    run(jest.requireMock("@/lib/db/prisma").prisma),
+}));
 import { POST } from "@/app/api/free-check/route";
 import { prisma } from "@/lib/db/prisma";
 import {
@@ -182,7 +186,12 @@ describe("non-canonical Production hosts", () => {
     it.each([
       [{ host: "ot-abc123.vercel.app" }],
       [{ "x-forwarded-host": "ot-abc123.vercel.app" }],
-      [{ "x-forwarded-host": "ot-abc123.vercel.app", host: "overtaxed-il.com" }],
+      [
+        {
+          "x-forwarded-host": "ot-abc123.vercel.app",
+          host: "overtaxed-il.com",
+        },
+      ],
       [{ host: "overtaxed-il.com.evil.example" }],
       [{}],
     ])("excludes %j and writes nothing", async (headers) => {

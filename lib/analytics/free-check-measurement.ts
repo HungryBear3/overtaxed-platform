@@ -82,12 +82,19 @@ export async function recordFreeCheckCompletion(
   if (!params) return "excluded";
   const attribution = resolveFreeCheckMeasurementAttribution(input.body);
   try {
-    const db = client ?? (await import("@/lib/db/prisma")).prisma;
+    if (!client) {
+      const { withMeasurementClient } =
+        await import("./free-check-measurement-runtime");
+      return await withMeasurementClient((db) =>
+        recordFreeCheckCompletion(input, db),
+      );
+    }
+    const db = client;
     // No automatic retry: an uncertain commit must never be counted twice by
     // this server invocation. New HTTP evaluations deliberately get new UUIDs.
     let timer: ReturnType<typeof setTimeout> | undefined;
     const write = db.$executeRaw`
-      INSERT INTO ot_free_check_completion
+      INSERT INTO public.ot_free_check_completion
         (completion_id, attribution_state, campaign_code, creative_code, registry_version,
          outcome_code, outcome_reason, allow_checkout, window_status)
       VALUES (${randomUUID()}::uuid, ${attribution.state}, ${attribution.campaign},

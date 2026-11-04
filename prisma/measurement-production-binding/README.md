@@ -6,9 +6,9 @@ roles, membership edges, datasource URL or hosted identity are changed here.
 
 Release ingredients (separate owner-approved release, not performed locally):
 
-1. Confirm exact deployed `DATABASE_URL` identity is the existing safe nonowner
+1. Confirm exact deployed `OT_FREE_CHECK_MEASUREMENT_DATABASE_URL` identity is the existing safe nonowner
    `ot_prod_app`, not merely a role with that name in source. Current hosted
-   identity is **unverified**; owner-to-restricted runtime cutover remains separate.
+   identity is **unverified**; purpose-bound restricted connection setup remains separate. Never change shared `DATABASE_URL`.
 2. Run unchanged Production baseline verifier and its pinned SQL first. Retain
    exact membership/ownership evidence. Apply the approved common measurement
    migration, then explicitly run `01_bind.sql` with owner credentials and
@@ -33,7 +33,11 @@ runtime no longer has ledger access and paid baseline still passes. If unrelated
 pre-existing grants/policies exist, diagnose separately; rollback is not a global
 ACL scrubber.
 
-Local disposable PG17 integration executes the default Prisma client writer and
+Local disposable PG17 integration executes the dedicated measurement pg writer and
 aggregate exporter as `ot_prod_app`, proves destructive/API denials, detects an
 inherited API grant, verifies unchanged memberships and data-preserving rollback.
 It is not evidence of actual hosted identity or live deployment.
+
+Runtime uses only `OT_FREE_CHECK_MEASUREMENT_DATABASE_URL`; missing/invalid configuration reports unavailable without importing shared Prisma. Remote connections require `SUPABASE_CA_PEM` and strict certificate verification. Runtime checks exact current/session identity, safe flags, exact neutral-reader membership, and no ownership before each operation. Connection/statement/query timeouts are bounded; no retry. The shared Prisma URL and all paid connections remain untouched.
+
+For canonical Supabase pooler URLs using `ot_prod_app.<projectRef>`, also set `OT_FREE_CHECK_MEASUREMENT_SUPABASE_PROJECT_REF` to the independently verified exact project ref. Arbitrary hosts/suffixes are rejected; actual SQL current/session identity must still be `ot_prod_app`. Read-only preflight: `npx tsx scripts/ot-free-check-measurement-preflight.ts`.

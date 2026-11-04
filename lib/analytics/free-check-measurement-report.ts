@@ -47,7 +47,7 @@ export async function exportFreeCheckMeasurement(
         COUNT(*)::text AS completed,
         COUNT(*) FILTER (WHERE outcome_code = 'supportive')::text AS supportive,
         COUNT(*) FILTER (WHERE allow_checkout)::text AS allow_checkout
-      FROM ot_free_check_completion
+      FROM public.ot_free_check_completion
       WHERE completed_at >= ${start} AND completed_at < ${end}
       GROUP BY attribution_state, campaign_code, creative_code, registry_version
       ORDER BY attribution_state, campaign_code, creative_code, registry_version

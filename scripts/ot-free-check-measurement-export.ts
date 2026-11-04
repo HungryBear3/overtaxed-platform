@@ -20,12 +20,13 @@ async function main() {
     );
     return;
   }
-  const { prisma } = await import("../lib/db/prisma");
-  try {
+  const { withMeasurementClient } =
+    await import("../lib/analytics/free-check-measurement-runtime");
+  await withMeasurementClient(async (client) => {
     console.log(
       JSON.stringify(
         await exportFreeCheckMeasurement(
-          prisma,
+          client,
           new Date(start),
           new Date(end),
         ),
@@ -33,9 +34,7 @@ async function main() {
         2,
       ),
     );
-  } finally {
-    await prisma.$disconnect();
-  }
+  });
 }
 main().catch(() => {
   console.error("free_check_measurement_export_failed");
