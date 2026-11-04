@@ -137,7 +137,11 @@ jobs:
           sudo install -o root -g root -m 0644 "$key_tmp" /usr/share/keyrings/postgresql-archive-keyring.asc
           echo "deb [signed-by=/usr/share/keyrings/postgresql-archive-keyring.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends postgresql-17 "postgresql-${{ matrix.postgres }}"
+          # Restore signed package bytes/modes even when the runner image
+          # already contains the same version with unsafe writable files.
+          sudo apt-get install --yes --no-install-recommends --reinstall \
+            postgresql-17 postgresql-client-17 \
+            "postgresql-${{ matrix.postgres }}" "postgresql-client-${{ matrix.postgres }}"
           /usr/lib/postgresql/17/bin/initdb --version | grep --quiet '^initdb (PostgreSQL) 17'
           /usr/lib/postgresql/${{ matrix.postgres }}/bin/initdb --version | grep --quiet '^initdb (PostgreSQL) ${{ matrix.postgres }}'
       # Hosted images may preinstall PG18 with a group-writable sharedir root.
