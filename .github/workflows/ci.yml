@@ -140,6 +140,22 @@ jobs:
           sudo apt-get install --yes --no-install-recommends postgresql-17 "postgresql-${{ matrix.postgres }}"
           /usr/lib/postgresql/17/bin/initdb --version | grep --quiet '^initdb (PostgreSQL) 17'
           /usr/lib/postgresql/${{ matrix.postgres }}/bin/initdb --version | grep --quiet '^initdb (PostgreSQL) ${{ matrix.postgres }}'
+      # Hosted images may preinstall PG18 with a group-writable sharedir root.
+      # Normalize only that verified package directory, never its contents and
+      # never the production verifier's ownership/mode acceptance policy.
+      - name: Verify and seal PostgreSQL shared directory roots
+        run: |
+          set -euo pipefail
+          for pg_major in 17 "${{ matrix.postgres }}"; do
+            pg_share="$(/usr/lib/postgresql/"$pg_major"/bin/pg_config --sharedir)"
+            test "$pg_share" = "/usr/share/postgresql/$pg_major"
+            test -d "$pg_share"
+            test ! -L "$pg_share"
+            stat --format='%n owner=%u group=%g mode=%a type=%F' -- "$pg_share"
+            pg_owner="$(stat --format='%u' -- "$pg_share")"
+            test "$pg_owner" = 0 || test "$pg_owner" = "$(id -u)"
+            sudo chmod go-w -- "$pg_share"
+          done
       - name: Install
         run: npm ci
       - name: Restore synthetic encrypted recovery fixture
