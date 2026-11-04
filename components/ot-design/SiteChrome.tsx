@@ -1,4 +1,5 @@
 "use client";
+import { freeCheckMeasurementRequestFields } from "@/lib/analytics/free-check-measurement-client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { buildTickerItems, TICKER_STANDING_ITEM, TOWNSHIPS } from "@/lib/townships";
@@ -341,7 +342,7 @@ export function StickyAddressBar() {
       const res = await fetch("/api/free-check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address: addr, mode: "address" }),
+        body: JSON.stringify({ ...freeCheckMeasurementRequestFields(), address: addr, mode: "address" }),
       });
       const data = await res.json().catch(() => null);
       if (res.ok === false) {

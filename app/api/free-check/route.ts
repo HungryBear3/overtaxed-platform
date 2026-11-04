@@ -15,6 +15,7 @@
  * Address lookups can answer 409 `ADDRESS_AMBIGUOUS` with public-record
  * candidate fragments; the caller re-posts the same address with `selectedPin`.
  */
+import { recordFreeCheckCompletion } from "@/lib/analytics/free-check-measurement"
 import { NextRequest, NextResponse } from "next/server"
 import {
   getPropertyByPIN,
@@ -507,8 +508,10 @@ export async function POST(req: NextRequest) {
           compCount: 0,
         }),
       })
+      const measurement = await recordFreeCheckCompletion({ body, outcome: noValueOutcome, windowStatus: noValueWindow.status, preview: false })
       return NextResponse.json({
         success: true,
+        measurement,
         disclosure: CC_02,
         sourceCaveat: CC_07,
         outcome: noValueOutcome,
@@ -706,8 +709,10 @@ export async function POST(req: NextRequest) {
     // evidence" over a comparison that was sitting complete in the response.
     const showRecordComparison = outcome.showRecordComparison
 
+    const measurement = await recordFreeCheckCompletion({ body, outcome, windowStatus: appealWindowStatus.status, preview: false })
     return NextResponse.json({
       success: true,
+      measurement,
       disclosure: CC_02,
       sourceCaveat: CC_07,
       outcome,
