@@ -137,6 +137,20 @@ jobs:
           sudo install -o root -g root -m 0644 "$key_tmp" /usr/share/keyrings/postgresql-archive-keyring.asc
           echo "deb [signed-by=/usr/share/keyrings/postgresql-archive-keyring.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update
+          # dpkg preserves existing directory modes. Quarantine the runner's
+          # preinstalled shared trees before restoring signed package contents;
+          # never relabel unsafe descendants as trusted with recursive chmod.
+          pg_quarantine="$(mktemp -d /tmp/ot-pg-share.XXXXXX)"
+          for pg_major in 17 "${{ matrix.postgres }}"; do
+            pg_share="/usr/share/postgresql/$pg_major"
+            if test -e "$pg_share"; then
+              test -d "$pg_share"
+              test ! -L "$pg_share"
+              pg_owner="$(stat --format='%u' -- "$pg_share")"
+              test "$pg_owner" = 0 || test "$pg_owner" = "$(id -u)"
+              sudo mv -- "$pg_share" "$pg_quarantine/$pg_major"
+            fi
+          done
           # Restore signed package bytes/modes even when the runner image
           # already contains the same version with unsafe writable files.
           sudo apt-get install --yes --no-install-recommends --reinstall \
