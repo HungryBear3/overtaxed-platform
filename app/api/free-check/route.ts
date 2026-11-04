@@ -15,6 +15,7 @@
  * Address lookups can answer 409 `ADDRESS_AMBIGUOUS` with public-record
  * candidate fragments; the caller re-posts the same address with `selectedPin`.
  */
+import { recordFreeCheckCompletion } from "@/lib/analytics/free-check-measurement"
 import { NextRequest, NextResponse } from "next/server"
 import {
   getPropertyByPIN,
@@ -44,6 +45,7 @@ import {
 } from "@/lib/free-check-address"
 import {
   hostFromRequest,
+  isPreviewStubEnabled,
   marketingGateReason,
 } from "@/lib/marketing/preview-gate"
 
@@ -267,6 +269,10 @@ export async function POST(req: NextRequest) {
       reason: forcePreviewStub ? "forced-override" : marketingGateReason({ host }),
     })
   }
+
+  // Production deployment URLs and Preview serve real results but must not enter
+  // the measurement ledger. The gate stays open on a missing host, so close it here.
+  const excludeFromMeasurement = !host || isPreviewStubEnabled({ host })
 
   const { allowed } = rateLimit(getClientIdentifier(req), 10, 60_000)
   if (!allowed) {
@@ -507,8 +513,10 @@ export async function POST(req: NextRequest) {
           compCount: 0,
         }),
       })
+      const measurement = await recordFreeCheckCompletion({ body, outcome: noValueOutcome, windowStatus: noValueWindow.status, preview: excludeFromMeasurement })
       return NextResponse.json({
         success: true,
+        measurement,
         disclosure: CC_02,
         sourceCaveat: CC_07,
         outcome: noValueOutcome,
@@ -706,8 +714,10 @@ export async function POST(req: NextRequest) {
     // evidence" over a comparison that was sitting complete in the response.
     const showRecordComparison = outcome.showRecordComparison
 
+    const measurement = await recordFreeCheckCompletion({ body, outcome, windowStatus: appealWindowStatus.status, preview: excludeFromMeasurement })
     return NextResponse.json({
       success: true,
+      measurement,
       disclosure: CC_02,
       sourceCaveat: CC_07,
       outcome,

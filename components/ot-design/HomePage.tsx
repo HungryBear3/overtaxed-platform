@@ -1,4 +1,5 @@
 "use client";
+import { freeCheckMeasurementRequestFields } from "@/lib/analytics/free-check-measurement-client";
 import { useCallback, useEffect, useState } from "react";
 import {
   StatusChip,
@@ -367,7 +368,7 @@ function HeroCheckCard({
         const res = await fetch("/api/free-check", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ address, pin, mode, ...(selectedPin ? { selectedPin } : {}) }),
+          body: JSON.stringify({ ...freeCheckMeasurementRequestFields(), address, pin, mode, ...(selectedPin ? { selectedPin } : {}) }),
         });
         const data = await res.json().catch(() => null);
         setLoading(false);

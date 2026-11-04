@@ -115,6 +115,15 @@ export function getApprovedAttributionCodesForRequest(): AttributionRequestField
   }
 }
 
+/**
+ * Measurement-only: whether anything sits under the storage key, valid or not.
+ * Throws if storage cannot be read. Exposes presence alone, never the value, and
+ * is not a checkout input.
+ */
+export function hasStoredAttributionRecord(): boolean {
+  return window.localStorage.getItem(STORAGE_KEY) !== null
+}
+
 /** Test/consent helper. */
 export function clearStoredAttributionCodes(): void {
   if (typeof window === "undefined") return

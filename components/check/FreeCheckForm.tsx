@@ -1,5 +1,6 @@
 "use client"
 
+import { freeCheckMeasurementRequestFields } from "@/lib/analytics/free-check-measurement-client";
 import { useState, useRef, useCallback } from "react"
 import type { Result } from "./FreeCheckResult"
 import { analytics } from "@/lib/analytics/events"
@@ -102,8 +103,9 @@ export function FreeCheckForm({ onResult, onReset }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
           mode === "pin"
-            ? { pin: pin.trim().replace(/\D/g, "") }
+            ? { ...freeCheckMeasurementRequestFields(), pin: pin.trim().replace(/\D/g, "") }
             : {
+                ...freeCheckMeasurementRequestFields(),
                 address: address.trim(),
                 city: city.trim() || undefined,
                 ...(selectedPin ? { selectedPin } : {}),

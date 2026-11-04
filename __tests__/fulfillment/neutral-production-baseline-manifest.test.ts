@@ -85,12 +85,33 @@ describe("Production resolve manifest", () => {
     expect(OT_NEUTRAL_PRODUCTION_DEPLOYABLE_AFTER_BASELINE).toEqual([
       "20260921120000_add_ot_neutral_generation_work",
       "20260922120000_add_ot_neutral_operator_ledgers",
+      "20261103210000_add_ot_free_check_measurement",
     ]);
     // Every declared entry must be a migration that actually exists on disk.
     for (const migration of OT_NEUTRAL_PRODUCTION_DEPLOYABLE_AFTER_BASELINE)
       expect(
         fs.existsSync(path.join(root, "prisma/migrations", migration, "migration.sql")),
       ).toBe(true);
+  });
+
+  /**
+   * Declaring a migration deployable is not a claim that the baseline covers it
+   * or that Production has it: no resolve command, no pin, and the last applied
+   * migration does not move.
+   */
+  test("keeps the free-check measurement migration out of every baseline claim", () => {
+    const migration = "20261103210000_add_ot_free_check_measurement";
+    expect(OT_PRODUCTION_LAST_APPLIED_MIGRATION).toBe(
+      "20260809120000_add_ot_artifact_provenance",
+    );
+    expect(coveredMigrationNames()).not.toContain(migration);
+    expect(
+      planResolveCommands(PRISMA_BINARY).flatMap((command) => command.args),
+    ).not.toContain(migration);
+    expect(manifestPinnedPaths().join("\n")).not.toContain(migration);
+    expect(
+      fs.readFileSync(path.join(root, OT_NEUTRAL_PRODUCTION_CHECKSUM_FILE), "utf8"),
+    ).not.toContain(migration);
   });
 
   /**

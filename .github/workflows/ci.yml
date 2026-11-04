@@ -137,9 +137,43 @@ jobs:
           sudo install -o root -g root -m 0644 "$key_tmp" /usr/share/keyrings/postgresql-archive-keyring.asc
           echo "deb [signed-by=/usr/share/keyrings/postgresql-archive-keyring.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends postgresql-17 "postgresql-${{ matrix.postgres }}"
+          # dpkg preserves existing directory modes. Quarantine the runner's
+          # preinstalled shared trees before restoring signed package contents;
+          # never relabel unsafe descendants as trusted with recursive chmod.
+          pg_quarantine="$(mktemp -d /tmp/ot-pg-share.XXXXXX)"
+          for pg_major in 17 "${{ matrix.postgres }}"; do
+            pg_share="/usr/share/postgresql/$pg_major"
+            if test -e "$pg_share"; then
+              test -d "$pg_share"
+              test ! -L "$pg_share"
+              pg_owner="$(stat --format='%u' -- "$pg_share")"
+              test "$pg_owner" = 0 || test "$pg_owner" = "$(id -u)"
+              sudo mv -- "$pg_share" "$pg_quarantine/$pg_major"
+            fi
+          done
+          # Restore signed package bytes/modes even when the runner image
+          # already contains the same version with unsafe writable files.
+          sudo apt-get install --yes --no-install-recommends --reinstall \
+            postgresql-17 postgresql-client-17 \
+            "postgresql-${{ matrix.postgres }}" "postgresql-client-${{ matrix.postgres }}"
           /usr/lib/postgresql/17/bin/initdb --version | grep --quiet '^initdb (PostgreSQL) 17'
           /usr/lib/postgresql/${{ matrix.postgres }}/bin/initdb --version | grep --quiet '^initdb (PostgreSQL) ${{ matrix.postgres }}'
+      # Hosted images may preinstall PG18 with a group-writable sharedir root.
+      # Normalize only that verified package directory, never its contents and
+      # never the production verifier's ownership/mode acceptance policy.
+      - name: Verify and seal PostgreSQL shared directory roots
+        run: |
+          set -euo pipefail
+          for pg_major in 17 "${{ matrix.postgres }}"; do
+            pg_share="$(/usr/lib/postgresql/"$pg_major"/bin/pg_config --sharedir)"
+            test "$pg_share" = "/usr/share/postgresql/$pg_major"
+            test -d "$pg_share"
+            test ! -L "$pg_share"
+            stat --format='%n owner=%u group=%g mode=%a type=%F' -- "$pg_share"
+            pg_owner="$(stat --format='%u' -- "$pg_share")"
+            test "$pg_owner" = 0 || test "$pg_owner" = "$(id -u)"
+            sudo chmod go-w -- "$pg_share"
+          done
       - name: Install
         run: npm ci
       - name: Restore synthetic encrypted recovery fixture

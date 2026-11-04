@@ -198,6 +198,9 @@ export const OT_NEUTRAL_PRODUCTION_DEPLOYABLE_AFTER_BASELINE: readonly string[] 
   [
     "20260921120000_add_ot_neutral_generation_work",
     "20260922120000_add_ot_neutral_operator_ledgers",
+    // Standalone, default-off measurement table. Declared here so the pending
+    // set stays exact; this is neither approval to run it nor payment activation.
+    "20261103210000_add_ot_free_check_measurement",
   ];
 
 export const OT_NEUTRAL_PRODUCTION_BASELINE_ARTIFACTS = [
