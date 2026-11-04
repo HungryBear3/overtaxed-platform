@@ -88,10 +88,12 @@ No false join to decision packet's MAC-keyed unique conversion references.
 2. Apply ONLY the dedicated additive migration using approved owner identity,
    test RLS/ACL on isolated database, verify raw SQL role and read-only export.
    No Prisma schema edits or paid-order table changes. The migration revokes ALL
-   from PUBLIC, `anon`, `authenticated` and `service_role`, so the runtime and
-   export identity must be the table owner. A non-owner role, `service_role`
-   included, gets `measurement: unavailable` on every request. Production's
-   runtime identity is unverified and must be confirmed first.
+   from PUBLIC, `anon`, `authenticated` and `service_role`. The intended runtime
+   and export identity is the restricted, non-owning `ot_prod_app`, authorized
+   only by the separately approved binding in `prisma/measurement-production-binding`.
+   Without that binding, the restricted runtime returns `measurement: unavailable`.
+   Do not make the runtime the table owner. Production's actual runtime identity
+   is unverified and must be confirmed before release.
 3. Rehearse successful writes, timeout/failure semantics, sample exclusion and
    real three-surface transport on isolated environment before Production.
 4. Separately approve/activate the flag, verify live evidence, recording start
