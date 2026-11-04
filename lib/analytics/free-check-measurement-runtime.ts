@@ -39,7 +39,7 @@ export function measurementClientConfig(): ClientConfig {
     port: url.port ? Number(url.port) : 5432,
     database: decodeURIComponent(url.pathname.slice(1)) || "postgres",
     ssl: local ? false : { ca, rejectUnauthorized: true },
-    connectionTimeoutMillis: 500,
+    connectionTimeoutMillis: 1500,
     statement_timeout: 500,
     query_timeout: 600,
     application_name: "ot_free_check_measurement",

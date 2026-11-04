@@ -95,7 +95,7 @@ it.each([
     statement_timeout: 500,
     query_timeout: 600,
   });
-  expect(config.connectionTimeoutMillis).toBe(500);
+  expect(config.connectionTimeoutMillis).toBe(1500);
 });
 
 it("uses dedicated CA ahead of shared CA without changing shared configuration", () => {
