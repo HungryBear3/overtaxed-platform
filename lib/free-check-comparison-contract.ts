@@ -142,3 +142,7 @@ export const FREE_COMPARISON_SELECTION_LABEL =
 /** A limit of the check, stated as one. Says nothing about the property. */
 export const FREE_COMPARISON_UNAVAILABLE_TEXT =
   "We could not complete the records comparison for this property from the county's published data, so no comparable figures are shown. That is a limit of this check, not a finding about your property."
+
+/** Says what CC-05 means when figures sit beneath it. CC-05 itself does not change. */
+export const FREE_COMPARISON_NO_CONCLUSION_TEXT =
+  "“Insufficient evidence” here means this check draws no conclusion from the figures below. It does not mean the county records are missing, and it is not a finding about your property."

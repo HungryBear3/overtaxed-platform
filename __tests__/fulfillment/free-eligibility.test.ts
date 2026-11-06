@@ -84,11 +84,10 @@ describe("classifyFreeParcel", () => {
     ["zero building area", chars({ char_bldg_sf: "0" }), "invalid_characteristics"],
     ["a future year built", chars({ char_yrblt: "2027" }), "invalid_characteristics"],
     ["no residence type", chars({ char_type_resd: null }), "invalid_characteristics"],
-    ["no assessed row", { ...base, assessed: null }, "no_mailed_value"],
     ["no mailed figures at all", { ...base, assessed: { ...assessed, mailed_tot: null, mailed_land: null, mailed_bldg: null } }, "no_mailed_value"],
     ["a zero mailed total", { ...base, assessed: { ...assessed, mailed_tot: "0", mailed_land: "0", mailed_bldg: "0" } }, "no_mailed_value"],
-    ["no address row", { ...base, address: null }, "incomplete_address"],
     ["no street", { ...base, address: { ...address, prop_address_full: null } }, "incomplete_address"],
+    ["no city", { ...base, address: { ...address, prop_address_city_name: null } }, "incomplete_address"],
     ["no state", { ...base, address: { ...address, prop_address_state: null } }, "incomplete_address"],
     ["another state", { ...base, address: { ...address, prop_address_state: "IN" } }, "incomplete_address"],
   ])("excludes %s", (_name, input, reason) => {

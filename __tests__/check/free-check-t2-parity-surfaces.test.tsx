@@ -18,7 +18,8 @@ jest.mock("@/components/check/FreeCheckForm", () => ({
 import { FreeCheckFormWrapper } from "@/components/check/FreeCheckFormWrapper"
 import { FreeCheckResult, type Result } from "@/components/check/FreeCheckResult"
 import HomePage from "@/components/ot-design/HomePage"
-import { CC_02 } from "@/lib/copy/canonical"
+import { CC_02, CC_05 } from "@/lib/copy/canonical"
+import { FREE_COMPARISON_NO_CONCLUSION_TEXT } from "@/lib/free-check-comparison-contract"
 import { canonicalFreeCheckOutcome } from "@/lib/free-check-outcome-contract"
 
 const COMPARABLE_PINS = ["14-00-000-000-0010", "14-00-000-000-0020", "14-00-000-000-0030"]
@@ -263,6 +264,59 @@ describe("jsdom: the /check result when the comparison is unavailable", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Comparable properties \(3\)/ }))
     for (const pin of COMPARABLE_PINS) expect(container.textContent).toContain(pin)
+  })
+})
+
+describe("jsdom: the no-conclusion line under the Insufficient evidence headline", () => {
+  beforeEach(() => {
+    jest.restoreAllMocks()
+    Object.defineProperty(window, "scrollTo", { value: jest.fn(), writable: true })
+  })
+
+  const renderResult = (payload: unknown) => render(<FreeCheckResult result={payload as Result} />).container
+  const line = (container: HTMLElement) => container.querySelector('[data-testid="free-comparison-no-conclusion"]')
+
+  it("leaves the headline and the wording byte-exact", () => {
+    expect(CC_05).toBe("Insufficient evidence")
+    expect(FREE_COMPARISON_NO_CONCLUSION_TEXT).toBe(
+      "“Insufficient evidence” here means this check draws no conclusion from the figures below. It does not mean the county records are missing, and it is not a finding about your property.",
+    )
+    expect(canonicalFreeCheckOutcome("insufficient_evidence", "no_comparable_level")).toMatchObject({
+      headline: CC_05,
+      showFigures: false,
+      showRecordComparison: true,
+      allowCheckout: false,
+    })
+  })
+
+  it("sits directly under the headline on /check, beside a brief", () => {
+    const shown = line(renderResult(available()))
+
+    expect(shown?.textContent).toBe(FREE_COMPARISON_NO_CONCLUSION_TEXT)
+    expect(shown?.previousElementSibling?.textContent).toBe(CC_05)
+  })
+
+  it("sits directly under the headline on the homepage, beside a brief", async () => {
+    const shown = line(await heroResult(available()))
+
+    expect(shown?.textContent).toBe(FREE_COMPARISON_NO_CONCLUSION_TEXT)
+    expect(shown?.previousElementSibling?.textContent).toBe(CC_05)
+  })
+
+  it.each<[string, Record<string, unknown>]>([
+    ["the route refused", {}],
+    ["the outcome allowed a comparison but no metric came", { outcome: canonicalFreeCheckOutcome("insufficient_evidence", "no_comparable_level") }],
+  ])("is absent when the comparison is unavailable: %s", async (_name, over) => {
+    expect(line(renderResult(unavailable(over)))).toBeNull()
+    expect(screen.getByTestId("free-comparison-unavailable")).toBeTruthy()
+    expect(line(await heroResult(unavailable(over)))).toBeNull()
+  })
+
+  it("is absent beside a brief under any other headline", async () => {
+    const outcome = canonicalFreeCheckOutcome("not_supportive", "below_evidence_threshold")
+
+    expect(line(renderResult(available({ outcome })))).toBeNull()
+    expect(line(await heroResult(available({ outcome })))).toBeNull()
   })
 })
 

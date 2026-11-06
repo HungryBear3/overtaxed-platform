@@ -48,8 +48,10 @@ export type FreeParcelInput = {
   universe: Row
   /** Every row the county published for the parcel. Vacant parcels have none. */
   characteristics: ReadonlyArray<Row>
-  assessed: Row | null
-  address: Row | null
+  /** The published row. A row that is absent refuses the read before this runs. */
+  assessed: Row
+  /** The published row. A row that is absent refuses the read before this runs. */
+  address: Row
 }
 
 export type FreeParcelClass =
@@ -118,12 +120,10 @@ export function classifyFreeParcel(input: FreeParcelInput): FreeParcelClass {
   if (characteristics.some((row) => text(row.township_code) !== townshipCode)) {
     return { kind: "conflict", blocker: "FREE_LOCALITY_CONFLICT" }
   }
-  if (assessed) {
-    if (text(assessed.township_code) !== townshipCode || text(assessed.nbhd) !== neighborhoodCode) {
-      return { kind: "conflict", blocker: "FREE_LOCALITY_CONFLICT" }
-    }
-    if (mailedConflict(assessed)) return { kind: "conflict", blocker: "FREE_MAILED_INTEGRITY_CONFLICT" }
+  if (text(assessed.township_code) !== townshipCode || text(assessed.nbhd) !== neighborhoodCode) {
+    return { kind: "conflict", blocker: "FREE_LOCALITY_CONFLICT" }
   }
+  if (mailedConflict(assessed)) return { kind: "conflict", blocker: "FREE_MAILED_INTEGRITY_CONFLICT" }
 
   const excluded = (reason: FreeExclusionReason): FreeParcelClass => ({ kind: "excluded", reason })
 
@@ -133,7 +133,7 @@ export function classifyFreeParcel(input: FreeParcelInput): FreeParcelClass {
   if (wholeNumber(row.pin_num_cards) !== 1) return excluded("multi_card")
   if (wholeNumber(row.pin_num_landlines) !== 1 || !explicitlyFalse(row.pin_is_multiland)) return excluded("multi_land")
   if (!wholeBuilding(row, pin)) return excluded("prorated_or_tied_back")
-  if (text(row.class) !== propertyClass || (assessed && text(assessed.class) !== propertyClass)) {
+  if (text(row.class) !== propertyClass || text(assessed.class) !== propertyClass) {
     return excluded("class_conflict")
   }
 
@@ -152,12 +152,12 @@ export function classifyFreeParcel(input: FreeParcelInput): FreeParcelClass {
     return excluded("invalid_characteristics")
   }
 
-  const assessedValue = assessed ? decimal(assessed.mailed_tot) : null
+  const assessedValue = decimal(assessed.mailed_tot)
   if (assessedValue === null || assessedValue <= 0) return excluded("no_mailed_value")
 
-  const street = address ? text(address.prop_address_full) : ""
-  const city = address ? text(address.prop_address_city_name) : ""
-  if (!street || !city || !address || text(address.prop_address_state).toUpperCase() !== "IL") {
+  const street = text(address.prop_address_full)
+  const city = text(address.prop_address_city_name)
+  if (!street || !city || text(address.prop_address_state).toUpperCase() !== "IL") {
     return excluded("incomplete_address")
   }
 

@@ -142,8 +142,9 @@ function compare(read: FreePoolRead, expectedTownship: string | null): FreeCompa
     const parcel = classifyFreeParcel({
       universe,
       characteristics: read.characteristics.get(pin) ?? [],
-      assessed: read.assessed.get(pin) ?? null,
-      address: read.addresses.get(pin) ?? null,
+      // `readFreePool` refuses a pool PIN missing either row.
+      assessed: read.assessed.get(pin)!,
+      address: read.addresses.get(pin)!,
     })
     if (parcel.kind === "conflict") return refuse(parcel.blocker)
     if (parcel.kind === "excluded") {

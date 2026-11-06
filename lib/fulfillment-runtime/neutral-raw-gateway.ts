@@ -303,8 +303,11 @@ export type FreePoolRead = Readonly<{
   neighborhoodCode: string
   /** Every parcel the county placed in the pool, unfiltered and in PIN order. */
   pool: ReadonlyArray<Row>
+  /** Absent for a vacant parcel, which has no improvement row to publish. */
   characteristics: ReadonlyMap<string, ReadonlyArray<Row>>
+  /** Holds every pool PIN: a parcel with no row here refuses the read. */
   assessed: ReadonlyMap<string, Row>
+  /** Holds every pool PIN: a parcel with no row here refuses the read. */
   addresses: ReadonlyMap<string, Row>
   sources: ReadonlyArray<NeutralSourceReceipt>
 }>
@@ -321,8 +324,10 @@ function rowsByPin(rows: ReadonlyArray<Row>): Map<string, Row[]> {
  * as the county published them, for `free-eligibility` to classify, rather than
  * refusing the pool at the first unusable parcel. Everything about the READ still
  * refuses: transport, status, bytes, pages, counts, epochs, a foreign or malformed
- * PIN, a wrong year, an out-of-scope pool row, and a repeated assessed or address
- * row. The paid paths never call this.
+ * PIN, a wrong year, an out-of-scope pool row, a repeated assessed or address row,
+ * and a pool PIN with no assessed or address row, which is a short read and not a
+ * fact about the parcel. A characteristics row may be absent: vacant parcels have
+ * none. The paid paths never call this.
  *
  * The three parcel joins and the epoch reads run in parallel because the route's
  * budget is shared with the subject lookup, and a sequential walk of a 460-parcel
@@ -378,8 +383,10 @@ async function readFreePool(input: { propertyPin: string }, deps: NeutralRawDeps
     const [countAfter, epochAfter] = await together<[number, string]>([count, epochs])
     if (countAfter !== countBefore || epochAfter !== epochBefore) throw new Refusal("NEUTRAL_RAW_PAGINATION_CONFLICT")
     const single = (rows: Row[]) => { const out = new Map<string, Row>(); for (const [key, group] of rowsByPin(rows)) { if (group.length !== 1) throw new Refusal("NEUTRAL_RAW_IDENTITY_CONFLICT"); out.set(key, group[0]) }; return out }
+    const assessed = single(values), addressed = single(addresses)
+    if (pins.some(key => !assessed.has(key) || !addressed.has(key))) throw new Refusal("NEUTRAL_RAW_INCOMPLETE")
     const sources = Object.freeze([...active.pages.map(page => page.receipt)])
-    return { ok: true, read: Object.freeze({ subjectPin, township, townshipCode, neighborhoodCode, pool: Object.freeze(pool), characteristics: rowsByPin(chars), assessed: single(values), addresses: single(addresses), sources }) }
+    return { ok: true, read: Object.freeze({ subjectPin, township, townshipCode, neighborhoodCode, pool: Object.freeze(pool), characteristics: rowsByPin(chars), assessed, addresses: addressed, sources }) }
   } catch (error) { return { ok: false, blocker: error instanceof Refusal ? error.blocker : "NEUTRAL_RAW_SOURCE_UNAVAILABLE" } }
 }
 

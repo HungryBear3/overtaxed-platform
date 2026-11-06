@@ -182,6 +182,29 @@ describe("the county's real rows", () => {
     expect(candidatePoolSha256([])).not.toBe(whole.result.comparison.comparisonEvidence.candidatePoolSha256)
   })
 
+  describe("a row absent from a join", () => {
+    const peer = fixture.universe.find((row) => row.pin !== fixture.subjectPin && row.pin !== NO_CHARACTERISTICS)!.pin
+    const without = (id: string, pin: unknown): Fault => (url, rows) =>
+      url.pathname.endsWith(`/resource/${id}.json`) ? rows.filter((row) => row.pin !== pin) : rows
+
+    it.each([
+      ["assessed", IDS.assessed, peer],
+      ["address", IDS.addresses, peer],
+      ["assessed", IDS.assessed, fixture.subjectPin],
+      ["address", IDS.addresses, fixture.subjectPin],
+    ])("refuses the whole read when a pool PIN has no %s row", async (_name, id, pin) => {
+      await expect(run(fixture.subjectPin, without(id, pin))).resolves.toMatchObject({
+        result: { ok: false, blocker: "NEUTRAL_RAW_INCOMPLETE" },
+      })
+    })
+
+    it("still excludes a parcel with no characteristics row, because vacant parcels have none", async () => {
+      const { result } = await run(fixture.subjectPin, without(IDS.characteristics, peer))
+      if (!result.ok) throw new Error(result.blocker)
+      expect(result.comparison.poolDispositions.find((row) => row.pin === peer)?.disposition).toBe("no_characteristics_record")
+    })
+  })
+
   it("shows a comparison at exactly three comparables", async () => {
     const { result } = await run("14990000000002")
     if (!result.ok) throw new Error(result.blocker)

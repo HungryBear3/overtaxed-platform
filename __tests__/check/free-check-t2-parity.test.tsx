@@ -678,7 +678,7 @@ describe("controlled synthetic transport: the canonical read, and nothing else",
   })
 })
 
-describe("controlled synthetic transport: anything the report refuses, the free check withholds", () => {
+describe("controlled synthetic transport: a refused read or subject withholds the free comparison, as it does the report", () => {
   const peerPin = pinAt(PEER_B.n)
   const onPeer =
     (dataset: string, change: (row: Row) => Row | null) =>
@@ -686,6 +686,8 @@ describe("controlled synthetic transport: anything the report refuses, the free 
       context.dataset === dataset && row.pin === peerPin ? change(row) : row
 
   const reportRefusals: Array<[string, CountyOptions["mutate"]]> = [
+    ["a peer has no assessed row", onPeer(ASSESSED, () => null)],
+    ["a peer has no address row", onPeer(ADDRESSES, () => null)],
     ["a peer's assessed row is from another year", onPeer(ASSESSED, (row) => ({ ...row, year: "2025.0" }))],
     ["a peer's characteristics are from another year", onPeer(CHARACTERISTICS, (row) => ({ ...row, year: "2025" }))],
     ["a peer has a partly published mailed record", onPeer(ASSESSED, (row) => ({ ...row, mailed_tot: null }))],
@@ -714,6 +716,7 @@ describe("controlled synthetic transport: anything the report refuses, the free 
     ["two cards", (row, c) => (c.dataset === CHARACTERISTICS && row.pin === SUBJECT_PIN ? { ...row, pin_num_cards: "2" } : row)],
     ["a prorated building", (row, c) => (c.dataset === CHARACTERISTICS && row.pin === SUBJECT_PIN ? { ...row, tieback_proration_rate: "0.5", card_proration_rate: "0.5" } : row)],
     ["no mailed figures", (row, c) => (c.dataset === ASSESSED && row.pin === SUBJECT_PIN ? { ...row, mailed_tot: null, mailed_land: null, mailed_bldg: null } : row)],
+    ["no assessed row", (row, c) => (c.dataset === ASSESSED && row.pin === SUBJECT_PIN ? null : row)],
     ["no address row", (row, c) => (c.dataset === ADDRESSES && row.pin === SUBJECT_PIN ? null : row)],
   ]
 
@@ -755,8 +758,8 @@ describe("controlled synthetic transport: an unusable peer is left out and count
     ["a peer carries a partial proration", "prorated_or_tied_back", onPeer(CHARACTERISTICS, (row) => ({ ...row, card_proration_rate: "0.5" }))],
     ["datasets disagree about a peer's class", "class_conflict", onPeer(ASSESSED, (row) => ({ ...row, class: "204" }))],
     ["a peer has zero building area", "invalid_characteristics", onPeer(CHARACTERISTICS, (row) => ({ ...row, char_bldg_sf: "0" }))],
-    ["a peer has no assessed row", "no_mailed_value", onPeer(ASSESSED, () => null)],
-    ["a peer has no address row", "incomplete_address", onPeer(ADDRESSES, () => null)],
+    ["a peer's published assessed row has no mailed figures", "no_mailed_value", onPeer(ASSESSED, (row) => ({ ...row, mailed_tot: null, mailed_land: null, mailed_bldg: null }))],
+    ["a peer's published address row has no state", "incomplete_address", onPeer(ADDRESSES, (row) => ({ ...row, prop_address_state: null }))],
   ]
 
   it.each(peerCases)("when %s", async (_name, reason, mutate) => {

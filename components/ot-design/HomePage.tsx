@@ -9,6 +9,7 @@ import {
 import { analytics } from "@/lib/analytics/events";
 import { CC_01, CC_10, CC_11, CC_12 } from "@/lib/copy/canonical";
 import {
+  FREE_COMPARISON_NO_CONCLUSION_TEXT,
   FREE_COMPARISON_UNAVAILABLE_TEXT,
   describeComparisonEvidence,
   freeComparisonBrief,
@@ -688,6 +689,11 @@ function HeroCheckResult({
           </>
         )}
       </div>
+      {result.comparisonBrief && result.outcome?.code === "insufficient_evidence" && (
+        <div className="ot-result-altline" role="note" data-testid="free-comparison-no-conclusion">
+          {FREE_COMPARISON_NO_CONCLUSION_TEXT}
+        </div>
+      )}
       {result.preview && <div className="ot-result-sample-strip">SAMPLE DATA</div>}
       {result.comparisonUnavailable && (
         <div className="ot-result-altline" role="note" data-testid="free-comparison-unavailable">
@@ -702,7 +708,7 @@ function HeroCheckResult({
               <span className="ot-result-row-val">{fmtUSD(result.yourAssessed)}</span>
             </div>
           )}
-          {/* The report's own figures, in the same words as /check. */}
+          {/* The free comparison's figures, in the same words as /check. */}
           {result.comparisonBrief && (
             <div data-testid="free-comparison-brief">
               <div className="ot-result-row">

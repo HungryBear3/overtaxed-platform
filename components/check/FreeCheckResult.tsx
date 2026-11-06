@@ -5,6 +5,7 @@ import Link from "next/link"
 
 import { CC_02, CC_05, CC_12 } from "@/lib/copy/canonical"
 import {
+  FREE_COMPARISON_NO_CONCLUSION_TEXT,
   FREE_COMPARISON_UNAVAILABLE_TEXT,
   describeComparisonEvidence,
   freeComparisonBrief,
@@ -368,6 +369,11 @@ export function FreeCheckResult({ result }: Props) {
             mismatch is surfaced rather than shown. */}
         <p className="text-sm text-gray-600 mb-3" role="note">{CC_02}</p>
         <p className="text-2xl font-bold text-gray-900 mb-2">{headline}</p>
+        {brief && outcome?.code === "insufficient_evidence" && (
+          <p data-testid="free-comparison-no-conclusion" className="text-sm text-gray-700 mb-4">
+            {FREE_COMPARISON_NO_CONCLUSION_TEXT}
+          </p>
+        )}
         {result.sourceCaveat && (
           <p className="text-sm text-gray-500 mb-6">{result.sourceCaveat}</p>
         )}
@@ -378,7 +384,7 @@ export function FreeCheckResult({ result }: Props) {
           </p>
         )}
 
-        {/* The report's own figures, in the accepted brief's words. */}
+        {/* The free comparison's figures, in the accepted brief's words. */}
         {brief && (
           <div data-testid="free-comparison-brief" className="rounded-xl bg-gray-50 border border-gray-200 p-4 mb-4 space-y-1">
             <p className="text-sm text-gray-700">{brief.subjectTotal}</p>
