@@ -21,6 +21,7 @@ env:
 jobs:
   verify:
     name: build · type-check · test
+    if: github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/abigail/ot-503-canonical-20261106'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -108,6 +109,7 @@ jobs:
 
   recovery-restore-matrix:
     name: synthetic fixture portability · PostgreSQL ${{ matrix.postgres }}
+    if: github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/abigail/ot-503-canonical-20261106'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -195,3 +197,86 @@ jobs:
           export OT_TEST_TARGET_PG_RUNTIME="$target_runtime"
           export OT_NEUTRAL_PRODUCTION_RECOVERY_GPG_PATH=/usr/bin/gpg
           npm test -- --ci --runInBand __tests__/fulfillment/neutral-production-recovery-postgres.integration.test.ts
+
+  # Synthetic /check browser QA, credential-free. The browser proof is NOT
+  # backend qualification: POST /api/free-check is answered by the harness.
+  # It runs only on a manual dispatch of the one branch below, the two jobs
+  # above skip for exactly that case, and everything else is unchanged:
+  # scripts/ot-linux-qa.py validate proves this block is the only difference
+  # from the pinned ci.yml besides their guards.
+  #
+  # Runner choice: ubuntu-22.04 predates the Ubuntu 24.04 default of
+  # kernel.apparmor_restrict_unprivileged_userns=1, so bubblewrap and Chromium's
+  # own namespace sandbox can run as the regular user. The harness reads that
+  # sysctl and HOLDs if it is restrictive; nothing here changes it.
+  #
+  # The report stays on the runner and seal prints it to the job log: only
+  # first-party actions/checkout and actions/setup-node are allowed in this file.
+  browser-qa:
+    name: synthetic /check browser QA
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/abigail/ot-503-canonical-20261106'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      # GitHub expressions compare strings case-insensitively; this shell test
+      # does not, so a case-variant ref stops here before any repository code.
+      - name: Refuse anything but the accepted branch
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          test "$EVENT" = "workflow_dispatch"
+          test "$REF" = "refs/heads/abigail/ot-503-canonical-20261106"
+
+      # Full history: the source pin must be proven an ancestor of HEAD.
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # Same major as verify. No npm cache: nothing is shared with other jobs.
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+
+      # Pin proof: HEAD descends from the pin, differs by exactly the three QA
+      # files plus this ci.yml change, and the pin's tree is what gets staged.
+      - name: Validate source and stage tree
+        timeout-minutes: 1
+        run: >-
+          env -i PATH=/usr/bin:/bin /usr/bin/python3 -I scripts/ot-linux-qa.py validate
+          --root "$RUNNER_TEMP/ot-qa" --repo "$GITHUB_WORKSPACE"
+          --ref "$GITHUB_REF" --sha "$GITHUB_SHA"
+
+      # PREPARE: the only networked stage. Public apt/npm/Playwright downloads
+      # on the host with an explicit scrubbed env; no credential exists here.
+      - name: Prepare public dependencies (networked)
+        timeout-minutes: 6
+        run: >-
+          env -i PATH=/usr/bin:/bin /usr/bin/python3 -I scripts/ot-linux-qa.py prepare
+          --root "$RUNNER_TEMP/ot-qa" --node "$(command -v node)"
+
+      # Full `next build` through the source wrapper inside a namespace with no
+      # network; the wrapper is checked first to run no migration.
+      - name: Build in network-isolated namespace
+        timeout-minutes: 6
+        run: >-
+          env -i PATH=/usr/bin:/bin /usr/bin/python3 -I scripts/ot-linux-qa.py build
+          --root "$RUNNER_TEMP/ot-qa"
+
+      # Server and browser share one namespace. Fence controls and the Chromium
+      # sandbox gate must pass before any UI step; cleanup precedes any verdict.
+      - name: Fence controls and browser QA
+        timeout-minutes: 3
+        run: >-
+          env -i PATH=/usr/bin:/bin /usr/bin/python3 -I scripts/ot-linux-qa.py run
+          --root "$RUNNER_TEMP/ot-qa"
+
+      - name: Seal bounded report
+        if: always()
+        run: >-
+          env -i PATH=/usr/bin:/bin /usr/bin/python3 -I scripts/ot-linux-qa.py seal
+          --root "$RUNNER_TEMP/ot-qa"
