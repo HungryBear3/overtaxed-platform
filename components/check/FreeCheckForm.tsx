@@ -122,6 +122,9 @@ export function FreeCheckForm({ onResult, onReset }: Props) {
           setError("Too many checks — please wait a minute and try again.")
         } else if (res.status === 503) {
           setServiceUnavailable(true)
+          // A refusal on our side still leaves the reader an official place to
+          // look. The link is the fixed Assessor URL, never one from the body.
+          setShowAssessorFallback(true)
           setError(data.error ?? "The Cook County records service is not responding. Please try again shortly.")
         } else if (res.status === 409 && data.code === "ADDRESS_AMBIGUOUS") {
           const offered = Array.isArray(data.candidates) ? data.candidates.filter(isAddressCandidate) : []
