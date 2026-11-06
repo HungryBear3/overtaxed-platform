@@ -1289,7 +1289,7 @@ def fake_engine(machine=qa.ELF_X86_64, body=b"schema-engine body"):
 
 
 class PrismaClosureBase(unittest.TestCase):
-    """A real on-disk closure, laid out the way the networked prisma-generate leaves it."""
+    """A real on-disk closure, laid out the way the networked prisma-engine-target step leaves it."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -1726,6 +1726,260 @@ class PrismaEngineStages(PrismaClosureBase):
         self.assertEqual(parsed.engine_sha256, "a" * 64)
         with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
             qa.parse_args(["inner-build", "--timeout", "1"])
+
+
+class PrismaEngineTargetFetch(PrismaClosureBase):
+    """The real prepare_steps through the real prepare_body; only the child processes are fake."""
+
+    NODE_ROOT = "/opt/hostedtoolcache/node/24/x64"
+    HOST_TARGET = "host-detected-target"
+
+    def setUp(self):
+        super().setUp()
+        for path in [*self.entry.iterdir(), self.target]:
+            path.unlink()
+        self.entry.rmdir()
+        qa.write_json(self.layout.report / "stage-validate.json", {"status": "PASS"})
+        self.args = mock.Mock(node=f"{self.NODE_ROOT}/bin/node")
+        self.argv, self.ran, self.printed = {}, [], []
+        self.exits, self.outputs, self.effects = {}, {}, {}
+
+    def materialize(self, data=None):
+        self.entry.mkdir(parents=True, exist_ok=True)
+        self.write_engine(data or fake_engine())
+
+    def host_engine(self):
+        entry = self.entry.parent / self.HOST_TARGET
+        entry.mkdir()
+        (entry / "schema-engine").write_bytes(fake_engine(body=b"host"))
+        host = self.engine_dir / f"schema-engine-{self.HOST_TARGET}"
+        host.write_bytes(fake_engine(body=b"host"))
+        host.chmod(0o755)
+
+    def run_child(self, argv, log_path, *_args, **_kwargs):
+        label = pathlib.Path(log_path).name[len("prepare-"):-len(".log")]
+        self.ran.append(label)
+        self.argv[label] = argv
+        pathlib.Path(log_path).write_text(self.outputs.get(label, f"schema-engine-cli {qa.PRISMA_ENGINES_COMMIT}\n"))
+        self.effects.get(label, lambda: None)()
+        return {"exit": self.exits.get(label, 0), "reason": None}
+
+    def prepare(self):
+        with mock.patch.object(qa, "run_bounded", side_effect=self.run_child), \
+                mock.patch.object(qa, "preflight_problems", return_value=[]), \
+                mock.patch.object(qa, "find_chrome", return_value=str(self.layout.browsers / "chrome")), \
+                mock.patch.object(qa, "print", create=True, side_effect=lambda line, **_kw: self.printed.append(line)):
+            return qa.prepare_body(self.args, self.layout)
+
+    def prepare_stop(self):
+        with self.assertRaises(qa.StageStop) as stop:
+            self.prepare()
+        self.assertEqual(stop.exception.status, "FAIL")
+        return stop.exception.problems
+
+    def steps(self):
+        return {label: (argv, env) for label, argv, env in qa.prepare_steps(self.layout, self.NODE_ROOT)}
+
+    def test_fetch_passes_the_exact_public_module_target_and_commit(self):
+        app = self.layout.app
+        self.assertEqual(self.steps()["prisma-engine-target"][0], [
+            f"{self.NODE_ROOT}/bin/node", "-e", qa.PRISMA_TARGET_FETCH,
+            f"{app}/node_modules/@prisma/fetch-engine", f"{app}/node_modules/@prisma/engines",
+            "debian-openssl-3.0.x", "9d6ad21cbbceab97458517b147a6a09ff43aa735",
+        ])
+
+    def test_fetch_awaits_a_strict_download_and_starts_failed(self):
+        script = qa.PRISMA_TARGET_FETCH
+        options = re.search(r"await download\(\{(.*?)\}\);", script, re.S).group(1)
+        names = re.findall(r"^\s*\[?([A-Za-z]+)\b", options, re.M)
+        self.assertEqual(names, ["binaries", "binaryTargets", "version", "failSilent"])
+        self.assertIn("[BinaryType.SchemaEngineBinary]: engineDir", options)
+        self.assertIn("binaryTargets: [target]", options)
+        self.assertIn("failSilent: false", options)
+        self.assertLess(script.index("process.exitCode = 1"), script.index("await download"))
+        self.assertLess(script.index("await download"), script.index("process.exitCode = 0"))
+
+    def test_fetch_cannot_reach_an_integrity_or_source_override(self):
+        script = qa.PRISMA_TARGET_FETCH.lower()
+        for word in ("skipcacheintegritycheck", "process.env", "prisma_", "mirror", "checksum", "force", "http"):
+            self.assertNotIn(word, script)
+        self.assertEqual(qa.PRISMA_TARGET_FETCH.count("process.argv"), 1)
+
+    def test_fetch_follows_install_and_precedes_generate(self):
+        self.assertEqual(list(self.steps()), ["apt-update", "apt-bubblewrap", "npm-ci", "prisma-engine-target",
+                                              "prisma-generate", "playwright-deps", "playwright-chromium"])
+
+    def test_fetch_shares_generates_env_so_the_cache_lands_where_it_is_bound(self):
+        steps = self.steps()
+        env = steps["prisma-engine-target"][1]
+        self.assertEqual(env, steps["prisma-generate"][1])
+        # No XDG_CACHE_HOME: getRootCacheDir falls to os.homedir()/.cache/prisma.
+        self.assertEqual(pathlib.Path(env["HOME"]) / ".cache", self.layout.cache)
+        self.assertNotIn("XDG_CACHE_HOME", env)
+
+    def test_explicit_target_survives_generate_fetching_another_host_target(self):
+        self.effects = {"prisma-engine-target": self.materialize, "prisma-generate": self.host_engine}
+        result = self.prepare()
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["prisma_engine"]["target"], "debian-openssl-3.0.x")
+        self.assertEqual(result["prisma_engine"]["problems"], [])
+        self.assertEqual(result["prisma_engine"]["cached_targets"], sorted([qa.PRISMA_ENGINE_TARGET, self.HOST_TARGET]))
+        self.assertEqual(result["prisma_engine"]["installed_targets"], result["prisma_engine"]["cached_targets"])
+        self.assertLess(self.ran.index("prisma-engine-target"), self.ran.index("prisma-generate"))
+        self.assertEqual(self.argv["prisma-engine-version"], [str(self.target), "--version"])
+
+    def test_explicit_target_passes_when_generate_adds_nothing(self):
+        self.effects = {"prisma-engine-target": self.materialize}
+        self.assertEqual(self.prepare()["prisma_engine"]["installed_targets"], [qa.PRISMA_ENGINE_TARGET])
+
+    def test_inventory_reaches_the_ci_log_on_success(self):
+        self.effects = {"prisma-engine-target": self.materialize, "prisma-generate": self.host_engine}
+        self.prepare()
+        self.assertIn(f"cached={sorted([qa.PRISMA_ENGINE_TARGET, self.HOST_TARGET])}", self.printed[0])
+        self.assertTrue(self.printed[1].startswith("prisma engine version probe: exit=0 reason=None"))
+
+    def test_a_host_only_engine_reproduces_the_observed_failure_and_names_the_target(self):
+        # Exit 0 with nothing written. Run 42193443324 reported only the two missing lines;
+        # its host target is unknown, so HOST_TARGET and this inventory are synthetic.
+        self.effects = {"prisma-generate": self.host_engine}
+        problems = self.prepare_stop()
+        self.assertEqual(problems[:2], ["prisma engine closure: cached engine: missing",
+                                        "prisma engine closure: target engine: missing"])
+        self.assertEqual(problems[2], f"prisma engine inventory: cached=['{self.HOST_TARGET}'] "
+                                      f"installed=['{self.HOST_TARGET}']")
+        self.assertNotIn(self.tmp.name, "\n".join(problems))
+        self.assertNotIn("prisma-engine-version", self.ran)
+
+    def test_a_failed_fetch_stops_before_generate_and_the_browser(self):
+        self.exits = {"prisma-engine-target": 1}
+        problems = self.prepare_stop()
+        self.assertTrue(problems[0].startswith("prepare prisma-engine-target: "))
+        self.assertEqual(self.ran[-2:], ["npm-ci", "prisma-engine-target"])
+
+    def fail_fetch(self, output=None):
+        self.exits = {"prisma-engine-target": 1}
+        if output is not None:
+            self.outputs = {"prisma-engine-target": output}
+        problems = self.prepare_stop()
+        self.assertEqual(len(problems), 1)
+        self.assertTrue(problems[0].startswith("prepare prisma-engine-target: {'exit': 1"), problems)
+        self.assertEqual(self.ran[-1], "prisma-engine-target")
+
+    def test_a_failed_fetch_prints_its_first_error_without_the_root(self):
+        self.fail_fetch(f"Error: Failed to fetch the engine\n    at download ({self.layout.app}/x.js:1:2)\n")
+        self.assertEqual(self.printed, [
+            f"--- {qa.PRISMA_TARGET_LOG}: bytes={(self.layout.report / qa.PRISMA_TARGET_LOG).stat().st_size} cut=false",
+            "| Error: Failed to fetch the engine",
+            "|     at download (<root>/app/x.js:1:2)",
+        ])
+
+    def test_the_excerpt_reads_the_log_the_real_step_writes(self):
+        self.assertEqual(qa.PRISMA_TARGET_LOG, "prepare-prisma-engine-target.log")
+        self.fail_fetch("Error: named\n")
+        self.assertTrue((self.layout.report / qa.PRISMA_TARGET_LOG).is_file())
+        self.assertIn("| Error: named", self.printed)
+
+    def test_fetch_log_text_cannot_act_as_a_runner_command(self):
+        self.fail_fetch("::error::a\n##[error]b\n\x1b[31mc\rd\n")
+        self.assertEqual(self.printed[1:], ["| ::error::a", "| #\\x23[error]b", "| \\x1b[31mc\\x0dd"])
+
+    def test_only_a_failed_fetch_prints_a_step_log(self):
+        self.outputs = {"prisma-engine-target": "fetch marker\n", "prisma-generate": "generate marker\n"}
+        self.exits = {"prisma-generate": 1}
+        self.effects = {"prisma-engine-target": self.materialize}
+        self.assertTrue(self.prepare_stop()[0].startswith("prepare prisma-generate: "))
+        self.assertEqual(self.printed, [])
+        self.exits = {}
+        self.assertEqual(self.prepare()["status"], "PASS")
+        self.assertNotIn("marker", "\n".join(self.printed))
+
+    def test_the_excerpt_keeps_the_first_and_last_lines_under_its_cap(self):
+        log = self.layout.report / qa.PRISMA_TARGET_LOG
+        log.write_bytes(b"Error: first\n" + b"\xff##[x\n" * 200_000 + b"\xff" * 9000 + b"\nError: last\n")
+        lines = qa.prisma_target_excerpt(self.layout.report, self.layout.root)
+        self.assertLessEqual(sum(len(line) + 1 for line in lines), qa.PRISMA_TARGET_EXCERPT_CAP)
+        self.assertEqual(lines[0], f"--- {qa.PRISMA_TARGET_LOG}: bytes={log.stat().st_size} cut=true")
+        self.assertEqual(lines[1], "| Error: first")
+        self.assertEqual(lines[-1], "| Error: last")
+        self.assertNotIn("##[", "\n".join(lines))
+        self.assertTrue(all(line.startswith(("--- ", "| ")) for line in lines))
+
+    def test_an_unsafe_fetch_log_is_refused_unread(self):
+        log = self.layout.report / qa.PRISMA_TARGET_LOG
+        outside = self.layout.outside / "secret"
+        outside.write_text("outside marker\n")
+        for state, make in (("refused:symlink", lambda: log.symlink_to(outside)),
+                            ("refused:hardlink", lambda: os.link(outside, log)),
+                            ("refused:not-regular", lambda: os.mkfifo(log)),
+                            ("absent", lambda: None)):
+            log.unlink(missing_ok=True)
+            self.printed = []
+            self.effects = {"prisma-engine-target": lambda: (log.unlink(), make())}
+            with self.subTest(state):
+                self.fail_fetch()
+                self.assertEqual(self.printed, [f'--- {qa.PRISMA_TARGET_LOG}: {{"state": "{state}"}}'])
+
+    def test_a_broken_excerpt_cannot_replace_the_fetch_failure(self):
+        with mock.patch.object(qa, "prisma_target_excerpt", side_effect=RuntimeError("log text")):
+            self.fail_fetch()
+        self.assertEqual(self.printed, [f"--- {qa.PRISMA_TARGET_LOG} excerpt unavailable: RuntimeError"])
+
+    def test_a_closed_stdout_cannot_replace_the_fetch_failure(self):
+        self.printed = mock.Mock()
+        self.printed.append.side_effect = BrokenPipeError
+        self.fail_fetch("Error: unseen\n")
+        self.printed.append.assert_called_once()
+
+    def test_a_fetch_without_the_checksum_files_is_refused(self):
+        def partial():
+            self.materialize()
+            (self.entry / "schema-engine.gz.sha256").unlink()
+        self.effects = {"prisma-engine-target": partial}
+        self.assertIn("prisma engine closure: cached engine: missing", self.prepare_stop())
+        self.assertNotIn("prisma-engine-version", self.ran)
+
+    def test_a_fetched_engine_of_another_architecture_is_refused_before_running(self):
+        self.effects = {"prisma-engine-target": lambda: self.materialize(fake_engine(machine=183))}
+        problems = self.prepare_stop()
+        self.assertIn("prisma engine closure: cached engine: not an x86-64 executable", problems)
+        self.assertNotIn("prisma-engine-version", self.ran)
+
+    def test_a_target_the_host_cannot_load_fails_with_a_pathless_reason_and_no_fallback(self):
+        self.effects = {"prisma-engine-target": self.materialize, "prisma-generate": self.host_engine}
+        self.exits = {"prisma-engine-version": 127}
+        self.outputs = {"prisma-engine-version": f"{self.target}: error while loading shared libraries: libssl.so.3\n"}
+        self.assertEqual(self.prepare_stop(), ["schema-engine --version failed"])
+        self.assertEqual(self.ran.count("prisma-engine-version"), 1)
+        self.assertEqual(self.argv["prisma-engine-version"], [str(self.target), "--version"])
+        evidence = self.printed[-1]
+        self.assertIn("exit=127", evidence)
+        self.assertIn("libssl.so.3", evidence)
+        self.assertNotIn(self.tmp.name, evidence)
+
+    def test_version_evidence_is_one_bounded_line(self):
+        line = qa.engine_version_evidence({"exit": 1}, "x\n::error::y " * 100, "/root")
+        self.assertNotIn("\n", line)
+        self.assertLess(len(line), 400)
+        self.assertTrue(line.startswith("prisma engine version probe: "))
+
+    def test_version_evidence_neutralises_the_runner_command_marker(self):
+        line = qa.engine_version_evidence({"exit": 1}, "##[error]y", "/root")
+        self.assertIn("#\\\\x23[error]y", line)
+        # Around the 240-character cut too: truncation must not restore the marker.
+        for pad in range(236, 242):
+            line = qa.engine_version_evidence({"exit": 1}, "x" * pad + "##[error]y ##\n[", "/root")
+            self.assertNotIn("##[", line)
+            self.assertLess(len(line), 400)
+
+    def test_installed_targets_are_names_only(self):
+        for name in (self.HOST_TARGET, "BAD NAME"):
+            (self.engine_dir / f"schema-engine-{name}").write_bytes(b"x")
+        (self.engine_dir / "index.js").write_text("")
+        self.assertEqual(self.closure()["installed_targets"], [self.HOST_TARGET])
+
+    def test_installed_targets_of_an_absent_package_are_empty(self):
+        report = qa.prisma_engine_closure(str(self.layout.cache), str(self.layout.outside))
+        self.assertEqual(report["installed_targets"], [])
 
 
 if __name__ == "__main__":

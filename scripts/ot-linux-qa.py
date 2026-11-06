@@ -118,12 +118,33 @@ PRISMA_PACKAGES = {
 }
 PRISMA_ENGINE_TARGET = "debian-openssl-3.0.x"
 PRISMA_ENGINE_DIR = ("node_modules", "@prisma", "engines")
+PRISMA_FETCH_ENGINE_DIR = ("node_modules", "@prisma", "fetch-engine")
 PRISMA_ENGINE_FILE = f"schema-engine-{PRISMA_ENGINE_TARGET}"
+# `generate` passes no binaryTargets, so it fetches whatever target the host detects. The
+# fence needs this exact one, so prepare asks the same checksum-verified download() for it.
+# exitCode starts failed: a promise that never settles must not read as success.
+PRISMA_TARGET_FETCH = """\
+process.exitCode = 1;
+const [, fetchEngine, engineDir, target, version] = process.argv;
+const { BinaryType, download } = require(fetchEngine);
+(async () => {
+  await download({
+    binaries: { [BinaryType.SchemaEngineBinary]: engineDir },
+    binaryTargets: [target],
+    version,
+    failSilent: false,
+  });
+  process.exitCode = 0;
+})().catch((error) => console.error(error));
+"""
 PRISMA_CACHE_REL = f"prisma/master/{PRISMA_ENGINES_COMMIT}/{PRISMA_ENGINE_TARGET}"
 PRISMA_CACHE_FILES = ("schema-engine", "schema-engine.gz.sha256", "schema-engine.sha256")
 NS_PRISMA_CACHE = f"/tmp/cache/{PRISMA_CACHE_REL}"
 PRISMA_ENGINE_CAP = 256 * MIB
 PRISMA_TARGET_RE = re.compile(r"[a-z0-9][a-z0-9.-]{0,63}")
+PRISMA_TARGET_LOG = "prepare-prisma-engine-target.log"
+PRISMA_TARGET_EXCERPT_CAP = 4 * 1024
+PRISMA_TARGET_EXCERPT_RESERVE = 256
 ENGINE_VERSION_TIMEOUT = 15
 ELF_X86_64 = 62
 
@@ -195,7 +216,7 @@ class Layout:
         self.etc = self.root / "etc"
         self.outside = self.root / "outside"
         self.work = self.root / "work"
-        # Written by the networked prisma-generate step, whose HOME is self.home.
+        # Written by the networked prisma-engine-target step, whose HOME is self.home.
         self.cache = self.home / ".cache"
         self.prisma_cache = self.cache / PRISMA_CACHE_REL
 
@@ -658,6 +679,20 @@ def _cached_targets(cache_root):
         os.close(fd)
 
 
+def _installed_targets(app_root):
+    """Names only, like _cached_targets: which targets the engines package actually holds."""
+    prefix = "schema-engine-"
+    try:
+        fd = _open_dir_under(app_root, PRISMA_ENGINE_DIR)
+    except OSError:
+        return []
+    try:
+        names = (n[len(prefix):] for n in os.listdir(fd) if n.startswith(prefix))
+        return sorted(n for n in names if PRISMA_TARGET_RE.fullmatch(n))[:8]
+    finally:
+        os.close(fd)
+
+
 def _package_version(app_root, package):
     fd = _open_dir_under(app_root, ["node_modules", *package.split("/")])
     try:
@@ -693,9 +728,14 @@ def prisma_engine_closure(cache_root, app_root):
     if cached and target and cached["sha256"] != target:
         problems.append("target engine: differs from the cached engine")
     return {"packages": PRISMA_PACKAGES, "engines_commit": PRISMA_ENGINES_COMMIT, "target": PRISMA_ENGINE_TARGET,
-            "cached_targets": _cached_targets(cache_root), "sha256": cached and cached["sha256"],
+            "cached_targets": _cached_targets(cache_root), "installed_targets": _installed_targets(app_root),
+            "sha256": cached and cached["sha256"],
             "gz_sha256": cached and cached["gz_sha256"], "bytes": cached and cached["bytes"],
             "target_sha256": target, "problems": problems}
+
+
+def engine_inventory(report):
+    return f"prisma engine inventory: cached={report['cached_targets']} installed={report['installed_targets']}"
 
 
 def engine_version_problems(result, text):
@@ -703,6 +743,12 @@ def engine_version_problems(result, text):
     if not bounded_ok(result):
         return ["schema-engine --version failed"]
     return [] if PRISMA_ENGINES_COMMIT in text else ["schema-engine version mismatch"]
+
+
+def engine_version_evidence(result, text, root):
+    """One bounded CI log line: a failed prepare may upload no report to read the loader error from."""
+    output = " ".join(text.replace(str(root), "<root>").split()).replace("##[", "#\\x23[")[:240]
+    return f"prisma engine version probe: exit={result.get('exit')} reason={result.get('reason')} output={output!r}"
 
 
 def namespace_engine_problems(engine, expected_sha256, write_errno):
@@ -1219,6 +1265,45 @@ def print_build_failure_excerpt(report_dir):
             print(line, flush=True)
     except Exception as exc:  # noqa: BLE001 - the type alone, so no file text is echoed
         print(f"--- build failure excerpt unavailable: {type(exc).__name__}", flush=True)
+
+
+def prisma_target_excerpt(report_dir, root):
+    """One fixed name, windowed: a failed prepare may upload nothing else that says why the fetch failed."""
+    window = (PRISMA_TARGET_EXCERPT_CAP - PRISMA_TARGET_EXCERPT_RESERVE) // 2
+    dir_fd = open_report_dir(report_dir)
+    try:
+        report = read_build_file(dir_fd, PRISMA_TARGET_LOG, window)
+    finally:
+        os.close(dir_fd)
+    prefix = f"--- {PRISMA_TARGET_LOG}"
+    if report["state"] != "ok":
+        return [f"{prefix}: {json.dumps({'state': report['state']})}"]
+
+    def pathless(data):
+        return excerpt_lines(data.replace(os.fsencode(root), b"<root>"))
+
+    head, left, head_cut = fit_lines(pathless(report["head"]), window)
+    # Fitted backwards, like render_build_file: the first and the last lines say the most.
+    tail, _, tail_cut = fit_lines(pathless(report["tail"])[::-1], left + window)
+    tail.reverse()
+    cut = head_cut or tail_cut or len(report["head"]) + len(report["tail"]) < report["bytes"]
+    lines = [f"{prefix}: bytes={report['bytes']} cut={str(cut).lower()}", *head]
+    if tail:
+        lines += [f"{prefix} tail offset={report['tail_offset']}", *tail]
+    return lines
+
+
+def print_prisma_target_excerpt(report_dir, root):
+    """Diagnostics only: a bad read or a closed stdout must leave the step's own failure standing."""
+    try:
+        lines = prisma_target_excerpt(report_dir, root)
+    except Exception as exc:  # noqa: BLE001 - the type alone, so no file text is echoed
+        lines = [f"--- {PRISMA_TARGET_LOG} excerpt unavailable: {type(exc).__name__}"]
+    try:
+        for line in lines:
+            print(line, flush=True)
+    except Exception:  # noqa: BLE001 - the caller is about to report the real failure
+        pass
 
 
 def enforce_report_cap(report_dir):
@@ -1786,6 +1871,8 @@ def prepare_steps(layout, node_root):
     node = f"{node_root}/bin/node"
     cli = f"{layout.app}/node_modules/playwright/cli.js"
     prisma = f"{layout.app}/node_modules/prisma/build/index.js"
+    fetch_engine = str(layout.app.joinpath(*PRISMA_FETCH_ENGINE_DIR))
+    engine_dir = str(layout.app.joinpath(*PRISMA_ENGINE_DIR))
     env = scrubbed_env(
         PATH=f"{node_root}/bin:/usr/bin:/bin", HOME=str(layout.home),
         NPM_CONFIG_USERCONFIG=str(layout.home / ".npmrc"), NPM_CONFIG_CACHE=str(layout.npm_cache),
@@ -1798,6 +1885,10 @@ def prepare_steps(layout, node_root):
         ("apt-update", root_env + ["apt-get", "update"], env),
         ("apt-bubblewrap", root_env + ["apt-get", "install", "--yes", "--no-install-recommends", "bubblewrap"], env),
         ("npm-ci", [f"{node_root}/bin/npm", "ci", "--ignore-scripts"], env),
+        # Before generate: with the target still absent, download() cannot skip this fetch
+        # (a present non-native target is accepted as-is), and it fills the cache entry.
+        ("prisma-engine-target", [node, "-e", PRISMA_TARGET_FETCH, fetch_engine, engine_dir,
+                                  PRISMA_ENGINE_TARGET, PRISMA_ENGINES_COMMIT], env),
         # Offline-capable in theory; run here so any public Prisma engine fetch
         # stays in this labelled stage. The build repeats it inside the namespace.
         ("prisma-generate", [node, prisma, "generate"], env),
@@ -1810,7 +1901,8 @@ def prepare_steps(layout, node_root):
 def require_prisma_engine(layout):
     report = prisma_engine_closure(str(layout.cache), str(layout.app))
     if report["problems"]:
-        raise StageStop("FAIL", [f"prisma engine closure: {p}" for p in report["problems"]])
+        raise StageStop("FAIL", [*(f"prisma engine closure: {p}" for p in report["problems"]),
+                                 engine_inventory(report)])
     return report
 
 
@@ -1833,11 +1925,15 @@ def prepare_body(args, layout):
         result = run_bounded(argv, layout.report / f"prepare-{label}.log", PREPARE_STEP_TIMEOUT, env, cwd=layout.app)
         steps[label] = result
         if not bounded_ok(result):
+            if label == "prisma-engine-target":
+                print_prisma_target_excerpt(layout.report, layout.root)
             raise StageStop("FAIL", [f"prepare {label}: {result}"])
     engine = require_prisma_engine(layout)
+    print(engine_inventory(engine), flush=True)
     steps["prisma-engine-version"], text = probe_engine_version(
         layout.app.joinpath(*PRISMA_ENGINE_DIR, PRISMA_ENGINE_FILE),
         layout.report / "prepare-prisma-engine-version.log", scrubbed_env(), layout.work)
+    print(engine_version_evidence(steps["prisma-engine-version"], text, layout.root), flush=True)
     problems = engine_version_problems(steps["prisma-engine-version"], text)
     if problems:
         raise StageStop("FAIL", problems)
