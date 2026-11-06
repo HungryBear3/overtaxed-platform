@@ -26,6 +26,10 @@ const NETWORK_ERROR = 'Network error. Please try again.';
 const SCREENSHOT_CAP = 2 * 1024 * 1024;
 const REQUEST_RECORD_CAP = 500;
 const GATE_WAIT_MS = 30000;
+// The quiet window is Playwright's own idle window (frames.js _startNetworkIdleTimer).
+const SETTLE_QUIET_MS = 500;
+const SETTLE_TIMEOUT_MS = 5000;
+const SETTLE_POLL_MS = 25;
 // Fixed proof files, read back by ot-linux-qa.py. Diagnostic only: nothing here
 // reconciles a request, and the seen/routed object oracle stays the only count.
 const PROOF_SCHEMA = 1;
@@ -462,6 +466,42 @@ function within(promise, ms, message) {
   return Promise.race([promise, expiry]).finally(() => clearTimeout(timer));
 }
 
+function inFlight() {
+  // This phase only: an older record may never finish, and chrome:// is outside the oracle.
+  return [...ledger].some(([request, item]) => item.seen && !item.finished && !item.failed
+    && item.phase === state.phase && /^https?:/.test(request.url()));
+}
+
+// A navigation that beats a request's Fetch pause cancels it unrouted, so the
+// transitions wait here first. This only delays them: a canceled request is still
+// seen without a route and still fails the oracle. networkidle cannot do this
+// wait: once a document has fired it the client returns at once (frame.js
+// waitForLoadState), and a request only counts after its pause pairs it
+// (crNetworkManager.js _onRequest). A quiet window outlasts that pairing.
+async function settleNetwork() {
+  const end = Date.now() + SETTLE_TIMEOUT_MS;
+  let order = -1;
+  let quietSince = 0;
+  for (;;) {
+    const now = Date.now();
+    if (order !== accounting.order || inFlight()) {
+      order = accounting.order;
+      quietSince = now;
+    } else if (now - quietSince >= SETTLE_QUIET_MS) {
+      return;
+    }
+    if (now >= end) throw Object.assign(new Error('network did not settle'), { name: 'TimeoutError' });
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
+  }
+}
+
+// Two frames, so the observers for the new layout have run before the wait starts.
+async function renderedFrame(page) {
+  await within(page.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  })), SETTLE_TIMEOUT_MS, 'no frame after resize');
+}
+
 async function waitForGate() {
   const file = path.join(OT_OUT, 'gate.json');
   const end = Date.now() + GATE_WAIT_MS;
@@ -510,8 +550,13 @@ async function interceptionControl(page) {
 }
 
 async function openForm(page, viewport, phase) {
+  // Before the phase changes, so what is left of the last case stays in its phase.
+  await settleNetwork();
   state.phase = phase;
   await page.setViewportSize(viewport);
+  // A new layout can reveal links, and their prefetches race the goto below.
+  await renderedFrame(page);
+  await settleNetwork();
   const response = await page.goto(CHECK, { waitUntil: 'load' });
   assert(response && response.status() === 200, phase + ': /check status ' + (response && response.status()));
   const address = page.getByLabel('Street address');
@@ -669,6 +714,7 @@ async function run() {
         await runCase(page, context, `${kind}-${label}`, spec, viewport);
       }
     }
+    await settleNetwork();
     state.phase = 'final';
     assert(Object.values(ev.cases).every((c) => c.status === 'pass'), 'one or more cases failed');
     assert(ev.errors.handlerErrors.length === 0, 'route handler errors');

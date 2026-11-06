@@ -2006,9 +2006,12 @@ const CHECK = ORIGIN + '/check';
 const STATIC = ORIGIN + '/_next/static/chunks/a.js';
 const code = fs.readFileSync(source, 'utf8');
 const results = {};
+// Real source with shorter bounds, for faults that would otherwise wait them out.
+const QUICK = code.replace('const SETTLE_QUIET_MS = 500;', 'const SETTLE_QUIET_MS = 60;')
+  .replace('const SETTLE_TIMEOUT_MS = 5000;', 'const SETTLE_TIMEOUT_MS = 800;');
 
 // A launch function runs the driver's real main path; without one it only loads.
-function load(out, launchPersistentContext) {
+function load(out, launchPersistentContext, driverCode = code) {
   const modules = { crypto, fs, path };
   const app = '/fake-app';
   const fakeRequire = (id) => {
@@ -2024,8 +2027,8 @@ function load(out, launchPersistentContext) {
   const fakeConsole = { error: (...args) => logged.push(args.map(String).join(' ')) };
   const sandbox = { require: fakeRequire, module: fakeModule, process: { env, pid: 1, exit: (exitCode) => exits.push(exitCode) }, console: fakeConsole, Buffer, URL, setTimeout, clearTimeout };
   const context = vm.createContext(sandbox);
-  vm.runInContext(code, context, { filename: 'ot-linux-browser.cjs' });
-  const driver = vm.runInContext('({ ev, state, tally, seen, routed, ledger, accounting, handler, observe, save, finish, runCase, closeContext, fitProof, safeUrl, safeFailure, safeErrorKind, accountingProof, unroutedRequests, KINDS, VIEWPORTS, ADDRESS, CITY })', context);
+  vm.runInContext(driverCode, context, { filename: 'ot-linux-browser.cjs' });
+  const driver = vm.runInContext('({ ev, state, tally, seen, routed, ledger, accounting, handler, observe, save, finish, runCase, closeContext, fitProof, safeUrl, safeFailure, safeErrorKind, accountingProof, unroutedRequests, settleNetwork, openForm, KINDS, VIEWPORTS, ADDRESS, CITY })', context);
   return Object.assign(driver, { logged, exits });
 }
 
@@ -2063,10 +2066,10 @@ function proofs(out) {
   };
 }
 
-async function scenario(name, body) {
+async function scenario(name, body, driverCode) {
   const out = path.join(root, name);
   fs.mkdirSync(out, { mode: 0o755 });
-  const driver = load(out);
+  const driver = load(out, undefined, driverCode);
   const context = wire(driver);
   const extra = await body(driver, context);
   driver.save();
@@ -2143,7 +2146,7 @@ function fakePage(driver, link) {
     request.postData = () => `${driver.ADDRESS} ${driver.CITY}`;
     return request;
   };
-  const anchor = { count: async () => 1, first: () => anchor, getAttribute: async (name) => link[name] };
+  const anchor = { count: async () => (driver.state.current.spec.link ? 1 : 0), first: () => anchor, getAttribute: async (name) => link[name] };
   const locator = {
     waitFor: async () => {}, isVisible: async () => true, isEnabled: async () => true, isDisabled: async () => true,
     fill: async () => {}, click: async () => { driver.handler(fakeRoute(submitted())); }, count: async () => 0,
@@ -2154,6 +2157,106 @@ function fakePage(driver, link) {
     getByRole: locator.getByRole, content: async () => '', waitForTimeout: async () => {}, url: () => CHECK,
     evaluate: async () => ({ scroll: 1, client: 1 }),
   };
+}
+
+// Runs run() to the end against the order crNetworkManager reports. A started
+// request stays invisible until its Fetch pause pairs it, and a navigation that
+// beats the pause reports it seen then failed with no route. Each widening starts
+// a chain of prefetches, where the next one starts as the last one is answered.
+async function simulatedRun(name, driverCode, { hang = false } = {}) {
+  const out = path.join(root, name);
+  fs.mkdirSync(out, { mode: 0o755 });
+  fs.writeFileSync(path.join(out, 'gate.json'), JSON.stringify({ go: true }));
+  const page = new EventEmitter();
+  const context = new EventEmitter();
+  const hooks = {};
+  const unpaired = new Set();
+  const gaps = [];
+  let lastNetwork = Date.now();
+  let width = 800;
+  let reply = null;
+  const emit = (event, request) => {
+    lastNetwork = Date.now();
+    context.emit(event, request);
+  };
+  const paired = (request) => {
+    emit('request', request);
+    return hooks.route({
+      ...fakeRoute(request),
+      continue: async () => emit('requestfinished', request),
+      abort: async () => {
+        request.failed = { errorText: 'net::ERR_BLOCKED_BY_CLIENT' };
+        emit('requestfailed', request);
+      },
+      fulfill: async (answer) => {
+        reply = answer;
+        emit('requestfinished', request);
+      },
+    });
+  };
+  const prefetch = (remaining) => {
+    const request = fakeRequest(`${ORIGIN}/prefetch-${remaining}?_rsc=1`, { type: 'fetch' });
+    const item = { request };
+    item.timer = setTimeout(async () => {
+      unpaired.delete(item);
+      await paired(request);
+      if (remaining > 1) prefetch(remaining - 1);
+    }, 40);
+    unpaired.add(item);
+  };
+  Object.assign(context, {
+    setDefaultTimeout() {},
+    setDefaultNavigationTimeout() {},
+    route: async (_pattern, callback) => { hooks.route = callback; },
+    routeWebSocket: async () => {},
+    pages: () => [page],
+    close: async () => { mark('close'); },
+  });
+  const driver = load(out, async () => context, driverCode);
+  const mark = (at) => gaps.push({ at, phase: driver.state.phase, unpaired: unpaired.size, idleMs: Date.now() - lastNetwork });
+  const good = { href: 'https://www.cookcountyassessoril.gov/address-search', target: '_blank', rel: 'noopener noreferrer' };
+  Object.assign(page, fakePage({ ...driver, handler: (route) => paired(route.request()) }, good), {
+    waitForFunction: async () => {},
+    screenshot: async ({ path: file }) => fs.writeFileSync(file, 'x'),
+    setViewportSize: async (viewport) => {
+      mark('viewport');
+      if (viewport.width > width) prefetch(3);
+      width = viewport.width;
+    },
+    evaluate: async (_callback, api) => {
+      if (api) {
+        await paired(fakeRequest(api, { method: 'POST', type: 'fetch' }));
+        return { status: reply.status, body: reply.body };
+      }
+      if (driver.state.phase === 'sandbox') return 'sandboxed';
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return { scroll: 1, client: 1 };
+    },
+    goto: async (url) => {
+      if (url !== 'chrome://sandbox') {
+        mark('goto');
+        for (const item of unpaired) {
+          clearTimeout(item.timer);
+          item.request.failed = { errorText: 'net::ERR_ABORTED' };
+          emit('request', item.request);
+          emit('requestfailed', item.request);
+        }
+        unpaired.clear();
+        await paired(fakeRequest(url));
+      }
+      return { status: () => 200 };
+    },
+    content: async () => {
+      if (hang && driver.state.phase === 'fetch-failure-mobile') {
+        const hung = fakeRequest(ORIGIN + '/_next/static/chunks/hung.js', { type: 'script' });
+        emit('request', hung);
+        await hooks.route(fakeRoute(hung));
+      }
+      return '';
+    },
+  });
+  for (let wait = 0; wait < 4000 && !driver.exits.length; wait += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+  results[name] = { ...proofs(out), extra: { gaps, exits: driver.exits } };
 }
 
 (async () => {
@@ -2313,6 +2416,147 @@ function fakePage(driver, link) {
     await driver.runCase(throwing(secretError()), context, 'null-json-desktop', driver.KINDS['null-json'], desktop);
     await driver.runCase(throwing(Object.assign(secretError(), { name: 'TimeoutError' })), context, 'null-json-mobile', driver.KINDS['null-json'], desktop);
   });
+
+  const aborted = (url) => {
+    const request = fakeRequest(url, { type: 'fetch' });
+    request.failed = { errorText: 'net::ERR_ABORTED' };
+    return request;
+  };
+
+  await scenario('settle-canceled', async (driver, context) => {
+    const request = aborted(ORIGIN + '/townships?_rsc=1');
+    context.emit('request', request);
+    context.emit('requestfailed', request);
+    await driver.settleNetwork();
+  });
+
+  await scenario('settle-handled', async (driver, context) => {
+    const request = fakeRequest(STATIC, { type: 'script' });
+    const order = [];
+    context.emit('request', request);
+    setTimeout(async () => {
+      await driver.handler(fakeRoute(request));
+      context.emit('requestfinished', request);
+      order.push('finished');
+    }, 100);
+    await driver.settleNetwork();
+    order.push('settled');
+    return { order };
+  });
+
+  await scenario('settle-restart', async (driver, context) => {
+    const requests = [fakeRequest(CHECK), fakeRequest(STATIC, { type: 'script' })];
+    for (const request of requests) {
+      await pass(driver, context, request);
+      context.emit('requestfinished', request);
+    }
+    setTimeout(() => context.emit('response', fakeResponse(requests[0], 200)), 300);
+    setTimeout(() => context.emit('response', fakeResponse(requests[1], 200)), 600);
+    const started = Date.now();
+    await driver.settleNetwork();
+    return { elapsed: Date.now() - started };
+  });
+
+  await scenario('settle-duplicates', async (driver, context) => {
+    const first = fakeRequest(STATIC, { type: 'script' });
+    const second = fakeRequest(STATIC, { type: 'script' });
+    const order = [];
+    await pass(driver, context, first);
+    context.emit('request', second);
+    context.emit('requestfinished', first);
+    setTimeout(() => {
+      context.emit('requestfinished', second);
+      order.push('second-finished');
+    }, 100);
+    await driver.settleNetwork();
+    order.push('settled');
+    return { order, secondId: driver.ledger.get(second).id };
+  });
+
+  await scenario('settle-stale', async (driver, context) => {
+    context.emit('request', fakeRequest(STATIC, { type: 'script' }));
+    driver.state.phase = 'control';
+    context.emit('request', fakeRequest('chrome://sandbox'));
+    const started = Date.now();
+    await driver.settleNetwork();
+    const elapsed = Date.now() - started;
+    await driver.closeContext({ close: async () => {} });
+    return { elapsed };
+  });
+
+  await scenario('settle-timeout', async (driver, context) => {
+    await pass(driver, context, fakeRequest(CHECK));
+    const calls = [];
+    const page = { setViewportSize: async () => { calls.push('viewport'); }, goto: async () => { calls.push('goto'); } };
+    await driver.runCase(page, { pages: () => [page] }, 'normal-desktop', driver.KINDS.normal, driver.VIEWPORTS.desktop);
+    return { calls };
+  }, QUICK);
+
+  await scenario('settle-noisy', async (driver, context) => {
+    const request = fakeRequest(CHECK);
+    await pass(driver, context, request);
+    context.emit('requestfinished', request);
+    const noise = setInterval(() => context.emit('response', fakeResponse(request, 200)), 10);
+    const kind = await driver.settleNetwork().then(() => 'settled', driver.safeErrorKind);
+    clearInterval(noise);
+    return { kind };
+  }, QUICK);
+
+  await scenario('settle-late', async (driver, context) => {
+    await driver.settleNetwork();
+    const late = aborted(STATIC);
+    await driver.closeContext({
+      close: async () => {
+        context.emit('request', late);
+        context.emit('requestfailed', late);
+      },
+    });
+  });
+
+  await scenario('settle-callback-error', async (driver, context) => {
+    const request = fakeRequest(CHECK);
+    let calls = 0;
+    request.redirectedFrom = () => {
+      calls += 1;
+      if (calls === 1) throw new Error('broken');
+      return null;
+    };
+    context.emit('request', request);
+    setTimeout(() => context.emit('requestfinished', request), 100);
+    await driver.settleNetwork();
+  });
+
+  await scenario('settle-order', async (driver, context) => {
+    const trace = [];
+    const old = fakeRequest(STATIC, { type: 'script' });
+    const resized = fakeRequest(ORIGIN + '/_next/static/chunks/b.js', { type: 'script' });
+    const finishLater = (request, label) => setTimeout(() => {
+      trace.push(label);
+      context.emit('requestfinished', request);
+    }, 100);
+    driver.state.phase = 'control';
+    await pass(driver, context, old);
+    finishLater(old, 'old-finished');
+    const page = Object.assign(fakePage(driver, {}), {
+      setViewportSize: async () => { trace.push(`viewport:${driver.state.phase}`); },
+      evaluate: async () => {
+        trace.push('frame');
+        await pass(driver, context, resized);
+        finishLater(resized, 'resized-finished');
+      },
+      goto: async () => {
+        trace.push('goto');
+        return { status: () => 200 };
+      },
+    });
+    await driver.openForm(page, driver.VIEWPORTS.desktop, 'normal-desktop');
+    return { trace, phases: [old, resized].map((request) => driver.ledger.get(request).phase) };
+  });
+
+  await simulatedRun('run-settled');
+  await simulatedRun('run-unsettled', code.replaceAll('await settleNetwork();', ''));
+  await simulatedRun('run-final-timeout', QUICK, { hang: true });
+  results.settleEdges = (code.match(/await settleNetwork\(\);/g) || []).length;
 
   const absent = path.join(root, 'absent-dir-needle');
   const unsaved = load(absent);
@@ -2794,6 +3038,114 @@ class BrowserAccounting(unittest.TestCase):
         self.assertIn(f"const PROOF_BYTE_CAP = {qa.BROWSER_PROOF_CAP};", text)
         self.assertIn(f"const PROOF_SCHEMA = {qa.BROWSER_PROOF_SCHEMA};", text)
         self.assertEqual(set(re.findall(r"\['net::\w+', '(\w+)'\]", text)) | {"other"}, set(qa.PROOF_FAILURES))
+
+    def assert_unrouted_gate(self, name, count):
+        self.assertIn(f"unrouted is {count}", qa.evaluate_browser_evidence(self.results[name]["evidence"]))
+
+    def test_settle_bounds_and_call_edges_are_the_shipped_ones(self):
+        text = (HERE / "ot-linux-browser.cjs").read_text()
+        for needle in ("const SETTLE_QUIET_MS = 500;", "const SETTLE_TIMEOUT_MS = 5000;"):
+            self.assertIn(needle, text)
+        self.assertEqual(self.results["settleEdges"], 3)
+
+    def test_a_request_canceled_before_its_pause_stays_unrouted_after_settling(self):
+        doc = self.accounting("settle-canceled")
+        self.assertEqual(doc["counts"]["unrouted"], 1)
+        record = doc["unmatched"][0]
+        self.assertEqual((record["failed"], record["canceled"], record["failure"], record["handlerSeen"]),
+                         (True, True, "aborted", False))
+        self.assertEqual(self.problems("settle-canceled"), [])
+        self.assert_unrouted_gate("settle-canceled", 1)
+
+    def test_settling_waits_for_a_request_handled_before_the_transition(self):
+        result = self.results["settle-handled"]
+        self.assertEqual(result["extra"]["order"], ["finished", "settled"])
+        self.assertEqual(result["accounting"]["counts"]["unrouted"], 0)
+
+    def test_every_event_restarts_the_quiet_window(self):
+        self.assertGreaterEqual(self.results["settle-restart"]["extra"]["elapsed"], 1050)
+
+    def test_settling_tracks_objects_so_a_duplicate_url_neither_merges_nor_clears(self):
+        result = self.results["settle-duplicates"]
+        doc = result["accounting"]
+        self.assertEqual(result["extra"]["order"], ["second-finished", "settled"])
+        self.assertEqual([r["id"] for r in doc["unmatched"]], [result["extra"]["secondId"]])
+        self.assertEqual(doc["counts"]["routed"], 1)
+        self.assert_unrouted_gate("settle-duplicates", 1)
+
+    def test_a_stale_or_internal_record_delays_nothing_and_stays_counted(self):
+        result = self.results["settle-stale"]
+        doc = result["accounting"]
+        self.assertLess(result["extra"]["elapsed"], 4000)
+        self.assertEqual(doc["snapshots"]["afterDrain"]["pending"], 2)
+        self.assertEqual(doc["counts"]["unrouted"], 1)
+        self.assert_unrouted_gate("settle-stale", 1)
+
+    def test_a_settle_timeout_fails_the_case_before_any_transition(self):
+        result = self.results["settle-timeout"]
+        case = result["evidence"]["cases"]["normal-desktop"]
+        self.assertEqual((case["status"], case["failureKind"]), ("failed", "timeout"))
+        self.assertEqual(result["extra"]["calls"], [])
+        self.assertIn("case normal-desktop: failed", qa.evaluate_browser_evidence(result["evidence"]))
+
+    def test_activity_that_never_stops_times_out(self):
+        self.assertEqual(self.results["settle-noisy"]["extra"]["kind"], "timeout")
+
+    def test_a_late_failure_after_settling_stays_late_and_unrouted(self):
+        doc = self.accounting("settle-late")
+        self.assertEqual(doc["counts"]["lateEvents"], 2)
+        self.assertEqual((doc["unmatched"][0]["closing"], doc["unmatched"][0]["failure"]), (True, "aborted"))
+        self.assert_unrouted_gate("settle-late", 1)
+
+    def test_a_callback_error_during_settling_still_fails_closed(self):
+        self.assertEqual(self.accounting("settle-callback-error")["callbackErrorsBy"], {"request": 1})
+        self.assertIn("browser accounting callbackErrors is 1", self.problems("settle-callback-error"))
+        self.assert_unrouted_gate("settle-callback-error", 1)
+
+    def test_navigation_waits_for_the_last_case_and_for_the_resize(self):
+        extra = self.results["settle-order"]["extra"]
+        self.assertEqual(extra["trace"], ["old-finished", "viewport:normal-desktop", "frame", "resized-finished", "goto"])
+        self.assertEqual(extra["phases"], ["control", "normal-desktop"])
+
+    def test_a_full_run_routes_every_prefetch_and_passes_every_gate(self):
+        result = self.results["run-settled"]
+        self.assertEqual(result["extra"]["exits"], [0])
+        self.assertEqual(qa.evaluate_browser_evidence(result["evidence"]), [])
+        self.assertEqual(self.problems("run-settled"), [])
+        self.assertEqual(result["accounting"]["counts"]["unrouted"], 0)
+        self.assertEqual(result["summary"]["counts"]["aborted"], 20)
+        self.assertEqual(list(result["evidence"]["cases"]), list(qa.EXPECTED_CASES))
+
+    def test_every_transition_of_a_full_run_starts_from_a_quiet_network(self):
+        gaps = self.results["run-settled"]["extra"]["gaps"]
+        self.assertEqual([g["at"] for g in gaps[1:4]], ["viewport", "goto", "viewport"])
+        self.assertEqual(sum(g["at"] == "viewport" for g in gaps), 12)
+        self.assertEqual(sum(g["at"] == "goto" for g in gaps), 13)
+        self.assertEqual(gaps[-1]["at"], "close")
+        self.assertEqual({g["unpaired"] for g in gaps}, {0})
+        for gap in gaps[1:]:
+            with self.subTest(gap=gap):
+                self.assertGreaterEqual(gap["idleMs"], 450)
+
+    def test_without_settling_the_same_run_reproduces_the_failure(self):
+        result = self.results["run-unsettled"]
+        doc = result["accounting"]
+        self.assertGreater(doc["counts"]["unrouted"], 0)
+        for record in doc["unmatched"]:
+            self.assertEqual((record["method"], record["query"], record["resourceType"]), ("GET", "_rsc", "fetch"))
+            self.assertEqual((record["handlerSeen"], record["status"], record["failure"]), (False, None, "aborted"))
+            self.assertRegex(record["phase"], r"-desktop$")
+            self.assertRegex(record["life"], r"^seen@\d+ failed@\d+$")
+        self.assert_unrouted_gate("run-unsettled", doc["counts"]["unrouted"])
+
+    def test_a_final_settle_timeout_fails_the_run_and_still_closes(self):
+        result = self.results["run-final-timeout"]
+        self.assertEqual(result["extra"]["exits"], [1])
+        self.assertEqual(result["extra"]["gaps"][-1]["at"], "close")
+        self.assertEqual(result["summary"]["failure"], {"phase": "fetch-failure-mobile", "kind": "timeout"})
+        self.assertEqual(result["summary"]["cleanup"], {"closing": True, "close": "closed"})
+        self.assertEqual({case["status"] for case in result["summary"]["cases"].values()}, {"pass"})
+        self.assertIn("browser reported failure: timeout", qa.evaluate_browser_evidence(result["evidence"]))
 
 
 if __name__ == "__main__":
