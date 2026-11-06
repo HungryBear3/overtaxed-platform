@@ -39,7 +39,13 @@ export type NeutralRawEvidence = Readonly<{
   sources: ReadonlyArray<NeutralSourceReceipt>
   exactPages: ReadonlyArray<ExactSourcePage>
   dataEvidenceSha256: string
+  /** Present only when the shared-snapshot protections were requested and all passed. */
+  collectorProtections?: ReadonlyArray<SharedCollectorProtection>
 }>
+
+export const SHARED_COLLECTOR_PROTECTIONS = ["POOL_COUNT_BEFORE_AFTER", "DATASET_EPOCH_BEFORE_AFTER", "MAILED_TOTAL_EQUALS_LAND_PLUS_BUILDING"] as const
+export type SharedCollectorProtection = (typeof SHARED_COLLECTOR_PROTECTIONS)[number]
+const metadataUrl = (id: string) => `${ORIGIN}/api/views/${id}.json`
 
 type RawResponse = { ok: boolean; status: number; redirected?: boolean; url: string; headers: { get(name: string): string | null }; body?: CountyBody | null; text(): Promise<string> }
 type RawFetch = (url: string, init: { method: "GET"; headers: Record<string, string>; cache: "no-store"; redirect: "error"; credentials: "omit"; signal: AbortSignal }) => Promise<RawResponse>
@@ -117,8 +123,21 @@ class Reader {
     if (!isUtf8(out)) throw new Refusal("NEUTRAL_RAW_RESPONSE_INVALID")
     return out
   }
-  async one(dataset: Dataset, url: string, roles: Role[], maxRows: number): Promise<Row[]> {
-    if (++this.requests > MAX_REQUESTS || !url.startsWith(`${ORIGIN}/resource/${dataset.id}.json?`)) throw new Refusal("NEUTRAL_RAW_SOURCE_UNAVAILABLE")
+  /** Dataset metadata epoch, captured as exact bytes. Read only under the shared-snapshot protections. */
+  async epoch(dataset: Dataset, roles: Role[]): Promise<string> {
+    const m = (await this.one(dataset, metadataUrl(dataset.id), roles, 0, true)) as unknown as Record<string, any>
+    if (m?.id !== dataset.id || m.provenance !== "official" || !Number.isSafeInteger(m.rowsUpdatedAt) || !Number.isSafeInteger(m.viewLastModified) || !Number.isSafeInteger(m.tableId) || !Array.isArray(m.columns)) throw new Refusal("NEUTRAL_RAW_RESPONSE_INVALID")
+    for (const f of dataset.select.split(",")) {
+      // Socrata publishes this one characteristics field as checkbox. Do not admit
+      // checkbox on arbitrary fields or coerce the retained published boolean bytes.
+      const allowedTypes = dataset.id === COUNTY_DATASETS.characteristics.id && f === "pin_is_multiland"
+        ? ["text", "number", "checkbox"] : ["text", "number"]
+      if (!m.columns.some((c: any) => c?.fieldName === f && allowedTypes.includes(c?.dataTypeName))) throw new Refusal("NEUTRAL_RAW_RESPONSE_INVALID")
+    }
+    return JSON.stringify([m.rowsUpdatedAt, m.viewLastModified, m.tableId])
+  }
+  async one(dataset: Dataset, url: string, roles: Role[], maxRows: number, metadata = false): Promise<Row[]> {
+    if (++this.requests > MAX_REQUESTS || !(metadata ? url === metadataUrl(dataset.id) : url.startsWith(`${ORIGIN}/resource/${dataset.id}.json?`))) throw new Refusal("NEUTRAL_RAW_SOURCE_UNAVAILABLE")
     const remaining = this.deps.deadline == null ? 15_000 : this.deps.deadline - this.tickRaw()
     if (remaining <= 0) throw new Refusal("NEUTRAL_RAW_SOURCE_UNAVAILABLE")
     const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), Math.min(15_000, remaining))
@@ -132,7 +151,7 @@ class Reader {
     } catch (error) { throw error instanceof Refusal ? error : new Refusal("NEUTRAL_RAW_SOURCE_UNAVAILABLE") } finally { clearTimeout(timer) }
     let parsed: unknown
     try { parsed = JSON.parse(bytes.toString("utf8")) } catch { throw new Refusal("NEUTRAL_RAW_RESPONSE_INVALID") }
-    if (!Array.isArray(parsed) || parsed.length > maxRows || parsed.some(row => !row || typeof row !== "object" || Array.isArray(row))) throw new Refusal("NEUTRAL_RAW_RESPONSE_INVALID")
+    if (metadata ? (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) : (!Array.isArray(parsed) || parsed.length > maxRows || parsed.some(row => !row || typeof row !== "object" || Array.isArray(row)))) throw new Refusal("NEUTRAL_RAW_RESPONSE_INVALID")
     const now = this.tick()
     const receipt: NeutralSourceReceipt = Object.freeze({ datasetId: dataset.id, datasetTitle: dataset.title, url, retrievedAt: now.toISOString(), contentSha256: sha(bytes), roles: Object.freeze([...roles]), subjectPin: this.subjectPin, taxYear: OFFICIAL_TAX_YEAR })
     this.pages.push(Object.freeze({ receipt, bytes: Buffer.from(bytes) }))
@@ -164,25 +183,56 @@ class Reader {
  * Dedicated neutral reader. It discloses published proration values but never
  * interprets them. Every normalized fact is parsed from retained exact bytes.
  */
-async function readNeutralOfficialBytes(input: { propertyPin: string }, deps: NeutralRawDeps): Promise<{ ok: true; evidence: NeutralRawEvidence } | { ok: false; blocker: NeutralRawBlocker }> {
+async function readNeutralOfficialBytes(input: { propertyPin: string; sharedSnapshotProtections?: boolean }, deps: NeutralRawDeps): Promise<{ ok: true; evidence: NeutralRawEvidence } | { ok: false; blocker: NeutralRawBlocker }> {
   if (!PIN.test(input.propertyPin)) return { ok: false, blocker: "NEUTRAL_RAW_INPUT_INVALID" }
   const subjectPin = input.propertyPin
+  // Opt-in: adds count, epoch, land+building and pool-scope checks. The default
+  // path keeps its existing exact request sequence and refusals.
+  const strict = input.sharedSnapshotProtections === true
+  const assessedDataset: Dataset = strict ? { ...COUNTY_DATASETS.assessedValues, select: `${COUNTY_DATASETS.assessedValues.select},mailed_land,mailed_bldg` } : COUNTY_DATASETS.assessedValues
   try {
     const reader = new Reader(deps, subjectPin)
     const universe = COUNTY_DATASETS.parcelUniverse
+    const epochSets: Dataset[] = [universe, COUNTY_DATASETS.characteristics, assessedDataset, COUNTY_DATASETS.addresses]
+    const epochs = async () => { const out: string[] = []; for (const d of epochSets) out.push(await reader.epoch(d, ["candidates"])); return out.join("|") }
+    const epochBefore = strict ? await epochs() : ""
     const subjects = await reader.one(universe, query(universe, `year=${OFFICIAL_TAX_YEAR} AND pin='${subjectPin}'`, 2, 0), ["subject"], 2)
     if (subjects.length !== 1 || pin(subjects[0]) !== subjectPin) throw new Refusal("NEUTRAL_RAW_IDENTITY_CONFLICT")
     const subjectRow = subjects[0]; year(subjectRow)
     const propertyClass = text(subjectRow.class), townshipCode = text(subjectRow.township_code), township = text(subjectRow.township_name), neighborhoodCode = text(subjectRow.nbhd_code)
     if (!/^2\d{2}$/.test(propertyClass) || propertyClass === "299" || !/^\d{1,10}$/.test(townshipCode) || !/^\d{1,10}$/.test(neighborhoodCode) || !township) throw new Refusal("NEUTRAL_RAW_INCOMPLETE")
     const where = `year=${OFFICIAL_TAX_YEAR} AND nbhd_code='${neighborhoodCode}' AND township_code='${townshipCode}' AND starts_with(class, '2') AND class != '299'`
+    const count = async () => {
+      const p = new URLSearchParams(); p.set("$select", "count(*) AS n"); p.set("$where", where); p.sort()
+      const r = await reader.one(universe, `${ORIGIN}/resource/${universe.id}.json?${p.toString()}`, ["candidates"], 1)
+      const n = r.length === 1 && Object.keys(r[0]).join() === "n" ? integer(r[0].n) : null
+      if (n === null || n < 1 || n > MAX_ROWS) throw new Refusal("NEUTRAL_RAW_PAGINATION_CONFLICT")
+      return n
+    }
+    const countBefore = strict ? await count() : 0
     const pool = await reader.all(universe, where, ["candidates"])
-    if (!pool.some(row => pin(row) === subjectPin)) throw new Refusal("NEUTRAL_RAW_IDENTITY_CONFLICT")
+    if (strict && pool.length !== countBefore) throw new Refusal("NEUTRAL_RAW_PAGINATION_CONFLICT")
+    const pooledSubject = pool.find(row => pin(row) === subjectPin)
+    if (!pooledSubject || (strict && text(pooledSubject.class) !== propertyClass)) throw new Refusal("NEUTRAL_RAW_IDENTITY_CONFLICT")
+    // Bind the returned universe to the requested scope, not merely to peer
+    // joins that might consistently repeat the same out-of-scope identity.
+    if (strict) for (const row of pool) {
+      const rowClass = text(row.class)
+      if (!/^2\d{2}$/.test(rowClass) || rowClass === "299" || text(row.township_code) !== townshipCode || text(row.township_name) !== township || text(row.nbhd_code) !== neighborhoodCode) throw new Refusal("NEUTRAL_RAW_IDENTITY_CONFLICT")
+    }
     const pins = pool.map(pin)
     const chars = await reader.forPins(COUNTY_DATASETS.characteristics, pins, ["subject", "candidates", "proration"])
-    const values = await reader.forPins(COUNTY_DATASETS.assessedValues, pins, ["subject", "assessed_values"])
+    const values = await reader.forPins(assessedDataset, pins, ["subject", "assessed_values"])
     const addresses = await reader.forPins(COUNTY_DATASETS.addresses, pins, ["subject", "addresses"])
-    const unique = (rows: Row[]) => { const out = new Map<string, Row>(); for (const row of rows) { const key = pin(row); if (!pins.includes(key) || out.has(key)) throw new Refusal("NEUTRAL_RAW_IDENTITY_CONFLICT"); out.set(key, row) }; if (out.size !== pins.length) throw new Refusal("NEUTRAL_RAW_INCOMPLETE"); return out }
+    if (strict) {
+      for (const v of values) {
+        const cents = (x: unknown) => { const d = decimal(x); return d === null || d < 0 ? null : Math.round(d * 100) }
+        const t = cents(v.mailed_tot), l = cents(v.mailed_land), b = cents(v.mailed_bldg)
+        if (t === null || l === null || b === null || t !== l + b) throw new Refusal("NEUTRAL_RAW_INCOMPLETE")
+      }
+      if (await count() !== countBefore || await epochs() !== epochBefore) throw new Refusal("NEUTRAL_RAW_PAGINATION_CONFLICT")
+    }
+    const unique =(rows: Row[]) => { const out = new Map<string, Row>(); for (const row of rows) { const key = pin(row); if (!pins.includes(key) || out.has(key)) throw new Refusal("NEUTRAL_RAW_IDENTITY_CONFLICT"); out.set(key, row) }; if (out.size !== pins.length) throw new Refusal("NEUTRAL_RAW_INCOMPLETE"); return out }
     const byChar = unique(chars), byValue = unique(values), byAddress = unique(addresses)
     const candidates: ComparableMatchAttributes[] = []; const assessedValues = new Map<string, number>(); const addressMap = new Map<string, string>()
     for (const key of pins) {
@@ -205,12 +255,12 @@ async function readNeutralOfficialBytes(input: { propertyPin: string }, deps: Ne
     const exactPages = Object.freeze(reader.pages.map(page => Object.freeze({ receipt: page.receipt, bytes: Buffer.from(page.bytes) })))
     const sources = Object.freeze(exactPages.map(page => page.receipt))
     const dataEvidenceSha256 = sha(canonical(exactPages.map(page => ({ receipt: page.receipt, bytesSha256: sha(page.bytes) }))))
-    return { ok: true, evidence: Object.freeze({ subject, subjectProration, candidatePool: Object.freeze(candidates), assessedValues, addresses: addressMap, sources, exactPages, dataEvidenceSha256 }) }
+    return { ok: true, evidence: Object.freeze({ subject, subjectProration, candidatePool: Object.freeze(candidates), assessedValues, addresses: addressMap, sources, exactPages, dataEvidenceSha256, ...(strict ? { collectorProtections: Object.freeze([...SHARED_COLLECTOR_PROTECTIONS]) } : {}) }) }
   } catch (error) { return { ok: false, blocker: error instanceof Refusal ? error.blocker : "NEUTRAL_RAW_SOURCE_UNAVAILABLE" } }
 }
 
 /** Production reader: transport and clock are owned here, never caller injected. */
-export async function readNeutralOfficialBytesRuntime(input: { propertyPin: string; deadline?: number }): Promise<{ ok: true; evidence: NeutralRawEvidence } | { ok: false; blocker: NeutralRawBlocker }> {
+export async function readNeutralOfficialBytesRuntime(input: { propertyPin: string; deadline?: number; sharedSnapshotProtections?: boolean }): Promise<{ ok: true; evidence: NeutralRawEvidence } | { ok: false; blocker: NeutralRawBlocker }> {
   return readNeutralOfficialBytes(input, {
     now: () => new Date(),
     deadline: input.deadline,

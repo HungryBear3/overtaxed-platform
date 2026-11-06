@@ -9,6 +9,13 @@ import {
 import { analytics } from "@/lib/analytics/events";
 import { CC_01, CC_10, CC_11, CC_12 } from "@/lib/copy/canonical";
 import {
+  FREE_COMPARISON_UNAVAILABLE_TEXT,
+  describeComparisonEvidence,
+  freeComparisonBrief,
+  isFreeCheckSharedMetric,
+  type FreeComparisonBrief,
+} from "@/lib/free-check-comparison-contract";
+import {
   isCanonicalFreeCheckOutcome,
   type FreeCheckOutcome,
 } from "@/lib/free-check-outcome-contract";
@@ -46,6 +53,12 @@ type Result = {
   overpayPerYear: number | null;
   overpay3Year: number | null;
   comps: number;
+  /** The report's comparison, when the route released one. Never computed here. */
+  comparisonBrief: FreeComparisonBrief | null;
+  comparisonProvenance: string | null;
+  comparablePins: string[];
+  /** The route withheld the comparison, as distinct from an older payload. */
+  comparisonUnavailable: boolean;
   /** How the route selected the comparables, when it said. Never inferred. */
   compsLabel: string | null;
   /** The route's single evaluated outcome. Null only for a malformed response. */
@@ -57,7 +70,12 @@ type Result = {
   source?: string;
 };
 
-type RawCheckResult = Partial<Result> & {
+type RawCheckResult = Omit<Partial<Result>, "comps"> & {
+  /** A count on the legacy preview shape, the comparable list on the route's. */
+  comps?: unknown;
+  sharedMetric?: unknown;
+  comparisonEvidence?: unknown;
+  noAssessedValue?: boolean | null;
   equityRatio?: number | null;
   subject?: {
     address?: string | null;
@@ -133,6 +151,12 @@ function normalizeCheckResult(
 
   const verifiedOpen = status === "open" && Boolean(aw?.closeDate);
 
+  const outcome = isCanonicalFreeCheckOutcome(r.outcome) ? r.outcome : null;
+  const comparisonBrief =
+    outcome?.showRecordComparison && isFreeCheckSharedMetric(r.sharedMetric)
+      ? freeComparisonBrief(r.sharedMetric)
+      : null;
+
   return {
     address: subject
       ? [subject.address, subject.city, subject.zipCode].filter(Boolean).join(", ")
@@ -148,10 +172,17 @@ function normalizeCheckResult(
     overpayPerYear: asFiniteNumber(r.potentialOverpaymentPerYear ?? r.overpayPerYear),
     overpay3Year: asFiniteNumber(r.potentialOverpayment3Year ?? r.overpay3Year),
     comps: asFiniteNumber(r.compCount ?? r.comps) ?? 0,
+    comparisonBrief,
+    comparisonProvenance: comparisonBrief ? describeComparisonEvidence(r.comparisonEvidence) : null,
+    comparablePins:
+      comparisonBrief && Array.isArray(r.comps)
+        ? r.comps.flatMap((comp: { pin?: unknown } | null) => (typeof comp?.pin === "string" ? [comp.pin] : []))
+        : [],
+    comparisonUnavailable: !comparisonBrief && !r.noAssessedValue && r.sharedMetric !== undefined,
     compsLabel: typeof r.compSelection?.label === "string" ? r.compSelection.label : null,
     // The homepage is a second consumer of the same response used by /check.
     // It must not trust a capability tuple that the shared matrix rejects.
-    outcome: isCanonicalFreeCheckOutcome(r.outcome) ? r.outcome : null,
+    outcome,
     disclosure: typeof r.disclosure === "string" ? r.disclosure : null,
     preview,
     submittedInput: submittedInput.trim(),
@@ -187,9 +218,8 @@ function HeroNarrative({ neutralReport = false }: { neutralReport?: boolean }) {
         {neutralReport ? <>See the <em>official records</em> behind your Cook County assessment.</> : <>Is Cook County <em>over-assessing</em> your home?</>}
       </h1>
       {/* "nearby" is gone from all three of these. Nothing in the free check
-          computes a distance: comparables are selected from the subject's CCAO
-          neighbourhood and building class and ordered by sale date, widening to
-          the township when that cohort is thin. */}
+          computes a distance: comparables are every parcel meeting the report's
+          selection rule within the subject's CCAO neighbourhood. */}
       <p className="ot-hero-subhead">{neutralReport ? "Review your assessment facts beside properties selected by clear, published matching filters." : "See where your assessed value lands against comparable Cook County homes."}</p>
       <p className="ot-hero-valueprop">
         Plain math on Cook County&apos;s own public records — no signup, no
@@ -604,7 +634,7 @@ function HeroCheckResult({
   // not publish — and a blank market-value column withheld assessed values that
   // were on file, validated, and the entire point of the check.
   const showRecordComparison = result.outcome?.showRecordComparison ?? false;
-  const hasGap = showRecordComparison && result.yourAssessed !== null && result.compsAvg !== null;
+  const hasGap = showRecordComparison && !result.comparisonBrief && result.yourAssessed !== null && result.compsAvg !== null;
   const gap = hasGap ? result.yourAssessed! - result.compsAvg! : null;
   const gapPct =
     gap !== null && result.compsAvg! > 0 ? ((gap / result.compsAvg!) * 100).toFixed(1) : null;
@@ -659,15 +689,44 @@ function HeroCheckResult({
         )}
       </div>
       {result.preview && <div className="ot-result-sample-strip">SAMPLE DATA</div>}
-      {showRecordComparison && (
+      {result.comparisonUnavailable && (
+        <div className="ot-result-altline" role="note" data-testid="free-comparison-unavailable">
+          {FREE_COMPARISON_UNAVAILABLE_TEXT}
+        </div>
+      )}
+      {showRecordComparison && !result.comparisonUnavailable && (
         <div className={`ot-result-table${result.preview ? " ot-result-table--sample" : ""}`}>
-          {result.yourAssessed !== null && (
+          {!result.comparisonBrief && result.yourAssessed !== null && (
             <div className="ot-result-row">
               <span className="ot-result-row-key">Your assessed value</span>
               <span className="ot-result-row-val">{fmtUSD(result.yourAssessed)}</span>
             </div>
           )}
-          {result.compsAvg !== null && (
+          {/* The report's own figures, in the same words as /check. */}
+          {result.comparisonBrief && (
+            <div data-testid="free-comparison-brief">
+              <div className="ot-result-row">
+                <span className="ot-result-row-key">{result.comparisonBrief.subjectTotal}</span>
+              </div>
+              <div className="ot-result-row">
+                <span className="ot-result-row-key">{result.comparisonBrief.subject}</span>
+              </div>
+              <div className="ot-result-row ot-result-row-emph">
+                <span className="ot-result-row-key">{result.comparisonBrief.median}</span>
+              </div>
+              <div className="ot-result-altline" role="note">{result.comparisonBrief.adequacy}</div>
+              <div className="ot-result-altline" role="note">{result.comparisonBrief.adequacyGloss}</div>
+              {result.comparisonProvenance && (
+                <div className="ot-result-altline" role="note">{result.comparisonProvenance}</div>
+              )}
+              {result.comparablePins.length > 0 && (
+                <div className="ot-result-altline" role="note">
+                  Comparable PINs: {result.comparablePins.join(", ")}
+                </div>
+              )}
+            </div>
+          )}
+          {!result.comparisonBrief && result.compsAvg !== null && (
             <div className="ot-result-row">
               <span className="ot-result-row-key">
                 Avg of {result.comps} comparable{result.comps !== 1 ? "s" : ""} on record

@@ -19,6 +19,10 @@
  *     address that was asked about;
  *   - a subject with no market value suppressed the entire assessed-value
  *     comparison, comps included.
+ *
+ * The comparison itself is stubbed at `readFreeComparison` here, so this file
+ * proves the route's handling of its result. What that result contains is proven
+ * through the real reader in `free-check-t2-parity.test.tsx`.
  */
 
 jest.mock("@/lib/cook-county", () => {
@@ -27,8 +31,6 @@ jest.mock("@/lib/cook-county", () => {
   return {
     getPropertyByPIN: jest.fn(),
     searchPropertiesByAddress: jest.fn(),
-    getComparableSales: jest.fn(),
-    getComparableEquity: jest.fn(),
     formatPIN: (v: string) => String(v),
     normalizePIN: (v: string) => String(v).replace(/\D/g, ""),
     isValidPIN: (v: string) => /^\d{14}$/.test(String(v).replace(/\D/g, "")),
@@ -41,13 +43,19 @@ jest.mock("@/lib/rate-limit", () => ({
   getClientIdentifier: jest.fn(() => "test-client"),
 }))
 
+jest.mock("@/lib/fulfillment-runtime/free-comparison", () => ({
+  readFreeComparison: jest.fn(async () => ({ ok: false, blocker: "TEST_NOT_STUBBED" })),
+}))
+
 import { POST } from "@/app/api/free-check/route"
 
 const cookCounty = jest.requireMock("@/lib/cook-county") as {
   getPropertyByPIN: jest.Mock
   searchPropertiesByAddress: jest.Mock
-  getComparableSales: jest.Mock
-  getComparableEquity: jest.Mock
+}
+
+const comparison = jest.requireMock("@/lib/fulfillment-runtime/free-comparison") as {
+  readFreeComparison: jest.Mock
 }
 
 const ENV_KEYS = ["NODE_ENV", "VERCEL_ENV", "OT_FORCE_PREVIEW_STUB", "NEXT_PUBLIC_OT_FORCE_PREVIEW_STUB"] as const
@@ -125,9 +133,36 @@ function equityComp(n: number, assessedMarketValue: number | null) {
   }
 }
 
-function stubComps(equity: unknown[], sales: unknown[] = []) {
-  cookCounty.getComparableSales.mockResolvedValue({ success: true, data: sales, error: null, source: "Cook County Open Data - Parcel Sales" })
-  cookCounty.getComparableEquity.mockResolvedValue({ success: true, data: equity, error: null, source: "Cook County Open Data" })
+/**
+ * The mailed total, distinct from `propertyRecord`'s 42500, so a test can tell
+ * the reader's figure from the lookup's board-first one.
+ */
+const MAILED_TOTAL = 42000
+
+/** Stands in for the reader: a comparison from three or more, a refusal below. */
+function stubComps(equity: ReturnType<typeof equityComp>[]) {
+  const usable = equity.filter((comp) => (comp.assessedMarketValue ?? 0) > 0)
+  comparison.readFreeComparison.mockResolvedValue(
+    usable.length < 3
+      ? { ok: false, blocker: "INSUFFICIENT_COMPARABLES" }
+      : {
+          ok: true,
+          comparison: {
+            subject: { propertyClass: "203", township: "Lake View", neighborhoodCode: "70", taxYear: 2026, assessedTotalValue: MAILED_TOTAL },
+            comparables: usable.map((comp) => ({
+              pin: comp.pin,
+              address: comp.address,
+              city: comp.city,
+              assessedValue: comp.assessedMarketValue! / 10,
+              squareFeet: comp.livingArea,
+              yearBuilt: comp.yearBuilt,
+              propertyClass: "203",
+            })),
+            sharedMetric: { version: "ot-shared-metric/v1", comparableMedian: { value: 2950, count: usable.length, minimumCount: 3 } },
+            comparisonEvidence: { selectionRuleId: "synthetic" },
+          },
+        },
+  )
 }
 
 describe("address lookup — provider failure is not a fact about the address", () => {
@@ -365,8 +400,7 @@ describe("address lookup — the widened query and the ranker", () => {
     expect(body.candidates.map((c: { pin: string }) => c.pin)).toEqual([pinAt(2)])
     // The parcel the second lookup found on its own is never the parcel loaded.
     expect(cookCounty.getPropertyByPIN).not.toHaveBeenCalled()
-    expect(cookCounty.getComparableEquity).not.toHaveBeenCalled()
-    expect(cookCounty.getComparableSales).not.toHaveBeenCalled()
+    expect(comparison.readFreeComparison).not.toHaveBeenCalled()
   })
 
   it("selects the posted parcel even when another survivor now outscores it", async () => {
@@ -452,7 +486,7 @@ describe("address lookup — the county record appends the unit the index omits"
 
     expect(res.status).toBe(409)
     expect(body.code).toBe("ADDRESS_EVIDENCE_MISMATCH")
-    expect(cookCounty.getComparableEquity).not.toHaveBeenCalled()
+    expect(comparison.readFreeComparison).not.toHaveBeenCalled()
   })
 })
 
@@ -500,8 +534,7 @@ describe("address lookup — a numbered route is not a condo unit", () => {
     expect(res.status).toBe(409)
     expect(body.code).toBe("ADDRESS_EVIDENCE_MISMATCH")
     expect(body.subject).toBeUndefined()
-    expect(cookCounty.getComparableEquity).not.toHaveBeenCalled()
-    expect(cookCounty.getComparableSales).not.toHaveBeenCalled()
+    expect(comparison.readFreeComparison).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -603,8 +636,7 @@ describe("address lookup — an unenumerated route qualifier is not a condo unit
     expect(res.status).toBe(409)
     expect(body.code).toBe("ADDRESS_EVIDENCE_MISMATCH")
     expect(body.subject).toBeUndefined()
-    expect(cookCounty.getComparableEquity).not.toHaveBeenCalled()
-    expect(cookCounty.getComparableSales).not.toHaveBeenCalled()
+    expect(comparison.readFreeComparison).not.toHaveBeenCalled()
   })
 })
 
@@ -643,8 +675,7 @@ describe("address lookup — an undesignated digit-prefix unit fails closed", ()
     expect(res.status).toBe(409)
     expect(body.code).toBe("ADDRESS_EVIDENCE_MISMATCH")
     expect(body.subject).toBeUndefined()
-    expect(cookCounty.getComparableEquity).not.toHaveBeenCalled()
-    expect(cookCounty.getComparableSales).not.toHaveBeenCalled()
+    expect(comparison.readFreeComparison).not.toHaveBeenCalled()
   })
 
   const designated: Array<[string, string]> = [
@@ -711,7 +742,7 @@ describe("address lookup — failing closed", () => {
 
     expect(res.status).toBe(409)
     expect(body.code).toBe("ADDRESS_EVIDENCE_MISMATCH")
-    expect(cookCounty.getComparableEquity).not.toHaveBeenCalled()
+    expect(comparison.readFreeComparison).not.toHaveBeenCalled()
   })
 
   it("stops when a selected unit loads a different unit on the second lookup", async () => {
@@ -764,7 +795,8 @@ describe("address lookup — failing closed", () => {
       data: propertyRecord({ county: "DuPage" }),
       error: null,
     })
-    stubComps([equityComp(2, 364000), equityComp(3, 348000)])
+    // Three, so the comparison exists and it is the outcome that withholds it.
+    stubComps([equityComp(2, 364000), equityComp(3, 348000), equityComp(4, 341000)])
 
     const body = await (await POST(req({ address: SUBJECT_ADDRESS }))).json()
     expect(body.outcome.code).toBe("unsupported_property")
@@ -773,6 +805,9 @@ describe("address lookup — failing closed", () => {
     expect(body.comps).toEqual([])
     expect(body.avgComparableAssessedValue).toBeNull()
     expect(body.compCount).toBe(0)
+    expect(body.sharedMetric).toBeNull()
+    expect(body.comparisonEvidence).toBeNull()
+    expect(body.subject.assessedTotalValue).toBeNull()
   })
 })
 
@@ -786,13 +821,13 @@ describe("the assessed-value comparison survives a missing market value", () => 
     })
   })
 
-  it("releases assessed values and their average when no market value is on file", async () => {
+  it("releases mailed assessed values and the median when no market value is on file", async () => {
     cookCounty.getPropertyByPIN.mockResolvedValue({
       success: true,
       data: propertyRecord({ marketValue: null }),
       error: null,
     })
-    // 364000/10, 348000/10, 341000/10 → 36400, 34800, 34100 → avg 35100.
+    // 364000/10, 348000/10, 341000/10 → 36400, 34800, 34100.
     stubComps([equityComp(2, 364000), equityComp(3, 348000), equityComp(4, 341000)])
 
     const body = await (await POST(req({ address: SUBJECT_ADDRESS }))).json()
@@ -806,17 +841,20 @@ describe("the assessed-value comparison survives a missing market value", () => 
     expect(body.avgCompEquityRatio).toBeNull()
     expect(body.compCount).toBe(3)
     expect(body.comps).toHaveLength(3)
-    expect(body.avgComparableAssessedValue).toBe(35100)
-    expect(body.assessmentGap).toBe(42500 - 35100)
+    expect(body.comps.map((c: { assessedValue: number }) => c.assessedValue)).toEqual([36400, 34800, 34100])
+    expect(body.sharedMetric.comparableMedian.value).toBe(2950)
+    expect(body.subject.assessedTotalValue).toBe(MAILED_TOTAL)
+    expect(body.avgComparableAssessedValue).toBeNull()
+    expect(body.assessmentGap).toBeNull()
   })
 
-  it("averages only the comps that validated, and reports that count", async () => {
+  it("withholds the comparison when too few comps validated, rather than averaging them", async () => {
     cookCounty.getPropertyByPIN.mockResolvedValue({
       success: true,
       data: propertyRecord({ marketValue: null }),
       error: null,
     })
-    // Two usable, two with nothing to read. 36400 and 34800 → 35600.
+    // Two usable, two with nothing to read: below the report's floor of three.
     stubComps([
       equityComp(2, 364000),
       equityComp(3, null),
@@ -826,13 +864,14 @@ describe("the assessed-value comparison survives a missing market value", () => 
 
     const body = await (await POST(req({ address: SUBJECT_ADDRESS }))).json()
 
-    expect(body.compCount).toBe(2)
-    expect(body.comps).toHaveLength(2)
-    expect(body.avgComparableAssessedValue).toBe(35600)
-    expect(body.comps.map((c: { assessedValue: number }) => c.assessedValue)).toEqual([36400, 34800])
+    expect(body.compCount).toBe(0)
+    expect(body.comps).toEqual([])
+    expect(body.sharedMetric).toBeNull()
+    expect(body.subject.assessedTotalValue).toBeNull()
+    expect(body.avgComparableAssessedValue).toBeNull()
   })
 
-  it("says nothing about three when fewer than three survive", async () => {
+  it("shows no single comparable as a comparison", async () => {
     cookCounty.getPropertyByPIN.mockResolvedValue({
       success: true,
       data: propertyRecord({ marketValue: null }),
@@ -841,9 +880,9 @@ describe("the assessed-value comparison survives a missing market value", () => 
     stubComps([equityComp(2, 364000)])
 
     const body = await (await POST(req({ address: SUBJECT_ADDRESS }))).json()
-    expect(body.compCount).toBe(1)
-    expect(body.comps).toHaveLength(1)
-    expect(body.avgComparableAssessedValue).toBe(36400)
+    expect(body.compCount).toBe(0)
+    expect(body.comps).toEqual([])
+    expect(body.avgComparableAssessedValue).toBeNull()
   })
 
   it("withholds the comparison when there is nothing to compare", async () => {
@@ -863,7 +902,7 @@ describe("the assessed-value comparison survives a missing market value", () => 
 })
 
 describe("the response describes how comparables were chosen, truthfully", () => {
-  it("declares the selection as cohort-and-recency and not distance-ranked", async () => {
+  it("declares the selection as the report's rule and not distance-ranked", async () => {
     cookCounty.searchPropertiesByAddress.mockResolvedValue({
       success: true,
       data: [searchRow({ pin: pinAt(1) })],
@@ -871,12 +910,12 @@ describe("the response describes how comparables were chosen, truthfully", () =>
       source: "x",
     })
     cookCounty.getPropertyByPIN.mockResolvedValue({ success: true, data: propertyRecord(), error: null })
-    stubComps([equityComp(2, 364000), equityComp(3, 348000)])
+    stubComps([equityComp(2, 364000), equityComp(3, 348000), equityComp(4, 341000)])
 
     const body = await (await POST(req({ address: SUBJECT_ADDRESS }))).json()
 
     expect(body.compSelection.distanceRanked).toBe(false)
-    expect(body.compSelection.basis).toBe("cohort_recency")
+    expect(body.compSelection.basis).toBe("R2-same-neighborhood-class-subtype-sqft15-yrblt10-median-all-v1")
     expect(body.compSelection.label).not.toMatch(/nearest|nearby|closest/i)
     expect(JSON.stringify(body)).not.toMatch(/\bnearest\b|\bnearby\b/i)
   })
