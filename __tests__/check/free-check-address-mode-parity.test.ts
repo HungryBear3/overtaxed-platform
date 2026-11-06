@@ -72,7 +72,10 @@ function rowsFor(id: string): Row[] {
       year: "2026",
       class: "203",
       township_code: "73",
+      card: "1",
       pin_num_cards: "1",
+      tieback_proration_rate: "1.0",
+      card_proration_rate: "0.0",
       pin_num_landlines: "1",
       pin_is_multiland: false,
       char_bldg_sf: "1500",
@@ -107,7 +110,7 @@ function rowsFor(id: string): Row[] {
 
 function metadata(id: string): Row {
   const dataset = Object.values(COUNTY_DATASETS).find((d) => d.id === id)!
-  const fields = [...dataset.select.split(","), ...(id === ASSESSED ? ["mailed_land", "mailed_bldg"] : [])]
+  const fields = [...dataset.select.split(","), ...(id === ASSESSED ? ["mailed_land", "mailed_bldg"] : []), ...(id === CHARACTERISTICS ? ["card"] : [])]
   return {
     id,
     provenance: "official",

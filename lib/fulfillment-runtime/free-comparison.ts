@@ -1,5 +1,7 @@
 import "server-only"
 
+import { createHash } from "node:crypto"
+
 import { townshipKeyFromName } from "@/lib/deadlines/township-resolution"
 import {
   RULE15_REQUIRED_MINIMUM,
@@ -8,41 +10,46 @@ import {
   measureUniformity,
   rejectionCountsByReason,
   selectNonDirectionalComparables,
+  type ComparableMatchAttributes,
+  type ComparableRejectionReason,
 } from "@/lib/fulfillment/t2-comparables"
 import {
-  SHARED_COLLECTOR_PROTECTIONS,
-  readNeutralOfficialBytesRuntime,
-  type NeutralRawEvidence,
-} from "@/lib/fulfillment-runtime/neutral-raw-gateway"
+  FREE_EXCLUSION_REASONS,
+  classifyFreeParcel,
+  type FreeExclusionReason,
+} from "@/lib/fulfillment-runtime/free-eligibility"
 import {
-  COUNTY_DATASETS,
-  OFFICIAL_TAX_YEAR,
-  chicagoCalendarYear,
-  parcelJoinRefusal,
-  type LocalityKeys,
-} from "@/lib/fulfillment-runtime/t2-county-gateway"
+  SHARED_COLLECTOR_PROTECTIONS,
+  readFreePoolRuntime,
+  type FreePoolRead,
+} from "@/lib/fulfillment-runtime/neutral-raw-gateway"
+import { OFFICIAL_TAX_YEAR, chicagoCalendarYear } from "@/lib/fulfillment-runtime/t2-county-gateway"
 import type {
   FreeCheckComparisonEvidence,
   FreeCheckSharedMetric,
 } from "@/lib/free-check-comparison-contract"
 
 /**
- * The T2 comparison for one parcel, inside one request, for the free check.
+ * The comparison for one parcel, inside one request, for the free check.
  *
  * Read-only over the county's public datasets. Nothing here is written anywhere:
  * no order, no snapshot, no token, no database and no storage. The retained bytes
  * live only as long as this call and never leave it; the caller gets the compact
  * projection below.
  *
- * Selection and arithmetic are the report's own pure functions, and every row
- * rule is the report's own `parcelJoinRefusal`. There is no looser mode: where the
- * report would refuse, this refuses, and the caller shows no comparison at all.
- * That is why the gateway's stricter opt-in protections are requested and why a
- * parcel that fails any rule refuses the whole pool rather than dropping out.
+ * Selection and arithmetic are the report's own pure functions. Eligibility is
+ * not: the report's `parcelJoinRefusal` refuses a pool for any one unusable
+ * parcel, and on the county's real rows no neighborhood survives that, because
+ * vacant and multi-building parcels are ordinary members of a class-2 pool. Here
+ * the whole pool is kept and every parcel in it ends in exactly one disposition:
+ * accepted, rejected by the selector, or excluded by `free-eligibility` with a
+ * named reason. The subject gets no such allowance. If it cannot be compared,
+ * neither can anything else, and any failure of the read refuses outright.
  *
  * It does not establish that a free result and a later report agree. They are
  * separate reads of a county source with no read isolation, so the data can move
- * between them, and `upstreamAtomicGuarantee` says so on every result.
+ * between them, and `upstreamAtomicGuarantee` says so on every result. A report
+ * can also refuse a pool this one compares.
  */
 
 export type FreeComparison = {
@@ -64,6 +71,16 @@ export type FreeComparison = {
   }>
   sharedMetric: FreeCheckSharedMetric
   comparisonEvidence: FreeCheckComparisonEvidence
+  /**
+   * One line per parcel in the pool, in PIN order. Server side only: the route
+   * publishes its counts and digest, not a list of the neighbors.
+   */
+  poolDispositions: ReadonlyArray<PoolDisposition>
+}
+
+export type PoolDisposition = {
+  pin: string
+  disposition: "accepted" | ComparableRejectionReason | FreeExclusionReason
 }
 
 /** `blocker` is a bounded name for operators. It carries no parcel or address. */
@@ -71,98 +88,120 @@ export type FreeComparisonResult =
   | { ok: true; comparison: FreeComparison }
   | { ok: false; blocker: string }
 
-type Row = Record<string, unknown>
+const POOL_DISPOSITIONS_HASH_DOMAIN = "ot-free-pool-dispositions/v1"
 
 function exactCents(dollars: number): number | null {
   const cents = Math.round(dollars * 100)
   return Number.isSafeInteger(cents) && cents > 0 && Math.abs(cents - dollars * 100) < 1e-6 ? cents : null
 }
 
-/**
- * Rows as the county published them, re-parsed from the retained bytes. The
- * gateway keeps only its normalized fields, and the report's rules read the
- * markers it never normalized: landlines, multi-land, tieback and proration.
- */
-function publishedRows(evidence: NeutralRawEvidence, datasetId: string): Map<string, Row[]> {
-  const byPin = new Map<string, Row[]>()
-  for (const page of evidence.exactPages) {
-    if (page.receipt.datasetId !== datasetId || !page.receipt.url.includes("/resource/")) continue
-    for (const row of JSON.parse(page.bytes.toString("utf8")) as Row[]) {
-      if (typeof row.pin !== "string") continue
-      byPin.set(row.pin, [...(byPin.get(row.pin) ?? []), row])
-    }
-  }
-  return byPin
+function poolDispositionsSha256(dispositions: ReadonlyArray<PoolDisposition>): string {
+  const material = [
+    POOL_DISPOSITIONS_HASH_DOMAIN,
+    String(dispositions.length),
+    ...dispositions.map(({ pin, disposition }) => `${pin}:${disposition}`),
+  ].join("\n")
+  return createHash("sha256").update(material, "utf8").digest("hex")
 }
 
-function compare(evidence: NeutralRawEvidence, expectedTownship: string | null): FreeComparisonResult {
-  const refuse = (blocker: string): FreeComparisonResult => ({ ok: false, blocker })
-  const { subject, candidatePool, assessedValues, addresses } = evidence
+/**
+ * What the pool row can say about a parcel that never reached selection, so the
+ * pool digest still binds it. Absent features hash as null, by design of
+ * `canonicalCandidateRow`.
+ */
+function poolRowOnly(row: Record<string, unknown>): ComparableMatchAttributes {
+  return {
+    pin: String(row.pin),
+    neighborhoodCode: String(row.nbhd_code).trim(),
+    propertyClass: String(row.class).trim(),
+  } as ComparableMatchAttributes
+}
 
-  const collected = evidence.collectorProtections ?? []
-  if (SHARED_COLLECTOR_PROTECTIONS.some((protection) => !collected.includes(protection))) {
-    return refuse("FREE_COMPARISON_UNPROTECTED_READ")
-  }
+function compare(read: FreePoolRead, expectedTownship: string | null): FreeComparisonResult {
+  const refuse = (blocker: string): FreeComparisonResult => ({ ok: false, blocker })
 
   // The report refuses a parcel whose county township is not the one on the
   // order. There is no order here, so the check is against the subject lookup
   // that named the window this result will show.
-  if (expectedTownship && townshipKeyFromName(expectedTownship) !== townshipKeyFromName(subject.township)) {
+  if (expectedTownship && townshipKeyFromName(expectedTownship) !== townshipKeyFromName(read.township)) {
     return refuse("SUBJECT_TOWNSHIP_MISMATCH")
   }
 
-  const townshipCode = publishedRows(evidence, COUNTY_DATASETS.parcelUniverse.id).get(subject.pin)?.[0]?.township_code
-  if (typeof townshipCode !== "string") return refuse("SUBJECT_LOCALITY_UNRECOGNIZED")
-  const locality: LocalityKeys = { neighborhoodCode: subject.neighborhoodCode, townshipCode: townshipCode.trim() }
+  const eligible: ComparableMatchAttributes[] = []
+  const hashedPool: ComparableMatchAttributes[] = []
+  const values = new Map<string, number>()
+  const addresses = new Map<string, { address: string; city: string }>()
+  const excluded: PoolDisposition[] = []
+  const candidateExcludedByReason = Object.fromEntries(FREE_EXCLUSION_REASONS.map((reason) => [reason, 0])) as Record<
+    FreeExclusionReason,
+    number
+  >
 
-  const characteristics = publishedRows(evidence, COUNTY_DATASETS.characteristics.id)
-  const assessed = publishedRows(evidence, COUNTY_DATASETS.assessedValues.id)
-  const published = publishedRows(evidence, COUNTY_DATASETS.addresses.id)
-  for (const candidate of candidatePool) {
-    const blocker = parcelJoinRefusal(
-      candidate.pin,
-      {
-        characteristics: characteristics.get(candidate.pin) ?? [],
-        assessed: assessed.get(candidate.pin) ?? [],
-        address: published.get(candidate.pin) ?? [],
-      },
-      candidate.propertyClass,
-      locality,
-    )
-    if (blocker) return refuse(blocker)
+  for (const universe of read.pool) {
+    const pin = String(universe.pin)
+    const parcel = classifyFreeParcel({
+      universe,
+      characteristics: read.characteristics.get(pin) ?? [],
+      assessed: read.assessed.get(pin) ?? null,
+      address: read.addresses.get(pin) ?? null,
+    })
+    if (parcel.kind === "conflict") return refuse(parcel.blocker)
+    if (parcel.kind === "excluded") {
+      if (pin === read.subjectPin) return refuse(`FREE_SUBJECT_${parcel.reason.toUpperCase()}`)
+      candidateExcludedByReason[parcel.reason] += 1
+      excluded.push({ pin, disposition: parcel.reason })
+      hashedPool.push(poolRowOnly(universe))
+      continue
+    }
+    eligible.push(parcel.attributes)
+    hashedPool.push(parcel.attributes)
+    values.set(pin, parcel.assessedValue)
+    addresses.set(pin, { address: parcel.address, city: parcel.city })
   }
 
-  const selection = selectNonDirectionalComparables(subject, candidatePool)
+  const subjectAttributes = eligible.find((row) => row.pin === read.subjectPin)
+  const subjectValue = values.get(read.subjectPin)
+  const subjectAddress = addresses.get(read.subjectPin)
+  if (!subjectAttributes || subjectValue === undefined || !subjectAddress) return refuse("SUBJECT_NOT_IN_POOL")
+
+  const selection = selectNonDirectionalComparables(subjectAttributes, eligible)
   if (!selection) return refuse("MISSING_PROPERTY_CHARACTERISTICS")
   const candidateRejectedByReason = rejectionCountsByReason(selection.rejected)
-  if (selection.accepted.length + selection.rejected.length !== candidatePool.length) {
+  const candidateCount = read.pool.length
+  if (selection.accepted.length + selection.rejected.length + excluded.length !== candidateCount) {
     return refuse("CANDIDATE_ACCOUNTING_MISMATCH")
   }
   if (selection.accepted.length < RULE15_REQUIRED_MINIMUM) return refuse("INSUFFICIENT_COMPARABLES")
 
-  const { valued, missingValue } = attachAssessedValues(selection.accepted, assessedValues)
+  const { valued, missingValue } = attachAssessedValues(selection.accepted, values)
   if (missingValue.length > 0) return refuse("COMPARABLE_VALUE_INCOMPLETE")
-  if (valued.some((comparable) => !addresses.get(comparable.pin)?.trim())) return refuse("COMPARABLE_ADDRESS_MISSING")
 
-  const measurement = measureUniformity(subject, valued)
-  const subjectAssessedTotalCents = exactCents(subject.assessedTotalValue)
+  const measurement = measureUniformity({ buildingSqft: subjectAttributes.buildingSqft, assessedTotalValue: subjectValue }, valued)
+  const subjectAssessedTotalCents = exactCents(subjectValue)
   if (!measurement || subjectAssessedTotalCents === null) return refuse("UNIFORMITY_NOT_COMPUTABLE")
 
-  const sources = evidence.sources
+  const poolDispositions: PoolDisposition[] = [
+    ...selection.accepted.map(({ pin }) => ({ pin, disposition: "accepted" as const })),
+    ...selection.rejected.map(({ pin, reason }) => ({ pin, disposition: reason })),
+    ...excluded,
+  ].sort((a, b) => (a.pin < b.pin ? -1 : a.pin > b.pin ? 1 : 0))
+  if (new Set(poolDispositions.map(({ pin }) => pin)).size !== candidateCount) return refuse("CANDIDATE_ACCOUNTING_MISMATCH")
+
+  const { sources } = read
   return {
     ok: true,
     comparison: {
       subject: {
-        propertyClass: subject.propertyClass,
-        township: subject.township,
-        neighborhoodCode: subject.neighborhoodCode,
-        taxYear: subject.taxYear,
-        assessedTotalValue: subject.assessedTotalValue,
+        propertyClass: subjectAttributes.propertyClass,
+        township: read.township,
+        neighborhoodCode: read.neighborhoodCode,
+        taxYear: OFFICIAL_TAX_YEAR,
+        assessedTotalValue: subjectValue,
       },
       comparables: valued.map((comparable) => ({
         pin: comparable.pin,
-        address: addresses.get(comparable.pin)!,
-        city: String(published.get(comparable.pin)?.[0]?.prop_address_city_name ?? "").trim(),
+        address: addresses.get(comparable.pin)!.address,
+        city: addresses.get(comparable.pin)!.city,
         assessedValue: comparable.assessedTotalValue,
         squareFeet: comparable.buildingSqft,
         yearBuilt: comparable.yearBuilt,
@@ -172,9 +211,9 @@ function compare(evidence: NeutralRawEvidence, expectedTownship: string | null):
         version: "ot-shared-metric/v1",
         metric: "MEDIAN_ASSESSED_PER_BUILDING_SQFT",
         unit: "ASSESSED_USD_CENTS_PER_BUILDING_SQFT",
-        cohortRule: "PAID_NEUTRAL_MATCH_V1",
+        cohortRule: "FREE_ELIGIBLE_POOL_MATCH_V1",
         stage: "mailed",
-        taxYear: subject.taxYear,
+        taxYear: OFFICIAL_TAX_YEAR,
         subjectExcluded: true,
         subjectAssessedCentsPerBuildingSqft: measurement.subjectAssessedPerSqft * 100,
         subjectAssessedTotalCents,
@@ -183,8 +222,8 @@ function compare(evidence: NeutralRawEvidence, expectedTownship: string | null):
           status: "COMPUTED",
           value: measurement.comparableMedianAssessedPerSqft * 100,
           count: measurement.comparableCount,
-          // The report's floor, not the accepted snapshot's 1: below it the report
-          // refuses, so nothing is shown here either.
+          // The report's floor, not the accepted snapshot's 1: below it nothing
+          // is shown here either.
           minimumCount: RULE15_REQUIRED_MINIMUM,
         },
         sampleAdequacy: "NOT_QUALIFIED",
@@ -193,17 +232,21 @@ function compare(evidence: NeutralRawEvidence, expectedTownship: string | null):
       comparisonEvidence: {
         selectionRuleId: selection.ruleId,
         stage: "mailed",
-        taxYear: subject.taxYear,
-        candidateCount: candidatePool.length,
+        taxYear: OFFICIAL_TAX_YEAR,
+        candidateCount,
         candidateAcceptedCount: selection.accepted.length,
         candidateRejectedByReason,
-        candidatePoolSha256: candidatePoolSha256(candidatePool),
+        candidateExcludedCount: excluded.length,
+        candidateExcludedByReason,
+        candidatePoolSha256: candidatePoolSha256(hashedPool),
+        poolDispositionsSha256: poolDispositionsSha256(poolDispositions),
         sourceDatasetIds: [...new Set(sources.map((source) => source.datasetId))].sort(),
         sourceResponseCount: sources.length,
-        collectorProtections: [...collected],
-        retrievedAt: sources[sources.length - 1].retrievedAt,
+        collectorProtections: [...SHARED_COLLECTOR_PROTECTIONS],
+        retrievedAt: sources.map((source) => source.retrievedAt).sort()[sources.length - 1],
         upstreamAtomicGuarantee: "NOT_ESTABLISHED",
       },
+      poolDispositions,
     },
   }
 }
@@ -218,12 +261,8 @@ export async function readFreeComparison(input: {
   // refuses here too, rather than reading a year nobody validated.
   if (chicagoCalendarYear(new Date()) !== OFFICIAL_TAX_YEAR) return { ok: false, blocker: "COUNTY_TAX_YEAR_UNVERIFIED" }
   try {
-    const read = await readNeutralOfficialBytesRuntime({
-      propertyPin: input.propertyPin,
-      deadline: input.deadline,
-      sharedSnapshotProtections: true,
-    })
-    return read.ok ? compare(read.evidence, input.expectedTownship) : { ok: false, blocker: read.blocker }
+    const read = await readFreePoolRuntime({ propertyPin: input.propertyPin, deadline: input.deadline })
+    return read.ok ? compare(read.read, input.expectedTownship) : { ok: false, blocker: read.blocker }
   } catch {
     return { ok: false, blocker: "FREE_COMPARISON_FAILED" }
   }

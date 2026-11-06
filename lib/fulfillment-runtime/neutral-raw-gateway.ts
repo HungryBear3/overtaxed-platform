@@ -89,9 +89,9 @@ function published(value: unknown): string | null {
   if (out.length > 64 || /[\p{Cc}\p{Cf}]/u.test(out)) throw new Refusal("NEUTRAL_RAW_RESPONSE_INVALID")
   return out
 }
-function query(dataset: Dataset, where: string, limit: number, offset: number): string {
+function query(dataset: Dataset, where: string, limit: number, offset: number, order = "pin"): string {
   const p = new URLSearchParams()
-  p.set("$select", dataset.select); p.set("$where", where); p.set("$order", "pin"); p.set("$limit", String(limit)); p.set("$offset", String(offset))
+  p.set("$select", dataset.select); p.set("$where", where); p.set("$order", order); p.set("$limit", String(limit)); p.set("$offset", String(offset))
   p.sort()
   return `${ORIGIN}/resource/${dataset.id}.json?${p.toString()}`
 }
@@ -102,6 +102,8 @@ class Reader {
   private cumulativeBytes = 0
   private readonly started: number
   private last: number
+  /** Set once a parallel read has refused, so its siblings issue no further requests. */
+  halted = false
   constructor(private readonly deps: NeutralRawDeps, private readonly subjectPin: string) { this.started = this.tickRaw(); this.last = this.started }
   private tickRaw(): number { const value = this.deps.now().getTime(); if (!Number.isFinite(value)) throw new Refusal("NEUTRAL_RAW_SOURCE_UNAVAILABLE"); return value }
   private tick(): Date { const value = this.tickRaw(); if (value < this.last || value - this.started > 120_000) throw new Refusal("NEUTRAL_RAW_SOURCE_UNAVAILABLE"); this.last = value; return new Date(value) }
@@ -137,6 +139,7 @@ class Reader {
     return JSON.stringify([m.rowsUpdatedAt, m.viewLastModified, m.tableId])
   }
   async one(dataset: Dataset, url: string, roles: Role[], maxRows: number, metadata = false): Promise<Row[]> {
+    if (this.halted) throw new Refusal("NEUTRAL_RAW_SOURCE_UNAVAILABLE")
     if (++this.requests > MAX_REQUESTS || !(metadata ? url === metadataUrl(dataset.id) : url.startsWith(`${ORIGIN}/resource/${dataset.id}.json?`))) throw new Refusal("NEUTRAL_RAW_SOURCE_UNAVAILABLE")
     const remaining = this.deps.deadline == null ? 15_000 : this.deps.deadline - this.tickRaw()
     if (remaining <= 0) throw new Refusal("NEUTRAL_RAW_SOURCE_UNAVAILABLE")
@@ -166,12 +169,34 @@ class Reader {
     }
     return out
   }
-  async forPins(dataset: Dataset, pins: string[], roles: Role[]): Promise<Row[]> {
+  /**
+   * `all`, keyed on the dataset's published primary key (`pin`, `card`), for the
+   * one dataset where a parcel legitimately has several rows. `$order` names both
+   * columns because `pin` alone leaves ties free to move between pages.
+   */
+  async allCards(dataset: Dataset, where: string, roles: Role[]): Promise<Row[]> {
+    const out: Row[] = []; let previous = ""
+    for (let offset = 0; ; offset += PAGE) {
+      const rows = await this.one(dataset, query(dataset, where, PAGE, offset, "pin,card"), roles, PAGE)
+      for (const row of rows) {
+        year(row)
+        const card = integer(row.card)
+        if (card === null || card < 0 || card > 9999) throw new Refusal("NEUTRAL_RAW_RESPONSE_INVALID")
+        const current = `${pin(row)}:${String(card).padStart(4, "0")}`
+        if (current <= previous) throw new Refusal("NEUTRAL_RAW_PAGINATION_CONFLICT")
+        previous = current; out.push(row)
+        if (out.length > MAX_ROWS) throw new Refusal("NEUTRAL_RAW_PAGINATION_CONFLICT")
+      }
+      if (rows.length < PAGE) break
+    }
+    return out
+  }
+  async forPins(dataset: Dataset, pins: string[], roles: Role[], cards = false): Promise<Row[]> {
     const out: Row[] = []
     for (let start = 0; start < pins.length; start += 100) {
       const chunk = pins.slice(start, start + 100)
       const where = `year=${OFFICIAL_TAX_YEAR} AND pin in(${chunk.map(value => `'${value}'`).join(",")})`
-      const rows = await this.all(dataset, where, roles)
+      const rows = await (cards ? this.allCards(dataset, where, roles) : this.all(dataset, where, roles))
       if (rows.some(row => !chunk.includes(pin(row)))) throw new Refusal("NEUTRAL_RAW_IDENTITY_CONFLICT")
       out.push(...rows)
     }
@@ -262,6 +287,105 @@ async function readNeutralOfficialBytes(input: { propertyPin: string; sharedSnap
 /** Production reader: transport and clock are owned here, never caller injected. */
 export async function readNeutralOfficialBytesRuntime(input: { propertyPin: string; deadline?: number; sharedSnapshotProtections?: boolean }): Promise<{ ok: true; evidence: NeutralRawEvidence } | { ok: false; blocker: NeutralRawBlocker }> {
   return readNeutralOfficialBytes(input, {
+    now: () => new Date(),
+    deadline: input.deadline,
+    fetch: async (url, init) => {
+      const response = await globalThis.fetch(url, init as RequestInit)
+      return { ok: response.ok, status: response.status, redirected: response.redirected, url: response.url, headers: response.headers, body: response.body as CountyBody | null, text: () => response.text() }
+    },
+  })
+}
+
+export type FreePoolRead = Readonly<{
+  subjectPin: string
+  township: string
+  townshipCode: string
+  neighborhoodCode: string
+  /** Every parcel the county placed in the pool, unfiltered and in PIN order. */
+  pool: ReadonlyArray<Row>
+  characteristics: ReadonlyMap<string, ReadonlyArray<Row>>
+  assessed: ReadonlyMap<string, Row>
+  addresses: ReadonlyMap<string, Row>
+  sources: ReadonlyArray<NeutralSourceReceipt>
+}>
+
+function rowsByPin(rows: ReadonlyArray<Row>): Map<string, Row[]> {
+  const out = new Map<string, Row[]>()
+  for (const row of rows) { const key = pin(row); out.set(key, [...(out.get(key) ?? []), row]) }
+  return out
+}
+
+/**
+ * The free check's read. It takes the same whole pool under the same protections
+ * as the strict path above, and differs in one way: a parcel's rows are returned
+ * as the county published them, for `free-eligibility` to classify, rather than
+ * refusing the pool at the first unusable parcel. Everything about the READ still
+ * refuses: transport, status, bytes, pages, counts, epochs, a foreign or malformed
+ * PIN, a wrong year, an out-of-scope pool row, and a repeated assessed or address
+ * row. The paid paths never call this.
+ *
+ * The three parcel joins and the epoch reads run in parallel because the route's
+ * budget is shared with the subject lookup, and a sequential walk of a 460-parcel
+ * pool ran out of it on the county's real latency.
+ */
+async function readFreePool(input: { propertyPin: string }, deps: NeutralRawDeps): Promise<{ ok: true; read: FreePoolRead } | { ok: false; blocker: NeutralRawBlocker }> {
+  if (!PIN.test(input.propertyPin)) return { ok: false, blocker: "NEUTRAL_RAW_INPUT_INVALID" }
+  const subjectPin = input.propertyPin
+  const assessedDataset: Dataset = { ...COUNTY_DATASETS.assessedValues, select: `${COUNTY_DATASETS.assessedValues.select},mailed_land,mailed_bldg` }
+  const charsDataset: Dataset = { ...COUNTY_DATASETS.characteristics, select: `${COUNTY_DATASETS.characteristics.select},card` }
+  const universe = COUNTY_DATASETS.parcelUniverse
+  const epochSets: Dataset[] = [universe, charsDataset, assessedDataset, COUNTY_DATASETS.addresses]
+  let reader: Reader | null = null
+  const together = async <T extends unknown[]>(reads: { [K in keyof T]: () => Promise<T[K]> }): Promise<T> => {
+    // allSettled, so no sibling is still writing to the reader after a refusal returns.
+    const settled = await Promise.allSettled((reads as Array<() => Promise<unknown>>).map(read => read().catch(error => { reader!.halted = true; throw error })))
+    const failed = settled.find(result => result.status === "rejected") as PromiseRejectedResult | undefined
+    if (failed) throw failed.reason
+    return settled.map(result => (result as PromiseFulfilledResult<unknown>).value) as T
+  }
+  try {
+    const active = reader = new Reader(deps, subjectPin)
+    const epochs = async () => (await together<string[]>(epochSets.map(d => () => active.epoch(d, ["candidates"])))).join("|")
+    const epochBefore = await epochs()
+    const subjects = await active.one(universe, query(universe, `year=${OFFICIAL_TAX_YEAR} AND pin='${subjectPin}'`, 2, 0), ["subject"], 2)
+    if (subjects.length !== 1 || pin(subjects[0]) !== subjectPin) throw new Refusal("NEUTRAL_RAW_IDENTITY_CONFLICT")
+    const subjectRow = subjects[0]; year(subjectRow)
+    const propertyClass = text(subjectRow.class), townshipCode = text(subjectRow.township_code), township = text(subjectRow.township_name), neighborhoodCode = text(subjectRow.nbhd_code)
+    if (!/^2\d{2}$/.test(propertyClass) || propertyClass === "299" || !/^\d{1,10}$/.test(townshipCode) || !/^\d{1,10}$/.test(neighborhoodCode) || !township) throw new Refusal("NEUTRAL_RAW_INCOMPLETE")
+    const where = `year=${OFFICIAL_TAX_YEAR} AND nbhd_code='${neighborhoodCode}' AND township_code='${townshipCode}' AND starts_with(class, '2') AND class != '299'`
+    const count = async () => {
+      const p = new URLSearchParams(); p.set("$select", "count(*) AS n"); p.set("$where", where); p.sort()
+      const r = await active.one(universe, `${ORIGIN}/resource/${universe.id}.json?${p.toString()}`, ["candidates"], 1)
+      const n = r.length === 1 && Object.keys(r[0]).join() === "n" ? integer(r[0].n) : null
+      if (n === null || n < 1 || n > MAX_ROWS) throw new Refusal("NEUTRAL_RAW_PAGINATION_CONFLICT")
+      return n
+    }
+    const countBefore = await count()
+    const pool = await active.all(universe, where, ["candidates"])
+    if (pool.length !== countBefore) throw new Refusal("NEUTRAL_RAW_PAGINATION_CONFLICT")
+    const pooledSubject = pool.find(row => pin(row) === subjectPin)
+    if (!pooledSubject || text(pooledSubject.class) !== propertyClass) throw new Refusal("NEUTRAL_RAW_IDENTITY_CONFLICT")
+    for (const row of pool) {
+      const rowClass = text(row.class)
+      if (!/^2\d{2}$/.test(rowClass) || rowClass === "299" || text(row.township_code) !== townshipCode || text(row.township_name) !== township || text(row.nbhd_code) !== neighborhoodCode) throw new Refusal("NEUTRAL_RAW_IDENTITY_CONFLICT")
+    }
+    const pins = pool.map(pin)
+    const [chars, values, addresses] = await together<[Row[], Row[], Row[]]>([
+      () => active.forPins(charsDataset, pins, ["subject", "candidates", "proration"], true),
+      () => active.forPins(assessedDataset, pins, ["subject", "assessed_values"]),
+      () => active.forPins(COUNTY_DATASETS.addresses, pins, ["subject", "addresses"]),
+    ])
+    const [countAfter, epochAfter] = await together<[number, string]>([count, epochs])
+    if (countAfter !== countBefore || epochAfter !== epochBefore) throw new Refusal("NEUTRAL_RAW_PAGINATION_CONFLICT")
+    const single = (rows: Row[]) => { const out = new Map<string, Row>(); for (const [key, group] of rowsByPin(rows)) { if (group.length !== 1) throw new Refusal("NEUTRAL_RAW_IDENTITY_CONFLICT"); out.set(key, group[0]) }; return out }
+    const sources = Object.freeze([...active.pages.map(page => page.receipt)])
+    return { ok: true, read: Object.freeze({ subjectPin, township, townshipCode, neighborhoodCode, pool: Object.freeze(pool), characteristics: rowsByPin(chars), assessed: single(values), addresses: single(addresses), sources }) }
+  } catch (error) { return { ok: false, blocker: error instanceof Refusal ? error.blocker : "NEUTRAL_RAW_SOURCE_UNAVAILABLE" } }
+}
+
+/** Production reader for the free check: transport and clock are owned here. */
+export async function readFreePoolRuntime(input: { propertyPin: string; deadline?: number }): Promise<{ ok: true; read: FreePoolRead } | { ok: false; blocker: NeutralRawBlocker }> {
+  return readFreePool(input, {
     now: () => new Date(),
     deadline: input.deadline,
     fetch: async (url, init) => {

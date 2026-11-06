@@ -8,12 +8,13 @@
  * word the same figures differently.
  */
 import type { ComparableRejectionReason } from "@/lib/fulfillment/t2-comparables"
+import type { FreeExclusionReason } from "@/lib/fulfillment-runtime/free-eligibility"
 
 export type FreeCheckSharedMetric = {
   version: "ot-shared-metric/v1"
   metric: "MEDIAN_ASSESSED_PER_BUILDING_SQFT"
   unit: "ASSESSED_USD_CENTS_PER_BUILDING_SQFT"
-  cohortRule: "PAID_NEUTRAL_MATCH_V1"
+  cohortRule: "FREE_ELIGIBLE_POOL_MATCH_V1"
   stage: "mailed"
   taxYear: number
   subjectExcluded: true
@@ -37,7 +38,11 @@ export type FreeCheckComparisonEvidence = {
   candidateCount: number
   candidateAcceptedCount: number
   candidateRejectedByReason: Record<ComparableRejectionReason, number>
+  /** In the pool, unusable on the published record, so never handed to selection. */
+  candidateExcludedCount: number
+  candidateExcludedByReason: Record<FreeExclusionReason, number>
   candidatePoolSha256: string
+  poolDispositionsSha256: string
   sourceDatasetIds: string[]
   sourceResponseCount: number
   collectorProtections: string[]
@@ -58,7 +63,7 @@ export function isFreeCheckSharedMetric(value: unknown): value is FreeCheckShare
     metric.version === "ot-shared-metric/v1" &&
     metric.metric === "MEDIAN_ASSESSED_PER_BUILDING_SQFT" &&
     metric.unit === "ASSESSED_USD_CENTS_PER_BUILDING_SQFT" &&
-    metric.cohortRule === "PAID_NEUTRAL_MATCH_V1" &&
+    metric.cohortRule === "FREE_ELIGIBLE_POOL_MATCH_V1" &&
     metric.stage === "mailed" &&
     count(metric.taxYear) &&
     metric.subjectExcluded === true &&
@@ -112,20 +117,27 @@ export function describeComparisonEvidence(value: unknown): string | null {
     !count(evidence.taxYear) ||
     !count(evidence.candidateCount) ||
     !count(evidence.candidateAcceptedCount) ||
+    !count(evidence.candidateExcludedCount) ||
     typeof evidence.retrievedAt !== "string" ||
     !/^\d{4}-\d{2}-\d{2}T/.test(evidence.retrievedAt)
   ) {
     return null
   }
+  const excluded = evidence.candidateExcludedCount
+  const leftOut =
+    excluded === 0
+      ? ""
+      : `${excluded} could not be compared from the published record and ${excluded === 1 ? "was" : "were"} left out. `
   return (
     `Mailed values for tax year ${evidence.taxYear}, read from the Cook County Assessor's public datasets ` +
     `on ${evidence.retrievedAt.slice(0, 10)}. ${evidence.candidateAcceptedCount} of ${evidence.candidateCount} ` +
-    "parcels in the neighborhood pool met the selection rule. This is a point-in-time read, not a guaranteed snapshot of county data."
+    `parcels in the neighborhood pool met the selection rule. ${leftOut}` +
+    "This is a point-in-time read, not a guaranteed snapshot of county data."
   )
 }
 
 export const FREE_COMPARISON_SELECTION_LABEL =
-  "Every property in your Assessor neighborhood with the same class and residence type, building area within 15% and year built within 10 years of yours. None was ranked or chosen by value."
+  "Every property in your Assessor neighborhood with the same class and residence type, building area within 15% and year built within 10 years of yours. Parcels whose public record shows more than one building or land line, a prorated building, or missing details cannot be compared and are left out. None was ranked or chosen by value."
 
 /** A limit of the check, stated as one. Says nothing about the property. */
 export const FREE_COMPARISON_UNAVAILABLE_TEXT =

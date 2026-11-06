@@ -157,14 +157,15 @@ function datasetRows(parcels: Parcel[], subjectClass: string | undefined): Recor
       parcels.map((p) => ({
         pin: pinAt(p.n),
         year: TAX_YEAR,
+        card: "1",
         class: classOf(p),
         township_code: TOWNSHIP_CODE,
         pin_num_cards: "1",
         pin_is_multiland: false,
         pin_num_landlines: "1",
         tieback_key_pin: null,
-        tieback_proration_rate: null,
-        card_proration_rate: null,
+        tieback_proration_rate: "1.0",
+        card_proration_rate: "1.0",
         char_bldg_sf: String(p.sqft),
         char_yrblt: String(p.yearBuilt),
         char_type_resd: p.subtype ?? "2 Story",
@@ -220,7 +221,11 @@ function satisfies(row: Row, where: string): boolean {
 
 function metadata(id: string, rowsUpdatedAt: number): Row {
   const dataset = Object.values(COUNTY_DATASETS).find((d) => d.id === id)
-  const fields = [...(dataset?.select.split(",") ?? []), ...(id === ASSESSED ? ["mailed_land", "mailed_bldg"] : [])]
+  const fields = [
+    ...(dataset?.select.split(",") ?? []),
+    ...(id === ASSESSED ? ["mailed_land", "mailed_bldg"] : []),
+    ...(id === CHARACTERISTICS ? ["card"] : []),
+  ]
   return {
     id,
     provenance: "official",
@@ -478,7 +483,7 @@ describe("controlled synthetic transport: the free check reports what the T2 rep
       version: "ot-shared-metric/v1",
       metric: "MEDIAN_ASSESSED_PER_BUILDING_SQFT",
       unit: "ASSESSED_USD_CENTS_PER_BUILDING_SQFT",
-      cohortRule: "PAID_NEUTRAL_MATCH_V1",
+      cohortRule: "FREE_ELIGIBLE_POOL_MATCH_V1",
       stage: "mailed",
       taxYear: 2026,
       subjectExcluded: true,
@@ -516,6 +521,7 @@ describe("controlled synthetic transport: the free check reports what the T2 rep
       candidateAcceptedCount: manifest.candidateAcceptedCount,
       candidateRejectedByReason: manifest.candidateRejectedByReason,
       candidatePoolSha256: manifest.candidatePoolSha256,
+      candidateExcludedCount: 0,
       upstreamAtomicGuarantee: "NOT_ESTABLISHED",
     })
     expect(manifest.candidateCount).toBe(10)
@@ -625,7 +631,8 @@ describe("controlled synthetic transport: the canonical read, and nothing else",
 
     for (const call of canonical) {
       const params = new URL(call.url).searchParams
-      expect(params.get("$order") ?? "pin").toBe("pin")
+      // The characteristics key is (pin, card). Nothing orders by a value.
+      expect(["pin", "pin,card"]).toContain(params.get("$order") ?? "pin")
       expect(params.get("$select") ?? "").not.toMatch(/certified_|board_/)
     }
   })
@@ -681,17 +688,8 @@ describe("controlled synthetic transport: anything the report refuses, the free 
   const reportRefusals: Array<[string, CountyOptions["mutate"]]> = [
     ["a peer's assessed row is from another year", onPeer(ASSESSED, (row) => ({ ...row, year: "2025.0" }))],
     ["a peer's characteristics are from another year", onPeer(CHARACTERISTICS, (row) => ({ ...row, year: "2025" }))],
-    ["datasets disagree about a peer's class", onPeer(ASSESSED, (row) => ({ ...row, class: "204" }))],
-    ["a peer has zero building area", onPeer(CHARACTERISTICS, (row) => ({ ...row, char_bldg_sf: "0" }))],
-    ["a peer has no characteristics row", onPeer(CHARACTERISTICS, () => null)],
-    ["a peer has no assessed row", onPeer(ASSESSED, () => null)],
-    ["a peer has no mailed total", onPeer(ASSESSED, (row) => ({ ...row, mailed_tot: null }))],
-    ["a peer has no address row", onPeer(ADDRESSES, () => null)],
-    ["a peer is multi-card", onPeer(CHARACTERISTICS, (row) => ({ ...row, pin_num_cards: "2" }))],
-    ["a peer is multi-landline", onPeer(CHARACTERISTICS, (row) => ({ ...row, pin_num_landlines: "2" }))],
-    ["a peer is multi-land", onPeer(CHARACTERISTICS, (row) => ({ ...row, pin_is_multiland: true }))],
-    ["a peer ties back to another parcel", onPeer(CHARACTERISTICS, (row) => ({ ...row, tieback_key_pin: pinAt(99) }))],
-    ["a peer carries a partial proration", onPeer(CHARACTERISTICS, (row) => ({ ...row, card_proration_rate: "0.5" }))],
+    ["a peer has a partly published mailed record", onPeer(ASSESSED, (row) => ({ ...row, mailed_tot: null }))],
+    ["a peer's characteristics are from another township", onPeer(CHARACTERISTICS, (row) => ({ ...row, township_code: "71" }))],
     [
       "the pool returns a parcel from another neighborhood",
       (row, context) =>
@@ -711,6 +709,18 @@ describe("controlled synthetic transport: anything the report refuses, the free 
     expectNoComparison(await check({ mutate }))
   })
 
+  const subjectIneligible: Array<[string, CountyOptions["mutate"]]> = [
+    ["no characteristics row", (row, c) => (c.dataset === CHARACTERISTICS && row.pin === SUBJECT_PIN ? null : row)],
+    ["two cards", (row, c) => (c.dataset === CHARACTERISTICS && row.pin === SUBJECT_PIN ? { ...row, pin_num_cards: "2" } : row)],
+    ["a prorated building", (row, c) => (c.dataset === CHARACTERISTICS && row.pin === SUBJECT_PIN ? { ...row, tieback_proration_rate: "0.5", card_proration_rate: "0.5" } : row)],
+    ["no mailed figures", (row, c) => (c.dataset === ASSESSED && row.pin === SUBJECT_PIN ? { ...row, mailed_tot: null, mailed_land: null, mailed_bldg: null } : row)],
+    ["no address row", (row, c) => (c.dataset === ADDRESSES && row.pin === SUBJECT_PIN ? null : row)],
+  ]
+
+  it.each(subjectIneligible)("withholds for a subject with %s, which no peer rule forgives", async (_name, mutate) => {
+    expectNoComparison(await check({ mutate }))
+  })
+
   it("withholds below the Rule 15 floor, where the report refuses", async () => {
     const parcels = [SUBJECT, PEER_A, PEER_B, ...REJECTED]
     await expect(buildReport({ parcels })).resolves.toEqual({ ok: false, blocker: "INSUFFICIENT_COMPARABLES" })
@@ -725,6 +735,85 @@ describe("controlled synthetic transport: anything the report refuses, the free 
     })
 
     expectNoComparison(await check({ subjectClass }))
+  })
+})
+
+describe("controlled synthetic transport: an unusable peer is left out and counted, and the paid path still refuses it", () => {
+  const peer = PEER_B
+  const peerPin = pinAt(peer.n)
+  const onPeer =
+    (dataset: string, change: (row: Row) => Row | null) =>
+    (row: Row, context: FaultContext): Row | null =>
+      context.dataset === dataset && row.pin === peerPin ? change(row) : row
+
+  const peerCases: Array<[string, string, CountyOptions["mutate"]]> = [
+    ["a peer has no characteristics row", "no_characteristics_record", onPeer(CHARACTERISTICS, () => null)],
+    ["a peer is multi-card", "multi_card", onPeer(CHARACTERISTICS, (row) => ({ ...row, pin_num_cards: "2" }))],
+    ["a peer is multi-landline", "multi_land", onPeer(CHARACTERISTICS, (row) => ({ ...row, pin_num_landlines: "2" }))],
+    ["a peer is multi-land", "multi_land", onPeer(CHARACTERISTICS, (row) => ({ ...row, pin_is_multiland: true }))],
+    ["a peer ties back to another parcel", "prorated_or_tied_back", onPeer(CHARACTERISTICS, (row) => ({ ...row, tieback_key_pin: pinAt(99) }))],
+    ["a peer carries a partial proration", "prorated_or_tied_back", onPeer(CHARACTERISTICS, (row) => ({ ...row, card_proration_rate: "0.5" }))],
+    ["datasets disagree about a peer's class", "class_conflict", onPeer(ASSESSED, (row) => ({ ...row, class: "204" }))],
+    ["a peer has zero building area", "invalid_characteristics", onPeer(CHARACTERISTICS, (row) => ({ ...row, char_bldg_sf: "0" }))],
+    ["a peer has no assessed row", "no_mailed_value", onPeer(ASSESSED, () => null)],
+    ["a peer has no address row", "incomplete_address", onPeer(ADDRESSES, () => null)],
+  ]
+
+  it.each(peerCases)("when %s", async (_name, reason, mutate) => {
+    await expect(readForReport({ mutate })).resolves.toMatchObject({ ok: false })
+
+    const { status, body } = await check({ mutate })
+    expect(status).toBe(200)
+    const evidence = body.comparisonEvidence
+    expect(evidence.candidateCount).toBe(10)
+    expect(evidence.candidateExcludedCount).toBe(1)
+    expect(evidence.candidateExcludedByReason[reason]).toBe(1)
+    expect(evidence.candidateAcceptedCount).toBe(4)
+    expect(body.comps.map((c: { pin: string }) => undashed(c.pin)).sort()).toEqual(QUALIFIED_PINS.filter((pin) => pin !== peerPin))
+    expect(body.sharedMetric.comparableMedian.count).toBe(4)
+    // $17, $18, $15, $100 per sq ft: the median of the four that remain.
+    expect(body.sharedMetric.comparableMedian.value).toBeCloseTo(1750, 8)
+    expect(body.sharedMetric.subjectAssessedCentsPerBuildingSqft).toBeCloseTo(2000, 8)
+    const rejected = Object.values(evidence.candidateRejectedByReason as Record<string, number>).reduce((a, b) => a + b, 0)
+    expect(evidence.candidateAcceptedCount + rejected + evidence.candidateExcludedCount).toBe(evidence.candidateCount)
+  })
+
+  it("keeps a multi-card peer's two rows from reading as a pagination conflict", async () => {
+    const county = createCounty()
+    const inner = county.fetcher
+    const fetcher = async (input: unknown, init?: { method?: string }) => {
+      const response = await inner(input, init)
+      const url = String(input)
+      if (!url.includes(`/resource/${CHARACTERISTICS}.json`)) return response
+      const rows = (await response.clone().json()) as Row[]
+      const doubled = rows.flatMap((row) => (row.pin === peerPin ? [{ ...row, pin_num_cards: "2" }, { ...row, card: "2", pin_num_cards: "2" }] : [row]))
+      return respond(url, doubled)
+    }
+    ;(globalThis as { fetch: unknown }).fetch = fetcher
+    const response = await POST(req({ pin: SUBJECT_PIN }))
+    const body = await response.json()
+    expect(body.comparisonEvidence.candidateExcludedByReason.multi_card).toBe(1)
+    expect(body.sharedMetric.comparableMedian.count).toBe(4)
+  })
+
+  it("withholds when exclusions leave fewer than three, and does not lower the floor", async () => {
+    const out = new Set([pinAt(PEER_A.n), pinAt(PEER_B.n), pinAt(PEER_C.n)])
+    const mutate = (row: Row, context: FaultContext): Row | null =>
+      context.dataset === CHARACTERISTICS && out.has(String(row.pin)) ? null : row
+    expectNoComparison(await check({ mutate }))
+  })
+
+  it("does not let an excluded peer's value reach the median", async () => {
+    const mutate = (row: Row, context: FaultContext): Row | null =>
+      context.dataset === CHARACTERISTICS && row.pin === pinAt(OUTLIER.n) ? { ...row, card_proration_rate: "0.5" } : row
+    const { body } = await check({ mutate })
+    expect(body.comps.map((c: { pin: string }) => undashed(c.pin))).not.toContain(pinAt(OUTLIER.n))
+    expect(body.sharedMetric.comparableMedian.value).toBeCloseTo(1650, 8)
+  })
+
+  it("names the exclusions in the provenance line", async () => {
+    const { markup } = await check({ mutate: peerCases[0][2] })
+    expect(markup).toContain("1 could not be compared from the published record and was left out")
   })
 })
 

@@ -3,11 +3,11 @@
  *
  * POST: { pin?: string, address?: string, city?: string, selectedPin?: string }
  *
- * Returns the subject property, the T2 report's comparison for it (every
+ * Returns the subject property, the T2 report's selection rule applied to it (every
  * qualifying comparable and the median mailed assessed value per building square
  * foot, subject excluded), the township window status, and the property
- * characteristics on file. Where the report would refuse the parcel, no
- * comparison is returned at all; see `readFreeComparison`.
+ * characteristics on file. Where the subject or the read fails, no comparison is
+ * returned at all; see `readFreeComparison`.
  *
  * No overpayment projection is returned on any path; see the note beside
  * `potentialOverpaymentPerYear` below. The doc comment here used to promise one.
@@ -79,7 +79,7 @@ const PREVIEW_SHARED_METRIC: FreeCheckSharedMetric = {
   version: "ot-shared-metric/v1",
   metric: "MEDIAN_ASSESSED_PER_BUILDING_SQFT",
   unit: "ASSESSED_USD_CENTS_PER_BUILDING_SQFT",
-  cohortRule: "PAID_NEUTRAL_MATCH_V1",
+  cohortRule: "FREE_ELIGIBLE_POOL_MATCH_V1",
   stage: "mailed",
   taxYear: 2025,
   subjectExcluded: true,
@@ -552,8 +552,9 @@ export async function POST(req: NextRequest) {
 
     // ── The report's comparison ──────────────────────────────────────────────
     //
-    // The same selection, median and refusals as the T2 report, read inside this
-    // request and stored nowhere. It used to be the first three parcels of a
+    // The same selection and median as the T2 report, over the whole neighborhood
+    // pool with unusable parcels counted out, read inside this request and stored
+    // nowhere. It used to be the first three parcels of a
     // sales-then-equity search with looser bands and widening fallbacks, a mean of
     // whichever total each happened to carry, and a market value that was the
     // assessed value times ten. None of that survives: a refused read means no
