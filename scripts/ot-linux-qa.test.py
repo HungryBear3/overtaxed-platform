@@ -1283,5 +1283,450 @@ class PrismaEnginePrepare(unittest.TestCase):
         self.assertFalse([key for key in qa.namespace_env("build") if key.startswith("PRISMA_")])
 
 
+def fake_engine(machine=qa.ELF_X86_64, body=b"schema-engine body"):
+    header = b"\x7fELF\x02\x01\x01" + bytes(9) + (3).to_bytes(2, "little") + machine.to_bytes(2, "little")
+    return header + body
+
+
+class PrismaClosureBase(unittest.TestCase):
+    """A real on-disk closure, laid out the way the networked prisma-generate leaves it."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.layout = qa.Layout(self.tmp.name)
+        self.layout.create()
+        self.entry = self.layout.prisma_cache
+        self.engine_dir = self.layout.app.joinpath(*qa.PRISMA_ENGINE_DIR)
+        self.target = self.engine_dir / qa.PRISMA_ENGINE_FILE
+        self.entry.mkdir(parents=True)
+        self.engine_dir.mkdir(parents=True)
+        for package, version in qa.PRISMA_PACKAGES.items():
+            folder = self.layout.app / "node_modules" / package
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "package.json").write_text(f'{{"name": "{package}", "version": "{version}"}}')
+        self.write_engine(fake_engine())
+
+    def write_engine(self, data):
+        for path in (self.entry / "schema-engine", self.target):
+            path.write_bytes(data)
+            path.chmod(0o755)
+        (self.entry / "schema-engine.sha256").write_text(qa.hashlib.sha256(data).hexdigest())
+        (self.entry / "schema-engine.gz.sha256").write_text("e" * 64)
+
+    def closure(self):
+        return qa.prisma_engine_closure(str(self.layout.cache), str(self.layout.app))
+
+    def assert_refused(self, fragment):
+        problems = self.closure()["problems"]
+        self.assertTrue([p for p in problems if fragment in p], problems)
+
+
+class PrismaEngineClosure(PrismaClosureBase):
+    def test_entry_matches_the_failed_url_and_the_cache_prisma_derives(self):
+        # getCacheDir joins XDG_CACHE_HOME or ~/.cache with prisma/master/<commit>/<target>.
+        failed = ("https://binaries.prisma.sh/all_commits/9d6ad21cbbceab97458517b147a6a09ff43aa735/"
+                  "debian-openssl-3.0.x/schema-engine.gz.sha256")
+        self.assertIn(f"/{qa.PRISMA_ENGINES_COMMIT}/{qa.PRISMA_ENGINE_TARGET}/schema-engine.gz.sha256", failed)
+        self.assertEqual(qa.NS_PRISMA_CACHE, f"{qa.namespace_env('build')['XDG_CACHE_HOME']}/{qa.PRISMA_CACHE_REL}")
+        self.assertEqual(self.entry, self.layout.home / ".cache/prisma/master" / qa.PRISMA_ENGINES_COMMIT
+                         / "debian-openssl-3.0.x")
+
+    def test_packages_match_the_pinned_lock(self):
+        lock = (ROOT / "package-lock.json").read_text()
+        self.assertEqual(qa.PRISMA_VERSION, "7.3.0")
+        for package, version in qa.PRISMA_PACKAGES.items():
+            self.assertRegex(lock, rf'"node_modules/{re.escape(package)}": \{{\s+"version": "{re.escape(version)}"')
+
+    def test_verified_closure_reports_exact_provenance(self):
+        report = self.closure()
+        digest = qa.hashlib.sha256(fake_engine()).hexdigest()
+        self.assertEqual(report["problems"], [])
+        self.assertEqual((report["sha256"], report["target_sha256"]), (digest, digest))
+        self.assertEqual((report["gz_sha256"], report["bytes"]), ("e" * 64, len(fake_engine())))
+        self.assertEqual((report["engines_commit"], report["target"]), (qa.PRISMA_ENGINES_COMMIT, qa.PRISMA_ENGINE_TARGET))
+        self.assertEqual(report["cached_targets"], ["debian-openssl-3.0.x"])
+        self.assertEqual(report["packages"], qa.PRISMA_PACKAGES)
+
+    def test_report_never_holds_a_host_path(self):
+        (self.entry / "schema-engine.sha256").unlink()
+        self.assertNotIn(self.tmp.name, repr(self.closure()))
+
+    def test_empty_cache_is_refused_like_the_observed_namespace(self):
+        for name in qa.PRISMA_CACHE_FILES:
+            (self.entry / name).unlink()
+        self.assert_refused("cached engine: missing")
+
+    def test_each_missing_cache_file_is_refused(self):
+        for name in qa.PRISMA_CACHE_FILES:
+            with self.subTest(name):
+                saved = (self.entry / name).read_bytes()
+                (self.entry / name).unlink()
+                self.assert_refused("cached engine: missing")
+                (self.entry / name).write_bytes(saved)
+                (self.entry / name).chmod(0o755)
+
+    def test_missing_target_is_refused(self):
+        self.target.unlink()
+        self.assert_refused("target engine: missing")
+
+    def test_malformed_checksums_are_refused(self):
+        digest = qa.hashlib.sha256(fake_engine()).hexdigest()
+        # Prisma compares with ===, so each of these would otherwise reach the network.
+        for label, value in (("newline", digest + "\n"), ("capital", digest.upper()), ("short", digest[:63]),
+                             ("empty", ""), ("not hex", "z" * 64), ("long", digest + "0")):
+            with self.subTest(label):
+                (self.entry / "schema-engine.sha256").write_text(value)
+                self.assertTrue(self.closure()["problems"])
+        (self.entry / "schema-engine.sha256").write_text(digest)
+        (self.entry / "schema-engine.gz.sha256").write_text("not a digest")
+        self.assert_refused("malformed checksum")
+
+    def test_checksum_mismatch_is_refused(self):
+        (self.entry / "schema-engine.sha256").write_text("0" * 64)
+        self.assert_refused("checksum mismatch")
+
+    def test_cached_bytes_changed_after_download_are_refused(self):
+        (self.entry / "schema-engine").write_bytes(fake_engine(body=b"tampered"))
+        self.assert_refused("checksum mismatch")
+
+    def test_target_differing_from_cache_is_refused(self):
+        self.target.write_bytes(fake_engine(body=b"other"))
+        self.assert_refused("differs from the cached engine")
+
+    def test_package_version_mismatch_is_refused(self):
+        for package in qa.PRISMA_PACKAGES:
+            with self.subTest(package):
+                path = self.layout.app / "node_modules" / package / "package.json"
+                saved = path.read_text()
+                path.write_text('{"version": "7.7.0"}')
+                self.assert_refused(f"{package}: version mismatch")
+                path.write_text(saved)
+
+    def test_malformed_or_missing_package_json_is_refused(self):
+        path = self.layout.app / "node_modules/@prisma/engines-version/package.json"
+        for label, value in (("bad", "{"), ("array", "[]"), ("dup", '{"version": "1", "version": "2"}'),
+                             ("no version", "{}"), ("numeric", '{"version": 7}')):
+            with self.subTest(label):
+                path.write_text(value)
+                self.assert_refused("malformed package.json")
+        path.unlink()
+        self.assert_refused("@prisma/engines-version: missing")
+
+    def test_a_different_detected_target_is_refused_and_named(self):
+        self.entry.rename(self.entry.with_name("rhel-openssl-3.0.x"))
+        report = self.closure()
+        self.assertIn("cached engine: missing", report["problems"])
+        self.assertEqual(report["cached_targets"], ["rhel-openssl-3.0.x"])
+
+    def test_a_different_engine_version_directory_is_refused(self):
+        self.entry.parent.rename(self.entry.parent.with_name("0" * 40))
+        self.assert_refused("cached engine: missing")
+
+    def test_foreign_abi_and_non_elf_are_refused(self):
+        for label, data, fragment in (("aarch64", fake_engine(machine=183), "x86-64"),
+                                      ("script", b"#!/bin/sh\nexit 0\n" + bytes(8), "not an ELF"),
+                                      ("truncated", b"\x7fELF", "not an ELF"),
+                                      ("32-bit", b"\x7fELF\x01" + fake_engine()[5:], "64-bit")):
+            with self.subTest(label):
+                self.write_engine(data)
+                self.assert_refused(fragment)
+
+    def test_empty_and_oversize_engines_are_refused(self):
+        self.write_engine(b"")
+        self.assert_refused("size out of bounds")
+        self.write_engine(fake_engine())
+        with mock.patch.object(qa, "PRISMA_ENGINE_CAP", 8):
+            self.assert_refused("size out of bounds")
+
+    def test_non_executable_engine_is_refused(self):
+        self.target.chmod(0o644)
+        self.assert_refused("target engine: not executable")
+
+    def test_unsafe_modes_are_refused(self):
+        for mode in (0o757, 0o4755, 0o2755):
+            with self.subTest(oct(mode)):
+                self.target.chmod(mode)
+                # chmod silently drops setgid when the file's group is not one of the caller's.
+                if self.target.stat().st_mode & 0o7777 == mode:
+                    self.assert_refused("target engine: refused")
+        self.target.chmod(0o755)
+        self.entry.chmod(0o777)
+        self.assert_refused("cached engine: refused")
+        self.entry.chmod(0o755)
+
+    def test_foreign_owner_is_refused(self):
+        with mock.patch.object(qa.os, "geteuid", return_value=os.geteuid() + 1):
+            self.assert_refused("cached engine: refused")
+
+    def test_symlinked_files_are_refused(self):
+        outside = self.layout.outside / "engine"
+        outside.write_bytes(fake_engine())
+        outside.chmod(0o755)
+        for path in (self.entry / "schema-engine", self.target):
+            with self.subTest(path.name):
+                path.unlink()
+                path.symlink_to(outside)
+                self.assertTrue(self.closure()["problems"])
+                path.unlink()
+                path.write_bytes(fake_engine())
+                path.chmod(0o755)
+
+    def test_symlinked_directories_are_refused(self):
+        moved = self.layout.outside / "entry"
+        self.entry.rename(moved)
+        self.entry.symlink_to(moved)
+        self.assert_refused("cached engine: refused")
+
+    def test_symlinked_cache_root_is_refused(self):
+        moved = self.layout.outside / "cache"
+        self.layout.cache.rename(moved)
+        self.layout.cache.symlink_to(moved)
+        self.assert_refused("cached engine: refused")
+
+    def test_hardlink_fifo_and_directory_are_refused(self):
+        os.link(self.entry / "schema-engine", self.layout.outside / "linked")
+        self.assert_refused("not a single regular file")
+        (self.layout.outside / "linked").unlink()
+        self.target.unlink()
+        os.mkfifo(self.target)
+        self.assert_refused("target engine: not a single regular file")
+        self.target.unlink()
+        self.target.mkdir()
+        self.assert_refused("target engine: not a single regular file")
+
+    def test_unexpected_cache_entry_is_refused(self):
+        (self.entry / "private").write_text("x")
+        self.assert_refused("unexpected cache entries")
+
+    def test_read_only_closure_stays_usable(self):
+        self.entry.chmod(0o555)
+        self.addCleanup(self.entry.chmod, 0o755)
+        self.assertEqual(self.closure()["problems"], [])
+
+    def test_engine_version_uses_prismas_substring_rule(self):
+        ok = {"exit": 0, "reason": None}
+        self.assertEqual(qa.engine_version_problems(ok, f"schema-engine-cli {qa.PRISMA_ENGINES_COMMIT}\n"), [])
+        self.assertEqual(qa.engine_version_problems(ok, "schema-engine-cli " + "0" * 40), ["schema-engine version mismatch"])
+        self.assertEqual(qa.engine_version_problems({"exit": 127, "reason": None}, qa.PRISMA_ENGINES_COMMIT),
+                         ["schema-engine --version failed"])
+        self.assertEqual(qa.engine_version_problems({"exit": None, "reason": "ENOENT"}, ""),
+                         ["schema-engine --version failed"])
+
+    def test_namespace_check_needs_the_same_digest_and_a_read_only_mount(self):
+        report = self.closure()
+        self.assertEqual(qa.namespace_engine_problems(report, report["sha256"], "EROFS"), [])
+        self.assertTrue(qa.namespace_engine_problems(report, "0" * 64, "EROFS"))
+        self.assertTrue(qa.namespace_engine_problems(report, report["sha256"], None))
+        self.assertTrue(qa.namespace_engine_problems(report, report["sha256"], "EACCES"))
+        self.assertTrue(qa.namespace_engine_problems({**report, "problems": ["x"]}, report["sha256"], "EROFS"))
+
+
+class PrismaCacheBind(unittest.TestCase):
+    NODE = "/opt/hostedtoolcache/node/24.0.0/x64"
+
+    def setUp(self):
+        self.layout = qa.Layout("/w/_temp/ot-qa")
+        self.source = str(self.layout.prisma_cache)
+
+    def argv(self, mode="build"):
+        return qa.build_bwrap_argv(self.layout, self.NODE, mode, ["/usr/bin/python3", "x"], 9)
+
+    def problems(self, argv, mode="build"):
+        return qa.bwrap_problems(argv, self.layout, self.NODE, mode)
+
+    def binds(self, argv):
+        return [argv[i:i + 3] for i, arg in enumerate(argv) if arg in ("--ro-bind", "--bind")]
+
+    def in_cache_dir(self, path):
+        # A whole path component, so the public /etc/ld.so.cache file never matches.
+        return ".cache" in pathlib.PurePosixPath(path).parts
+
+    def test_build_binds_only_the_exact_entry_read_only_after_tmp(self):
+        argv = self.argv()
+        self.assertEqual(self.problems(argv), [])
+        at = argv.index(self.source)
+        self.assertEqual(argv[at - 1:at + 2], ["--ro-bind", self.source, qa.NS_PRISMA_CACHE])
+        self.assertLess(argv.index("/tmp"), at)
+
+    def test_build_mounts_differ_from_runtime_by_this_contract_only(self):
+        build = self.binds(self.argv("build"))
+        runtime = self.binds(self.argv("runtime"))
+        self.assertEqual([b for b in build if b[2] == qa.NS_PRISMA_CACHE], [["--ro-bind", self.source, qa.NS_PRISMA_CACHE]])
+        self.assertFalse([b for b in runtime if "prisma" in b[1] or self.in_cache_dir(b[1])])
+        self.assertEqual([b for b in build if self.in_cache_dir(b[1]) or "/etc/os-release" in b[2]],
+                         [["--ro-bind", self.source, qa.NS_PRISMA_CACHE]])
+
+    def test_argv_adds_no_engine_env_or_network_flag(self):
+        argv = self.argv()
+        names = [argv[i + 1] for i, arg in enumerate(argv) if arg == "--setenv"]
+        self.assertFalse([n for n in names if n.startswith(("PRISMA_", "BINARY_DOWNLOAD"))])
+        self.assertNotIn("--share-net", argv)
+        self.assertIn("--unshare-all", argv)
+
+    def test_missing_or_repeated_bind_is_refused(self):
+        argv = self.argv()
+        at = argv.index(self.source) - 1
+        self.assertTrue(self.problems(argv[:at] + argv[at + 3:]))
+        self.assertTrue(self.problems(argv[:at] + argv[at:at + 3] + argv[at:]))
+
+    def test_bind_before_or_under_a_later_tmp_mount_is_refused(self):
+        argv = self.argv()
+        at = argv.index(self.source) - 1
+        tmp = argv.index("/tmp") - 2
+        self.assertTrue(self.problems(argv[:tmp] + argv[at:at + 3] + argv[tmp:at] + argv[at + 3:]))
+        self.assertTrue(self.problems(argv[:at + 3] + ["--bind", str(self.layout.tmp_build), "/tmp"] + argv[at + 3:]))
+
+    def test_inexact_or_writable_binds_are_refused(self):
+        insert = {
+            "whole cache": ["--ro-bind", str(self.layout.cache), "/tmp/cache"],
+            "whole home": ["--ro-bind", str(self.layout.home), "/tmp/home"],
+            "parent entry": ["--ro-bind", str(self.layout.prisma_cache.parent), qa.NS_PRISMA_CACHE],
+            "other destination": ["--ro-bind", self.source, "/tmp/elsewhere"],
+            "other source": ["--ro-bind", "/usr", qa.NS_PRISMA_CACHE],
+            "writable": ["--bind", self.source, qa.NS_PRISMA_CACHE],
+            "whole etc": ["--ro-bind", "/etc", "/etc"],
+            "os release": ["--ro-bind", "/etc/os-release", "/etc/os-release"],
+        }
+        for label, extra in insert.items():
+            with self.subTest(label):
+                argv = self.argv()
+                argv[1:1] = extra
+                self.assertTrue(self.problems(argv))
+
+    def test_runtime_cannot_gain_the_build_entry(self):
+        argv = self.argv("runtime")
+        self.assertEqual(self.problems(argv, "runtime"), [])
+        argv[1:1] = ["--ro-bind", self.source, qa.NS_PRISMA_CACHE]
+        self.assertTrue(self.problems(argv, "runtime"))
+
+
+class PrismaEngineStages(PrismaClosureBase):
+    def setUp(self):
+        super().setUp()
+        self.args = mock.Mock(node="/opt/hostedtoolcache/node/24/x64/bin/node", timeout=315,
+                              engine_sha256=qa.hashlib.sha256(fake_engine()).hexdigest())
+        qa.write_json(self.layout.report / "stage-validate.json", {"status": "PASS"})
+
+    def fake_run(self, stdout=f"schema-engine-cli {qa.PRISMA_ENGINES_COMMIT}\n", exit_code=0):
+        def run(argv, log_path, *_args, **_kwargs):
+            pathlib.Path(log_path).write_text(stdout)
+            return {"exit": exit_code, "reason": None}
+        return mock.patch.object(qa, "run_bounded", side_effect=run)
+
+    def prepare(self):
+        with mock.patch.object(qa, "prepare_steps", return_value=[]), \
+                mock.patch.object(qa, "preflight_problems", return_value=[]), \
+                mock.patch.object(qa, "find_chrome", return_value=str(self.layout.browsers / "chrome")):
+            return qa.prepare_body(self.args, self.layout)
+
+    def build(self, recorded):
+        qa.write_json(self.layout.report / "stage-prepare.json", {"status": "PASS", "node_root": "/n",
+                                                                  "prisma_engine": recorded})
+        qa.write_json(self.layout.work / "expected-tree.json", {"a": ["100644", "blob", "x"]})
+        (self.layout.app / "scripts").mkdir()
+        (self.layout.app / qa.BUILD_WRAPPER).write_text("")
+        qa.write_json(self.layout.report / "inner-build.json", {"problems": [], "offbox": []})
+        with mock.patch.object(qa, "wrapper_problems", return_value=[]), \
+                mock.patch.object(qa, "preflight_problems", return_value=[]), \
+                mock.patch.object(qa, "stage_tree_problems", return_value=[]), \
+                mock.patch.object(qa, "build_output_problems", return_value=[]), \
+                mock.patch.object(qa, "run_in_namespace", return_value={"exit": 0, "reason": None}) as ns:
+            try:
+                return qa.build_body(self.args, self.layout), ns
+            except qa.StageStop as stop:
+                return stop, ns
+
+    def inner(self, closure, write_errno="EROFS"):
+        written = {}
+        ran = []
+        def run(argv, log_path, *_args, **_kwargs):
+            ran.append(argv)
+            return {"exit": 0, "reason": None}
+        version = ({"exit": 0, "reason": None}, qa.PRISMA_ENGINES_COMMIT)
+        with mock.patch.object(qa.os, "makedirs"), mock.patch.object(qa, "offbox_probes", return_value=[]), \
+                mock.patch.object(qa, "evaluate_offbox", return_value=[]), \
+                mock.patch.object(qa, "proc_env_keys", return_value=[]), \
+                mock.patch.object(qa, "prisma_engine_closure", return_value=closure), \
+                mock.patch.object(qa, "probe_readonly", return_value=write_errno), \
+                mock.patch.object(qa, "probe_engine_version", return_value=version), \
+                mock.patch.object(qa, "run_bounded", side_effect=run), \
+                mock.patch.object(qa, "write_json", side_effect=lambda _p, ev: written.update(ev)), \
+                mock.patch.dict(os.environ, {"PATH": "/usr/bin"}, clear=True):
+            code = qa.inner_build(self.args)
+        return code, written, ran
+
+    def test_prepare_records_the_verified_closure(self):
+        with self.fake_run() as run:
+            result = self.prepare()
+        self.assertEqual(result["prisma_engine"]["sha256"], self.args.engine_sha256)
+        self.assertEqual(run.call_args.args[0], [str(self.target), "--version"])
+
+    def test_prepare_refuses_a_missing_cache_before_running_the_engine(self):
+        (self.entry / "schema-engine.sha256").unlink()
+        with self.fake_run() as run, self.assertRaises(qa.StageStop) as stop:
+            self.prepare()
+        self.assertEqual(stop.exception.status, "FAIL")
+        self.assertIn("prisma engine closure: cached engine: missing", stop.exception.problems)
+        run.assert_not_called()
+
+    def test_prepare_refuses_a_wrong_or_failing_engine_version(self):
+        for stdout, code, message in (("schema-engine-cli " + "0" * 40, 0, "schema-engine version mismatch"),
+                                      ("", 127, "schema-engine --version failed")):
+            with self.subTest(message), self.fake_run(stdout, code), self.assertRaises(qa.StageStop) as stop:
+                self.prepare()
+            self.assertEqual(stop.exception.problems, [message])
+
+    def test_unstartable_engine_is_a_reported_failure(self):
+        with mock.patch.object(qa, "run_bounded", side_effect=FileNotFoundError(qa.errno.ENOENT, "x")):
+            result, text = qa.probe_engine_version("/x", self.layout.work / "log", {}, None)
+        self.assertEqual((result["exit"], result["reason"], text), (None, "ENOENT", ""))
+        self.assertTrue(qa.engine_version_problems(result, text))
+
+    def test_build_passes_the_verified_digest_into_the_namespace(self):
+        result, ns = self.build(self.closure())
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["prisma_engine"]["sha256"], self.args.engine_sha256)
+        inner = ns.call_args.args[3]
+        self.assertEqual(inner[inner.index("--engine-sha256") + 1], self.args.engine_sha256)
+
+    def test_build_refuses_drift_since_prepare_before_the_namespace(self):
+        recorded = self.closure()
+        self.write_engine(fake_engine(body=b"replaced"))
+        stop, ns = self.build(recorded)
+        self.assertEqual(stop.problems, ["prisma engine closure changed since prepare"])
+        ns.assert_not_called()
+
+    def test_build_refuses_a_broken_cache_before_the_namespace(self):
+        recorded = self.closure()
+        (self.entry / "schema-engine.gz.sha256").unlink()
+        stop, ns = self.build(recorded)
+        self.assertIn("prisma engine closure: cached engine: missing", stop.problems)
+        ns.assert_not_called()
+
+    def test_inner_builds_with_a_verified_read_only_entry(self):
+        code, written, ran = self.inner(self.closure())
+        self.assertEqual(code, 0)
+        self.assertEqual(ran, [[qa.NS_NODE_BIN, qa.BUILD_WRAPPER]])
+        self.assertEqual(written["prisma_engine"]["sha256"], self.args.engine_sha256)
+        self.assertEqual(written["engine_version_probe"]["problems"], [])
+
+    def test_inner_never_starts_the_wrapper_on_a_bad_entry(self):
+        good = self.closure()
+        for label, closure, write_errno in (("writable", good, None),
+                                            ("other digest", {**good, "sha256": "0" * 64}, "EROFS"),
+                                            ("broken", {**good, "problems": ["cached engine: missing"]}, "EROFS")):
+            with self.subTest(label):
+                code, written, ran = self.inner(closure, write_errno)
+                self.assertEqual((code, ran, written["build"]), (3, [], "notrun"))
+                self.assertTrue(written["problems"])
+
+    def test_inner_build_requires_the_expected_digest(self):
+        parsed = qa.parse_args(["inner-build", "--timeout", "1", "--engine-sha256", "a" * 64])
+        self.assertEqual(parsed.engine_sha256, "a" * 64)
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            qa.parse_args(["inner-build", "--timeout", "1"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -105,7 +105,29 @@ INNER_TIMEOUT = 125
 BROWSER_DEADLINE_MS = 95_000
 GATE_LAUNCH_TIMEOUT = 40
 
-KINDS = ("normal", "malicious", "missing-message", "null-json", "malformed-json", "fetch-failure")
+# Exact public closure of the pinned package-lock.json. Inside the fence `prisma generate`
+# skips the checksum fetch without running the engine only when this cache entry verifies:
+# binaryNeedsToBeDownloaded compares <entry>/schema-engine.sha256 to the entry's own hash.
+PRISMA_VERSION = "7.3.0"
+PRISMA_ENGINES_COMMIT = "9d6ad21cbbceab97458517b147a6a09ff43aa735"
+PRISMA_PACKAGES = {
+    "prisma": PRISMA_VERSION,
+    "@prisma/engines": PRISMA_VERSION,
+    "@prisma/fetch-engine": PRISMA_VERSION,
+    "@prisma/engines-version": f"{PRISMA_VERSION}-16.{PRISMA_ENGINES_COMMIT}",
+}
+PRISMA_ENGINE_TARGET = "debian-openssl-3.0.x"
+PRISMA_ENGINE_DIR = ("node_modules", "@prisma", "engines")
+PRISMA_ENGINE_FILE = f"schema-engine-{PRISMA_ENGINE_TARGET}"
+PRISMA_CACHE_REL = f"prisma/master/{PRISMA_ENGINES_COMMIT}/{PRISMA_ENGINE_TARGET}"
+PRISMA_CACHE_FILES = ("schema-engine", "schema-engine.gz.sha256", "schema-engine.sha256")
+NS_PRISMA_CACHE = f"/tmp/cache/{PRISMA_CACHE_REL}"
+PRISMA_ENGINE_CAP = 256 * MIB
+PRISMA_TARGET_RE = re.compile(r"[a-z0-9][a-z0-9.-]{0,63}")
+ENGINE_VERSION_TIMEOUT = 15
+ELF_X86_64 = 62
+
+KINDS =("normal", "malicious", "missing-message", "null-json", "malformed-json", "fetch-failure")
 VIEWPORTS = ("desktop", "mobile")
 EXPECTED_CASES = tuple(f"{k}-{v}" for k in KINDS for v in VIEWPORTS)
 
@@ -173,6 +195,9 @@ class Layout:
         self.etc = self.root / "etc"
         self.outside = self.root / "outside"
         self.work = self.root / "work"
+        # Written by the networked prisma-generate step, whose HOME is self.home.
+        self.cache = self.home / ".cache"
+        self.prisma_cache = self.cache / PRISMA_CACHE_REL
 
     def owned_dirs(self):
         return (self.root, self.app, self.harness, self.browsers, self.report, self.tmp_build,
@@ -405,7 +430,9 @@ def build_bwrap_argv(layout, node_root, mode, inner_argv, info_fd):
     argv += ["--ro-bind", str(layout.harness), NS_HARNESS]
     argv += ["--bind", str(layout.report), NS_OUT]
     argv += ["--bind", str(layout.tmp_build if build else layout.tmp_run), "/tmp"]
-    if not build:
+    if build:
+        argv += ["--ro-bind", str(layout.prisma_cache), NS_PRISMA_CACHE]
+    else:
         argv += ["--ro-bind", str(layout.browsers), NS_BROWSERS]
         argv += ["--tmpfs", NS_APP + "/.next/cache"]
     for key, value in namespace_env(mode).items():
@@ -425,12 +452,16 @@ def bwrap_problems(argv, layout, node_root, mode):
     read_only = {"/usr", str(node_root), str(layout.harness), *NS_PUBLIC_RO}
     read_only |= {str(layout.etc / n) for n in ("passwd", "group", "hosts")}
     writable = {str(layout.report), str(layout.tmp_build if build else layout.tmp_run)}
+    prisma_cache = str(layout.prisma_cache) if build else None
     if build:
         writable.add(str(layout.app))
+        read_only.add(prisma_cache)
     else:
         read_only |= {str(layout.app), str(layout.browsers)}
     problems = [] if argv and argv[0] == BWRAP else ["argv[0] is not bwrap"]
     seen = set()
+    prisma_binds = 0
+    tmp_bound = prisma_visible = False
     i = 1
     while i < len(argv) and argv[i] != "--":
         flag = argv[i]
@@ -443,8 +474,17 @@ def bwrap_problems(argv, layout, node_root, mode):
             first, second = argv[i + 1], argv[i + 2]
             if flag == "--ro-bind" and first not in read_only:
                 problems.append(f"read-only source not allowed: {first}")
+            elif flag == "--ro-bind" and (first == prisma_cache or second == NS_PRISMA_CACHE):
+                if (first, second) == (prisma_cache, NS_PRISMA_CACHE):
+                    prisma_binds += 1
+                    prisma_visible = tmp_bound
+                else:
+                    problems.append(f"prisma cache bind not exact: {first} -> {second}")
             elif flag == "--bind" and first not in writable:
                 problems.append(f"writable source not allowed: {first}")
+            elif flag == "--bind" and second == "/tmp":
+                # Mounted over the entry, /tmp would hide it and silently restore the refetch.
+                tmp_bound, prisma_visible = True, False
             elif flag == "--setenv":
                 problems += env_key_problems([first], NS_ENV_KEYS)
                 if SECRET_KEY_RE.search(first):
@@ -460,6 +500,8 @@ def bwrap_problems(argv, layout, node_root, mode):
     for required in ("--unshare-all", "--unshare-user", "--die-with-parent", "--clearenv", "--proc"):
         if required not in seen:
             problems.append(f"required flag missing: {required}")
+    if build and (prisma_binds != 1 or not prisma_visible):
+        problems.append("prisma cache must be bound once, after /tmp")
     return problems
 
 
@@ -488,6 +530,188 @@ def node_root_problems(node_root):
     if not str(node_root).startswith("/opt/hostedtoolcache/node/"):
         return [f"node root outside the public tool cache: {node_root}"]
     return []
+
+
+# --- Prisma engine closure ------------------------------------------------------
+
+def _require_safe(fd, forbidden):
+    info = os.fstat(fd)
+    if info.st_uid != os.geteuid() or info.st_mode & forbidden:
+        raise PermissionError(errno.EPERM, "unsafe owner or mode")
+    return info
+
+
+def _open_dir_under(base, parts):
+    """Every component is opened without following a link, so no step can leave the root."""
+    fd = os.open(base, BUILD_DIR_FLAGS)
+    try:
+        _require_safe(fd, stat.S_IWOTH)
+        for part in parts:
+            child = os.open(part, BUILD_DIR_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = child
+            _require_safe(fd, stat.S_IWOTH)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _open_safe_file(dir_fd, name):
+    fd = os.open(name, BUILD_FILE_FLAGS, dir_fd=dir_fd)
+    try:
+        info = _require_safe(fd, stat.S_IWOTH | stat.S_ISUID | stat.S_ISGID)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ValueError("not a single regular file")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _read_safe(dir_fd, name, cap):
+    fd = _open_safe_file(dir_fd, name)
+    try:
+        size = os.fstat(fd).st_size
+        if size > cap:
+            raise ValueError("oversize")
+        return _pread_all(fd, size, 0)
+    finally:
+        os.close(fd)
+
+
+def _read_digest(dir_fd, name):
+    # Exact bytes: Prisma compares this file with ===, so a newline or capital means refetch.
+    data = _read_safe(dir_fd, name, 64)
+    if not re.fullmatch(rb"[0-9a-f]{64}", data):
+        raise ValueError("malformed checksum")
+    return data.decode("ascii")
+
+
+def elf_problem(head):
+    """Header bytes of the native x86-64 ELF that the debian-openssl target names."""
+    if len(head) < 20 or head[:4] != b"\x7fELF":
+        return "not an ELF file"
+    if head[4] != 2 or head[5] != 1 or int.from_bytes(head[16:18], "little") not in (2, 3):
+        return "not a 64-bit little-endian executable"
+    if int.from_bytes(head[18:20], "little") != ELF_X86_64:
+        return "not an x86-64 executable"
+    return None
+
+
+def _measure_engine(dir_fd, name):
+    fd = _open_safe_file(dir_fd, name)
+    try:
+        info = os.fstat(fd)
+        if not info.st_mode & stat.S_IXUSR:
+            raise ValueError("not executable")
+        if not 0 < info.st_size <= PRISMA_ENGINE_CAP:
+            raise ValueError("size out of bounds")
+        problem = elf_problem(os.pread(fd, 20, 0))
+        if problem:
+            raise ValueError(problem)
+        digest = hashlib.sha256()
+        hashed = 0
+        while hashed < info.st_size:
+            chunk = os.pread(fd, min(info.st_size - hashed, MIB), hashed)
+            if not chunk:
+                raise ValueError("short read")
+            digest.update(chunk)
+            hashed += len(chunk)
+        return digest.hexdigest(), info.st_size
+    finally:
+        os.close(fd)
+
+
+def _cached_engine(cache_root):
+    fd = _open_dir_under(cache_root, PRISMA_CACHE_REL.split("/"))
+    try:
+        recorded = _read_digest(fd, "schema-engine.sha256")
+        zipped = _read_digest(fd, "schema-engine.gz.sha256")
+        digest, size = _measure_engine(fd, "schema-engine")
+        if sorted(os.listdir(fd)) != sorted(PRISMA_CACHE_FILES):
+            raise ValueError("unexpected cache entries")
+    finally:
+        os.close(fd)
+    if digest != recorded:
+        raise ValueError("checksum mismatch")
+    return {"sha256": digest, "gz_sha256": zipped, "bytes": size}
+
+
+def _target_engine(app_root):
+    fd = _open_dir_under(app_root, PRISMA_ENGINE_DIR)
+    try:
+        return _measure_engine(fd, PRISMA_ENGINE_FILE)[0]
+    finally:
+        os.close(fd)
+
+
+def _cached_targets(cache_root):
+    """Names only: tells a detected-target drift from an absent cache without a host path."""
+    try:
+        fd = _open_dir_under(cache_root, PRISMA_CACHE_REL.split("/")[:-1])
+    except OSError:
+        return []
+    try:
+        return sorted(n for n in os.listdir(fd) if PRISMA_TARGET_RE.fullmatch(n))[:8]
+    finally:
+        os.close(fd)
+
+
+def _package_version(app_root, package):
+    fd = _open_dir_under(app_root, ["node_modules", *package.split("/")])
+    try:
+        state, value = classify_build_json(_read_safe(fd, "package.json", BUILD_JSON_PARSE_CAP))
+    finally:
+        os.close(fd)
+    if state != "valid" or not isinstance(value, dict) or not isinstance(value.get("version"), str):
+        raise ValueError("malformed package.json")
+    return value["version"]
+
+
+def _closure_step(problems, label, step):
+    try:
+        return step()
+    except FileNotFoundError:
+        problems.append(f"{label}: missing")
+    except OSError as exc:
+        problems.append(f"{label}: refused {errno.errorcode.get(exc.errno, exc.errno)}")
+    except ValueError as exc:
+        problems.append(f"{label}: {exc}")
+    return None
+
+
+def prisma_engine_closure(cache_root, app_root):
+    """Same check on the host and in the namespace; the report never holds a host path."""
+    problems = []
+    for package, version in PRISMA_PACKAGES.items():
+        found = _closure_step(problems, package, lambda: _package_version(app_root, package))
+        if found not in (None, version):
+            problems.append(f"{package}: version mismatch")
+    cached = _closure_step(problems, "cached engine", lambda: _cached_engine(cache_root))
+    target = _closure_step(problems, "target engine", lambda: _target_engine(app_root))
+    if cached and target and cached["sha256"] != target:
+        problems.append("target engine: differs from the cached engine")
+    return {"packages": PRISMA_PACKAGES, "engines_commit": PRISMA_ENGINES_COMMIT, "target": PRISMA_ENGINE_TARGET,
+            "cached_targets": _cached_targets(cache_root), "sha256": cached and cached["sha256"],
+            "gz_sha256": cached and cached["gz_sha256"], "bytes": cached and cached["bytes"],
+            "target_sha256": target, "problems": problems}
+
+
+def engine_version_problems(result, text):
+    """Prisma's own test: the engine's --version output must contain the pinned commit."""
+    if not bounded_ok(result):
+        return ["schema-engine --version failed"]
+    return [] if PRISMA_ENGINES_COMMIT in text else ["schema-engine version mismatch"]
+
+
+def namespace_engine_problems(engine, expected_sha256, write_errno):
+    problems = list(engine["problems"])
+    if engine["sha256"] != expected_sha256:
+        problems.append("prisma engine differs from the host-verified closure")
+    if write_errno != "EROFS":
+        problems.append(f"prisma cache is not read-only: {write_errno}")
+    return problems
 
 
 # --- pure fence evaluation ------------------------------------------------------
@@ -1414,7 +1638,17 @@ def inner_run(args):
     return 0 if run_inner(NamespaceOps(args))["status"] == "PASS" else 3
 
 
+def probe_engine_version(engine, log_path, env, cwd):
+    try:
+        result = run_bounded([str(engine), "--version"], log_path, ENGINE_VERSION_TIMEOUT, env, cwd=cwd)
+    except OSError as exc:
+        return {"exit": None, "reason": errno.errorcode.get(exc.errno, str(exc.errno))}, ""
+    with open(log_path, "rb") as fh:
+        return result, fh.read(4096).decode("utf-8", "replace")
+
+
 def inner_build(args):
+    started = time.monotonic()
     for path in ("/tmp/home", "/tmp/cache", "/tmp/config"):
         os.makedirs(path, exist_ok=True)
     probes = offbox_probes()
@@ -1422,8 +1656,17 @@ def inner_build(args):
     problems = evaluate_offbox(probes) + (["env unreadable"] if keys is None else env_key_problems(keys, NS_ENV_KEYS))
     ev = {"offbox": probes, "problems": problems, "build": "notrun"}
     if not problems:
+        ev["prisma_engine"] = prisma_engine_closure("/tmp/cache", NS_APP)
+        problems += namespace_engine_problems(ev["prisma_engine"], args.engine_sha256, probe_readonly(NS_PRISMA_CACHE))
+    if not problems:
         env = assert_safe_env(dict(os.environ))
-        ev["build"] = run_bounded([NS_NODE_BIN, BUILD_WRAPPER], f"{NS_OUT}/build.log", args.timeout, env,
+        # Evidence only: the verified cache entry answers Prisma before it would run this.
+        result, text = probe_engine_version(f"{NS_APP}/{'/'.join(PRISMA_ENGINE_DIR)}/{PRISMA_ENGINE_FILE}",
+                                            f"{NS_OUT}/engine-version.log", env, NS_APP)
+        ev["engine_version_probe"] = {"result": result, "output": text[:256],
+                                      "problems": engine_version_problems(result, text)}
+        timeout = max(args.timeout - round(time.monotonic() - started), 1)
+        ev["build"] = run_bounded([NS_NODE_BIN, BUILD_WRAPPER], f"{NS_OUT}/build.log", timeout, env,
                                   cwd=NS_APP, cap=LOG_CAP)
         if not bounded_ok(ev["build"]):
             problems.append(f"build failed: {ev['build']}")
@@ -1564,6 +1807,13 @@ def prepare_steps(layout, node_root):
     ]
 
 
+def require_prisma_engine(layout):
+    report = prisma_engine_closure(str(layout.cache), str(layout.app))
+    if report["problems"]:
+        raise StageStop("FAIL", [f"prisma engine closure: {p}" for p in report["problems"]])
+    return report
+
+
 def find_chrome(browsers):
     found = glob.glob(f"{browsers}/chromium-*/chrome-linux*/chrome")
     if len(found) != 1:
@@ -1584,12 +1834,19 @@ def prepare_body(args, layout):
         steps[label] = result
         if not bounded_ok(result):
             raise StageStop("FAIL", [f"prepare {label}: {result}"])
+    engine = require_prisma_engine(layout)
+    steps["prisma-engine-version"], text = probe_engine_version(
+        layout.app.joinpath(*PRISMA_ENGINE_DIR, PRISMA_ENGINE_FILE),
+        layout.report / "prepare-prisma-engine-version.log", scrubbed_env(), layout.work)
+    problems = engine_version_problems(steps["prisma-engine-version"], text)
+    if problems:
+        raise StageStop("FAIL", problems)
     problems = preflight_problems()
     if problems:
         raise StageStop("HOLD", problems)
     chrome = find_chrome(layout.browsers)
     return {"status": "PASS", "label": "public networked prepare", "node_root": node_root,
-            "chrome": os.path.relpath(chrome, layout.browsers), "steps": steps}
+            "chrome": os.path.relpath(chrome, layout.browsers), "steps": steps, "prisma_engine": engine}
 
 
 def write_synthetic_etc(layout):
@@ -1632,8 +1889,12 @@ def build_body(args, layout):
     problems = stage_tree_problems(str(layout.app), expected)
     if not expected or problems:
         raise StageStop("FAIL", ["stage drifted before build"] + problems[:50])
+    engine = require_prisma_engine(layout)
+    if (read_json(layout.report / "stage-prepare.json") or {}).get("prisma_engine") != engine:
+        raise StageStop("FAIL", ["prisma engine closure changed since prepare"])
     write_synthetic_etc(layout)
-    inner = [SELF_PYTHON, "-I", f"{NS_HARNESS}/ot-linux-qa.py", "inner-build", "--timeout", str(BUILD_TIMEOUT - 15)]
+    inner = [SELF_PYTHON, "-I", f"{NS_HARNESS}/ot-linux-qa.py", "inner-build", "--timeout", str(BUILD_TIMEOUT - 15),
+             "--engine-sha256", engine["sha256"]]
     result = run_in_namespace(layout, stage_node_root(layout), "build", inner,
                               layout.work / "build-info.json", "bwrap-build.log", BUILD_TIMEOUT)
     inner_report = read_json(layout.report / "inner-build.json") or {}
@@ -1645,7 +1906,8 @@ def build_body(args, layout):
     if problems:
         raise StageStop("FAIL", problems[:50])
     return {"status": "PASS", "isolated": True, "offbox": inner_report.get("offbox"),
-            "namespace_build": result, "post_build_tree": "matches pin excluding tsconfig.json"}
+            "namespace_build": result, "post_build_tree": "matches pin excluding tsconfig.json",
+            "prisma_engine": engine, "engine_version_probe": inner_report.get("engine_version_probe")}
 
 
 def create_tripwire(layout):
@@ -1749,6 +2011,7 @@ def parse_args(argv):
             item.add_argument("--node", required=True)
     item = sub.add_parser("inner-build")
     item.add_argument("--timeout", type=int, required=True)
+    item.add_argument("--engine-sha256", required=True)
     item = sub.add_parser("inner-run")
     item.add_argument("--port", type=int, required=True)
     item.add_argument("--tripwire", required=True)
