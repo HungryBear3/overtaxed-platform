@@ -117,8 +117,12 @@ process.env.STRIPE_PRICE_T3_DFY = "price_t3"
 process.env.OT_CHECKOUT_GATE_SECRET = "test-gate-secret-at-least-32-characters"
 
 const { POST } = require("@/app/api/checkout/session/route") as typeof import("@/app/api/checkout/session/route")
-const { businessDaysBetween, chicagoCalendarDay } =
-  require("@/lib/checkout/business-days") as typeof import("@/lib/checkout/business-days")
+const {
+  COOK_COUNTY_OBSERVED_HOLIDAYS_2026,
+  businessDaysBetween,
+  chicagoCalendarDay,
+  evaluateCheckoutBusinessDayCutoff,
+} = require("@/lib/checkout/business-days") as typeof import("@/lib/checkout/business-days")
 
 const base = {
   email: "buyer@example.com",
@@ -147,6 +151,11 @@ const FIXTURE_CALENDAR_URL = "https://www.cookcountyassessoril.gov/assessment-ca
  * canonical state requires a same-day retrieval inside 14 days of a close, and
  * a fixture with hard-coded 2026 dates would go stale the way the map this
  * branch removes did.
+ *
+ * Relative dates do not outlive the checkout holiday calendar, though: it covers
+ * 2026 only, and the cutoff refuses a run day or close day outside that year.
+ * From 2026-12-12 the default 20-day close lands in 2027, so a case that expects
+ * checkout to open needs a supported calendar before it can pass.
  */
 function armWindow(
   townships: Array<{ key: string; name: string }>,
@@ -777,18 +786,22 @@ describe("the approved three-business-day product cutoff", () => {
   // business-day arithmetic at all.
   //
   // Close days are constructed by stepping Chicago calendar days until the
-  // required number of business days remains, so these cases mean the same
-  // thing whatever weekday the suite runs on. The arithmetic itself is proven
-  // independently in `__tests__/checkout/business-days.test.ts`.
+  // required number of business days remains, counted against the same Cook
+  // County 2026 holiday set the route's cutoff applies, so these cases mean the
+  // same thing whatever weekday the suite runs on while the run day and close
+  // day are both in 2026. That set says nothing about 2027, so the search below
+  // treats 2027 as holiday-free and the cutoff refuses any close it finds there.
+  // The arithmetic itself is proven independently in
+  // `__tests__/checkout/business-days.test.ts`.
 
   /** The first Chicago day with exactly `target` business days remaining. */
-  function closeDayWithBusinessDays(target: number): string {
-    const today = chicagoCalendarDay(Date.now())
+  function closeDayWithBusinessDays(target: number, now: number = Date.now()): string {
+    const today = chicagoCalendarDay(now)
     for (let step = 0; step <= 40; step += 1) {
       const day = new Date(Date.parse(`${today}T00:00:00Z`) + step * 86_400_000)
         .toISOString()
         .slice(0, 10)
-      if (businessDaysBetween(today, day) === target) return day
+      if (businessDaysBetween(today, day, COOK_COUNTY_OBSERVED_HOLIDAYS_2026) === target) return day
     }
     throw new Error(`no close day found for ${target} business days`)
   }
@@ -834,6 +847,24 @@ describe("the approved three-business-day product cutoff", () => {
 
     expect(res.status).toBe(200)
     expect(stripeCreate).toHaveBeenCalled()
+  })
+
+  it("skips the county-observed 2026-11-11 holiday when finding the boundary", () => {
+    // Friday 2026-11-06, noon in Chicago: Mon 9, Tue 10, closed Wed 11, Thu 12.
+    // A weekday-only fixture picks 2026-11-11 as three days out, which the
+    // cutoff counts as two and refuses.
+    const now = Date.parse("2026-11-06T18:00:00Z")
+
+    expect(evaluateCheckoutBusinessDayCutoff({ closeDate: "2026-11-11", now })).toMatchObject({
+      allowed: false,
+      reason: "insufficient_business_days",
+      businessDaysRemaining: 2,
+    })
+    expect(evaluateCheckoutBusinessDayCutoff({ closeDate: "2026-11-12", now })).toMatchObject({
+      allowed: true,
+      businessDaysRemaining: 3,
+    })
+    expect(closeDayWithBusinessDays(3, now)).toBe("2026-11-12")
   })
 
   it("cannot be satisfied by Stripe's thirty-minute session minimum", async () => {
