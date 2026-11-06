@@ -971,5 +971,317 @@ class Driver(unittest.TestCase):
         self.assertIn("'Fixtureville.invalid'", self.text)
 
 
+class BuildFailureExcerpt(unittest.TestCase):
+    SECRET = "OUTSIDE_REPORT_NEEDLE"
+    FAILED = '{"status": "FAIL", "problems": ["namespace build: synthetic"]}'
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name, "qa")
+        self.report = self.root / "report"
+        self.report.mkdir(parents=True)
+        self.outside = pathlib.Path(tmp.name, "outside.log")
+        self.outside.write_text(self.SECRET)
+
+    def write(self, name, data):
+        path = self.report / name
+        path.write_bytes(data if isinstance(data, bytes) else data.encode())
+        return path
+
+    def failed(self):
+        self.write("stage-build.json", self.FAILED)
+        self.write("inner-build.json", '{"build": {"exit": 1, "log_bytes": 1197}, "problems": ["build failed"]}')
+
+    def lines(self):
+        return qa.build_failure_excerpt(self.report)
+
+    def meta(self, name, lines=None):
+        prefix = f"--- build failure {name}: "
+        found = [line for line in (lines or self.lines()) if line.startswith(prefix)]
+        self.assertEqual(len(found), 1, name)
+        return qa.json.loads(found[0][len(prefix):])
+
+    def test_a_1197_byte_log_fits_whole_with_its_labels(self):
+        self.failed()
+        body = ("Error: synthetic failure line\n" * 60).encode()
+        body = (b"FIRST-LINE\n" + body)[:1185] + b"\nFINAL-LINE\n"
+        self.assertEqual(len(body), 1197)
+        self.write("build.log", body)
+        lines = self.lines()
+        meta = self.meta("build.log", lines)
+        self.assertEqual((meta["bytes"], meta["head_bytes"], meta["tail_bytes"], meta["omitted_bytes"]),
+                         (1197, 1197, 0, 0))
+        self.assertEqual(meta["sha256"], qa.hashlib.sha256(body).hexdigest())
+        self.assertEqual(meta["newlines"], body.count(b"\n"))
+        self.assertIs(meta["truncated"], False)
+        self.assertIs(meta["output_cut"], False)
+        self.assertTrue(meta["sha256_complete"])
+        for line in body.decode().rstrip("\n").split("\n"):
+            self.assertIn(f"| {line}", lines)
+
+    def test_safe_fixture_errors_are_retained_from_every_file(self):
+        self.failed()
+        self.write("bwrap-build.log", "bwrap: synthetic setup error\n")
+        self.write("build.log", "Error: synthetic generate error\n")
+        lines = self.lines()
+        for text in ("| bwrap: synthetic setup error", "| Error: synthetic generate error"):
+            self.assertIn(text, lines)
+        self.assertIn("namespace build: synthetic", "\n".join(lines))
+        self.assertIn('"log_bytes": 1197', "\n".join(lines))
+        self.assertEqual(self.meta("stage-build.json", lines)["json"], "valid")
+        self.assertEqual(self.meta("inner-build.json", lines)["json"], "valid")
+
+    def test_a_large_log_gets_labelled_head_and_tail_windows(self):
+        self.failed()
+        size = 3 * qa.MIB
+        filler = b"y\n" * (size // 2)
+        body = b"HEAD-MARK\n" + filler[:size // 2] + b"MIDDLE-MARK\n" + filler[:size // 2] + b"TAIL-MARK\n"
+        self.write("build.log", body)
+        lines = self.lines()
+        text = "\n".join(lines)
+        meta = self.meta("build.log", lines)
+        self.assertIn("| HEAD-MARK", lines)
+        self.assertIn("| TAIL-MARK", lines)
+        self.assertNotIn("MIDDLE-MARK", text)
+        self.assertIs(meta["truncated"], True)
+        self.assertEqual(meta["omitted_bytes"], len(body) - meta["head_bytes"] - meta["tail_bytes"])
+        self.assertEqual(meta["tail_offset"], len(body) - meta["tail_bytes"])
+        self.assertEqual(meta["sha256"], qa.hashlib.sha256(body).hexdigest())
+        self.assertIn(f"--- build failure build.log tail offset={meta['tail_offset']} bytes={meta['tail_bytes']}", lines)
+
+    def test_a_passing_build_keeps_its_logs_out_of_the_job_log(self):
+        self.write("stage-build.json", '{"status": "PASS"}')
+        self.write("build.log", "NOT-FOR-THE-JOB-LOG")
+        self.assertEqual(self.lines(), [])
+
+    def test_a_run_that_never_reached_the_build_prints_nothing(self):
+        self.assertEqual(self.lines(), [])
+
+    def test_a_killed_build_with_no_stage_report_is_still_shown(self):
+        self.write("build.log", "killed before the stage report\n")
+        lines = self.lines()
+        self.assertIn("| killed before the stage report", lines)
+        self.assertEqual(self.meta("stage-build.json", lines), {"state": "absent"})
+
+    def test_only_the_four_fixed_names_are_read(self):
+        self.failed()
+        for name in ("server.log", "browser.log", "prepare-npm-ci.log", "bwrap-run.log", "build.log.1", ".env",
+                     "stage-prepare.json", "inner.json"):
+            self.write(name, "UNNAMED")
+        (self.report / "nested").mkdir()
+        self.write("nested/build.log", "UNNAMED")
+        self.assertNotIn("UNNAMED", "\n".join(self.lines()))
+        self.assertEqual(qa.BUILD_EXCERPT_FILES, ("inner-build.json", "stage-build.json", "bwrap-build.log", "build.log"))
+
+    def test_symlinks_are_refused_without_reading_the_target(self):
+        self.failed()
+        os.symlink(self.outside, self.report / "build.log")
+        os.symlink("bwrap-build.log", self.report / "bwrap-build.log")
+        lines = self.lines()
+        self.assertEqual(self.meta("build.log", lines), {"state": "refused:symlink"})
+        self.assertEqual(self.meta("bwrap-build.log", lines), {"state": "refused:symlink"})
+        self.assertNotIn(self.SECRET, "\n".join(lines))
+
+    def test_a_host_hardlink_is_refused_and_not_even_hashed(self):
+        self.failed()
+        os.link(self.outside, self.report / "build.log")
+        lines = self.lines()
+        self.assertEqual(self.meta("build.log", lines), {"state": "refused:hardlink"})
+        self.assertNotIn(self.SECRET, "\n".join(lines))
+        self.assertNotIn(qa.hashlib.sha256(self.SECRET.encode()).hexdigest(), "\n".join(lines))
+
+    def test_fifo_and_directory_are_refused_without_blocking(self):
+        self.failed()
+        os.mkfifo(self.report / "build.log")
+        (self.report / "bwrap-build.log").mkdir()
+        lines = self.lines()
+        self.assertEqual(self.meta("build.log", lines), {"state": "refused:not-regular"})
+        self.assertEqual(self.meta("bwrap-build.log", lines), {"state": "refused:not-regular"})
+
+    def test_a_foreign_owner_is_refused(self):
+        self.failed()
+        self.write("build.log", "FOREIGN")
+        real = os.geteuid()
+        calls = {"n": 0}
+
+        def euid():
+            calls["n"] += 1
+            return real if calls["n"] == 1 else real + 1
+        with mock.patch.object(qa.os, "geteuid", euid):
+            lines = self.lines()
+        self.assertEqual(self.meta("build.log", lines), {"state": "refused:owner"})
+        self.assertNotIn("FOREIGN", "\n".join(lines))
+
+    def test_report_directory_and_parent_symlinks_are_refused(self):
+        real = self.root.parent / "elsewhere" / "report"
+        real.mkdir(parents=True)
+        (real / "stage-build.json").write_text(self.FAILED)
+        (real / "build.log").write_text(self.SECRET)
+        link = self.root / "linked-report"
+        os.symlink(real, link)
+        parent = self.root.parent / "linked-root"
+        os.symlink(real.parent, parent)
+        for path in (link, parent / "report"):
+            lines = qa.build_failure_excerpt(path)
+            self.assertEqual(len(lines), 1, path)
+            self.assertIn("report directory refused", lines[0])
+            self.assertNotIn(self.SECRET, lines[0])
+
+    def test_bad_json_fails_safe_and_keeps_the_raw_window(self):
+        deep = "[" * 200_000
+        for data, state in (("{not json", "malformed"), ("", "malformed"), (b"\xff\xfe\xff", "malformed"),
+                            ('{"status": NaN}', "malformed"), (deep, "too_deep"),
+                            ("[" * 100 + "]" * 100, "too_deep"),
+                            ('{"status": "PASS", "status": "FAIL"}', "duplicate_key"),
+                            ('{"status": "FAIL", "status": "PASS"}', "duplicate_key")):
+            self.write("stage-build.json", data)
+            self.write("build.log", "kept after bad json\n")
+            lines = self.lines()
+            self.assertEqual(self.meta("stage-build.json", lines)["json"], state, data[:20])
+            self.assertIn("| kept after bad json", lines)
+        self.write("stage-build.json", '{"status": "PASS", "status": "PASS"}')
+        self.assertIn('status', "\n".join(self.lines()))
+
+    def test_oversize_json_is_not_parsed_and_never_reads_as_pass(self):
+        self.write("stage-build.json", '{"status": "PASS", "pad": "' + "x" * 200 + '"}')
+        self.write("build.log", "oversize stage\n")
+        with mock.patch.object(qa, "BUILD_JSON_PARSE_CAP", 16), \
+                mock.patch.object(qa, "classify_build_json", side_effect=AssertionError("parsed")):
+            lines = self.lines()
+        self.assertEqual(self.meta("stage-build.json", lines)["json"], "oversize")
+        self.assertIn("| oversize stage", lines)
+
+    def test_cycle_and_node_bounds(self):
+        cycle = []
+        cycle.append(cycle)
+        with mock.patch.object(qa.json, "loads", return_value=cycle):
+            self.assertEqual(qa.classify_build_json(b"[]"), ("too_deep", None))
+        with mock.patch.object(qa, "BUILD_JSON_NODES", 3):
+            self.assertEqual(qa.classify_build_json(b"[1, 2, 3, 4]"), ("too_deep", None))
+        self.assertEqual(qa.classify_build_json(b'{"a": [1]}'), ("valid", {"a": [1]}))
+
+    def test_log_text_cannot_act_as_a_command_or_a_harness_line(self):
+        self.failed()
+        self.write("build.log", b"::stop-commands::token\n  ::error::spoof\nprefix ##[error]spoof ###[x\n"
+                                b"\x1b[2Jclear\rover\x00nul\x7f\n\xff\xfe bytes \xe2\x80\xa8 sep\n"
+                                b"--- build failure build.log: {}\n--- RESULT.json\n")
+        lines = self.lines()
+        self.meta("build.log", lines)
+        start = lines.index(next(l for l in lines if l.startswith("--- build failure build.log head")))
+        body = lines[start + 1:-1]
+        self.assertEqual(len(body), 7)
+        for line in lines:
+            self.assertTrue(line.isascii(), line)
+            self.assertFalse(line.lstrip().startswith("::"), line)
+            self.assertNotIn("##[", line)
+            self.assertIsNone(re.search(r"[\x00-\x08\x0b-\x1f\x7f]", line), line)
+        self.assertTrue(all(line.startswith("| ") for line in body))
+        self.assertIn("| --- RESULT.json", body)
+
+    def test_outbound_cap_holds_and_no_file_starves_the_rest(self):
+        for name in qa.BUILD_EXCERPT_FILES:
+            self.write(name, f"{name}-START\n".encode() + b"\xff" * (3 * qa.MIB))
+        lines = self.lines()
+        self.assertLessEqual(sum(len(line) + 1 for line in lines), qa.BUILD_EXCERPT_CAP)
+        for name in qa.BUILD_EXCERPT_FILES:
+            self.assertIn(f"| {name}-START", lines)
+            self.assertIs(self.meta(name, lines)["output_cut"], True)
+            self.assertIs(self.meta(name, lines)["truncated"], True)
+        self.assertRegex(lines[-1], r"^--- build failure excerpt: chars=\d+ cap=131072 cut=false$")
+
+    def test_a_smaller_cap_is_strict_and_says_it_cut(self):
+        for name in qa.BUILD_EXCERPT_FILES:
+            self.write(name, "z\n" * 5000)
+        with mock.patch.object(qa, "BUILD_EXCERPT_CAP", 1024):
+            lines = self.lines()
+        self.assertLessEqual(sum(len(line) + 1 for line in lines), 1024)
+        self.assertRegex(lines[-1], r"cap=1024 cut=true$")
+
+    def test_hash_scope_is_labelled_when_capped(self):
+        self.failed()
+        self.write("build.log", "abcdef")
+        with mock.patch.object(qa, "BUILD_HASH_CAP", 3):
+            meta = self.meta("build.log")
+        self.assertEqual((meta["sha256_bytes"], meta["sha256_complete"]), (3, False))
+        self.assertEqual(meta["sha256"], qa.hashlib.sha256(b"abc").hexdigest())
+
+    def seal(self):
+        printed = []
+        with mock.patch.object(qa, "print", create=True, side_effect=lambda line, **_kw: printed.append(line)):
+            code = qa.seal_body(None, qa.Layout(self.root))
+        return code, printed
+
+    def test_seal_prints_the_failed_build_and_keeps_the_verdict_last(self):
+        self.failed()
+        self.write("build.log", "Error: synthetic generate error\n")
+        code, printed = self.seal()
+        self.assertEqual(code, 1)
+        self.assertIn("| Error: synthetic generate error", printed)
+        self.assertEqual(qa.json.loads(printed[-1]), {"status": "FAIL", "dropped": []})
+        self.assertLess(printed.index("--- RESULT.json"), printed.index("| Error: synthetic generate error"))
+        self.assertEqual(qa.read_json(self.report / "RESULT.json")["problems"], ["run did not complete"])
+
+    def test_seal_of_a_passing_run_is_unchanged(self):
+        result = '{"status": "PASS"}'
+        self.write("RESULT.json", result)
+        self.write("stage-build.json", '{"status": "PASS"}')
+        self.write("build.log", "NOT-FOR-THE-JOB-LOG")
+        code, printed = self.seal()
+        self.assertEqual(code, 0)
+        self.assertNotIn("NOT-FOR-THE-JOB-LOG", "\n".join(printed))
+        self.assertFalse([line for line in printed if line.startswith("--- build failure")])
+        self.assertEqual((self.report / "RESULT.json").read_text(), result)
+
+    def test_seal_survives_an_excerpt_error_without_touching_the_result(self):
+        self.failed()
+        self.write("RESULT.json", '{"status": "HOLD", "problems": ["held"]}')
+        before = (self.report / "RESULT.json").read_bytes()
+        for error in (RuntimeError("boom-text"), OSError("boom-text"), RecursionError("boom-text")):
+            with mock.patch.object(qa, "build_failure_excerpt", side_effect=error):
+                code, printed = self.seal()
+            self.assertEqual(code, 1)
+            self.assertIn(f"--- build failure excerpt unavailable: {type(error).__name__}", printed)
+            self.assertNotIn("boom-text", "\n".join(printed))
+            self.assertEqual(qa.json.loads(printed[-1]), {"status": "HOLD", "dropped": []})
+            self.assertEqual((self.report / "RESULT.json").read_bytes(), before)
+
+    def test_seal_removes_planted_links_before_any_read(self):
+        self.failed()
+        os.symlink(self.outside, self.report / "build.log")
+        code, printed = self.seal()
+        self.assertEqual(code, 1)
+        self.assertNotIn(self.SECRET, "\n".join(printed))
+        self.assertFalse(os.path.lexists(self.report / "build.log"))
+        self.assertEqual(self.meta("build.log", printed), {"state": "absent"})
+
+    def test_seal_refuses_a_planted_hardlink(self):
+        self.failed()
+        os.link(self.outside, self.report / "build.log")
+        code, printed = self.seal()
+        self.assertEqual(code, 1)
+        self.assertNotIn(self.SECRET, "\n".join(printed))
+        self.assertEqual(self.meta("build.log", printed), {"state": "refused:hardlink"})
+
+
+class PrismaEnginePrepare(unittest.TestCase):
+    # @prisma/engines' postinstall is skipped by --ignore-scripts and swallows errors, so
+    # this networked step is what fetches schema-engine: the CLI's `generate` entry calls
+    # ensureNeededBinariesExist with failSilent false and a checksum-verified download.
+    def steps(self):
+        return qa.prepare_steps(qa.Layout("/w/_temp/ot-qa"), "/opt/hostedtoolcache/node/24/x64")
+
+    def test_networked_generate_follows_install_and_precedes_the_fence(self):
+        labels = [label for label, _argv, _env in self.steps()]
+        self.assertLess(labels.index("npm-ci"), labels.index("prisma-generate"))
+        argv = dict((label, argv) for label, argv, _env in self.steps())["prisma-generate"]
+        self.assertEqual(argv[-2:], ["/w/_temp/ot-qa/app/node_modules/prisma/build/index.js", "generate"])
+
+    def test_no_env_can_weaken_the_engine_download(self):
+        for _label, _argv, env in self.steps():
+            self.assertFalse([key for key in env if key.startswith(("PRISMA_", "BINARY_DOWNLOAD"))])
+        self.assertFalse([key for key in qa.namespace_env("build") if key.startswith("PRISMA_")])
+
+
 if __name__ == "__main__":
     unittest.main()

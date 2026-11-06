@@ -86,6 +86,17 @@ LOG_CAP = 8 * MIB
 REPORT_CAP = 32 * MIB
 EXCERPT_CAP = 64 * 1024
 EXCERPT_FILES = ("RESULT.json", "inner.json", "browser-evidence.json", "chrome-sandbox.json")
+BUILD_EXCERPT_FILES = ("inner-build.json", "stage-build.json", "bwrap-build.log", "build.log")
+BUILD_EXCERPT_CAP = 128 * 1024
+BUILD_META_RESERVE = 512
+BUILD_TRAILER_RESERVE = 96
+BUILD_HASH_CAP = REPORT_CAP
+BUILD_JSON_PARSE_CAP = MIB
+BUILD_JSON_DEPTH = 64
+BUILD_JSON_NODES = 100_000
+BUILD_META_KEYS = ("bytes", "json", "newlines", "sha256", "sha256_bytes", "sha256_complete", "state", "tail_offset")
+BUILD_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+BUILD_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 POLL = 0.25
 PREPARE_STEP_TIMEOUT = 240
 BUILD_TIMEOUT = 330
@@ -773,6 +784,217 @@ def report_excerpt(report_dir):
         # ASCII: the seal step runs with an empty locale and must not die printing.
         lines.append(data[:EXCERPT_CAP].decode("utf-8", "replace").encode("ascii", "backslashreplace").decode())
     return lines
+
+
+class _DuplicateKey(ValueError):
+    pass
+
+
+def _unique_keys(pairs):
+    out = {}
+    for key, value in pairs:
+        if key in out:
+            raise _DuplicateKey(key)
+        out[key] = value
+    return out
+
+
+def _reject_constant(name):
+    raise ValueError(name)
+
+
+def _json_exceeds_bounds(value):
+    """Iterative, so a deep or self-referencing value can only exhaust the bounds."""
+    stack = [(value, 1)]
+    nodes = 0
+    while stack:
+        item, depth = stack.pop()
+        nodes += 1
+        if depth > BUILD_JSON_DEPTH or nodes > BUILD_JSON_NODES:
+            return True
+        if isinstance(item, dict):
+            stack += [(child, depth + 1) for child in item.values()]
+        elif isinstance(item, list):
+            stack += [(child, depth + 1) for child in item]
+    return False
+
+
+def classify_build_json(data):
+    """A label only: the raw windows are emitted either way, so bad JSON loses nothing."""
+    try:
+        value = json.loads(data, object_pairs_hook=_unique_keys, parse_constant=_reject_constant)
+    except _DuplicateKey:
+        return "duplicate_key", None
+    except RecursionError:
+        return "too_deep", None
+    except ValueError:
+        return "malformed", None
+    return ("too_deep", None) if _json_exceeds_bounds(value) else ("valid", value)
+
+
+def open_report_dir(report_dir):
+    """The report directory and its parent are both opened without following a link."""
+    path = os.path.abspath(report_dir)
+    parent = os.open(os.path.dirname(path), BUILD_DIR_FLAGS)
+    try:
+        fd = os.open(os.path.basename(path), BUILD_DIR_FLAGS, dir_fd=parent)
+    finally:
+        os.close(parent)
+    if os.fstat(fd).st_uid != os.geteuid():
+        os.close(fd)
+        raise PermissionError(errno.EPERM, "report directory owner")
+    return fd
+
+
+def _pread_all(fd, count, offset):
+    chunks = []
+    while count > 0:
+        chunk = os.pread(fd, min(count, MIB), offset)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        count -= len(chunk)
+        offset += len(chunk)
+    return b"".join(chunks)
+
+
+def _measure_build_file(fd, name, size, window):
+    digest = hashlib.sha256()
+    newlines = hashed = 0
+    limit = min(size, BUILD_HASH_CAP)
+    while hashed < limit:
+        chunk = os.pread(fd, min(limit - hashed, MIB), hashed)
+        if not chunk:
+            break
+        digest.update(chunk)
+        newlines += chunk.count(b"\n")
+        hashed += len(chunk)
+    head_size = min(size, window)
+    tail_size = min(size - head_size, window)
+    out = {"state": "ok", "bytes": size, "sha256": digest.hexdigest(), "sha256_bytes": hashed,
+           "sha256_complete": hashed == size, "newlines": newlines, "tail_offset": size - tail_size,
+           "head": _pread_all(fd, head_size, 0), "tail": _pread_all(fd, tail_size, size - tail_size),
+           "json": None, "value": None}
+    if name.endswith(".json"):
+        if size > BUILD_JSON_PARSE_CAP:
+            out["json"] = "oversize"
+        else:
+            out["json"], out["value"] = classify_build_json(_pread_all(fd, size, 0))
+    return out
+
+
+def read_build_file(dir_fd, name, window):
+    """All facts come from one no-follow descriptor; a refused file reports nothing about its bytes.
+
+    The build namespace can write the report directory, so at seal time a link or
+    a FIFO here is hostile. O_NONBLOCK keeps a FIFO from hanging the open.
+    """
+    try:
+        fd = os.open(name, BUILD_FILE_FLAGS, dir_fd=dir_fd)
+    except FileNotFoundError:
+        return {"state": "absent"}
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EMLINK):
+            return {"state": "refused:symlink"}
+        return {"state": f"unreadable:{errno.errorcode.get(exc.errno, 'unknown')}"}
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            return {"state": "refused:not-regular"}
+        if info.st_nlink != 1:
+            return {"state": "refused:hardlink"}
+        if info.st_uid != os.geteuid():
+            return {"state": "refused:owner"}
+        return _measure_build_file(fd, name, info.st_size, window)
+    except OSError as exc:
+        return {"state": f"unreadable:{errno.errorcode.get(exc.errno, 'unknown')}"}
+    finally:
+        os.close(fd)
+
+
+def excerpt_lines(data):
+    """ASCII with no controls, and every line prefixed, so log text cannot act as a
+    runner workflow command or pass for a harness line in the job log."""
+    if not data:
+        return []
+    text = data.decode("utf-8", "backslashreplace").encode("ascii", "backslashreplace").decode()
+    text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", lambda m: f"\\x{ord(m.group()):02x}", text)
+    return ["| " + line.replace("##[", "#\\x23[") for line in text.removesuffix("\n").split("\n")]
+
+
+def fit_lines(lines, allowance):
+    kept = []
+    for line in lines:
+        room = allowance - len(line) - 1
+        if room < 0:
+            if allowance > 3:
+                kept.append(line[:allowance - 1])
+            return kept, 0, True
+        kept.append(line)
+        allowance = room
+    return kept, allowance, False
+
+
+def render_build_file(name, report, allowance):
+    prefix = f"--- build failure {name}"
+    if report["state"] != "ok":
+        return [f"{prefix}: {json.dumps({'state': report['state']})}"]
+    body = allowance - BUILD_META_RESERVE
+    head, left, head_cut = fit_lines(excerpt_lines(report["head"]), body // 2)
+    # Fitted backwards: the last lines of a failed build are the ones worth keeping.
+    tail, _, tail_cut = fit_lines(excerpt_lines(report["tail"])[::-1], left + body - body // 2)
+    tail.reverse()
+    head_size, tail_size = len(report["head"]), len(report["tail"])
+    omitted = report["bytes"] - head_size - tail_size
+    meta = {key: report[key] for key in BUILD_META_KEYS}
+    meta.update(head_bytes=head_size, tail_bytes=tail_size, omitted_bytes=omitted, truncated=omitted > 0,
+                output_cut=head_cut or tail_cut)
+    lines = [f"{prefix}: {json.dumps(meta, sort_keys=True)}"]
+    if head_size:
+        lines += [f"{prefix} head offset=0 bytes={head_size}", *head]
+    if tail_size:
+        lines += [f"{prefix} tail offset={report['tail_offset']} bytes={tail_size}", *tail]
+    return lines
+
+
+def build_failure_excerpt(report_dir):
+    """Fixed names on a failed build only, windowed under one outbound cap.
+
+    A passing build, or a run that never reached it, prints nothing here: the
+    normal run keeps build.log out of the job log exactly as before.
+    """
+    try:
+        dir_fd = open_report_dir(report_dir)
+    except OSError as exc:
+        return [f"--- build failure excerpt: report directory refused: {errno.errorcode.get(exc.errno, 'unknown')}"]
+    # Equal shares, so one huge or hostile file cannot starve the others.
+    cap = BUILD_EXCERPT_CAP
+    share = (cap - BUILD_TRAILER_RESERVE) // len(BUILD_EXCERPT_FILES)
+    window = max(share - BUILD_META_RESERVE, 0) * 3 // 8
+    try:
+        reports = {name: read_build_file(dir_fd, name, window) for name in BUILD_EXCERPT_FILES}
+    finally:
+        os.close(dir_fd)
+    stage = reports["stage-build.json"]
+    if isinstance(stage.get("value"), dict) and stage["value"].get("status") == "PASS":
+        return []
+    if all(report["state"] == "absent" for report in reports.values()):
+        return []
+    lines = []
+    for name in BUILD_EXCERPT_FILES:
+        lines += render_build_file(name, reports[name], share)
+    kept, _, cut = fit_lines(lines, cap - BUILD_TRAILER_RESERVE)
+    chars = sum(len(line) + 1 for line in kept)
+    return kept + [f"--- build failure excerpt: chars={chars} cap={cap} cut={str(cut).lower()}"]
+
+
+def print_build_failure_excerpt(report_dir):
+    """Diagnostics only: nothing here may change or hide the sealed result."""
+    try:
+        for line in build_failure_excerpt(report_dir):
+            print(line, flush=True)
+    except Exception as exc:  # noqa: BLE001 - the type alone, so no file text is echoed
+        print(f"--- build failure excerpt unavailable: {type(exc).__name__}", flush=True)
 
 
 def enforce_report_cap(report_dir):
@@ -1508,6 +1730,7 @@ def seal_body(args, layout):
     dropped = enforce_report_cap(layout.report)
     for line in report_excerpt(layout.report):
         print(line, flush=True)
+    print_build_failure_excerpt(layout.report)
     print(json.dumps({"status": existing.get("status"), "dropped": dropped}), flush=True)
     return 0 if existing.get("status") == "PASS" and not dropped else 1
 
