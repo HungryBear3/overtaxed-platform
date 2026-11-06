@@ -2,6 +2,7 @@
 // Synthetic browser driver for /check. Started by ot-linux-qa.py inside the
 // namespace, never directly. Browser proof only: POST /api/free-check is answered
 // here and never reaches the backend.
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -25,6 +26,28 @@ const NETWORK_ERROR = 'Network error. Please try again.';
 const SCREENSHOT_CAP = 2 * 1024 * 1024;
 const REQUEST_RECORD_CAP = 500;
 const GATE_WAIT_MS = 30000;
+// Fixed proof files, read back by ot-linux-qa.py. Diagnostic only: nothing here
+// reconciles a request, and the seen/routed object oracle stays the only count.
+const PROOF_SCHEMA = 1;
+const PROOF_BYTE_CAP = 65536;
+const UNMATCHED_RECORD_CAP = 40;
+const UNKNOWN_RECORD_CAP = 8;
+const RELATED_RECORD_CAP = 24;
+const LIFE_CAP = 8;
+const DRAIN_MS = 250;
+const HASH_CHARS = 24;
+const READABLE_PATH = /^\/(?:check|favicon\.ico|api\/free-check|_next\/static\/[A-Za-z0-9._~/-]{1,160})$/;
+const FAILURE_KINDS = new Map([
+  ['net::ERR_ABORTED', 'aborted'],
+  ['net::ERR_BLOCKED_BY_CLIENT', 'blocked_by_client'],
+  ['net::ERR_FAILED', 'failed'],
+  ['net::ERR_CONNECTION_REFUSED', 'connection_refused'],
+  ['net::ERR_CONNECTION_RESET', 'connection_reset'],
+  ['net::ERR_TIMED_OUT', 'timed_out'],
+  ['net::ERR_NAME_NOT_RESOLVED', 'name_not_resolved'],
+  ['net::ERR_ADDRESS_UNREACHABLE', 'address_unreachable'],
+  ['net::ERR_INTERNET_DISCONNECTED', 'internet_disconnected'],
+]);
 
 // Expected results follow components/check/FreeCheckForm.tsx exactly. null-json
 // is the subtle one: the 503 branch sets the status role and Assessor fallback
@@ -63,37 +86,299 @@ const tally = { total: 0, fulfilled: 0, aborted: 0, continued: 0, posts: 0, cont
 const state = { phase: 'startup', current: null, closing: false };
 const routed = new Set();
 const seen = new Set();
+// Keyed by the Request object itself: two requests for one URL are two records.
+const ledger = new Map();
+const accounting = {
+  order: 0,
+  lateEvents: 0,
+  lifeDropped: 0,
+  callbackErrors: {},
+  snapshots: { atClose: null, afterClose: null, afterDrain: null },
+  close: 'notrun',
+  failure: null,
+};
 
 function assert(condition, message) {
   if (!condition) throw new Error('ASSERTION FAILED: ' + message);
 }
 
-function writeJson(name, value) {
+function writeText(name, text) {
   const file = path.join(OT_OUT, name);
-  fs.writeFileSync(file + '.tmp', JSON.stringify(value, null, 2));
+  fs.writeFileSync(file + '.tmp', text);
   fs.renameSync(file + '.tmp', file);
+}
+
+function writeJson(name, value) {
+  writeText(name, JSON.stringify(value, null, 2));
+}
+
+// A throwing listener must surface as a counted failure, not as a lost event.
+function guard(name, callback) {
+  try {
+    return callback();
+  } catch {
+    accounting.callbackErrors[name] = (accounting.callbackErrors[name] || 0) + 1;
+    return undefined;
+  }
+}
+
+function digest(text) {
+  return 'sha256:' + crypto.createHash('sha256').update(String(text)).digest('hex').slice(0, HASH_CHARS);
+}
+
+function safeQuery(search) {
+  // Key names only. A part with no `=` may be a bare value, so it is never readable.
+  if (!search) return null;
+  const pairs = search.slice(1).split('&');
+  const keys = pairs.map((pair) => pair.split('=')[0]);
+  const readable = pairs.length <= 8 && keys.join(',').length <= 64
+    && pairs.every((pair, index) => pair.includes('=') && /^[A-Za-z0-9_-]{1,24}$/.test(keys[index]));
+  return readable ? keys.join(',') : digest(keys.join('&'));
+}
+
+function safeUrl(url) {
+  // Reads origin, host, pathname and key names only: never userinfo, values or a fragment.
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { url: 'unparseable:' + digest(url), query: null };
+  }
+  if (!/^https?:$/.test(parsed.protocol)) {
+    const scheme = /^[a-z][a-z0-9+.-]{0,15}:$/.test(parsed.protocol) ? parsed.protocol : 'other:';
+    return { url: scheme + digest(parsed.host + parsed.pathname), query: null };
+  }
+  const query = safeQuery(parsed.search);
+  const route = parsed.pathname;
+  if (parsed.origin === ORIGIN) return { url: READABLE_PATH.test(route) ? route : 'same-origin:' + digest(route), query };
+  const host = /^[A-Za-z0-9.:[\]-]{1,100}$/.test(parsed.host) ? parsed.host : digest(parsed.host);
+  return { url: parsed.protocol + '//' + host + '/' + digest(route), query };
+}
+
+function safeFailure(text) {
+  return FAILURE_KINDS.get(text) || 'other';
+}
+
+function safeErrorKind(error) {
+  const message = String(error && error.message || error);
+  if (error && error.name === 'TimeoutError') return 'timeout';
+  if (message.startsWith('ASSERTION FAILED')) return 'assertion';
+  return /closed/i.test(message) ? 'closed' : 'other';
+}
+
+function expectedOnly(value, wanted) {
+  // A DOM attribute is saved only when it is the value the contract names.
+  return value === wanted ? value : 'unexpected';
+}
+
+function recordFor(request) {
+  let item = ledger.get(request);
+  if (!item) {
+    const { url, query } = safeUrl(request.url());
+    const method = request.method();
+    const resourceType = request.resourceType();
+    item = {
+      id: ledger.size + 1,
+      phase: state.phase,
+      method: /^[A-Z]{1,16}$/.test(method) ? method : 'OTHER',
+      url,
+      query,
+      resourceType: /^[a-z]{1,16}$/.test(resourceType) ? resourceType : 'other',
+      seen: false,
+      handlerSeen: false,
+      entry: null,
+      redirectedFrom: null,
+      redirectedTo: null,
+      status: null,
+      finished: false,
+      failed: false,
+      canceled: false,
+      failure: null,
+      closing: false,
+      life: [],
+    };
+    ledger.set(request, item);
+  }
+  return item;
+}
+
+function linkRedirects(request, item) {
+  const from = request.redirectedFrom();
+  const to = request.redirectedTo();
+  if (from) {
+    const precursor = recordFor(from);
+    item.redirectedFrom = precursor.id;
+    precursor.redirectedTo = item.id;
+  }
+  if (to) {
+    const successor = recordFor(to);
+    item.redirectedTo = successor.id;
+    successor.redirectedFrom = item.id;
+  }
+}
+
+function note(request, event) {
+  const item = recordFor(request);
+  accounting.order += 1;
+  if (state.closing) {
+    item.closing = true;
+    accounting.lateEvents += 1;
+  }
+  if (item.life.length < LIFE_CAP) item.life.push(`${event}@${accounting.order}${state.closing ? ':closing' : ''}`);
+  else accounting.lifeDropped += 1;
+  linkRedirects(request, item);
+  return item;
+}
+
+function observe(context) {
+  context.on('request', (request) => guard('request', () => {
+    seen.add(request);
+    recordFor(request).seen = true;
+    note(request, 'seen');
+  }));
+  context.on('response', (response) => guard('response', () => {
+    const status = response.status();
+    const item = note(response.request(), 'response');
+    item.status = Number.isInteger(status) && status >= 0 && status <= 999 ? status : null;
+  }));
+  context.on('requestfinished', (request) => guard('requestfinished', () => {
+    note(request, 'finished').finished = true;
+  }));
+  context.on('requestfailed', (request) => guard('requestfailed', () => {
+    const item = note(request, 'failed');
+    const failure = request.failure();
+    item.failed = true;
+    item.failure = safeFailure(failure && failure.errorText);
+    item.canceled = item.failure === 'aborted';
+  }));
+}
+
+function unroutedRequests() {
+  return [...seen].filter((q) => /^https?:/.test(q.url()) && !routed.has(q));
+}
+
+function snapshot(name) {
+  guard('snapshot', () => {
+    const pending = [...ledger.values()].filter((item) => item.seen && !item.finished && !item.failed);
+    accounting.snapshots[name] = { seen: seen.size, routed: routed.size, unrouted: unroutedRequests().length, pending: pending.length };
+  });
+}
+
+function publicRecord({ entry, life, ...fields }) {
+  return { ...fields, decision: entry ? entry.decision : null, life: life.join(' ') };
+}
+
+function redirectPeers(items) {
+  // Every hop of an unmatched record's chain, so its IDs resolve inside the proof.
+  const byId = new Map([...ledger.values()].map((item) => [item.id, item]));
+  const listed = new Set(items.map((item) => item.id));
+  const peers = [];
+  const queue = [...items];
+  while (queue.length) {
+    const item = queue.pop();
+    for (const id of [item.redirectedFrom, item.redirectedTo]) {
+      if (id && !listed.has(id)) {
+        listed.add(id);
+        peers.push(byId.get(id));
+        queue.push(byId.get(id));
+      }
+    }
+  }
+  return peers.sort((a, b) => a.id - b.id);
+}
+
+function accountingProof(unmatched) {
+  for (const request of seen) guard('link', () => linkRedirects(request, recordFor(request)));
+  const items = unmatched.map((request) => ledger.get(request)).filter(Boolean);
+  const kept = items.slice(0, UNMATCHED_RECORD_CAP);
+  const unknown = [...ledger.values()].filter((item) => !item.seen);
+  const keptUnknown = unknown.slice(0, UNKNOWN_RECORD_CAP);
+  const related = redirectPeers([...items, ...unknown]);
+  const keptRelated = related.slice(0, RELATED_RECORD_CAP);
+  return {
+    kind: 'BROWSER REQUEST ACCOUNTING diagnostic; reconciles nothing',
+    schema: PROOF_SCHEMA,
+    counts: {
+      seen: seen.size,
+      routed: routed.size,
+      records: ledger.size,
+      unrouted: unmatched.length,
+      unknown: unknown.length,
+      related: related.length,
+      lateEvents: accounting.lateEvents,
+      callbackErrors: Object.values(accounting.callbackErrors).reduce((sum, count) => sum + count, 0),
+      unmatchedDropped: unmatched.length - kept.length,
+      unknownDropped: unknown.length - keptUnknown.length,
+      relatedDropped: related.length - keptRelated.length,
+      lifeDropped: accounting.lifeDropped,
+      requestsDropped: ev.requestsDropped,
+    },
+    callbackErrorsBy: accounting.callbackErrors,
+    snapshots: accounting.snapshots,
+    unmatched: kept.map(publicRecord),
+    unknown: keptUnknown.map(publicRecord),
+    related: keptRelated.map(publicRecord),
+  };
+}
+
+function summaryProof() {
+  const cases = {};
+  for (const [name, result] of Object.entries(ev.cases)) {
+    cases[name] = { status: result.status, failureKind: result.failureKind || null, posts: result.posts ?? null, linkCount: result.linkCount ?? null };
+  }
+  const control = ev.control && {
+    ok: ev.control.ok === true,
+    status: Number.isInteger(ev.control.status) ? ev.control.status : null,
+    markerSeen: ev.control.markerSeen === true,
+    posts: ev.control.posts,
+    fulfilled: ev.control.fulfilled,
+    fetchFailed: ev.control.fetchError !== null,
+  };
+  return {
+    kind: 'BROWSER RUN SUMMARY diagnostic; never a verdict',
+    schema: PROOF_SCHEMA,
+    cases,
+    control,
+    ok: ev.ok,
+    submitAttempted: ev.submitAttempted,
+    failure: accounting.failure || (ev.ok ? null : { phase: state.phase, kind: 'unknown' }),
+    cleanup: { closing: state.closing, close: accounting.close },
+    counts: ev.counts,
+  };
+}
+
+function fitProof(doc, cap = PROOF_BYTE_CAP) {
+  // Whatever cannot fit is counted, and a count above zero fails the run.
+  let text = JSON.stringify(doc, null, 1);
+  for (const [list, dropped] of [['related', 'relatedDropped'], ['unknown', 'unknownDropped'], ['unmatched', 'unmatchedDropped']]) {
+    while (doc[list] && doc[list].length && Buffer.byteLength(text) >= cap) {
+      doc[list].pop();
+      doc.counts[dropped] += 1;
+      text = JSON.stringify(doc, null, 1);
+    }
+  }
+  assert(Buffer.byteLength(text) < cap, 'proof over its byte cap');
+  return text;
 }
 
 function save() {
   ev.finishedAt = new Date().toISOString();
+  const unmatched = unroutedRequests();
   ev.counts = {
     ...tally,
-    unrouted: [...seen].filter((q) => /^https?:/.test(q.url()) && !routed.has(q)).length,
+    unrouted: unmatched.length,
     pageErrors: ev.errors.pageErrors.length,
     popups: ev.popups.length,
     observedWebSockets: ev.webSockets.length,
   };
   writeJson('browser-evidence.json', ev);
+  writeText('browser-accounting.json', fitProof(accountingProof(unmatched)));
+  writeText('browser-summary.json', fitProof(summaryProof()));
 }
 
 function describe(url) {
-  // Same-origin paths only, plus the host of anything blocked; never a query string.
-  try {
-    const parsed = new URL(url);
-    return parsed.origin === ORIGIN ? parsed.pathname : parsed.protocol + '//' + parsed.host + parsed.pathname;
-  } catch {
-    return '[unparseable]';
-  }
+  // The proof's own URL form, so the evidence holds no external path or unknown route.
+  return safeUrl(url).url;
 }
 
 function record(phase, method, url, resourceType) {
@@ -147,6 +432,12 @@ async function handler(route) {
   const url = request.url();
   routed.add(request);
   const entry = record(state.phase, method, url, request.resourceType());
+  guard('handler', () => {
+    const item = note(request, 'handler');
+    item.handlerSeen = true;
+    item.entry = entry;
+    entry.id = item.id;
+  });
   if (state.phase === 'control' && method === 'POST') tally.controlPosts += 1;
   try {
     if (method === 'POST' && url === API) return await answerApi(route, request, entry);
@@ -159,7 +450,7 @@ async function handler(route) {
     }
     return await deny(route, entry);
   } catch (error) {
-    if (!state.closing) ev.errors.handlerErrors.push({ url: describe(url), message: String(error && error.message || error) });
+    if (!state.closing) ev.errors.handlerErrors.push({ url: describe(url), kind: safeErrorKind(error) });
   }
 }
 
@@ -191,7 +482,7 @@ async function publishSandboxEvidence(page) {
     await page.waitForFunction(() => /sandboxed/i.test(document.body.innerText), null, { timeout: 5000 });
     out.text = (await page.evaluate(() => document.body.innerText)).slice(0, 8192);
   } catch (error) {
-    out.error = String(error && error.message || error).slice(0, 500);
+    out.error = safeErrorKind(error);
   }
   writeJson('chrome-sandbox.json', out);
   writeJson('browser-ready.json', { at: new Date().toISOString(), driverPid: process.pid });
@@ -211,7 +502,7 @@ async function interceptionControl(page) {
     }
   }, API);
   state.current = null;
-  ev.control = { status: result.status, markerSeen: String(result.body).includes(MARKER), fetchError: result.fetchError || null, posts: tally.controlPosts, fulfilled: tally.fulfilled };
+  ev.control = { status: result.status, markerSeen: String(result.body).includes(MARKER), fetchError: result.fetchError ? 'failed' : null, posts: tally.controlPosts, fulfilled: tally.fulfilled };
   assert(result.status === 503, 'control: status ' + JSON.stringify(result));
   assert(ev.control.markerSeen, 'control: marker missing');
   assert(tally.controlPosts === 1 && tally.fulfilled === 1, 'control: POST not intercepted exactly once');
@@ -275,7 +566,11 @@ async function runCase(page, context, name, spec, viewport) {
     assert(result.linkCount === (spec.link ? 1 : 0), name + ': assessor link count ' + result.linkCount);
     if (spec.link) {
       const link = links.first();
-      result.link = { href: await link.getAttribute('href'), target: await link.getAttribute('target'), rel: await link.getAttribute('rel') };
+      result.link = {
+        href: expectedOnly(await link.getAttribute('href'), ASSESSOR),
+        target: expectedOnly(await link.getAttribute('target'), '_blank'),
+        rel: expectedOnly(await link.getAttribute('rel'), 'noopener noreferrer'),
+      };
       assert(result.link.href === ASSESSOR, name + ': href ' + result.link.href);
       assert(result.link.target === '_blank', name + ': target ' + result.link.target);
       assert(result.link.rel === 'noopener noreferrer', name + ': rel ' + result.link.rel);
@@ -304,11 +599,26 @@ async function runCase(page, context, name, spec, viewport) {
     }
     result.status = 'pass';
   } catch (error) {
-    result.error = String(error && error.message || error).slice(0, 1000);
+    result.error = safeErrorKind(error);
+    result.failureKind = result.error;
   } finally {
     release();
     state.current = null;
   }
+}
+
+// Snapshots bracket the close, and the drain only runs after it, so waiting for
+// late events cannot change what the browser did before the context closed.
+async function closeContext(context) {
+  state.closing = true;
+  snapshot('atClose');
+  accounting.close = await Promise.race([
+    context.close().then(() => 'closed', () => 'error'),
+    new Promise((resolve) => setTimeout(() => resolve('timeout'), 5000).unref()),
+  ]);
+  snapshot('afterClose');
+  await new Promise((resolve) => setTimeout(resolve, DRAIN_MS));
+  snapshot('afterDrain');
 }
 
 async function run() {
@@ -332,23 +642,24 @@ async function run() {
     context.setDefaultTimeout(8000);
     context.setDefaultNavigationTimeout(10000);
     await context.route('**/*', handler);
-    await context.routeWebSocket(/.*/, (socket) => {
+    await context.routeWebSocket(/.*/, (socket) => guard('websocket', () => {
       ev.webSockets.push({ phase: state.phase, url: describe(socket.url()), decision: 'closed' });
       socket.close().catch(() => {});
-    });
-    context.on('request', (request) => seen.add(request));
-    context.on('page', (popup) => ev.popups.push({ phase: state.phase, url: describe(popup.url()) }));
+    }));
+    observe(context);
+    context.on('page', (popup) => guard('page', () => ev.popups.push({ phase: state.phase, url: describe(popup.url()) })));
     const page = context.pages()[0] || await context.newPage();
     ev.popups.length = 0;
-    page.on('pageerror', (error) => ev.errors.pageErrors.push({ phase: state.phase, message: String(error && error.message || error).slice(0, 500) }));
-    page.on('requestfailed', (request) => {
-      if (ev.errors.requestFailed.length < 100) ev.errors.requestFailed.push({ phase: state.phase, url: describe(request.url()), failure: request.failure() && request.failure().errorText });
-    });
-    page.on('crash', () => ev.errors.crashes.push({ phase: state.phase }));
+    page.on('pageerror', (error) => guard('pageerror', () => ev.errors.pageErrors.push({ phase: state.phase, kind: safeErrorKind(error) })));
+    page.on('requestfailed', (request) => guard('page-requestfailed', () => {
+      if (ev.errors.requestFailed.length < 100) ev.errors.requestFailed.push({ phase: state.phase, url: describe(request.url()), failure: request.failure() && safeFailure(request.failure().errorText) });
+    }));
+    page.on('crash', () => guard('crash', () => ev.errors.crashes.push({ phase: state.phase })));
 
     await publishSandboxEvidence(page);
     if (!(await waitForGate())) {
       ev.error = 'orchestrator gate did not release; no UI step ran';
+      accounting.failure = { phase: state.phase, kind: 'gate' };
       return;
     }
 
@@ -364,8 +675,7 @@ async function run() {
     assert(ev.errors.crashes.length === 0, 'page crashed');
     ev.ok = true;
   } finally {
-    state.closing = true;
-    await Promise.race([context.close(), new Promise((resolve) => setTimeout(resolve, 5000).unref())]).catch(() => {});
+    await closeContext(context);
   }
 }
 
@@ -373,7 +683,7 @@ function finish(code) {
   try {
     save();
   } catch (error) {
-    console.error(error);
+    console.error('browser proof save failed: ' + safeErrorKind(error));
     code = 1;
   }
   process.exit(code);
@@ -382,6 +692,7 @@ function finish(code) {
 const watchdog = setTimeout(() => {
   ev.ok = false;
   ev.error = ev.error || 'watchdog: driver deadline reached';
+  accounting.failure = accounting.failure || { phase: state.phase, kind: 'watchdog' };
   finish(1);
 }, Number(OT_DEADLINE_MS));
 
@@ -392,7 +703,8 @@ if (require.main === module) {
   }, (error) => {
     clearTimeout(watchdog);
     ev.ok = false;
-    ev.error = String(error && error.message || error).slice(0, 2000);
+    ev.error = safeErrorKind(error);
+    accounting.failure = accounting.failure || { phase: state.phase, kind: safeErrorKind(error) };
     finish(1);
   });
 } else {

@@ -3,12 +3,16 @@
 
 Pure fixtures only. Popen and socket are replaced with tripwires, so nothing here
 can start a browser, a sandbox, a build or a network connection, even on Linux.
+The one exception is BrowserAccounting: it lifts the Popen tripwire for a single
+node process that runs the real driver in a vm context against fake requests.
 """
 import copy
 import importlib.util
+import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -25,6 +29,9 @@ OID_B = "b" * 40
 HEAD = "c" * 40
 CI_HEAD = (ROOT / qa.CI_PATH).read_bytes().decode("utf-8")
 CI_BASE = qa.split_ci(CI_HEAD)[0]
+
+
+REAL_POPEN = subprocess.Popen
 
 
 def refuse(*_args, **_kwargs):
@@ -1980,6 +1987,813 @@ class PrismaEngineTargetFetch(PrismaClosureBase):
     def test_installed_targets_of_an_absent_package_are_empty(self):
         report = qa.prisma_engine_closure(str(self.layout.cache), str(self.layout.outside))
         self.assertEqual(report["installed_targets"], [])
+
+
+# Loads the real driver source into a vm context with a fake playwright, so every
+# scenario below calls the shipped functions. Top-level const bindings stay
+# reachable from a later script in the same context, which is how they are read.
+VM_HARNESS = r"""
+'use strict';
+const crypto = require('crypto');
+const { EventEmitter } = require('events');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+const [, source, root] = process.argv;
+const ORIGIN = 'http://127.0.0.1:31863';
+const CHECK = ORIGIN + '/check';
+const STATIC = ORIGIN + '/_next/static/chunks/a.js';
+const code = fs.readFileSync(source, 'utf8');
+const results = {};
+
+// A launch function runs the driver's real main path; without one it only loads.
+function load(out, launchPersistentContext) {
+  const modules = { crypto, fs, path };
+  const app = '/fake-app';
+  const fakeRequire = (id) => {
+    if (id === path.join(app, 'node_modules/playwright')) return { chromium: { launchPersistentContext } };
+    if (modules[id]) return modules[id];
+    throw new Error('harness refused require: ' + id);
+  };
+  const env = { OT_ORIGIN: ORIGIN, OT_OUT: out, OT_PROFILE: 'p', OT_CHROME: 'c', OT_APP: app, OT_DEADLINE_MS: '60000' };
+  const logged = [];
+  const exits = [];
+  const fakeModule = {};
+  if (launchPersistentContext) fakeRequire.main = fakeModule;
+  const fakeConsole = { error: (...args) => logged.push(args.map(String).join(' ')) };
+  const sandbox = { require: fakeRequire, module: fakeModule, process: { env, pid: 1, exit: (exitCode) => exits.push(exitCode) }, console: fakeConsole, Buffer, URL, setTimeout, clearTimeout };
+  const context = vm.createContext(sandbox);
+  vm.runInContext(code, context, { filename: 'ot-linux-browser.cjs' });
+  const driver = vm.runInContext('({ ev, state, tally, seen, routed, ledger, accounting, handler, observe, save, finish, runCase, closeContext, fitProof, safeUrl, safeFailure, safeErrorKind, accountingProof, unroutedRequests, KINDS, VIEWPORTS, ADDRESS, CITY })', context);
+  return Object.assign(driver, { logged, exits });
+}
+
+function fakeRequest(url, { method = 'GET', type = 'document', from = null } = {}) {
+  const request = {
+    url: () => url, method: () => method, resourceType: () => type, postData: () => null,
+    redirectedFrom: () => from, redirectedTo: () => request.to || null, failure: () => request.failed || null,
+  };
+  if (from) from.to = request;
+  return request;
+}
+
+const fakeRoute = (request) => ({ request: () => request, continue: async () => {}, abort: async () => {}, fulfill: async () => {} });
+const fakeResponse = (request, status) => ({ request: () => request, status: () => status });
+
+function wire(driver) {
+  const context = new EventEmitter();
+  driver.observe(context);
+  return context;
+}
+
+async function pass(driver, context, request) {
+  context.emit('request', request);
+  await driver.handler(fakeRoute(request));
+}
+
+function proofs(out) {
+  const read = (name) => JSON.parse(fs.readFileSync(path.join(out, name), 'utf8'));
+  return {
+    accounting: read('browser-accounting.json'),
+    summary: read('browser-summary.json'),
+    evidence: read('browser-evidence.json'),
+    bytes: fs.statSync(path.join(out, 'browser-accounting.json')).size,
+    text: fs.readFileSync(path.join(out, 'browser-accounting.json'), 'utf8'),
+  };
+}
+
+async function scenario(name, body) {
+  const out = path.join(root, name);
+  fs.mkdirSync(out, { mode: 0o755 });
+  const driver = load(out);
+  const context = wire(driver);
+  const extra = await body(driver, context);
+  driver.save();
+  results[name] = { ...proofs(out), extra: extra === undefined ? null : extra };
+}
+
+// Every word the driver saved or logged, so a privacy check cannot miss a file.
+function exported(out, driver) {
+  const files = {};
+  for (const name of fs.readdirSync(out)) files[name] = fs.readFileSync(path.join(out, name), 'utf8');
+  return { files, logged: driver.logged, exits: driver.exits };
+}
+
+const SECRET_URL = 'https://user:pw-needle@external.invalid/path-needle?token=value-needle#frag-needle';
+const SECRET_URLS = [
+  SECRET_URL,
+  `http://user:pw-needle@127.0.0.1:31863/check?token=value-needle#frag-needle`,
+  `${ORIGIN}/api/private-needle?x=value-needle`,
+  'data:text/plain,body-needle',
+  'not a url needle',
+  'http://[needle',
+];
+const secretError = () => new Error(`${SECRET_URL} raw-needle`);
+
+function failingRoute(request) {
+  const refuse = async () => { throw secretError(); };
+  return { ...fakeRoute(request), continue: refuse, abort: refuse };
+}
+
+// Runs run() through the driver's own main path and injects a fault at every
+// point that used to save raw text, finishing in the control's failed assertion.
+async function faultedRun(name) {
+  const out = path.join(root, name);
+  fs.mkdirSync(out, { mode: 0o755 });
+  fs.writeFileSync(path.join(out, 'gate.json'), JSON.stringify({ go: true }));
+  const page = new EventEmitter();
+  const context = new EventEmitter();
+  const hooks = {};
+  page.evaluate = async () => ({ fetchError: `TypeError: ${secretError().message}` });
+  page.goto = async (url) => {
+    if (url === 'chrome://sandbox') throw secretError();
+    page.emit('pageerror', secretError());
+    const failed = fakeRequest(SECRET_URL);
+    failed.failed = { errorText: `net::ERR_NEW ${SECRET_URL}` };
+    context.emit('request', failed);
+    context.emit('requestfailed', failed);
+    page.emit('requestfailed', failed);
+    page.emit('requestfailed', { url: () => { throw secretError(); } });
+    context.emit('page', { url: () => SECRET_URL });
+    await hooks.socket({ url: () => SECRET_URL.replace('https:', 'wss:'), close: async () => {} });
+    for (const secret of SECRET_URLS) {
+      const request = fakeRequest(secret);
+      context.emit('request', request);
+      await hooks.route(failingRoute(request));
+    }
+    return { status: () => 200 };
+  };
+  Object.assign(context, {
+    setDefaultTimeout() {},
+    setDefaultNavigationTimeout() {},
+    route: async (_pattern, callback) => { hooks.route = callback; },
+    routeWebSocket: async (_pattern, callback) => { hooks.socket = callback; },
+    pages: () => [page],
+    close: async () => { throw secretError(); },
+  });
+  const driver = load(out, async () => context);
+  for (let wait = 0; wait < 500 && !driver.exits.length; wait += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+  results[name] = { ...proofs(out), exported: exported(out, driver) };
+}
+
+function fakePage(driver, link) {
+  const submitted = () => {
+    const request = fakeRequest(ORIGIN + '/api/free-check', { method: 'POST' });
+    request.postData = () => `${driver.ADDRESS} ${driver.CITY}`;
+    return request;
+  };
+  const anchor = { count: async () => 1, first: () => anchor, getAttribute: async (name) => link[name] };
+  const locator = {
+    waitFor: async () => {}, isVisible: async () => true, isEnabled: async () => true, isDisabled: async () => true,
+    fill: async () => {}, click: async () => { driver.handler(fakeRoute(submitted())); }, count: async () => 0,
+    filter: () => locator, first: () => locator, getByRole: (role) => (role === 'link' ? anchor : locator),
+  };
+  return {
+    setViewportSize: async () => {}, goto: async () => ({ status: () => 200 }), getByLabel: () => locator,
+    getByRole: locator.getByRole, content: async () => '', waitForTimeout: async () => {}, url: () => CHECK,
+    evaluate: async () => ({ scroll: 1, client: 1 }),
+  };
+}
+
+(async () => {
+  await scenario('clean', async (driver, context) => {
+    const request = fakeRequest(CHECK);
+    await pass(driver, context, request);
+    context.emit('response', fakeResponse(request, 200));
+    context.emit('requestfinished', request);
+    await driver.closeContext({ close: async () => {} });
+    driver.ev.ok = true;
+    driver.tally.controlPosts = 1;
+    driver.ev.control = { ok: true, status: 503, markerSeen: true, posts: 1, fulfilled: 1, fetchError: null };
+    for (const result of Object.values(driver.ev.cases)) result.status = 'pass';
+  });
+
+  await scenario('duplicates', async (driver, context) => {
+    const first = fakeRequest(CHECK);
+    const second = fakeRequest(CHECK);
+    await pass(driver, context, first);
+    context.emit('request', second);
+    return { firstId: driver.ledger.get(first).id, secondId: driver.ledger.get(second).id };
+  });
+
+  await scenario('order', async (driver, context) => {
+    const request = fakeRequest(STATIC, { type: 'script' });
+    context.emit('request', request);
+    context.emit('response', fakeResponse(request, 200));
+    context.emit('requestfinished', request);
+  });
+
+  await scenario('redirects', async (driver, context) => {
+    const first = fakeRequest(CHECK);
+    const second = fakeRequest(ORIGIN + '/hop', { from: first });
+    const third = fakeRequest(STATIC, { from: second });
+    await pass(driver, context, first);
+    context.emit('request', second);
+    context.emit('request', third);
+    return { ids: [first, second, third].map((request) => driver.ledger.get(request).id) };
+  });
+
+  await scenario('failures', async (driver, context) => {
+    const cases = [['net::ERR_BLOCKED_BY_CLIENT'], ['net::ERR_ABORTED'], ['net::ERR_NEW https://secret-needle.invalid/?a=b']];
+    for (const [errorText] of cases) {
+      const request = fakeRequest(CHECK);
+      request.failed = { errorText };
+      context.emit('request', request);
+      context.emit('requestfailed', request);
+    }
+  });
+
+  await scenario('closing', async (driver, context) => {
+    const before = fakeRequest(CHECK);
+    context.emit('request', before);
+    const during = fakeRequest(ORIGIN + '/favicon.ico');
+    const drained = fakeRequest(STATIC);
+    await driver.closeContext({
+      close: async () => {
+        context.emit('request', during);
+        setTimeout(() => context.emit('request', drained), 20);
+      },
+    });
+    context.emit('requestfinished', during);
+  });
+
+  await scenario('close-error', async (driver) => {
+    await driver.closeContext({ close: async () => { throw new Error('https://secret-needle.invalid'); } });
+  });
+
+  await scenario('callback-errors', async (driver, context) => {
+    const broken = fakeRequest(CHECK);
+    broken.redirectedFrom = () => { throw new Error('broken'); };
+    context.emit('request', broken);
+    context.emit('response', { request: () => { throw new Error('broken'); }, status: () => 200 });
+    return { stillSeen: driver.seen.has(broken) };
+  });
+
+  await scenario('unknown', async (driver, context) => {
+    context.emit('requestfinished', fakeRequest(CHECK));
+    const late = fakeRequest(STATIC);
+    await driver.handler(fakeRoute(late));
+    context.emit('request', late);
+  });
+
+  await scenario('over-cap', async (driver, context) => {
+    for (let index = 0; index < 100; index += 1) {
+      const name = 'x'.repeat(150) + index;
+      context.emit('request', fakeRequest(`${ORIGIN}/_next/static/${name}.js?aaaaaaaaaaaaaaaaaaaaaaaa=1&bbbbbbbbbbbbbbbbbbbbbbbb=2`));
+    }
+  });
+
+  await scenario('life-overflow', async (driver, context) => {
+    const request = fakeRequest(CHECK);
+    context.emit('request', request);
+    for (let index = 0; index < 12; index += 1) context.emit('response', fakeResponse(request, 200));
+  });
+
+  await scenario('byte-guard', async (driver, context) => {
+    for (let index = 0; index < 5; index += 1) context.emit('request', fakeRequest(CHECK));
+    const doc = driver.accountingProof(driver.unroutedRequests());
+    const text = driver.fitProof(doc, 1500);
+    let refused = false;
+    try {
+      driver.fitProof({ counts: {}, unmatched: [] }, 2);
+    } catch {
+      refused = true;
+    }
+    return { bytes: Buffer.byteLength(text), kept: doc.unmatched.length, dropped: doc.counts.unmatchedDropped, refused };
+  });
+
+  await scenario('privacy', async (driver, context) => {
+    const hostile = [
+      `http://user:pw-needle@127.0.0.1:31863/check?token=value-needle#frag-needle`,
+      `https://user:pw-needle@external.example.invalid/path-needle?token=value-needle#frag-needle`,
+      `${ORIGIN}/api/private-needle?x=value-needle`,
+      `${ORIGIN}/_next/static/%2e%2e/escaped-needle`,
+      `${ORIGIN}/_next/static/chunks/a.js?dpl=value-needle#frag-needle`,
+      `https://external.example.invalid/?bare-needle`,
+      `https://external.example.invalid/x?${'k'.repeat(40)}=value-needle`,
+      `https://external.example.invalid/${'p'.repeat(500)}-needle`,
+    ];
+    for (const url of hostile) context.emit('request', fakeRequest(url));
+    const nonHttp = ['data:text/plain,body-needle', `blob:${ORIGIN}/blob-needle`, 'not a url needle'];
+    return {
+      hostile: hostile.map(driver.safeUrl),
+      nonHttp: nonHttp.map(driver.safeUrl),
+      failure: driver.safeFailure('net::ERR_X https://needle.invalid'),
+      inherited: driver.safeFailure('constructor'),
+      kinds: [
+        driver.safeErrorKind(Object.assign(new Error('https://needle.invalid'), { name: 'TimeoutError' })),
+        driver.safeErrorKind(new Error('ASSERTION FAILED: https://needle.invalid')),
+        driver.safeErrorKind(new Error('Target page has been closed')),
+        driver.safeErrorKind(new Error('https://needle.invalid')),
+      ],
+    };
+  });
+
+  await scenario('failed-run', async (driver) => {
+    driver.state.phase = 'normal-mobile';
+    driver.ev.cases['normal-mobile'].status = 'failed';
+    driver.ev.cases['normal-mobile'].failureKind = 'assertion';
+    driver.ev.cases['normal-mobile'].error = 'https://needle.invalid';
+    driver.ev.error = 'https://needle.invalid';
+    driver.accounting.failure = { phase: 'final', kind: 'assertion' };
+  });
+
+  await faultedRun('fault-run');
+
+  await scenario('fault-cases', async (driver) => {
+    const context = { pages: () => [null] };
+    const desktop = driver.VIEWPORTS.desktop;
+    const good = { href: 'https://www.cookcountyassessoril.gov/address-search', target: '_blank', rel: 'noopener noreferrer' };
+    const hostile = { href: SECRET_URL, target: '_top-needle', rel: 'rel-needle' };
+    const spec = driver.KINDS['missing-message'];
+    await driver.runCase(fakePage(driver, good), context, 'missing-message-desktop', spec, desktop);
+    await driver.runCase(fakePage(driver, hostile), context, 'missing-message-mobile', spec, desktop);
+    const throwing = (error) => ({ setViewportSize: async () => { throw error; } });
+    await driver.runCase(throwing(secretError()), context, 'null-json-desktop', driver.KINDS['null-json'], desktop);
+    await driver.runCase(throwing(Object.assign(secretError(), { name: 'TimeoutError' })), context, 'null-json-mobile', driver.KINDS['null-json'], desktop);
+  });
+
+  const absent = path.join(root, 'absent-dir-needle');
+  const unsaved = load(absent);
+  unsaved.finish(0);
+  results['fault-save'] = { logged: unsaved.logged, exits: unsaved.exits };
+
+  process.stdout.write(JSON.stringify(results));
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+"""
+
+
+class BrowserAccounting(unittest.TestCase):
+    """A missing node errors here on purpose: a skip would read as covered."""
+
+    @classmethod
+    def setUpClass(cls):
+        tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(tmp.cleanup)
+        cls.root = pathlib.Path(tmp.name)
+        node = shutil.which("node")
+        if node is None:
+            raise AssertionError("node is required to run the real driver in a vm context")
+        with mock.patch.object(subprocess, "Popen", REAL_POPEN):
+            done = subprocess.run([node, "-e", VM_HARNESS, str(HERE / "ot-linux-browser.cjs"), str(cls.root)],
+                                  capture_output=True, text=True, timeout=60, env={"PATH": os.environ["PATH"]},
+                                  cwd=cls.root)
+        if done.returncode != 0:
+            raise AssertionError(f"vm harness failed: {done.stderr[-2000:]}")
+        cls.results = json.loads(done.stdout)
+
+    def accounting(self, name):
+        return self.results[name]["accounting"]
+
+    def problems(self, name, accounting=None, summary=None):
+        result = self.results[name]
+        return (qa.accounting_problems(accounting or result["accounting"], result["evidence"])
+                + qa.summary_problems(summary or result["summary"], result["evidence"]))
+
+    def test_a_clean_run_satisfies_every_gate_read_back_from_disk(self):
+        report = self.root / "clean"
+        proofs = [qa.read_browser_proof(report, name) for name in qa.BROWSER_PROOF_FILES]
+        evidence = self.results["clean"]["evidence"]
+        self.assertEqual(qa.evaluate_browser_proof(evidence, *proofs), [])
+        self.assertEqual(qa.evaluate_browser_evidence(evidence), [])
+
+    def test_finish_browser_applies_the_proof_as_well_as_the_evidence(self):
+        ops = object.__new__(qa.NamespaceOps)
+        ops.driver = mock.Mock()
+        ops.driver.poll.return_value = 0
+        ops.deadline = 0
+        with mock.patch.object(qa, "NS_OUT", str(self.root / "clean")):
+            self.assertEqual(ops.finish_browser()["problems"], [])
+        with mock.patch.object(qa, "NS_OUT", str(self.root / "unknown")):
+            self.assertIn("browser accounting unknown is 1", ops.finish_browser()["problems"])
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(qa, "NS_OUT", tmp):
+            shutil.copy(self.root / "clean" / "browser-evidence.json", tmp)
+            self.assertEqual(ops.finish_browser()["problems"], ["browser-accounting.json: absent",
+                                                                "browser-summary.json: absent"])
+
+    def test_a_clean_proof_never_offsets_the_unrouted_gate(self):
+        result = self.results["duplicates"]
+        self.assertEqual(result["evidence"]["counts"]["unrouted"], 1)
+        self.assertEqual(self.problems("duplicates"), [])
+        self.assertIn("unrouted is 1", qa.evaluate_browser_evidence(result["evidence"]))
+
+    def test_duplicate_urls_are_distinct_objects_with_distinct_ids(self):
+        result = self.results["duplicates"]
+        extra = result["extra"]
+        self.assertNotEqual(extra["firstId"], extra["secondId"])
+        self.assertEqual([r["id"] for r in result["accounting"]["unmatched"]], [extra["secondId"]])
+        self.assertEqual(result["accounting"]["unmatched"][0]["url"], "/check")
+        self.assertEqual(result["accounting"]["counts"]["seen"], 2)
+        self.assertEqual(result["accounting"]["counts"]["routed"], 1)
+
+    def test_lifecycle_order_and_response_status(self):
+        record = self.accounting("order")["unmatched"][0]
+        self.assertEqual(record["life"], "seen@1 response@2 finished@3")
+        self.assertEqual((record["status"], record["finished"], record["handlerSeen"]), (200, True, False))
+        self.assertEqual((record["resourceType"], record["method"]), ("script", "GET"))
+
+    def test_a_redirect_chain_links_every_hop_and_resolves_its_precursor(self):
+        result = self.results["redirects"]
+        first, second, third = result["extra"]["ids"]
+        doc = result["accounting"]
+        self.assertEqual([r["id"] for r in doc["unmatched"]], [second, third])
+        self.assertEqual((doc["unmatched"][0]["redirectedFrom"], doc["unmatched"][0]["redirectedTo"]), (first, third))
+        self.assertEqual((doc["unmatched"][1]["redirectedFrom"], doc["unmatched"][1]["redirectedTo"]), (second, None))
+        self.assertEqual([(r["id"], r["handlerSeen"], r["redirectedTo"]) for r in doc["related"]], [(first, True, second)])
+        self.assertEqual(self.problems("redirects"), [])
+
+    def test_request_failures_use_the_enum_and_mark_cancellation(self):
+        records = self.accounting("failures")["unmatched"]
+        self.assertEqual([(r["failure"], r["failed"], r["canceled"]) for r in records],
+                         [("blocked_by_client", True, False), ("aborted", True, True), ("other", True, False)])
+        self.assertNotIn("needle", self.results["failures"]["text"])
+
+    def test_closing_and_drain_are_recorded_without_removing_anything(self):
+        doc = self.accounting("closing")
+        records = {r["url"]: r for r in doc["unmatched"]}
+        self.assertEqual(doc["counts"]["unrouted"], 3)
+        self.assertIs(records["/check"]["closing"], False)
+        self.assertRegex(records["/favicon.ico"]["life"], r"^seen@\d+:closing finished@\d+:closing$")
+        self.assertIs(records["/_next/static/chunks/a.js"]["closing"], True)
+        self.assertEqual(doc["counts"]["lateEvents"], 3)
+        self.assertEqual([doc["snapshots"][k]["seen"] for k in ("atClose", "afterClose", "afterDrain")], [1, 2, 3])
+        self.assertEqual(doc["snapshots"]["atClose"], {"seen": 1, "routed": 0, "unrouted": 1, "pending": 1})
+        self.assertEqual(self.results["closing"]["summary"]["cleanup"], {"closing": True, "close": "closed"})
+
+    def test_a_failed_close_is_a_state_and_not_a_message(self):
+        self.assertEqual(self.results["close-error"]["summary"]["cleanup"]["close"], "error")
+        self.assertNotIn("needle", json.dumps(self.results["close-error"]["summary"]))
+
+    def test_callback_exceptions_are_counted_and_fail_closed(self):
+        result = self.results["callback-errors"]
+        doc = result["accounting"]
+        self.assertTrue(result["extra"]["stillSeen"])
+        self.assertEqual(doc["counts"]["unrouted"], 1)
+        self.assertEqual(doc["callbackErrorsBy"], {"request": 1, "response": 1, "link": 1})
+        self.assertIn("browser accounting callbackErrors is 3", self.problems("callback-errors"))
+
+    def test_an_unknown_event_stays_unmatched_and_a_late_seen_does_not(self):
+        doc = self.accounting("unknown")
+        self.assertEqual(doc["counts"]["unknown"], 1)
+        self.assertEqual([r["life"].split("@")[0] for r in doc["unknown"]], ["finished"])
+        self.assertIn("browser accounting unknown is 1", self.problems("unknown"))
+
+    def test_the_cap_drops_explicitly_and_keeps_the_original_count(self):
+        result = self.results["over-cap"]
+        doc = result["accounting"]
+        self.assertLess(result["bytes"], qa.BROWSER_PROOF_CAP)
+        self.assertEqual(doc["counts"]["unrouted"], 100)
+        self.assertEqual(result["evidence"]["counts"]["unrouted"], 100)
+        self.assertEqual(len(doc["unmatched"]) + doc["counts"]["unmatchedDropped"], 100)
+        self.assertEqual(len(doc["unmatched"]), 40)
+        self.assertIn("browser accounting unmatchedDropped is 60", self.problems("over-cap"))
+
+    def test_lifecycle_overflow_is_counted(self):
+        self.assertEqual(self.accounting("life-overflow")["counts"]["lifeDropped"], 5)
+        self.assertIn("browser accounting lifeDropped is 5", self.problems("life-overflow"))
+
+    def test_the_byte_guard_counts_what_it_removes_and_refuses_what_it_cannot(self):
+        extra = self.results["byte-guard"]["extra"]
+        self.assertLess(extra["bytes"], 1500)
+        self.assertEqual(extra["kept"] + extra["dropped"], 5)
+        self.assertGreater(extra["dropped"], 0)
+        self.assertTrue(extra["refused"])
+
+    def test_nothing_private_reaches_any_output(self):
+        result = self.results["privacy"]
+        for text in (result["text"], json.dumps(result["extra"]), json.dumps(result["summary"])):
+            self.assertNotIn("needle", text)
+        for word in ("user", "pw-", "#", "?"):
+            self.assertNotIn(word, "".join(r["url"] for r in result["accounting"]["unmatched"]))
+        self.assertEqual(self.problems("privacy"), [])
+
+    def test_urls_fall_back_to_hashes(self):
+        extra = self.results["privacy"]["extra"]
+        digest = r"sha256:[0-9a-f]{24}"
+        hostile = extra["hostile"]
+        self.assertEqual(hostile[0], {"url": "/check", "query": "token"})
+        self.assertRegex(hostile[1]["url"], rf"^https://external\.example\.invalid/{digest}$")
+        self.assertRegex(hostile[2]["url"], rf"^same-origin:{digest}$")
+        self.assertRegex(hostile[3]["url"], rf"^same-origin:{digest}$")
+        self.assertEqual(hostile[4], {"url": "/_next/static/chunks/a.js", "query": "dpl"})
+        self.assertRegex(hostile[5]["query"], rf"^{digest}$")
+        self.assertRegex(hostile[6]["query"], rf"^{digest}$")
+        self.assertEqual(len(hostile[7]["url"]), len(hostile[1]["url"]))
+        self.assertEqual([re.sub(digest, "", r["url"]) for r in extra["nonHttp"]], ["data:", "blob:", "unparseable:"])
+
+    def test_a_hash_can_be_checked_against_a_known_path_offline(self):
+        path = "/api/private-needle"
+        expected = "same-origin:sha256:" + qa.hashlib.sha256(path.encode()).hexdigest()[:24]
+        self.assertEqual(self.results["privacy"]["extra"]["hostile"][2]["url"], expected)
+
+    def test_errors_are_enums(self):
+        extra = self.results["privacy"]["extra"]
+        self.assertEqual((extra["failure"], extra["inherited"]), ("other", "other"))
+        self.assertEqual(extra["kinds"], ["timeout", "assertion", "closed", "other"])
+
+    def test_summary_carries_all_twelve_cases_and_failure_provenance(self):
+        summary = self.results["failed-run"]["summary"]
+        self.assertEqual(list(summary["cases"]), list(qa.EXPECTED_CASES))
+        self.assertEqual(summary["cases"]["normal-mobile"]["failureKind"], "assertion")
+        self.assertEqual(summary["cases"]["normal-desktop"]["status"], "notrun")
+        self.assertEqual(summary["failure"], {"phase": "final", "kind": "assertion"})
+        self.assertNotIn("needle", json.dumps(summary))
+        self.assertEqual(qa.summary_problems(summary, self.results["failed-run"]["evidence"]), [])
+
+    def test_accounting_mutations_are_refused(self):
+        record = self.accounting("duplicates")["unmatched"][0]
+        for label, mutate in (
+            ("extra key", lambda d: d.update(extra=1)),
+            ("missing key", lambda d: d.pop("related")),
+            ("schema", lambda d: d.update(schema=2)),
+            ("kind", lambda d: d.update(kind="x")),
+            ("count type", lambda d: d["counts"].update(seen="1")),
+            ("bool count", lambda d: d["counts"].update(seen=True)),
+            ("unknown count", lambda d: d["counts"].update(extra=0)),
+            ("dropped", lambda d: d["counts"].update(unmatchedDropped=1)),
+            ("callback", lambda d: d["counts"].update(callbackErrors=1)),
+            ("callback name", lambda d: d["callbackErrorsBy"].update({"https://x": 0})),
+            ("record lost", lambda d: d["unmatched"].clear()),
+            ("record added", lambda d: d["unmatched"].append({**record, "id": 99})),
+            ("record repeated", lambda d: (d["unmatched"].append(record), d["counts"].update(unrouted=2))),
+            ("routed record", lambda d: d["unmatched"][0].update(handlerSeen=True)),
+            ("unseen record", lambda d: d["unmatched"][0].update(seen=False)),
+            ("url value", lambda d: d["unmatched"][0].update(url="/check?token=value")),
+            ("raw path", lambda d: d["unmatched"][0].update(url="/account/settings")),
+            ("external path", lambda d: d["unmatched"][0].update(url="https://x.invalid/path")),
+            ("userinfo", lambda d: d["unmatched"][0].update(url="https://u:p@x.invalid/sha256:" + "0" * 24)),
+            ("query value", lambda d: d["unmatched"][0].update(query="a=b")),
+            ("free failure", lambda d: d["unmatched"][0].update(failure="net::ERR https://x.invalid")),
+            ("record key", lambda d: d["unmatched"][0].update(headers={})),
+            ("snapshot", lambda d: d["snapshots"].update(atClose={"seen": 1})),
+            ("snapshot name", lambda d: d["snapshots"].update(extra=None)),
+            ("requests dropped", lambda d: d["counts"].update(requestsDropped=1)),
+            ("oversize list", lambda d: d["related"].extend({**record, "id": n} for n in range(100, 125))),
+            ("unresolved redirect peer", lambda d: d["unmatched"][0].update(redirectedTo=999)),
+            ("routed total", lambda d: d["counts"].update(routed=2)),
+        ):
+            with self.subTest(label):
+                doc = copy.deepcopy(self.accounting("duplicates"))
+                mutate(doc)
+                self.assertTrue(qa.accounting_problems(doc, self.results["duplicates"]["evidence"]))
+
+    def test_accounting_must_agree_with_the_evidence(self):
+        result = self.results["duplicates"]
+        for evidence in (None, {}, {**result["evidence"], "counts": {"unrouted": 0}}):
+            self.assertTrue(qa.accounting_problems(result["accounting"], evidence))
+
+    def test_summary_mutations_are_refused(self):
+        for label, mutate in (
+            ("extra key", lambda d: d.update(extra=1)),
+            ("case lost", lambda d: d["cases"].pop("normal-mobile")),
+            ("case added", lambda d: d["cases"].update(extra=d["cases"]["normal-mobile"])),
+            ("case status", lambda d: d["cases"]["normal-mobile"].update(status="fail")),
+            ("disagreeing status", lambda d: d["cases"]["normal-mobile"].update(status="failed")),
+            ("free error", lambda d: d["cases"]["normal-mobile"].update(failureKind="https://x.invalid")),
+            ("ok", lambda d: d.update(ok=False)),
+            ("counts", lambda d: d["counts"].update(unrouted=7)),
+            ("control", lambda d: d.update(control={"ok": True})),
+            ("failure", lambda d: d.update(failure={"phase": "final", "kind": "https://x.invalid"})),
+            ("close", lambda d: d["cleanup"].update(close="maybe")),
+        ):
+            with self.subTest(label):
+                doc = copy.deepcopy(self.results["clean"]["summary"])
+                mutate(doc)
+                self.assertTrue(qa.summary_problems(doc, self.results["clean"]["evidence"]))
+
+    def summary_with_close(self, close, ok=True):
+        result = self.results["clean"]
+        doc = copy.deepcopy(result["summary"])
+        doc["ok"] = ok
+        doc["cleanup"]["close"] = close
+        return qa.summary_problems(doc, {**result["evidence"], "ok": ok})
+
+    def test_a_proven_close_passes_the_summary_gate(self):
+        self.assertEqual(self.results["clean"]["summary"]["cleanup"], {"closing": True, "close": "closed"})
+        self.assertEqual(self.summary_with_close("closed"), [])
+
+    def test_a_context_that_did_not_close_fails_the_summary_gate(self):
+        for close in ("timeout", "error"):
+            for ok in (True, False):
+                with self.subTest(close=close, ok=ok):
+                    self.assertEqual(self.summary_with_close(close, ok), [f"browser summary close is {close}"])
+        self.assertIn("browser summary close is error", self.problems("close-error"))
+
+    def test_notrun_close_is_legal_only_on_a_failed_run(self):
+        self.assertEqual(self.summary_with_close("notrun", False), [])
+        self.assertEqual(self.summary_with_close("notrun"), ["browser summary close is notrun"])
+
+    def test_a_redirect_peer_is_checked_only_when_nothing_was_dropped(self):
+        doc = copy.deepcopy(self.accounting("duplicates"))
+        doc["unmatched"][0]["redirectedTo"] = 999
+        doc["counts"].update(unrouted=2, unmatchedDropped=1)
+        problems = qa.accounting_problems(doc, self.results["duplicates"]["evidence"])
+        self.assertNotIn("browser accounting redirect peer does not resolve", problems)
+        self.assertIn("browser accounting unmatchedDropped is 1", problems)
+
+    def assert_no_secret(self, text):
+        # Query key names are allowed by the contract; every value here contains "needle".
+        for word in ("needle", "pw-", "user:", "frag", "ERR_", "TypeError"):
+            self.assertNotIn(word, text)
+
+    def test_a_faulted_run_exports_no_secret_in_any_file_or_log(self):
+        exported = self.results["fault-run"]["exported"]
+        self.assertEqual(set(exported["files"]), {"browser-accounting.json", "browser-evidence.json", "browser-ready.json",
+                                                  "browser-summary.json", "chrome-sandbox.json", "gate.json"})
+        for name, text in exported["files"].items():
+            with self.subTest(name):
+                self.assert_no_secret(text)
+        self.assertEqual(exported["logged"], [])
+        self.assertEqual(exported["exits"], [1])
+
+    def test_a_faulted_run_keeps_every_failure_as_a_safe_state(self):
+        result = self.results["fault-run"]
+        evidence = result["evidence"]
+        errors = evidence["errors"]
+        self.assertEqual(evidence["error"], "assertion")
+        self.assertIs(evidence["ok"], False)
+        self.assertEqual(evidence["control"]["fetchError"], "failed")
+        self.assertEqual(errors["pageErrors"], [{"phase": "control", "kind": "other"}])
+        self.assertEqual([r["failure"] for r in errors["requestFailed"]], ["other"])
+        self.assertEqual(len(errors["handlerErrors"]), 6)
+        self.assertEqual({r["kind"] for r in errors["handlerErrors"]}, {"other"})
+        self.assertEqual((len(evidence["requests"]), len(evidence["popups"]), len(evidence["webSockets"])), (6, 1, 1))
+        self.assertEqual(evidence["counts"]["total"], 6)
+        self.assertEqual(evidence["counts"]["pageErrors"], 1)
+        self.assertEqual(json.loads(result["exported"]["files"]["chrome-sandbox.json"])["error"], "other")
+        self.assertIs(result["summary"]["control"]["fetchFailed"], True)
+        self.assertEqual(result["summary"]["failure"], {"phase": "control", "kind": "assertion"})
+
+    def test_a_scrubbed_run_still_fails_every_gate_it_failed_before(self):
+        result = self.results["fault-run"]
+        gates = qa.evaluate_browser_evidence(result["evidence"])
+        for problem in ("browser reported failure: assertion", "interception control failed or did not run",
+                        "unrouted is 1", "pageErrors is 1", "popups is 1"):
+            self.assertIn(problem, gates)
+        proofs = self.problems("fault-run")
+        self.assertIn("browser accounting callbackErrors is 1", proofs)
+        self.assertIn("browser summary close is error", proofs)
+
+    def test_a_scrubbed_url_is_the_proofs_url(self):
+        urls = [r["url"] for r in self.results["fault-run"]["evidence"]["requests"]]
+        self.assertRegex(urls[0], r"^https://external\.invalid/sha256:[0-9a-f]{24}$")
+        self.assertEqual(urls[1], "/check")
+        self.assertRegex(urls[2], r"^same-origin:sha256:[0-9a-f]{24}$")
+        self.assertRegex(urls[3], r"^data:sha256:[0-9a-f]{24}$")
+        self.assertRegex(urls[4], r"^unparseable:sha256:[0-9a-f]{24}$")
+        self.assertRegex(urls[5], r"^unparseable:sha256:[0-9a-f]{24}$")
+
+    def test_case_evidence_keeps_its_facts_and_loses_its_raw_text(self):
+        result = self.results["fault-cases"]
+        self.assert_no_secret(json.dumps(result["evidence"]))
+        self.assert_no_secret(json.dumps(result["summary"]))
+        cases = result["evidence"]["cases"]
+        good = cases["missing-message-desktop"]
+        self.assertEqual(good["status"], "pass")
+        self.assertEqual((good["posts"], good["linkCount"]), (1, 1))
+        self.assertIs(good["busyVisibleBeforeResponse"], True)
+        self.assertIs(good["busyDisabledBeforeResponse"], True)
+        self.assertIs(good["resetAfterResponse"], True)
+        self.assertEqual(good["link"], {"href": "https://www.cookcountyassessoril.gov/address-search",
+                                        "target": "_blank", "rel": "noopener noreferrer"})
+        hostile = cases["missing-message-mobile"]
+        self.assertEqual((hostile["status"], hostile["error"], hostile["failureKind"]), ("failed", "assertion", "assertion"))
+        self.assertEqual(hostile["link"], {"href": "unexpected", "target": "unexpected", "rel": "unexpected"})
+        self.assertEqual((cases["null-json-desktop"]["status"], cases["null-json-desktop"]["error"]), ("failed", "other"))
+        self.assertEqual((cases["null-json-mobile"]["status"], cases["null-json-mobile"]["error"]), ("failed", "timeout"))
+        self.assertEqual(len(cases), 12)
+        self.assertEqual(result["summary"]["cases"]["missing-message-mobile"]["failureKind"], "assertion")
+
+    def test_a_failed_save_logs_a_state_and_keeps_its_failure(self):
+        result = self.results["fault-save"]
+        self.assertEqual(result["logged"], ["browser proof save failed: other"])
+        self.assertEqual(result["exits"], [1])
+
+    def test_the_control_fetch_itself_is_unchanged(self):
+        self.assertIn("return { fetchError: String(error) };", (HERE / "ot-linux-browser.cjs").read_text())
+
+    def report_with(self, make):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        report = pathlib.Path(tmp.name, "qa", "report")
+        report.mkdir(parents=True)
+        for name in qa.BROWSER_PROOF_FILES:
+            shutil.copy(self.root / "clean" / name, report)
+        make(report, pathlib.Path(tmp.name))
+        return report
+
+    def test_unsafe_proof_files_are_refused_unread(self):
+        name = qa.BROWSER_PROOF_FILES[0]
+
+        def replace(make):
+            def apply(report, tmp):
+                outside = tmp / "outside.json"
+                outside.write_text('{"marker": "OUTSIDE"}')
+                (report / name).unlink()
+                make(report / name, outside)
+            return apply
+
+        for state, make in (("absent", replace(lambda path, outside: None)),
+                            ("refused:symlink", replace(lambda path, outside: path.symlink_to(outside))),
+                            ("refused:hardlink", replace(lambda path, outside: os.link(outside, path))),
+                            ("refused:not-regular", replace(lambda path, outside: os.mkfifo(path))),
+                            ("refused:oversize", lambda report, tmp: (report / name).write_bytes(b"x" * qa.BROWSER_PROOF_CAP))):
+            with self.subTest(state):
+                report = self.report_with(make)
+                self.assertEqual(qa.read_browser_proof(report, name), {"state": state})
+                lines = qa.browser_proof_excerpt(report)
+                self.assertIn(f'--- {name}: {{"state": "{state}"}}', lines)
+                self.assertNotIn("OUTSIDE", "\n".join(lines))
+
+    def test_a_proof_one_byte_under_the_cap_is_read_whole(self):
+        name = qa.BROWSER_PROOF_FILES[0]
+        data = b'"' + b"x" * (qa.BROWSER_PROOF_CAP - 3) + b'"'
+        report = self.report_with(lambda report, _tmp: (report / name).write_bytes(data))
+        read = qa.read_browser_proof(report, name)
+        self.assertEqual((read["state"], read["head"], read["json"]), ("ok", data, "valid"))
+
+    def test_a_refused_report_directory_is_a_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.symlink(self.root / "clean", pathlib.Path(tmp, "linked"))
+            report = qa.read_browser_proof(pathlib.Path(tmp, "linked"), qa.BROWSER_PROOF_FILES[0])
+            self.assertEqual(list(report), ["state"])
+            self.assertRegex(report["state"], r"^unreadable:")
+
+    def test_bad_proof_json_fails_the_gate(self):
+        evidence = self.results["clean"]["evidence"]
+        for data in ("{not json", '{"a": 1, "a": 2}', "[]"):
+            report = self.report_with(lambda report, _tmp: (report / qa.BROWSER_PROOF_FILES[0]).write_text(data))
+            proofs = [qa.read_browser_proof(report, name) for name in qa.BROWSER_PROOF_FILES]
+            self.assertTrue(qa.evaluate_browser_proof(evidence, *proofs), data)
+
+    def seal(self, report):
+        printed = []
+        layout = qa.Layout(report.parent)
+        with mock.patch.object(qa, "print", create=True, side_effect=lambda line, **_kw: printed.append(line)):
+            code = qa.seal_body(None, layout)
+        return code, printed
+
+    def test_seal_prints_the_whole_proof_on_failure_and_keeps_the_verdict(self):
+        report = self.report_with(lambda report, _tmp: (report / "RESULT.json").write_text('{"status": "FAIL"}'))
+        for name in qa.BROWSER_PROOF_FILES:
+            shutil.copy(self.root / "over-cap" / name, report)
+        code, printed = self.seal(report)
+        text = "\n".join(line[2:] for line in printed if line.startswith("| "))
+        decoder = json.JSONDecoder()
+        doc, _end = decoder.raw_decode(text)
+        self.assertEqual(code, 1)
+        self.assertEqual(doc, self.accounting("over-cap"))
+        self.assertIn('"normal-desktop"', text)
+        self.assertEqual(qa.json.loads(printed[-1]), {"status": "FAIL", "dropped": []})
+        self.assertLess(printed.index(next(l for l in printed if l.startswith("--- browser-summary.json"))),
+                        printed.index("--- RESULT.json"))
+
+    def test_seal_prints_the_proof_on_success_too(self):
+        report = self.report_with(lambda report, _tmp: (report / "RESULT.json").write_text('{"status": "PASS"}'))
+        code, printed = self.seal(report)
+        self.assertEqual(code, 0)
+        self.assertIn('"kind": "BROWSER REQUEST ACCOUNTING diagnostic; reconciles nothing",', "\n".join(printed))
+
+    def test_a_proof_cannot_change_a_sealed_verdict(self):
+        report = self.report_with(lambda report, _tmp: (report / "RESULT.json").write_text('{"status": "FAIL"}'))
+        (report / qa.BROWSER_PROOF_FILES[0]).write_text('{"status": "PASS"}')
+        code, printed = self.seal(report)
+        self.assertEqual(code, 1)
+        self.assertEqual(qa.json.loads(printed[-1])["status"], "FAIL")
+        for error in (RuntimeError("boom-text"), OSError("boom-text")):
+            with mock.patch.object(qa, "browser_proof_excerpt", side_effect=error):
+                code, printed = self.seal(report)
+            self.assertEqual(code, 1)
+            self.assertIn(f"--- browser proof excerpt unavailable: {type(error).__name__}", printed)
+            self.assertNotIn("boom-text", "\n".join(printed))
+
+    def test_proof_text_cannot_act_as_a_runner_command(self):
+        name = qa.BROWSER_PROOF_FILES[0]
+        report = self.report_with(lambda report, _tmp: (report / name).write_text('["::error::x", "##[error]y"]\n::stop\n'))
+        lines = qa.browser_proof_excerpt(report)
+        self.assertNotIn("##[", "\n".join(lines))
+        self.assertTrue(all(line.startswith(("--- ", "| ")) for line in lines))
+
+    def test_driver_keeps_the_oracle_and_every_boundary(self):
+        text = (HERE / "ot-linux-browser.cjs").read_text()
+        for needle in ("seen.add(request)", "routed.add(request)", "!routed.has(q)", "serviceWorkers: 'block'",
+                       "chromiumSandbox: true", "await context.route('**/*', handler)"):
+            self.assertIn(needle, text)
+        self.assertNotRegex(text, r"allHeaders|\.headers\(|headerValue|\.cookies\(|\.body\(|postDataBuffer")
+        self.assertIn("return parsed.pathname === '/check' || parsed.pathname.startsWith('/_next/static/') "
+                      "|| parsed.pathname === '/favicon.ico';", text)
+
+    def test_python_caps_are_the_drivers_caps(self):
+        text = (HERE / "ot-linux-browser.cjs").read_text()
+        for name, cap, _total, _dropped in qa.ACCOUNTING_LISTS:
+            self.assertIn(f"const {name.upper()}_RECORD_CAP = {cap};", text)
+        self.assertIn(f"const PROOF_BYTE_CAP = {qa.BROWSER_PROOF_CAP};", text)
+        self.assertIn(f"const PROOF_SCHEMA = {qa.BROWSER_PROOF_SCHEMA};", text)
+        self.assertEqual(set(re.findall(r"\['net::\w+', '(\w+)'\]", text)) | {"other"}, set(qa.PROOF_FAILURES))
 
 
 if __name__ == "__main__":

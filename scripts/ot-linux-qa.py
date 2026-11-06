@@ -152,6 +152,45 @@ KINDS =("normal", "malicious", "missing-message", "null-json", "malformed-json",
 VIEWPORTS = ("desktop", "mobile")
 EXPECTED_CASES = tuple(f"{k}-{v}" for k in KINDS for v in VIEWPORTS)
 
+# Fixed proof files from ot-linux-browser.cjs. They can only add problems: they
+# are never a verdict, and no count in them offsets the unrouted gate.
+BROWSER_PROOF_FILES = ("browser-accounting.json", "browser-summary.json")
+BROWSER_PROOF_CAP = 64 * 1024
+BROWSER_PROOF_SCHEMA = 1
+ACCOUNTING_KIND = "BROWSER REQUEST ACCOUNTING diagnostic; reconciles nothing"
+SUMMARY_KIND = "BROWSER RUN SUMMARY diagnostic; never a verdict"
+ACCOUNTING_KEYS = frozenset({"kind", "schema", "counts", "callbackErrorsBy", "snapshots", "unmatched", "unknown", "related"})
+ACCOUNTING_COUNTS = frozenset({
+    "seen", "routed", "records", "unrouted", "unknown", "related", "lateEvents", "callbackErrors",
+    "unmatchedDropped", "unknownDropped", "relatedDropped", "lifeDropped", "requestsDropped",
+})
+ACCOUNTING_LISTS = (("unmatched", 40, "unrouted", "unmatchedDropped"), ("unknown", 8, "unknown", "unknownDropped"),
+                    ("related", 24, "related", "relatedDropped"))
+ACCOUNTING_ZERO = ("unknown", "callbackErrors", "unmatchedDropped", "unknownDropped", "relatedDropped", "lifeDropped")
+SNAPSHOT_NAMES = frozenset({"atClose", "afterClose", "afterDrain"})
+SNAPSHOT_KEYS = frozenset({"seen", "routed", "unrouted", "pending"})
+SUMMARY_KEYS = frozenset({"kind", "schema", "cases", "control", "ok", "submitAttempted", "failure", "cleanup", "counts"})
+SUMMARY_CASE_KEYS = frozenset({"status", "failureKind", "posts", "linkCount"})
+SUMMARY_CONTROL_KEYS = frozenset({"ok", "status", "markerSeen", "posts", "fulfilled", "fetchFailed"})
+SUMMARY_STATUSES = frozenset({"pass", "failed", "notrun"})
+ERROR_KINDS = frozenset({"assertion", "timeout", "closed", "other"})
+FAILURE_KINDS = ERROR_KINDS | {"gate", "watchdog", "unknown"}
+CLOSE_STATES = frozenset({"notrun", "closed", "timeout", "error"})
+PROOF_PHASES = frozenset({"startup", "sandbox", "control", "final", *EXPECTED_CASES})
+PROOF_DECISIONS = frozenset({"continued", "aborted", "synthetic-failure", "fulfilled"})
+PROOF_FAILURES = frozenset({"aborted", "blocked_by_client", "failed", "connection_refused", "connection_reset",
+                            "timed_out", "name_not_resolved", "address_unreachable", "internet_disconnected", "other"})
+PROOF_DIGEST = r"sha256:[0-9a-f]{24}"
+PROOF_URL_RE = re.compile(
+    r"/(?:check|favicon\.ico|api/free-check|_next/static/[A-Za-z0-9._~/-]{1,160})"
+    rf"|[a-z][a-z0-9+.-]{{0,15}}:{PROOF_DIGEST}"
+    rf"|https?://[A-Za-z0-9.:\[\]-]{{1,100}}/{PROOF_DIGEST}")
+PROOF_QUERY_RE = re.compile(rf"[A-Za-z0-9_-]{{1,24}}(?:,[A-Za-z0-9_-]{{1,24}}){{0,7}}|{PROOF_DIGEST}")
+PROOF_LIFE_RE = re.compile(r"(?:[a-z]+@[0-9]+(?::closing)?(?: [a-z]+@[0-9]+(?::closing)?){0,7})?")
+PROOF_METHOD_RE = re.compile(r"[A-Z]{1,16}")
+PROOF_TYPE_RE = re.compile(r"[a-z]{1,16}")
+PROOF_CALLBACK_RE = re.compile(r"[a-z-]{1,32}")
+
 SECRET_KEY_RE = re.compile(
     r"TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE|STRIPE|RESEND|SENTRY|"
     r"AWS_|GITHUB_|ACTIONS_|RUNNER_|VERCEL|OPENAI|ANTHROPIC|SUPABASE|DIRECT_URL",
@@ -898,6 +937,171 @@ def evaluate_browser_evidence(evidence):
     return problems
 
 
+def _count(value):
+    return type(value) is int and value >= 0
+
+
+def _member(allowed):
+    return lambda value: isinstance(value, str) and value in allowed
+
+
+def _matching(pattern):
+    return lambda value: isinstance(value, str) and pattern.fullmatch(value) is not None
+
+
+def _optional(rule):
+    return lambda value: value is None or rule(value)
+
+
+def _flag(value):
+    return isinstance(value, bool)
+
+
+def _record_id(value):
+    return _count(value) and value > 0
+
+
+PROOF_RECORD_RULES = {
+    "id": _record_id,
+    "phase": _member(PROOF_PHASES),
+    "method": _matching(PROOF_METHOD_RE),
+    "url": _matching(PROOF_URL_RE),
+    "query": _optional(_matching(PROOF_QUERY_RE)),
+    "resourceType": _matching(PROOF_TYPE_RE),
+    "seen": _flag,
+    "handlerSeen": _flag,
+    "redirectedFrom": _optional(_record_id),
+    "redirectedTo": _optional(_record_id),
+    "status": _optional(lambda value: _count(value) and value <= 999),
+    "finished": _flag,
+    "failed": _flag,
+    "canceled": _flag,
+    "failure": _optional(_member(PROOF_FAILURES)),
+    "closing": _flag,
+    "decision": _optional(_member(PROOF_DECISIONS)),
+    "life": _matching(PROOF_LIFE_RE),
+}
+
+
+def proof_record_ok(record):
+    return (isinstance(record, dict) and set(record) == set(PROOF_RECORD_RULES)
+            and all(rule(record[key]) for key, rule in PROOF_RECORD_RULES.items()))
+
+
+def _snapshot_ok(value):
+    return value is None or (isinstance(value, dict) and set(value) == SNAPSHOT_KEYS
+                             and all(_count(item) for item in value.values()))
+
+
+def _proof_header_ok(doc, keys, kind):
+    return isinstance(doc, dict) and set(doc) == keys and doc["kind"] == kind and doc["schema"] == BROWSER_PROOF_SCHEMA
+
+
+def accounting_problems(doc, evidence):
+    """Schema and cross-checks only. A clean proof excuses nothing: unrouted stays its own gate."""
+    if not _proof_header_ok(doc, ACCOUNTING_KEYS, ACCOUNTING_KIND):
+        return ["browser accounting schema differs"]
+    counts = doc["counts"]
+    if not isinstance(counts, dict) or set(counts) != ACCOUNTING_COUNTS or not all(_count(v) for v in counts.values()):
+        return ["browser accounting counts schema differs"]
+    problems = []
+    records = []
+    for name, cap, total, dropped in ACCOUNTING_LISTS:
+        items = doc[name]
+        if not isinstance(items, list) or len(items) > cap or not all(proof_record_ok(item) for item in items):
+            problems.append(f"browser accounting {name} records schema differs")
+            continue
+        records += items
+        if len(items) + counts[dropped] != counts[total]:
+            problems.append(f"browser accounting {name} records do not add up to {counts[total]}")
+    if problems:
+        return problems
+    ids = [record["id"] for record in records]
+    if len(ids) != len(set(ids)):
+        problems.append("browser accounting record ids repeat")
+    peers = {r[key] for r in records for key in ("redirectedFrom", "redirectedTo")} - {None}
+    if not (counts["unmatchedDropped"] or counts["unknownDropped"] or counts["relatedDropped"]) and peers - set(ids):
+        problems.append("browser accounting redirect peer does not resolve")
+    if any(not r["seen"] or r["handlerSeen"] for r in doc["unmatched"]):
+        problems.append("browser accounting unmatched record contradicts the object oracle")
+    if any(r["seen"] for r in doc["unknown"]):
+        problems.append("browser accounting unknown record was seen")
+    by_callback = doc["callbackErrorsBy"]
+    if (not isinstance(by_callback, dict) or len(by_callback) > 16 or not all(_count(v) for v in by_callback.values())
+            or not all(PROOF_CALLBACK_RE.fullmatch(key) for key in by_callback)
+            or sum(by_callback.values()) != counts["callbackErrors"]):
+        problems.append("browser accounting callback errors schema differs")
+    snapshots = doc["snapshots"]
+    if not isinstance(snapshots, dict) or set(snapshots) != SNAPSHOT_NAMES or not all(map(_snapshot_ok, snapshots.values())):
+        problems.append("browser accounting snapshots schema differs")
+    problems += [f"browser accounting {key} is {counts[key]}" for key in ACCOUNTING_ZERO if counts[key] != 0]
+    evidence = evidence if isinstance(evidence, dict) else {}
+    if counts["unrouted"] != evidence.get("counts", {}).get("unrouted"):
+        problems.append("browser accounting unrouted differs from the evidence")
+    if counts["routed"] != evidence.get("counts", {}).get("total"):
+        problems.append("browser accounting routed differs from the evidence total")
+    if counts["requestsDropped"] != evidence.get("requestsDropped"):
+        problems.append("browser accounting requestsDropped differs from the evidence")
+    return problems
+
+
+def _summary_case_ok(case):
+    return (isinstance(case, dict) and set(case) == SUMMARY_CASE_KEYS and _member(SUMMARY_STATUSES)(case["status"])
+            and _optional(_member(ERROR_KINDS))(case["failureKind"])
+            and _optional(_count)(case["posts"]) and _optional(_count)(case["linkCount"]))
+
+
+def _summary_control_ok(control):
+    return control is None or (isinstance(control, dict) and set(control) == SUMMARY_CONTROL_KEYS
+                               and _flag(control["ok"]) and _flag(control["markerSeen"]) and _flag(control["fetchFailed"])
+                               and _optional(_count)(control["status"]) and _count(control["posts"])
+                               and _count(control["fulfilled"]))
+
+
+def _summary_failure_ok(failure):
+    return failure is None or (isinstance(failure, dict) and set(failure) == {"phase", "kind"}
+                               and _member(PROOF_PHASES)(failure["phase"]) and _member(FAILURE_KINDS)(failure["kind"]))
+
+
+def _summary_cleanup_ok(cleanup):
+    return (isinstance(cleanup, dict) and set(cleanup) == {"closing", "close"} and _flag(cleanup["closing"])
+            and _member(CLOSE_STATES)(cleanup["close"]))
+
+
+def summary_problems(doc, evidence):
+    if not _proof_header_ok(doc, SUMMARY_KEYS, SUMMARY_KIND):
+        return ["browser summary schema differs"]
+    cases = doc["cases"]
+    if not isinstance(cases, dict) or set(cases) != set(EXPECTED_CASES) or not all(map(_summary_case_ok, cases.values())):
+        return ["browser summary cases differ from the expected twelve"]
+    problems = []
+    if not (_summary_control_ok(doc["control"]) and _flag(doc["ok"]) and _flag(doc["submitAttempted"])
+            and _summary_failure_ok(doc["failure"]) and _summary_cleanup_ok(doc["cleanup"])):
+        problems.append("browser summary schema differs")
+    # notrun stays legal on a failed run: the driver may never have reached closeContext.
+    elif doc["cleanup"]["close"] in ("timeout", "error") or (doc["ok"] and doc["cleanup"]["close"] != "closed"):
+        problems.append(f"browser summary close is {doc['cleanup']['close']}")
+    evidence = evidence if isinstance(evidence, dict) else {}
+    if doc["ok"] != evidence.get("ok") or doc["counts"] != evidence.get("counts"):
+        problems.append("browser summary differs from the evidence")
+    observed = evidence.get("cases", {})
+    if {name: case["status"] for name, case in cases.items()} != {
+            name: case.get("status") for name, case in observed.items()}:
+        problems.append("browser summary case status differs from the evidence")
+    return problems
+
+
+def evaluate_browser_proof(evidence, accounting, summary):
+    """Reports from read_browser_proof. Absent, refused or unparsable fails like any other problem."""
+    problems = []
+    for name, report in zip(BROWSER_PROOF_FILES, (accounting, summary)):
+        if report.get("state") != "ok" or report.get("json") != "valid":
+            problems.append(f"{name}: {report.get('json') or report.get('state')}")
+    if problems:
+        return problems
+    return accounting_problems(accounting["value"], evidence) + summary_problems(summary["value"], evidence)
+
+
 def final_gate(stages, inner, host_cleanup, artifact):
     """Positive only when every stage, the fence, cleanup and the bound all held."""
     problems = []
@@ -1306,6 +1510,44 @@ def print_prisma_target_excerpt(report_dir, root):
         pass
 
 
+def read_browser_proof(report_dir, name):
+    """Refused rather than cut: a partial proof could hide the records it exists to keep."""
+    try:
+        dir_fd = open_report_dir(report_dir)
+    except OSError as exc:
+        return {"state": f"unreadable:{errno.errorcode.get(exc.errno, 'unknown')}"}
+    try:
+        report = read_build_file(dir_fd, name, BROWSER_PROOF_CAP)
+    finally:
+        os.close(dir_fd)
+    if report["state"] == "ok" and report["bytes"] >= BROWSER_PROOF_CAP:
+        return {"state": "refused:oversize"}
+    return report
+
+
+def browser_proof_excerpt(report_dir):
+    """Printed whole on every outcome, so the 64 KiB evidence cut cannot lose an identity."""
+    lines = []
+    for name in BROWSER_PROOF_FILES:
+        report = read_browser_proof(report_dir, name)
+        if report["state"] != "ok":
+            lines.append(f"--- {name}: {json.dumps({'state': report['state']})}")
+            continue
+        meta = {key: report[key] for key in ("bytes", "json", "sha256", "state")}
+        lines.append(f"--- {name}: {json.dumps(meta, sort_keys=True)}")
+        lines += excerpt_lines(report["head"])
+    return lines
+
+
+def print_browser_proof(report_dir):
+    """Diagnostics only: nothing here may change or hide the sealed result."""
+    try:
+        for line in browser_proof_excerpt(report_dir):
+            print(line, flush=True)
+    except Exception as exc:  # noqa: BLE001 - the type alone, so no file text is echoed
+        print(f"--- browser proof excerpt unavailable: {type(exc).__name__}", flush=True)
+
+
 def enforce_report_cap(report_dir):
     """Keep what is uploaded bounded even after a killed step: largest files go first."""
     entries = []
@@ -1688,6 +1930,8 @@ class NamespaceOps:
             time.sleep(POLL)
         evidence = read_json(f"{NS_OUT}/browser-evidence.json")
         out = {"driver_exit": self.driver.poll(), "problems": evaluate_browser_evidence(evidence)}
+        proofs = [read_browser_proof(NS_OUT, name) for name in BROWSER_PROOF_FILES]
+        out["problems"] += evaluate_browser_proof(evidence, *proofs)
         if out["driver_exit"] != 0:
             out["problems"].append(f"driver exit {out['driver_exit']}")
         if isinstance(evidence, dict):
@@ -2086,6 +2330,7 @@ def seal_body(args, layout):
         existing = {"status": "FAIL", "problems": ["run did not complete"], "stages": stages}
         write_json(layout.report / "RESULT.json", existing)
     dropped = enforce_report_cap(layout.report)
+    print_browser_proof(layout.report)
     for line in report_excerpt(layout.report):
         print(line, flush=True)
     print_build_failure_excerpt(layout.report)
