@@ -20,6 +20,11 @@ jest.mock("@/lib/analytics/free-check-measurement-runtime", () => ({
   withMeasurementClient: async (run: (db: unknown) => Promise<unknown>) =>
     run(jest.requireMock("@/lib/db/prisma").prisma),
 }));
+// The main branch now reads the county itself. This suite is about the ledger,
+// so the read refuses without a network, and the route answers as it would.
+jest.mock("@/lib/fulfillment-runtime/free-comparison", () => ({
+  readFreeComparison: async () => ({ ok: false, blocker: "TEST_NOT_STUBBED" }),
+}));
 import { POST } from "@/app/api/free-check/route";
 import { prisma } from "@/lib/db/prisma";
 import {

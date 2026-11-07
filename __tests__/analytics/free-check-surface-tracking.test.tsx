@@ -203,7 +203,12 @@ describe("free-check funnel across both surfaces", () => {
     })
 
     it("emits nothing when a cached result is rehydrated from sessionStorage", async () => {
-      window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(supportiveResponse()))
+      // The cache refuses an entry carrying the retired mean, so a restorable one
+      // is shaped as the route now writes it.
+      window.sessionStorage.setItem(
+        SESSION_KEY,
+        JSON.stringify({ ...supportiveResponse(), avgComparableAssessedValue: null, sharedMetric: null }),
+      )
       stubRoute(supportiveResponse())
 
       render(<FreeCheckFormWrapper />)

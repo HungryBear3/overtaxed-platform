@@ -3,11 +3,11 @@
  *
  * POST: { pin?: string, address?: string, city?: string, selectedPin?: string }
  *
- * Returns the subject property, up to three comparable properties from the
- * Cook County record with their assessed values and average, the assessment
- * level where a market value exists for both sides, the appeal argument for a
- * supportive outcome, the township window status, and the property
- * characteristics on file.
+ * Returns the subject property, the T2 report's selection rule applied to it (every
+ * qualifying comparable and the median mailed assessed value per building square
+ * foot, subject excluded), the township window status, and the property
+ * characteristics on file. Where the subject or the read fails, no comparison is
+ * returned at all; see `readFreeComparison`.
  *
  * No overpayment projection is returned on any path; see the note beside
  * `potentialOverpaymentPerYear` below. The doc comment here used to promise one.
@@ -20,14 +20,14 @@ import { NextRequest, NextResponse } from "next/server"
 import {
   getPropertyByPIN,
   searchPropertiesByAddress,
-  getComparableSales,
-  getComparableEquity,
   formatPIN,
   normalizePIN,
   isValidPIN,
   ADDRESS_LOOKUP_UNAVAILABLE,
 } from "@/lib/cook-county"
-import type { PropertyData, SalesRecord, EquityRecord } from "@/lib/cook-county"
+import type { PropertyData } from "@/lib/cook-county"
+import { NON_DIRECTIONAL_RULE_ID } from "@/lib/fulfillment/t2-comparables"
+import { readFreeComparison } from "@/lib/fulfillment-runtime/free-comparison"
 import { rateLimit, getClientIdentifier } from "@/lib/rate-limit"
 import {
   getFreeCheckAppealWindowStatus,
@@ -36,6 +36,10 @@ import {
   type FreeCheckOutcome,
 } from "@/lib/free-check-appeal-window"
 import { CC_02, CC_05, CC_07 } from "@/lib/copy/canonical"
+import {
+  FREE_COMPARISON_SELECTION_LABEL,
+  type FreeCheckSharedMetric,
+} from "@/lib/free-check-comparison-contract"
 import {
   parseFreeCheckAddress,
   resolveAddressCandidates,
@@ -52,12 +56,45 @@ import {
 export const maxDuration = 25
 
 /**
+ * The share of `maxDuration` the county comparison may spend, counted from the
+ * start of the request. The rest is for the measurement write and the response,
+ * so a slow read refuses instead of being killed mid-answer.
+ */
+const COMPARISON_BUDGET_MS = 22_000
+
+/**
  * Static sample returned to clients in preview/dev/test. Shaped to match
  * the live Result so `<FreeCheckResult>` renders without changes. Numbers
  * are illustrative — clearly inside the same neighborhood as the homepage
  * `/api/check` stub.
  */
 const PREVIEW_SAMPLE_ADDRESS_PATTERN = /\b123\s+s\s+sample\s+ave\b/i
+
+/**
+ * Synthetic throughout, including the metric: no county read happened, so it
+ * carries no `comparisonEvidence`. The figures are the sample comparables' own
+ * dollars per sq ft, so the median on screen is the median of the rows beneath it.
+ */
+const PREVIEW_SHARED_METRIC: FreeCheckSharedMetric = {
+  version: "ot-shared-metric/v1",
+  metric: "MEDIAN_ASSESSED_PER_BUILDING_SQFT",
+  unit: "ASSESSED_USD_CENTS_PER_BUILDING_SQFT",
+  cohortRule: "FREE_ELIGIBLE_POOL_MATCH_V1",
+  stage: "mailed",
+  taxYear: 2025,
+  subjectExcluded: true,
+  subjectAssessedCentsPerBuildingSqft: 3400,
+  subjectAssessedTotalCents: 4250000,
+  comparableMedian: {
+    unit: "ASSESSED_USD_CENTS_PER_BUILDING_SQFT",
+    status: "COMPUTED",
+    value: (34800 / 1180) * 100,
+    count: 3,
+    minimumCount: 3,
+  },
+  sampleAdequacy: "NOT_QUALIFIED",
+  claims: "ASSESSED_VALUES_ONLY_NO_MARKET_VALUE_NO_SAVINGS",
+}
 
 const PREVIEW_FREE_CHECK_SAMPLE = {
   success: true,
@@ -71,7 +108,7 @@ const PREVIEW_FREE_CHECK_SAMPLE = {
     neighborhoodCode: "78-120",
     taxYear: 2025,
     assessedTotalValue: 42500,
-    marketValue: 425000,
+    marketValue: null,
   },
   compCount: 3,
   comps: [
@@ -80,37 +117,39 @@ const PREVIEW_FREE_CHECK_SAMPLE = {
       address: "123 Sample Ave",
       city: "Chicago",
       assessedValue: 36400,
-      marketValue: 364000,
+      marketValue: null,
       squareFeet: 1200,
       yearBuilt: 1925,
-      propertyClass: "2-03",
+      propertyClass: "203",
     },
     {
       pin: "18-06-214-013-0000",
       address: "127 Sample Ave",
       city: "Chicago",
       assessedValue: 34800,
-      marketValue: 348000,
+      marketValue: null,
       squareFeet: 1180,
       yearBuilt: 1923,
-      propertyClass: "2-03",
+      propertyClass: "203",
     },
     {
       pin: "18-06-214-014-0000",
       address: "131 Sample Ave",
       city: "Chicago",
       assessedValue: 34100,
-      marketValue: 341000,
+      marketValue: null,
       squareFeet: 1210,
       yearBuilt: 1924,
-      propertyClass: "2-03",
+      propertyClass: "203",
     },
   ],
-  avgComparableAssessedValue: 35100,
-  equityRatio: 12.1,
+  sharedMetric: PREVIEW_SHARED_METRIC,
+  comparisonEvidence: null,
+  avgComparableAssessedValue: null,
+  equityRatio: null,
   targetEquityRatio: 10.0,
-  avgCompEquityRatio: 10.3,
-  assessmentGap: 7400,
+  avgCompEquityRatio: null,
+  assessmentGap: null,
   // No projected overpayment. The sample used to carry $1,420/yr and $4,260 over
   // three years, and those two figures escaped: `components/ot-design/HomePage.tsx`
   // spread this object as the base of every normalized result, so a real check
@@ -145,13 +184,13 @@ const PREVIEW_FREE_CHECK_SAMPLE = {
     code: "insufficient_evidence" as const,
     headline: CC_05,
     allowCheckout: false,
-    reason: "eligibility_policy_unsigned" as const,
-    showFigures: true,
+    reason: "no_comparable_level" as const,
+    showFigures: false,
     showRecordComparison: true,
   },
   propertyCharacteristics: null,
   compSelection: {
-    basis: "cohort_recency" as const,
+    basis: "preview_sample" as const,
     distanceRanked: false,
     label: "Sample data — not selected from any real Cook County record.",
   },
@@ -159,53 +198,6 @@ const PREVIEW_FREE_CHECK_SAMPLE = {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function getCompAssessedValue(sale: SalesRecord): number | null {
-  if (sale.assessedMarketValue != null && sale.assessedMarketValue > 0) {
-    return sale.assessedMarketValue / 10
-  }
-  if (sale.salePrice > 0) return sale.salePrice / 10
-  return null
-}
-
-function getEquityAssessedValue(equity: EquityRecord): number | null {
-  if (equity.assessedMarketValue != null && equity.assessedMarketValue > 0) {
-    return equity.assessedMarketValue / 10
-  }
-  return null
-}
-
-function formatCurrencyShort(n: number): string {
-  if (n >= 1000) return `$${Math.round(n / 1000)}k`
-  return `$${Math.round(n)}`
-}
-
-function buildAppealArgument(
-  address: string,
-  city: string,
-  subjectAV: number,
-  avgCompAV: number,
-  marketValue: number | null,
-  township: string | null,
-  neighborhoodCode: string | null,
-  equityRatio: number | null
-): string {
-  const gap = subjectAV - avgCompAV
-  const targetAV = avgCompAV
-  const mvStr = marketValue ? formatCurrencyShort(marketValue) : "estimated market value"
-  const ratioStr = equityRatio != null ? `${equityRatio.toFixed(1)}%` : "above"
-  const townshipStr = township ? `${township} township` : "this neighborhood"
-  const nbhdStr = neighborhoodCode ? ` (CCAO neighborhood ${neighborhoodCode})` : ""
-
-  return `The subject property at ${address}, ${city}${nbhdStr} has been assessed at $${subjectAV.toLocaleString()}, resulting in an assessment level of ${ratioStr} — above Cook County's 10% residential target.
-
-Comparable properties in ${townshipStr} average $${Math.round(avgCompAV).toLocaleString()} in assessed value, giving a separate uniformity benchmark for similar homes.
-
-Under Illinois law (35 ILCS 200/9-5) and the Cook County Assessor's rules, property assessments should reflect 10% of fair market value and be uniform with comparable properties. This property's assessment exceeds comparable properties by approximately $${Math.round(gap).toLocaleString()} in assessed value.
-
-We request a reduction in the assessed value to $${Math.round(targetAV).toLocaleString()}, consistent with the ${mvStr} market value and comparable properties in the neighborhood.`
-}
-
 
 const ASSESSOR_ADDRESS_SEARCH_URL = "https://www.cookcountyassessoril.gov/address-search"
 
@@ -278,6 +270,8 @@ export async function POST(req: NextRequest) {
   if (!allowed) {
     return NextResponse.json({ error: "Too many requests" }, { status: 429 })
   }
+
+  const comparisonDeadline = Date.now() + COMPARISON_BUDGET_MS
 
   try {
     const body = await req.json().catch(() => ({}))
@@ -533,6 +527,8 @@ export async function POST(req: NextRequest) {
         },
         compCount: 0,
         comps: [],
+        sharedMetric: null,
+        comparisonEvidence: null,
         avgComparableAssessedValue: null,
         equityRatio: null,
         targetEquityRatio: 10.0,
@@ -544,7 +540,7 @@ export async function POST(req: NextRequest) {
         appealWindowStatus: noValueWindow,
         propertyCharacteristics,
         compSelection: {
-          basis: "cohort_recency" as const,
+          basis: NON_DIRECTIONAL_RULE_ID,
           distanceRanked: false,
           label: "No comparable properties were selected — the subject has no published assessed value.",
         },
@@ -554,94 +550,24 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // ── Fetch comps ──────────────────────────────────────────────────────────
-    const [salesRes, equityRes] = await Promise.all([
-      getComparableSales(propertyData, { limit: 5, livingAreaTolerancePercent: 30, yearBuiltTolerance: 15 }),
-      getComparableEquity(propertyData, { limit: 5, livingAreaTolerancePercent: 30, yearBuiltTolerance: 15 }),
-    ])
-
-    const sales = salesRes.success && salesRes.data ? salesRes.data : []
-    const equity = equityRes.success && equityRes.data ? equityRes.data : []
-
-    // Build comp values list (max 3)
-    const compValues: number[] = []
-    const compDetails: Array<{
-      pin: string
-      address: string
-      city: string
-      assessedValue: number
-      marketValue: number | null
-      squareFeet: number | null
-      yearBuilt: number | null
-      propertyClass: string | null
-    }> = []
-
-    sales.slice(0, 3).forEach((s) => {
-      const av = getCompAssessedValue(s)
-      if (av != null) {
-        compValues.push(av)
-        compDetails.push({
-          pin: formatPIN(s.pin),
-          address: s.address || "",
-          city: s.city || "",
-          assessedValue: Math.round(av),
-          marketValue: s.assessedMarketValue != null ? Math.round(s.assessedMarketValue) : null,
-          squareFeet: s.livingArea,
-          yearBuilt: s.yearBuilt,
-          propertyClass: s.buildingClass,
-        })
-      }
+    // ── The report's comparison ──────────────────────────────────────────────
+    //
+    // The same selection and median as the T2 report, over the whole neighborhood
+    // pool with unusable parcels counted out, read inside this request and stored
+    // nowhere. It used to be the first three parcels of a
+    // sales-then-equity search with looser bands and widening fallbacks, a mean of
+    // whichever total each happened to carry, and a market value that was the
+    // assessed value times ten. None of that survives: a refused read means no
+    // comparison, never a looser one, and no subject figure beside it, because
+    // the lookup's figure above can be a later stage than the mailed one.
+    const comparisonRead = await readFreeComparison({
+      propertyPin: propertyData.pin,
+      expectedTownship: propertyData.township,
+      deadline: comparisonDeadline,
     })
-    if (compValues.length < 3) {
-      equity.forEach((e) => {
-        if (compValues.length >= 3) return
-        const av = getEquityAssessedValue(e)
-        if (av != null) {
-          compValues.push(av)
-          compDetails.push({
-            pin: formatPIN(e.pin),
-            address: e.address || "",
-            city: e.city || "",
-            assessedValue: Math.round(av),
-            marketValue: e.assessedMarketValue != null ? Math.round(e.assessedMarketValue) : null,
-            squareFeet: e.livingArea,
-            yearBuilt: e.yearBuilt,
-            propertyClass: e.buildingClass,
-          })
-        }
-      })
-    }
-
-    const avgCompAV = compValues.length > 0
-      ? compValues.reduce((a, b) => a + b, 0) / compValues.length
-      : null
-
-    // ── Equity ratio calculation ─────────────────────────────────────────────
-    // Equity ratio = assessed value / market value as percentage. CCAO target = 10%.
-    const subjectMarketValue = propertyData.marketValue
-    const equityRatio =
-      subjectMarketValue != null && subjectMarketValue > 0
-        ? Math.round((subjectAV / subjectMarketValue) * 1000) / 10  // e.g. 10.7
-        : null
-
-    // Average comp assessment level — use comp market values if available
-    const compEquityRatios: number[] = []
-    compDetails.forEach((c) => {
-      if (c.marketValue != null && c.marketValue > 0 && c.assessedValue > 0) {
-        compEquityRatios.push(c.assessedValue / c.marketValue)
-      }
-    })
-    // No comparable had both a market and an assessed value, so there is no
-    // comparable assessment level. This used to fall back to the literal 10.0 —
-    // the county's statutory target — which meant a subject with no usable
-    // comparables was silently measured against a policy number and reported as
-    // if it had been compared with its neighbours. Absence stays absent.
-    const avgCompEquityRatio =
-      compEquityRatios.length > 0
-        ? Math.round((compEquityRatios.reduce((a, b) => a + b, 0) / compEquityRatios.length) * 1000) / 10
-        : null
-
-    const assessmentGap = avgCompAV != null ? Math.round(subjectAV - avgCompAV) : null
+    // The blocker is a bounded name. No PIN or address reaches a log line here.
+    if (!comparisonRead.ok) console.warn("[free-check] comparison unavailable:", comparisonRead.blocker)
+    const comparison = comparisonRead.ok ? comparisonRead.comparison : null
 
     // ── No overpayment estimate is computed ──────────────────────────────────
     //
@@ -663,45 +589,23 @@ export async function POST(req: NextRequest) {
     // so the three could disagree about the same property. The decision is made
     // once, here, against the assessment evidence rather than a derived dollar
     // figure, and every surface renders what comes back.
-    const appealWindowStatus = getFreeCheckAppealWindowStatus(propertyData.township)
+    //
+    // No assessment level enters it. The only market value this route ever had
+    // was the assessed value times ten, which makes the ratio 10.0 for every
+    // parcel, so both levels are absent and the outcome resolves on the record
+    // comparison alone.
+    const township = comparison?.subject.township ?? propertyData.township
+    const appealWindowStatus = getFreeCheckAppealWindowStatus(township)
     const outcome: FreeCheckOutcome = evaluateFreeCheckOutcome({
       window: appealWindowStatus,
       evidence: evidenceFor(propertyData, {
-        assessedTotalValue: subjectAV,
-        equityRatio,
-        avgCompEquityRatio,
-        compCount: compValues.length,
+        assessedTotalValue: comparison?.subject.assessedTotalValue ?? subjectAV,
+        equityRatio: null,
+        avgCompEquityRatio: null,
+        compCount: comparison?.comparables.length ?? 0,
+        ...(comparison ? { propertyClass: comparison.subject.propertyClass } : {}),
       }),
     })
-
-    // ── Appeal argument text ─────────────────────────────────────────────────
-    // Generated only for a supportive outcome. Argument text for a property we
-    // have not concluded anything about reads as a conclusion.
-    const appealArgumentText =
-      outcome.code === "supportive" && avgCompAV != null
-        ? buildAppealArgument(
-            propertyData.address,
-            propertyData.city,
-            subjectAV,
-            avgCompAV,
-            subjectMarketValue,
-            propertyData.township,
-            neighborhoodCode,
-            equityRatio
-          )
-        : null
-
-    // Two different gates, because these are two different kinds of number.
-    //
-    // The assessment comparison — assessed value, comparable average, ratio —
-    // is a description of the public record, and it survives `showFigures`.
-    //
-    // The projected annual overpayment is not a record. It is a forecast of a
-    // tax bill that has not been issued, from an assessment the county has not
-    // been asked to change. It is the figure a reader remembers, and it is
-    // therefore released only for a supportive outcome. Shown beside
-    // "Insufficient evidence" it simply overrides the words next to it.
-    const showFigures = outcome.showFigures
 
     // The public-record comparison rides its own gate.
     //
@@ -712,7 +616,7 @@ export async function POST(req: NextRequest) {
     // and three published comparable assessed values had all of it suppressed
     // because a fourth field was blank, and the reader was shown "insufficient
     // evidence" over a comparison that was sitting complete in the response.
-    const showRecordComparison = outcome.showRecordComparison
+    const released = outcome.showRecordComparison ? comparison : null
 
     const measurement = await recordFreeCheckCompletion({ body, outcome, windowStatus: appealWindowStatus.status, preview: excludeFromMeasurement })
     return NextResponse.json({
@@ -726,21 +630,28 @@ export async function POST(req: NextRequest) {
         address: propertyData.address,
         city: propertyData.city,
         zipCode: propertyData.zipCode,
-        township: propertyData.township,
-        neighborhoodCode,
-        taxYear,
-        assessedTotalValue: subjectAV,
-        marketValue: propertyData.marketValue,
+        township,
+        neighborhoodCode: released?.subject.neighborhoodCode ?? neighborhoodCode,
+        taxYear: released?.subject.taxYear ?? taxYear,
+        // Mailed, from the same read as the comparison, or nothing.
+        assessedTotalValue: released?.subject.assessedTotalValue ?? null,
+        marketValue: null,
       },
-      compCount: showRecordComparison ? compValues.length : 0,
-      comps: showRecordComparison ? compDetails : [],
-      avgComparableAssessedValue: showRecordComparison ? avgCompAV : null,
-      // Assessment levels are ratios against a market value, so they stay behind
-      // the narrower gate even when the assessed-value comparison is released.
-      equityRatio: showFigures ? equityRatio : null,
+      compCount: released?.comparables.length ?? 0,
+      comps: (released?.comparables ?? []).map((comparable) => ({
+        ...comparable,
+        pin: formatPIN(comparable.pin),
+        marketValue: null,
+      })),
+      sharedMetric: released?.sharedMetric ?? null,
+      comparisonEvidence: released?.comparisonEvidence ?? null,
+      // Gone with the mean and the times-ten market value they were computed
+      // from. Still sent as null so the `Result` shape every surface reads holds.
+      avgComparableAssessedValue: null,
+      equityRatio: null,
       targetEquityRatio: 10.0,
-      avgCompEquityRatio: showFigures ? avgCompEquityRatio : null,
-      assessmentGap: showRecordComparison ? assessmentGap : null,
+      avgCompEquityRatio: null,
+      assessmentGap: null,
       // Never released. A per-year or three-year dollar projection is a savings
       // claim about the reader's property (BL-B1/B3) and a merits
       // characterization (BL-C3), and no signed eligibility policy (OD-2/OD-3)
@@ -749,22 +660,23 @@ export async function POST(req: NextRequest) {
       // outcome. It is computed no further and sent as null on every path.
       potentialOverpaymentPerYear: null,
       potentialOverpayment3Year: null,
-      appealArgumentText,
+      // The drafted argument was built from the mean. Nothing replaces it here:
+      // the report omits a drafted argument too, under the unsigned OD-5.
+      appealArgumentText: null,
       appealWindowStatus,
       propertyCharacteristics,
       // How the comparables above were actually chosen. Nothing in this route
-      // computes a distance: `getComparableSales` filters on the subject's CCAO
-      // neighbourhood code and building class and orders by sale date, widening
-      // to a three-year window and then to the township when a cohort is thin,
-      // and `getComparableEquity` fills any shortfall from the same neighbourhood
-      // or township. Every surface that called these "the three nearest" or
-      // "nearby" was describing a ranking that is not performed.
+      // computes a distance, and nothing ranks at all: every parcel that meets
+      // the rule is listed. Every surface that called these "the three nearest"
+      // or "nearby" was describing a ranking that is not performed.
       compSelection: {
-        basis: "cohort_recency" as const,
+        basis: NON_DIRECTIONAL_RULE_ID,
         distanceRanked: false,
-        label: "Selected from available Cook County records for similar properties in the same assessment cohort.",
+        label: released
+          ? FREE_COMPARISON_SELECTION_LABEL
+          : "No comparable properties are shown for this property.",
       },
-      source: salesRes.source ?? "Cook County Open Data",
+      source: "Cook County Open Data",
     })
   } catch (error) {
     console.error("[free-check] error:", error)
@@ -791,7 +703,7 @@ function evidenceFor(
   measured: Pick<
     FreeCheckEvidence,
     "assessedTotalValue" | "equityRatio" | "avgCompEquityRatio" | "compCount"
-  >,
+  > & Partial<Pick<FreeCheckEvidence, "propertyClass">>,
 ): FreeCheckEvidence {
   return {
     propertyClass: propertyData.buildingClass,

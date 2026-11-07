@@ -5,6 +5,15 @@ import Link from "next/link"
 
 import { CC_02, CC_05, CC_12 } from "@/lib/copy/canonical"
 import {
+  FREE_COMPARISON_NO_CONCLUSION_TEXT,
+  FREE_COMPARISON_UNAVAILABLE_TEXT,
+  describeComparisonEvidence,
+  freeComparisonBrief,
+  isFreeCheckSharedMetric,
+  type FreeCheckComparisonEvidence,
+  type FreeCheckSharedMetric,
+} from "@/lib/free-check-comparison-contract"
+import {
   isCanonicalFreeCheckOutcome,
   type FreeCheckOutcome as SharedResultOutcome,
 } from "@/lib/free-check-outcome-contract"
@@ -64,6 +73,12 @@ export type Result = {
   }
   compCount: number
   comps: CompDetail[]
+  /**
+   * The report's comparison. `null` means the route withheld it. Absent only on a
+   * payload written by an older build, which this renders as it always did.
+   */
+  sharedMetric?: FreeCheckSharedMetric | null
+  comparisonEvidence?: FreeCheckComparisonEvidence | null
   avgComparableAssessedValue: number | null
   equityRatio: number | null
   targetEquityRatio: number
@@ -170,6 +185,16 @@ export function FreeCheckResult({ result }: Props) {
   // transferred parcel and for most of the equity comps.
   const showRecordComparison = outcome?.showRecordComparison ?? false
   const canOffer = outcome?.allowCheckout === true
+
+  // Read through the guard, because this component is also fed from
+  // `sessionStorage`. A carried value that fails it is a comparison we cannot
+  // stand behind, so it renders as withheld rather than as whatever it says.
+  const brief =
+    showRecordComparison && isFreeCheckSharedMetric(result.sharedMetric)
+      ? freeComparisonBrief(result.sharedMetric)
+      : null
+  const provenance = brief ? describeComparisonEvidence(result.comparisonEvidence) : null
+  const comparisonUnavailable = !brief && !result.noAssessedValue && result.sharedMetric !== undefined
 
   // The generated appeal argument, and only when the route released figures.
   //
@@ -344,8 +369,31 @@ export function FreeCheckResult({ result }: Props) {
             mismatch is surfaced rather than shown. */}
         <p className="text-sm text-gray-600 mb-3" role="note">{CC_02}</p>
         <p className="text-2xl font-bold text-gray-900 mb-2">{headline}</p>
+        {brief && outcome?.code === "insufficient_evidence" && (
+          <p data-testid="free-comparison-no-conclusion" className="text-sm text-gray-700 mb-4">
+            {FREE_COMPARISON_NO_CONCLUSION_TEXT}
+          </p>
+        )}
         {result.sourceCaveat && (
           <p className="text-sm text-gray-500 mb-6">{result.sourceCaveat}</p>
+        )}
+
+        {comparisonUnavailable && (
+          <p data-testid="free-comparison-unavailable" className="text-sm text-gray-700 mb-4">
+            {FREE_COMPARISON_UNAVAILABLE_TEXT}
+          </p>
+        )}
+
+        {/* The free comparison's figures, in the accepted brief's words. */}
+        {brief && (
+          <div data-testid="free-comparison-brief" className="rounded-xl bg-gray-50 border border-gray-200 p-4 mb-4 space-y-1">
+            <p className="text-sm text-gray-700">{brief.subjectTotal}</p>
+            <p className="text-lg font-bold text-gray-900">{brief.subject}</p>
+            <p className="text-lg font-bold text-blue-900">{brief.median}</p>
+            <p className="text-xs text-gray-600">{brief.adequacy}</p>
+            <p className="text-xs text-gray-600">{brief.adequacyGloss}</p>
+            {provenance && <p className="text-xs text-gray-500">{provenance}</p>}
+          </div>
         )}
 
         {/* Value cards.
@@ -354,8 +402,12 @@ export function FreeCheckResult({ result }: Props) {
             blanks those fields itself when the comparison is withheld. This
             component is also fed from `sessionStorage`, where a stale or
             hand-edited entry can carry populated figures beside a withholding
-            outcome, and the capability is the thing with standing to decide. */}
-        {showRecordComparison && (
+            outcome, and the capability is the thing with standing to decide.
+
+            Only an older build's payload reaches them now: the route sends no
+            mean, and a result carrying the brief or a withheld comparison never
+            shows these. */}
+        {showRecordComparison && !brief && !comparisonUnavailable && (
         <div className="flex flex-wrap gap-4 justify-center mb-4">
           <div className="rounded-xl bg-gray-50 border border-gray-200 p-4 flex-1 min-w-[10rem] max-w-xs">
             <p className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Your assessed value</p>
@@ -420,7 +472,7 @@ export function FreeCheckResult({ result }: Props) {
           The two rows that need a market value carry their own null checks
           below, so a subject the county has no market value for still gets the
           assessed-value rows it does have. */}
-      {showRecordComparison && !result.noAssessedValue && result.subject.assessedTotalValue != null && result.avgComparableAssessedValue != null && (
+      {showRecordComparison && !brief && !result.noAssessedValue && result.subject.assessedTotalValue != null && result.avgComparableAssessedValue != null && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
           <h3 className="text-base font-bold text-gray-900 mb-1">Equity analysis</h3>
           <p className="text-sm text-gray-500 mb-4">
@@ -496,8 +548,15 @@ export function FreeCheckResult({ result }: Props) {
       )}
 
       {/* ── Comparable Properties ────────────────────────────────────────── */}
-      {showRecordComparison && result.comps && result.comps.length > 0 && (
+      {showRecordComparison && result.comps && result.comps.length > 0 && !comparisonUnavailable && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
+          {/* Beside a median the list is the evidence for it, so it is shown
+              rather than offered behind a toggle. */}
+          {brief ? (
+            <h3 className="text-base font-bold text-gray-900">
+              Comparable properties ({result.comps.length})
+            </h3>
+          ) : (
           <button
             onClick={() => setShowComps(!showComps)}
             className="w-full flex items-center justify-between text-left"
@@ -507,12 +566,13 @@ export function FreeCheckResult({ result }: Props) {
             </h3>
             <span className="text-sm text-blue-600 font-semibold">{showComps ? "Hide ↑" : "Show ↓"}</span>
           </button>
+          )}
           <p className="text-sm text-gray-500 mt-1">
             {result.compSelection?.label ??
               "These are the comparable properties used in the comparison above."}
           </p>
 
-          {showComps && (
+          {(brief || showComps) && (
             <div className="mt-4 space-y-3">
               {/* Desktop table */}
               <div className="hidden sm:block overflow-x-auto">
@@ -617,7 +677,7 @@ export function FreeCheckResult({ result }: Props) {
         <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
           <p className="text-center font-medium text-gray-900 text-lg mb-4">What happens next</p>
           <ol className="list-decimal list-inside space-y-3 text-gray-700 max-w-lg mx-auto mb-6">
-            <li>Review the public-record comparison above.</li>
+            {!comparisonUnavailable && <li>Review the public-record comparison above.</li>}
             <li>Confirm your own filing deadline with the Cook County Assessor.</li>
             <li>Decide for yourself whether to file — the county's filing route is free.</li>
           </ol>

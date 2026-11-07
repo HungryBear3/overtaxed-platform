@@ -455,7 +455,7 @@ function isClass2NonCondo(propertyClass: string): boolean {
 }
 
 /** The injected clock's calendar year in America/Chicago, where the roll happens. */
-function chicagoCalendarYear(at: Date): number | null {
+export function chicagoCalendarYear(at: Date): number | null {
   if (!(at instanceof Date) || !Number.isFinite(at.getTime())) return null
   const formatted = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Chicago",
@@ -761,7 +761,7 @@ function requireTaxYear(row: Record<string, unknown>): void {
   }
 }
 
-type LocalityKeys = { neighborhoodCode: string; townshipCode: string }
+export type LocalityKeys = { neighborhoodCode: string; townshipCode: string }
 
 type CharacteristicsRow = {
   propertyClass: string
@@ -1010,6 +1010,58 @@ function readAddress(rows: ReadonlyArray<Record<string, unknown>>): {
   return { address, city }
 }
 
+/** One parcel's joined rows, as the three datasets returned them. */
+export type ParcelJoinRows = {
+  characteristics: ReadonlyArray<Record<string, unknown>>
+  assessed: ReadonlyArray<Record<string, unknown>>
+  address: ReadonlyArray<Record<string, unknown>>
+}
+
+/**
+ * Every per-parcel row rule the packet depends on, in one place: one complete
+ * improvement record, one mailed total, one address, and one class across the
+ * three datasets that publish it.
+ */
+function readPoolParcel(
+  pin: string,
+  rows: ParcelJoinRows,
+  universeClass: string,
+  locality: LocalityKeys,
+): { characteristics: CharacteristicsRow; mailedTotal: number; address: { address: string; city: string } } {
+  const characteristics = readCharacteristics(rows.characteristics, pin, locality)
+  const { propertyClass: valueClass, mailedTotal } = readMailedTotal(rows.assessed, locality)
+  const address = readAddress(rows.address)
+
+  // Three datasets each publish the class. They have to agree, or the parcel's
+  // classification — the thing Rule 15 requires comparables to share — is not
+  // established by the record.
+  if (characteristics.propertyClass !== universeClass || valueClass !== universeClass) {
+    throw new CountyRefusal("CANDIDATE_CLASS_AMBIGUOUS")
+  }
+  return { characteristics, mailedTotal, address }
+}
+
+/**
+ * The blocker this module would refuse one parcel's rows with, or `null`.
+ *
+ * For a reader of other bytes that must refuse what the packet refuses. It runs
+ * [[readPoolParcel]] itself, so no second copy of the rules exists to drift.
+ */
+export function parcelJoinRefusal(
+  pin: string,
+  rows: ParcelJoinRows,
+  universeClass: string,
+  locality: LocalityKeys,
+): CountyGatewayBlocker | null {
+  try {
+    readPoolParcel(pin, rows, universeClass, locality)
+    return null
+  } catch (error) {
+    if (error instanceof CountyRefusal) return error.blocker
+    throw error
+  }
+}
+
 /* ------------------------------------------------------------- the retrieval */
 
 /**
@@ -1205,20 +1257,17 @@ async function assemble(
     if (addressesByPin.size !== pinCount) throw new CountyRefusal("CANDIDATE_ADDRESS_INCOMPLETE")
 
     for (const pin of pins) {
-      const characteristics = readCharacteristics(charsByPin.get(pin) ?? [], pin, locality)
-      const { propertyClass: valueClass, mailedTotal } = readMailedTotal(
-        valuesByPin.get(pin) ?? [],
+      const universeClass = poolClassByPin.get(pin) ?? ""
+      const { characteristics, mailedTotal, address } = readPoolParcel(
+        pin,
+        {
+          characteristics: charsByPin.get(pin) ?? [],
+          assessed: valuesByPin.get(pin) ?? [],
+          address: addressesByPin.get(pin) ?? [],
+        },
+        universeClass,
         locality,
       )
-      const address = readAddress(addressesByPin.get(pin) ?? [])
-      const universeClass = poolClassByPin.get(pin) ?? ""
-
-      // Three datasets each publish the class. They have to agree, or the parcel's
-      // classification — the thing Rule 15 requires comparables to share — is not
-      // established by the record.
-      if (characteristics.propertyClass !== universeClass || valueClass !== universeClass) {
-        throw new CountyRefusal("CANDIDATE_CLASS_AMBIGUOUS")
-      }
 
       comparableCandidates.push({
         pin,

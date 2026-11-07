@@ -8,6 +8,7 @@ import {
   type Result,
 } from "./FreeCheckResult"
 import { CC_02 } from "@/lib/copy/canonical"
+import { isFreeCheckSharedMetric } from "@/lib/free-check-comparison-contract"
 
 /**
  * Bumped from `_v1` deliberately.
@@ -40,6 +41,12 @@ function isNullableNumber(value: unknown): boolean {
   return value === null || (typeof value === "number" && Number.isFinite(value))
 }
 
+function isCachedComp(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false
+  const comp = value as Record<string, unknown>
+  return typeof comp.pin === "string" && typeof comp.assessedValue === "number" && Number.isFinite(comp.assessedValue)
+}
+
 /** Browser JSON is untrusted. Reject partial migrations rather than trying to
  * complete or infer them from optimistic capability fragments. */
 function isCompleteCachedResult(value: unknown): value is Result {
@@ -61,7 +68,15 @@ function isCompleteCachedResult(value: unknown): value is Result {
   if (
     typeof result.compCount !== "number" || !Number.isInteger(result.compCount) || result.compCount < 0 ||
     !Array.isArray(result.comps) ||
-    !isNullableNumber(result.avgComparableAssessedValue) ||
+    // The key stays `_v2`, so an entry from before the report's comparison is
+    // retired here: it has no `sharedMetric`, and it may carry the mean that
+    // replaced. Restoring it would show the old process as the current one.
+    !(result.sharedMetric === null || isFreeCheckSharedMetric(result.sharedMetric)) ||
+    !result.comps.every(isCachedComp) ||
+    // The list is the evidence for the median, so it holds exactly the properties
+    // counted, and none when the comparison was withheld.
+    result.comps.length !== (result.sharedMetric === null ? 0 : result.sharedMetric.comparableMedian.count) ||
+    result.avgComparableAssessedValue !== null ||
     !isNullableNumber(result.equityRatio) ||
     typeof result.targetEquityRatio !== "number" || !Number.isFinite(result.targetEquityRatio) ||
     !isNullableNumber(result.avgCompEquityRatio) ||
