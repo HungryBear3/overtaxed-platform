@@ -138,7 +138,9 @@ function TownshipHero({
               <span className="ot-tp-h1-sub">
                 {isOpen && <>property tax appeal window is <em>open now</em>.</>}
                 {isUpcoming && <>appeal window has <em>not opened yet</em>.</>}
-                {isClosed && <>appeal window is <em>closed</em>.</>}
+                {/* Scoped to the Assessor. The Board of Review runs its own,
+                    separate window, which can be open while this one is closed. */}
+                {isClosed && <>Cook County Assessor appeal window is <em>closed</em>.</>}
                 {!official && <>Cook County property tax appeals.</>}
               </span>
             </h1>
@@ -152,7 +154,7 @@ function TownshipHero({
                   fix; the disclosure is not. */}
               {isOpen && <> File a formal appeal with the Cook County Assessor by <strong>{view.lastFileLabel}</strong>.</>}
               {isUpcoming && <> The window opens <strong>{view.openLabel}</strong> and closes <strong>{view.lastFileLabel}</strong>.</>}
-              {isClosed && <> The window closed <strong>{view.lastFileLabel}</strong>.</>}
+              {isClosed && <> The Assessor window closed <strong>{view.lastFileLabel}</strong>.</>}
               {!official && <> We do not have a verified filing deadline for this township, so this page does not show one.</>}
             </p>
             <div className="ot-tp-hero-cta-row">
