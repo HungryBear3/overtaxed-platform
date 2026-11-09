@@ -4,7 +4,6 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { OT_PUBLIC_CONTACT } from "@/components/ot-design/SiteChrome";
 import {
   OFFICIAL_DEADLINE_SOURCES,
-  DEADLINE_PENDING_NOTICE,
   ASSESSOR_CALENDAR_URL,
 } from "@/lib/deadline-sources";
 import { analytics } from "@/lib/analytics/events";
@@ -143,40 +142,49 @@ function DeadlinesHero() {
         <p className="ot-page-sub">
           {NOTHING_VERIFIED ? (
             <>
-              We have not verified any township&apos;s 2026 filing deadline against the Cook
-              County Assessor&apos;s published calendar, so this page shows none. Every township
-              below is marked pending — we don&apos;t guess. Confirm your exact deadline with the
-              county before filing.
+              The official calendar is loading or unavailable. This does not mean appeal
+              windows are closed or that the county has not published dates. Check the
+              Cook County Assessor&apos;s calendar before filing.
+            </>
+          ) : COUNTS.pending === 0 ? (
+            // Every township verified: no "the rest are marked pending" when
+            // nothing on the page is pending.
+            <>
+              All {COUNTS.official} township{COUNTS.official === 1 ? "" : "s"}, with 2026 Assessor
+              last file dates as published on the Cook County Assessor&apos;s calendar. Always
+              confirm your exact deadline with the county before filing.
             </>
           ) : (
             <>
-              The {COUNTS.official} township{COUNTS.official === 1 ? "" : "s"} with a 2026 filing
-              deadline we verified against the Cook County Assessor&apos;s calendar. The rest are
-              marked pending — we don&apos;t guess. Always confirm your exact deadline with the
-              county before filing.
+              {COUNTS.official} of {COUNTS.official + COUNTS.pending} townships show a 2026 Assessor
+              last file date as published on the Cook County Assessor&apos;s calendar. Townships
+              without a freshly verified date are marked pending; we do not estimate them. Always
+              confirm your exact deadline with the county before filing.
             </>
           )}
         </p>
         <div className="ot-status-summary">
           <div className="ot-status-summary-item">
-            <span className="ot-status-summary-num" style={{ color: "var(--success)" }}>{COUNTS.open}</span>
-            <span className="ot-status-summary-label">open now</span>
+            <span className="ot-status-summary-num" style={{ color: "var(--success)" }}>{NOTHING_VERIFIED ? "—" : COUNTS.open}</span>
+            {/* "open now" is a present-tense claim. Beside a dash — nothing
+                verified — it would assert a window state the page cannot back. */}
+            <span className="ot-status-summary-label">{NOTHING_VERIFIED ? "open" : "open now"}</span>
           </div>
           <div className="ot-status-summary-divider" />
           <div className="ot-status-summary-item">
-            <span className="ot-status-summary-num" style={{ color: "var(--ink-soft)" }}>{COUNTS.pending}</span>
+            <span className="ot-status-summary-num" style={{ color: "var(--ink-soft)" }}>{NOTHING_VERIFIED ? "—" : COUNTS.pending}</span>
             <span className="ot-status-summary-label">pending official date</span>
           </div>
           <div className="ot-status-summary-divider" />
           <div className="ot-status-summary-item">
-            <span className="ot-status-summary-num" style={{ color: "var(--ink-soft)" }}>{COUNTS.closed}</span>
+            <span className="ot-status-summary-num" style={{ color: "var(--ink-soft)" }}>{NOTHING_VERIFIED ? "—" : COUNTS.closed}</span>
             <span className="ot-status-summary-label">closed</span>
           </div>
         </div>
         <div className="ot-page-hero-meta">
           {PROVENANCE
             ? cc08({ source: PROVENANCE.source, timestamp: PROVENANCE.retrievedAt })
-            : "No township deadline on this page has been verified against the Cook County Assessor's published calendar, so none is shown. Confirm your filing deadline with the county before you file."}
+            : "Official calendar loading or unavailable. Check the Cook County Assessor calendar for current filing dates."}
         </div>
       </div>
     </section>
@@ -293,7 +301,13 @@ function DeadlineSatelliteMap() {
         <div className="ot-floatcard-cycle">Cook County 2026</div>
         <div className="ot-floatcard-name">{activeTownship ? activeTitle : "Hover a township"}</div>
         <div className="ot-deadline-map-card-status">
-          {activeView ? <StatusPill status={activeView.status} /> : <StatusPill status="pending" />}
+          {activeTownship ? (
+            <StatusPill status={activeView?.status ?? "pending"} />
+          ) : (
+            // Nothing selected yet. A "Pending date" chip here read as a status
+            // claim about the county calendar when every township may be dated.
+            <span className="ot-status-pill ot-status-sm is-closed">Select a township</span>
+          )}
         </div>
         <div className="ot-deadline-map-card-deadline">{activeTownship ? activeDeadline : "Official Assessor dates only"}</div>
         <div className="ot-deadline-map-card-note">
@@ -305,7 +319,7 @@ function DeadlineSatelliteMap() {
 }
 
 function TownshipsTable() {
-  const { VIEWS, COUNTS } = useContext(CalendarContext);
+  const { VIEWS, COUNTS, NOTHING_VERIFIED } = useContext(CalendarContext);
   const [filter, setFilter] = useState<"all" | Deadline2026Status>("all");
   const [sort, setSort] = useState<"soonest" | "alpha">("soonest");
 
@@ -361,7 +375,7 @@ function TownshipsTable() {
                   onClick={() => setFilter(b.id)}
                 >
                   {b.label}
-                  <span className="ot-tbl-filter-count">{b.count}</span>
+                  <span className="ot-tbl-filter-count">{b.id !== "all" && NOTHING_VERIFIED ? "—" : b.count}</span>
                 </button>
               ))}
             </div>
@@ -506,7 +520,7 @@ function TownshipGrid() {
               <div key={status} className={`ot-fullmap-group ot-fullmap-group-${status}`}>
                 <div className="ot-fullmap-group-head">
                   <StatusPill status={status} />
-                  <span className="ot-fullmap-group-count">{groups[status].length}</span>
+                  <span className="ot-fullmap-group-count">{VIEWS.every(v => !v.official) ? "—" : groups[status].length}</span>
                 </div>
                 <ul className="ot-fullmap-group-list">
                   {groups[status].map((t) => (
@@ -533,6 +547,10 @@ function TownshipGrid() {
 }
 
 function VerifyAndSources() {
+  const { VIEWS } = useContext(CalendarContext);
+  // The "we have not verified" notice only where a township actually lacks a
+  // verified date. Beside a table of 38 verified dates it contradicted the page.
+  const anyUnverified = VIEWS.some((v) => !v.official);
   return (
     <section className="ot-tbl-section" aria-labelledby="ot-verify-heading">
       <div
@@ -547,7 +565,11 @@ function VerifyAndSources() {
         <h2 id="ot-verify-heading" className="ot-h2" style={{ marginTop: 0 }}>
           Verify your deadline before you file.
         </h2>
-        <p style={{ maxWidth: "60ch" }}>{DEADLINE_PENDING_NOTICE}</p>
+        <p style={{ maxWidth: "60ch" }}>
+          {anyUnverified
+            ? "We have not verified dates for every township on this page. Confirm your township’s deadline with the county before filing."
+            : "Confirm your filing deadline with the county before you file."}
+        </p>
         <ul className="ot-deadline-source-list">
           {OFFICIAL_DEADLINE_SOURCES.map((s) => (
             <li key={s.href} className="ot-deadline-source-item">
@@ -561,11 +583,14 @@ function VerifyAndSources() {
           ))}
         </ul>
         <p style={{ marginTop: 16, fontSize: 14, color: "var(--ink-soft, #6b6258)" }}>
-          Not sure which window applies to you? Request a review and we&apos;ll help you
-          confirm it — email{" "}
+          {/* Informational only. "Request a review … we never file anything
+              without your go-ahead" implied a filing service this page does
+              not offer. */}
+          Not sure which window applies to you? The official sources above are the authority
+          for your township&apos;s dates. This page is informational and does not start or
+          file an appeal. Questions about this page? Email{" "}
           <a href={`mailto:${OT_PUBLIC_CONTACT.email}`}>{OT_PUBLIC_CONTACT.email}</a> or call{" "}
-          <a href={OT_PUBLIC_CONTACT.phoneHref}>{OT_PUBLIC_CONTACT.phoneDisplay}</a>. We never
-          file anything without your go-ahead.
+          <a href={OT_PUBLIC_CONTACT.phoneHref}>{OT_PUBLIC_CONTACT.phoneDisplay}</a>.
         </p>
       </div>
     </section>

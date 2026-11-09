@@ -1,0 +1,31 @@
+PASS __tests__/deadlines/exact-rendered-claims.test.tsx
+PASS __tests__/deadlines/unavailable-counts.test.tsx
+PASS __tests__/deadlines/townships-live-route.test.tsx
+PASS __tests__/deadlines-tracking.test.tsx
+PASS __tests__/deadlines-sourcing.test.tsx
+PASS __tests__/deadlines-2026.test.tsx
+PASS __tests__/deadlines/generated-content-safety.test.ts
+PASS __tests__/deadlines/client-lifecycle.test.tsx
+PASS __tests__/deadlines/live-informational-snapshot.test.tsx
+PASS __tests__/deadlines/refresh-parser.test.ts
+PASS __tests__/deadlines/reminder-email-suppression.test.ts
+PASS __tests__/deadlines/informational-routes.test.ts
+PASS __tests__/deadlines/informational-snapshot.test.ts
+PASS __tests__/deadlines/collect-informational-snapshot.test.ts
+PASS __tests__/deadlines/render-time-countdown.test.tsx
+PASS __tests__/deadlines/informational-source.test.ts
+PASS __tests__/deadlines/live-calendar-ssr.test.tsx
+PASS __tests__/deadlines/township-resolution.test.ts
+PASS __tests__/deadlines/official-source-state.test.ts
+PASS __tests__/deadlines/commerce-capture-security.test.ts
+PASS __tests__/deadlines/informational-cadence.test.ts
+PASS __tests__/deadlines/township-detail-live-informational.test.tsx
+PASS __tests__/deadlines/informational-snapshot-store.test.ts
+PASS __tests__/deadlines/informational-refresh-barrier.test.ts
+PASS __tests__/deadlines/informational-preview-read-only.test.ts
+PASS __tests__/deadlines/commerce-snapshot-store.test.ts
+
+Test Suites: 26 passed, 26 total
+Tests:       429 passed, 429 total
+Snapshots:   0 total
+Time:        5.147 s

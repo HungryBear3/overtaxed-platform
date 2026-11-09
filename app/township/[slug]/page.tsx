@@ -112,7 +112,12 @@ function buildTownshipFaqEntries(
       q: `What's the deadline to file an appeal in ${t.name}?`,
       a:
         `The Cook County Assessor appeal deadline for ${t.name} Township is ${view.lastFileLabel}. ` +
-        `Late filings are not accepted — there is no grace period and no appeal-by-mail postmark exception. ` +
+        // Rule 10 of the Assessor's Official Appeal Rules is the source. It
+        // carves out CCAO system errors, and the Assessor has posted one-day
+        // extensions on its calendar, so no absolute "no exceptions" claim and
+        // no postmark claim (none appears in the official sources).
+        `Under the Assessor's Official Appeal Rules (Rule 10), appeals and evidence filed after the last file date are not accepted, except in cases of a Cook County Assessor's Office system error. ` +
+        `Check the Assessor's calendar for any posted extension. ` +
         `${provenance}`,
     });
   } else {
@@ -137,13 +142,17 @@ function buildTownshipFaqEntries(
     a:
       `The Assessor accepts comparable assessments, relevant sales evidence, ` +
       `lack-of-uniformity arguments (your assessment vs. similar properties), and condition-based evidence ` +
-      `(recent photos, contractor estimates). We pull public-record comparable properties from ` +
-      `${t.name} and surrounding townships automatically when you run a free check.`,
+      `(recent photos, contractor estimates). For supported properties, a free check looks for ` +
+      `public-record comparable properties in the same Cook County Assessor neighborhood within ` +
+      `${t.name} Township. If the records do not support a comparison, no comparable properties are shown.`,
   });
   entries.push({
-    q: `Will appealing increase my taxes?`,
+    q: `How does the Assessor respond to an appeal?`,
     a:
-      `The Assessor can confirm or lower your assessed value on your own appeal, but cannot raise it as a result of it. ` +
+      // The Assessor's FAQ wording. No official source read for this page
+      // supports "the Assessor cannot raise it", so that promise is not made.
+      `If the Assessor finds your property is overvalued, it adjusts the assessed value. ` +
+      `If it finds the property is correctly valued, you are notified of that decision. ` +
       `A change in assessed value does not produce an equal change in a tax bill.`,
   });
 

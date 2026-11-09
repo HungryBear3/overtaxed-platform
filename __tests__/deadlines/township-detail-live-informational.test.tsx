@@ -197,9 +197,32 @@ describe("/township/[slug] with a current (hypothetical) informational snapshot"
     const views = await indexViews();
     const closed = [...views.values()].find(v => v.status === "closed")!;
     const r = await renderRoute(closed.slug);
-    expect(r.visible).toContain(`The window closed ${closed.lastFileLabel}`);
+    expect(r.visible).toContain(`The Assessor window closed ${closed.lastFileLabel}`);
     expect(r.html).not.toContain('class="ot-tp-check-eyebrow">For your property');
     expect(r.html).not.toContain("tp-reminder");
+  });
+
+  it("a closed headline names the Assessor: the Board of Review runs a separate window", async () => {
+    const views = await indexViews();
+    for (const closed of [...views.values()].filter(v => v.status === "closed")) {
+      const r = await renderRoute(closed.slug);
+      expect(r.visible).toContain(`${closed.name} Township Cook County Assessor appeal window is closed`);
+      expect(r.visible).not.toMatch(new RegExp(`${closed.name} Township appeal window is closed`));
+    }
+  });
+
+  it("FAQ makes no unsupported late-filing, postmark or cannot-raise claim", async () => {
+    const views = await indexViews();
+    const official = [...views.values()].find(v => v.official)!;
+    const r = await renderRoute(official.slug);
+    const answers = r.faq.mainEntity.map((q: { acceptedAnswer: { text: string } }) => q.acceptedAnswer.text).join(" ");
+    for (const text of [r.visible, answers]) {
+      expect(text).not.toMatch(/postmark|no grace period|cannot raise/i);
+      expect(text).toContain("Official Appeal Rules (Rule 10)");
+      expect(text).toContain("except in cases of a Cook County Assessor's Office system error");
+      expect(text).toContain("If the Assessor finds your property is overvalued, it adjusts the assessed value.");
+      expect(text).toContain("A change in assessed value does not produce an equal change in a tax bill.");
+    }
   });
 
   it("an unpublished row stays pending while its neighbours show their own dates", async () => {
@@ -241,4 +264,11 @@ describe("/township/[slug] fails closed to the existing pending page", () => {
     }
     expect(fetchSpy?.mock.calls ?? []).toEqual([]);
   });
+});
+
+ test("township FAQ comparable scope matches neighborhood-only conditional selection", () => {
+  const source = require("node:fs").readFileSync(require("node:path").join(process.cwd(), "app/township/[slug]/page.tsx"), "utf8");
+  expect(source).not.toMatch(/and surrounding townships automatically/);
+  expect(source).toContain("same Cook County Assessor neighborhood within");
+  expect(source).toContain("If the records do not support a comparison");
 });
