@@ -143,10 +143,9 @@ function DeadlinesHero() {
         <p className="ot-page-sub">
           {NOTHING_VERIFIED ? (
             <>
-              We have not verified any township&apos;s 2026 filing deadline against the Cook
-              County Assessor&apos;s published calendar, so this page shows none. Every township
-              below is marked pending — we don&apos;t guess. Confirm your exact deadline with the
-              county before filing.
+              The official calendar is loading or unavailable. This does not mean appeal
+              windows are closed or that the county has not published dates. Check the
+              Cook County Assessor&apos;s calendar before filing.
             </>
           ) : (
             <>
@@ -159,24 +158,24 @@ function DeadlinesHero() {
         </p>
         <div className="ot-status-summary">
           <div className="ot-status-summary-item">
-            <span className="ot-status-summary-num" style={{ color: "var(--success)" }}>{COUNTS.open}</span>
+            <span className="ot-status-summary-num" style={{ color: "var(--success)" }}>{NOTHING_VERIFIED ? "—" : COUNTS.open}</span>
             <span className="ot-status-summary-label">open now</span>
           </div>
           <div className="ot-status-summary-divider" />
           <div className="ot-status-summary-item">
-            <span className="ot-status-summary-num" style={{ color: "var(--ink-soft)" }}>{COUNTS.pending}</span>
+            <span className="ot-status-summary-num" style={{ color: "var(--ink-soft)" }}>{NOTHING_VERIFIED ? "—" : COUNTS.pending}</span>
             <span className="ot-status-summary-label">pending official date</span>
           </div>
           <div className="ot-status-summary-divider" />
           <div className="ot-status-summary-item">
-            <span className="ot-status-summary-num" style={{ color: "var(--ink-soft)" }}>{COUNTS.closed}</span>
+            <span className="ot-status-summary-num" style={{ color: "var(--ink-soft)" }}>{NOTHING_VERIFIED ? "—" : COUNTS.closed}</span>
             <span className="ot-status-summary-label">closed</span>
           </div>
         </div>
         <div className="ot-page-hero-meta">
           {PROVENANCE
             ? cc08({ source: PROVENANCE.source, timestamp: PROVENANCE.retrievedAt })
-            : "No township deadline on this page has been verified against the Cook County Assessor's published calendar, so none is shown. Confirm your filing deadline with the county before you file."}
+            : "Official calendar loading or unavailable. Check the Cook County Assessor calendar for current filing dates."}
         </div>
       </div>
     </section>
@@ -305,7 +304,7 @@ function DeadlineSatelliteMap() {
 }
 
 function TownshipsTable() {
-  const { VIEWS, COUNTS } = useContext(CalendarContext);
+  const { VIEWS, COUNTS, NOTHING_VERIFIED } = useContext(CalendarContext);
   const [filter, setFilter] = useState<"all" | Deadline2026Status>("all");
   const [sort, setSort] = useState<"soonest" | "alpha">("soonest");
 
@@ -361,7 +360,7 @@ function TownshipsTable() {
                   onClick={() => setFilter(b.id)}
                 >
                   {b.label}
-                  <span className="ot-tbl-filter-count">{b.count}</span>
+                  <span className="ot-tbl-filter-count">{b.id !== "all" && NOTHING_VERIFIED ? "—" : b.count}</span>
                 </button>
               ))}
             </div>
@@ -506,7 +505,7 @@ function TownshipGrid() {
               <div key={status} className={`ot-fullmap-group ot-fullmap-group-${status}`}>
                 <div className="ot-fullmap-group-head">
                   <StatusPill status={status} />
-                  <span className="ot-fullmap-group-count">{groups[status].length}</span>
+                  <span className="ot-fullmap-group-count">{VIEWS.every(v => !v.official) ? "—" : groups[status].length}</span>
                 </div>
                 <ul className="ot-fullmap-group-list">
                   {groups[status].map((t) => (
