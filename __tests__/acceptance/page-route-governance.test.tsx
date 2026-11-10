@@ -156,7 +156,7 @@ describe("the route set is derived from what Next serves", () => {
       // URL was already being linked as a refund policy and served a 404; it is
       // indexable like `/terms` and `/privacy`, so it lands in the crawlable
       // bucket and is swept by every rule in this file.
-    }).toEqual({ all: 60, dynamic: 11, authenticated: 21, crawlable: 28 })
+    }).toEqual({ all: 61, dynamic: 11, authenticated: 22, crawlable: 28 })
   })
 
   it("classifies a route handler as not a page", () => {
