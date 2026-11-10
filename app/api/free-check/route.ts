@@ -16,6 +16,7 @@
  * candidate fragments; the caller re-posts the same address with `selectedPin`.
  */
 import { recordFreeCheckCompletion } from "@/lib/analytics/free-check-measurement"
+import { classifyFreeCheckInternalTest } from "@/lib/analytics/free-check-internal-test"
 import { NextRequest, NextResponse } from "next/server"
 import {
   getPropertyByPIN,
@@ -275,6 +276,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json().catch(() => ({}))
+    // Default OFF. Only a verified ADMIN session can make this true; the body
+    // marker alone is ignored. It changes measurement only, never the result.
+    const internalTest =
+      body && typeof body === "object" ? await classifyFreeCheckInternalTest(req, body) : false
     const pinRaw = typeof body.pin === "string" ? body.pin.trim() : ""
     const address = typeof body.address === "string" ? body.address.trim() : ""
     const city = typeof body.city === "string" ? body.city.trim() : ""
@@ -507,7 +512,7 @@ export async function POST(req: NextRequest) {
           compCount: 0,
         }),
       })
-      const measurement = await recordFreeCheckCompletion({ body, outcome: noValueOutcome, windowStatus: noValueWindow.status, preview: excludeFromMeasurement })
+      const measurement = await recordFreeCheckCompletion({ body, outcome: noValueOutcome, windowStatus: noValueWindow.status, preview: excludeFromMeasurement, internalTest })
       return NextResponse.json({
         success: true,
         measurement,
@@ -618,7 +623,7 @@ export async function POST(req: NextRequest) {
     // evidence" over a comparison that was sitting complete in the response.
     const released = outcome.showRecordComparison ? comparison : null
 
-    const measurement = await recordFreeCheckCompletion({ body, outcome, windowStatus: appealWindowStatus.status, preview: excludeFromMeasurement })
+    const measurement = await recordFreeCheckCompletion({ body, outcome, windowStatus: appealWindowStatus.status, preview: excludeFromMeasurement, internalTest })
     return NextResponse.json({
       success: true,
       measurement,

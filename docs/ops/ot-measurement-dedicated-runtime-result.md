@@ -20,6 +20,12 @@ Base: `f3672f53`. Local-only; no hosted configuration/database writes, push or d
 
 ## Remaining hosted prerequisites
 
+> Status 2026-11-09: superseded. Release evidence supplied by the coordinator
+> records the dedicated measurement runtime as released to Production on
+> 2026-11-04. That evidence is cited, not re-read: no hosted read, preflight
+> or database query was made for this note. The text below is the
+> pre-release checklist as written.
+
 Provision/locate protected existing `ot_prod_app` credential for the dedicated URL; common ledger migration and exact binding must exist before activation. Require hosted identity/read-only preflight, exact SQL postconditions, bounded hosted write qualification and release verification. No shared datasource change is qualified or needed. Local tests do not establish hosted identity/permissions.
 
 Claude Code CLI was attempted first but returned its five-hour quota limit; implementation and verification continued directly without waiting.

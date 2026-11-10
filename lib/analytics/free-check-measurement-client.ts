@@ -10,7 +10,26 @@ import {
   shippedAttributionRegistry,
 } from "@/lib/attribution/registry";
 
+/** URL opt-in for staff tests. A request only; the server verifies ADMIN. */
+export const FREE_CHECK_INTERNAL_TEST_PARAM = "ot_internal_test";
+
 export function freeCheckMeasurementRequestFields(): Record<string, string> {
+  const fields = freeCheckAttributionFields();
+  try {
+    if (typeof window === "undefined") return fields;
+    // Exactly one `=1`. Duplicates are ambiguous and request nothing.
+    const values = new URLSearchParams(window.location.search).getAll(
+      FREE_CHECK_INTERNAL_TEST_PARAM,
+    );
+    if (values.length === 1 && values[0] === "1")
+      return { ...fields, freeCheckInternalTest: "requested" };
+  } catch {
+    // An unreadable URL requests nothing.
+  }
+  return fields;
+}
+
+function freeCheckAttributionFields(): Record<string, string> {
   if (typeof window === "undefined")
     return { freeCheckAttributionObservation: "unknown" };
   try {

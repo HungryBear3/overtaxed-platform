@@ -155,6 +155,7 @@ export function FreeCheckForm({ onResult, onReset }: Props) {
         outcome: data?.outcome,
         windowStatus: data?.appealWindowStatus?.status,
         preview: isPreviewFreeCheckResponse(data),
+        measurement: data?.measurement,
       })
       onResult(data)
     } catch (err) {

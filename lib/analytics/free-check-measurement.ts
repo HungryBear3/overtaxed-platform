@@ -10,6 +10,7 @@ import type { AttributionSqlClient } from "@/lib/attribution/record";
 export type MeasurementStatus =
   | "disabled"
   | "excluded"
+  | "internal_test"
   | "recorded"
   | "unavailable";
 export type MeasurementAttribution =
@@ -70,6 +71,8 @@ export async function recordFreeCheckCompletion(
     outcome: unknown;
     windowStatus: unknown;
     preview: boolean;
+    /** Server-verified only (./free-check-internal-test); never a client value. */
+    internalTest?: boolean;
   },
   client?: AttributionSqlClient,
 ): Promise<MeasurementStatus> {
@@ -80,6 +83,9 @@ export async function recordFreeCheckCompletion(
     return "excluded";
   const params = deriveFreeCheckOutcomeParams(input);
   if (!params) return "excluded";
+  // Verified internal tests are not customer completions. Not persisted, so the
+  // ledger schema and every existing row keep their meaning.
+  if (input.internalTest === true) return "internal_test";
   const attribution = resolveFreeCheckMeasurementAttribution(input.body);
   try {
     if (!client) {

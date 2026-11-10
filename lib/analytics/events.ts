@@ -252,8 +252,13 @@ export const analytics = {
     outcome: unknown
     windowStatus: unknown
     preview: boolean
+    /** The server's `measurement` field. `internal_test` was ADMIN-verified there. */
+    measurement?: unknown
   }) => {
     safely(() => {
+      // A verified internal test is not a customer result: no GA result events.
+      // `free_check_started` has already fired; it cannot know the verdict.
+      if (params.measurement === "internal_test") return
       const derived = deriveFreeCheckOutcomeParams({
         outcome: params.outcome,
         windowStatus: params.windowStatus,

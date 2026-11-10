@@ -450,6 +450,7 @@ function HeroCheckCard({
           outcome: normalized.outcome,
           windowStatus: normalized.windowStatus,
           preview: normalized.preview === true,
+          measurement: data?.measurement,
         });
       } catch {
         setLoading(false);

@@ -38,6 +38,11 @@ export async function exportFreeCheckMeasurement(
     missingMeasurementCount: null,
     organicCount: null,
     coverage: "persisted_rows_only_not_total_traffic",
+    // Verified internal tests are never written, so rows carry no test label.
+    // Rows from before that classification was active (including the earliest
+    // Production completions) may be staff tests: unknown, never "customer".
+    internalTestRows: "not_persisted_when_classified",
+    customerProvenance: "unverified_rows_may_include_unclassified_tests",
   } as const;
   if (!freeCheckMeasurementEnabled())
     return { ...provenance, status: "disabled", groups: null } as const;
