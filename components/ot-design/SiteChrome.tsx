@@ -358,6 +358,7 @@ export function StickyAddressBar() {
           outcome: payload?.outcome,
           windowStatus: payload?.appealWindowStatus?.status,
           preview: isPreviewFreeCheckResponse(data) || isPreviewFreeCheckResponse(payload),
+          measurement: data?.measurement,
         });
         window.dispatchEvent(new CustomEvent("ot:free-check-result", {
           detail: {

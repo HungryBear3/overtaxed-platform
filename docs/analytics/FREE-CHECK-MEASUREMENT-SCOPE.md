@@ -53,6 +53,26 @@ read high. None of this is called organic.
 Only current known code references or fixed markers leave the new client helper.
 Existing raw-UTM capture elsewhere is not a measurement input and is unchanged.
 
+## Internal tests (default OFF)
+
+`OT_FREE_CHECK_INTERNAL_TEST_CLASSIFICATION_ENABLED=1` is a separate switch,
+unset everywhere. When on, a request is an internal test only if it carries the
+fixed body marker `freeCheckInternalTest: "requested"` (sent by the three
+surfaces when the page URL has exactly one `ot_internal_test=1`; duplicates or
+any other value request nothing) AND the existing signed
+NextAuth session has role `ADMIN` with an id. The marker alone is ignored; a
+non-admin, missing or unreadable session is measured exactly as before. The
+result is unchanged; the response says `measurement: internal_test`, no ledger
+row is written, and the browser skips `free_check_completed`/`qualified`
+(`free_check_started` fires before the verdict and still counts).
+
+No schema change, relabel or backfill. Rows persisted before this switch was
+active, including the first Production completions, keep their recorded
+attribution state; the export reports
+`customerProvenance: unverified_rows_may_include_unclassified_tests` and never
+calls them customer or organic. Enabling requires config review; GA4 internal
+traffic filters are not configured by this change.
+
 ## Semantics and failures
 
 Each successful server evaluation gets a fresh server UUID. Repeated HTTP
@@ -103,8 +123,13 @@ No false join to decision packet's MAC-keyed unique conversion references.
 6. Verify GA4 read access, sanitized source mapping and ad-account readback; no
    claim that this request ledger alone makes a trial measurement-ready.
 
-Migration has NOT been executed on any live or hosted database; no
-network/provider test occurred.
+As written before release: the migration had not been executed on any live or
+hosted database, and no network/provider test had occurred. Status 2026-11-09:
+coordinator-supplied release evidence records the dedicated measurement
+runtime released to Production on 2026-11-04 (see
+`docs/ops/ot-measurement-dedicated-runtime-result.md`). That is cited, not
+re-verified by a hosted read. The internal-test switch above is not part of
+that release and remains unset.
 
 ## Local verification
 
