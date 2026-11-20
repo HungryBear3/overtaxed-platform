@@ -343,4 +343,169 @@ describe("OT home free-check flow", () => {
     expect(screen.queryByText(/DIY Appeal Packet \$69/)).toBeNull();
   });
 
+  describe("input mode scoping", () => {
+    const HERO_ADDRESS = "123 S Sample Ave, La Grange IL";
+    const STALE_PIN = "16-01-216-001-0000";
+
+    function heroForm() {
+      return screen.getAllByPlaceholderText(HERO_ADDRESS)[1].closest("form") as HTMLFormElement;
+    }
+
+    function postedBody(fetchMock: jest.Mock, call = 0) {
+      return JSON.parse(fetchMock.mock.calls[call][1].body as string);
+    }
+
+    function typeStalePinThenSwitchBack(form: HTMLFormElement) {
+      fireEvent.click(within(form).getByRole("button", { name: /I have my PIN instead/i }));
+      fireEvent.change(within(form).getByPlaceholderText(STALE_PIN), { target: { value: "16012160010000" } });
+      fireEvent.click(within(form).getByRole("button", { name: /Look up by address instead/i }));
+    }
+
+    it("address mode never submits a PIN typed earlier in PIN mode", async () => {
+      const fetchMock = mockFetch({ error: "stop" }, false);
+      render(<HomePage />);
+      const form = heroForm();
+
+      typeStalePinThenSwitchBack(form);
+      fireEvent.change(within(form).getByPlaceholderText(HERO_ADDRESS), {
+        target: { value: "5236 N Kenmore Ave, Chicago IL 60640" },
+      });
+      fireEvent.click(within(form).getByRole("button", { name: /check my assessment/i }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      const body = postedBody(fetchMock);
+      expect(body.mode).toBe("address");
+      expect(body.address).toBe("5236 N Kenmore Ave, Chicago IL 60640");
+      expect(body).not.toHaveProperty("pin");
+      expect(body).not.toHaveProperty("selectedPin");
+    });
+
+    it("PIN mode omits address and city", async () => {
+      const fetchMock = mockFetch({ error: "stop" }, false);
+      render(<HomePage />);
+      const form = heroForm();
+
+      fireEvent.change(within(form).getByPlaceholderText(HERO_ADDRESS), {
+        target: { value: "5236 N Kenmore Ave, Chicago IL 60640" },
+      });
+      fireEvent.click(within(form).getByRole("button", { name: /I have my PIN instead/i }));
+      fireEvent.change(within(form).getByPlaceholderText(STALE_PIN), { target: { value: "16012160010000" } });
+      fireEvent.click(within(form).getByRole("button", { name: /check my assessment/i }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      const body = postedBody(fetchMock);
+      expect(body.mode).toBe("pin");
+      expect(body.pin).toBe(STALE_PIN);
+      expect(body).not.toHaveProperty("address");
+      expect(body).not.toHaveProperty("city");
+      expect(body).not.toHaveProperty("selectedPin");
+    });
+
+    it("a parcel picked from the selection step still carries no stale PIN", async () => {
+      const fetchMock = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 409,
+          json: async () => ({
+            code: "ADDRESS_AMBIGUOUS",
+            candidateCount: 2,
+            candidates: [
+              { pin: "14-08-123-456-1001", address: "5236 N KENMORE AVE", city: "CHICAGO", zipCode: "60640", unit: "1" },
+              { pin: "14-08-123-456-1002", address: "5236 N KENMORE AVE", city: "CHICAGO", zipCode: "60640", unit: "2" },
+            ],
+          }),
+        })
+        .mockResolvedValue({ ok: false, json: async () => ({ error: "stop" }) });
+      Object.defineProperty(global, "fetch", { value: fetchMock, writable: true });
+      render(<HomePage />);
+      const form = heroForm();
+
+      typeStalePinThenSwitchBack(form);
+      fireEvent.change(within(form).getByPlaceholderText(HERO_ADDRESS), {
+        target: { value: "5236 N Kenmore Ave, Chicago IL 60640" },
+      });
+      fireEvent.click(within(form).getByRole("button", { name: /check my assessment/i }));
+      const pick = await within(form).findByRole("button", { name: /Unit 2/ });
+      fireEvent.click(pick);
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      const body = postedBody(fetchMock, 1);
+      expect(body.mode).toBe("address");
+      expect(body.selectedPin).toBe("14081234561002");
+      expect(body).not.toHaveProperty("pin");
+    });
+
+    it("toggling input mode clears a stale parcel selection list", async () => {
+      const fetchMock = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          code: "ADDRESS_AMBIGUOUS",
+          candidates: [
+            { pin: "14-08-123-456-1001", address: "5236 N KENMORE AVE", city: "CHICAGO", zipCode: "60640", unit: "1" },
+            { pin: "14-08-123-456-1002", address: "5236 N KENMORE AVE", city: "CHICAGO", zipCode: "60640", unit: "2" },
+          ],
+        }),
+      });
+      Object.defineProperty(global, "fetch", { value: fetchMock, writable: true });
+      render(<HomePage />);
+      const form = heroForm();
+
+      fireEvent.change(within(form).getByPlaceholderText(HERO_ADDRESS), {
+        target: { value: "5236 N Kenmore Ave, Chicago IL 60640" },
+      });
+      fireEvent.click(within(form).getByRole("button", { name: /check my assessment/i }));
+      await within(form).findByText(/More than one Cook County property matches/i);
+
+      fireEvent.click(within(form).getByRole("button", { name: /I have my PIN instead/i }));
+      expect(within(form).queryByText(/More than one Cook County property matches/i)).toBeNull();
+      expect(within(form).queryByRole("button", { name: /Unit 1/ })).toBeNull();
+
+      fireEvent.click(within(form).getByRole("button", { name: /Look up by address instead/i }));
+      expect(within(form).queryByText(/More than one Cook County property matches/i)).toBeNull();
+    });
+
+    it.each([
+      [
+        "the route's outage sentence",
+        {
+          error:
+            "We could not reach the Cook County records service just now. Please try again in a few minutes — this is on our side, not your address.",
+          code: "ADDRESS_LOOKUP_UNAVAILABLE",
+          retryable: true,
+        },
+        /We could not reach the Cook County records service just now\..*this is on our side, not your address\./,
+      ],
+      [
+        "the client fallback when the 503 body is unreadable",
+        null,
+        /We couldn't reach the Cook County records service\. Please try again shortly — this is on our side\./,
+      ],
+    ])("a 503 renders %s and never blames the address", async (_label, payload, expected) => {
+      const fetchMock = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 503,
+        json: async () => {
+          if (payload === null) throw new Error("unreadable");
+          return payload;
+        },
+      });
+      Object.defineProperty(global, "fetch", { value: fetchMock, writable: true });
+      render(<HomePage />);
+      const form = heroForm();
+
+      fireEvent.change(within(form).getByPlaceholderText(HERO_ADDRESS), {
+        target: { value: "5236 N Kenmore Ave, Chicago IL 60640" },
+      });
+      fireEvent.click(within(form).getByRole("button", { name: /check my assessment/i }));
+
+      const alert = await within(form).findByRole("alert");
+      expect(alert.textContent).toMatch(expected);
+      expect(alert.textContent).not.toMatch(/couldn't find a Cook County property/i);
+      expect(alert.textContent).not.toMatch(/Try your 14-digit PIN/i);
+      expect(screen.queryByText(/Sample data — not your submitted address/i)).toBeNull();
+    });
+  });
+
 });

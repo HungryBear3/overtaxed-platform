@@ -396,10 +396,18 @@ function HeroCheckCard({
       }
       try {
         const submittedInput = mode === "pin" ? pin : address;
+        // Only the active mode's input is sent. The route tries a valid PIN
+        // before the address, so a PIN left over from PIN mode would silently
+        // answer for a different property than the address on screen. The
+        // parcel selection step is address-only, so selectedPin is too.
+        const lookup =
+          mode === "pin"
+            ? { mode, pin }
+            : { mode, address, ...(selectedPin ? { selectedPin } : {}) };
         const res = await fetch("/api/free-check", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...freeCheckMeasurementRequestFields(), address, pin, mode, ...(selectedPin ? { selectedPin } : {}) }),
+          body: JSON.stringify({ ...freeCheckMeasurementRequestFields(), ...lookup }),
         });
         const data = await res.json().catch(() => null);
         setLoading(false);
@@ -608,7 +616,13 @@ function HeroCheckCard({
       <button
         type="button"
         className="ot-pin-link"
-        onClick={() => setMode(mode === "pin" ? "address" : "pin")}
+        onClick={() => {
+          // A parcel list belongs to the address that raised it; it must not
+          // survive into PIN mode or back into an address that may have changed.
+          setCandidates([]);
+          setCandidateTotal(0);
+          setMode(mode === "pin" ? "address" : "pin");
+        }}
       >
         {mode === "pin"
           ? "← Look up by address instead"
