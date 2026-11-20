@@ -25,6 +25,7 @@ import {
   normalizePIN,
   isValidPIN,
   ADDRESS_LOOKUP_UNAVAILABLE,
+  PROPERTY_LOOKUP_UNAVAILABLE,
 } from "@/lib/cook-county"
 import type { PropertyData } from "@/lib/cook-county"
 import { NON_DIRECTIONAL_RULE_ID } from "@/lib/fulfillment/t2-comparables"
@@ -245,6 +246,22 @@ function publicSelectionFragment(candidate: RankedAddressCandidate) {
   }
 }
 
+/**
+ * "The county did not answer" for the subject lookup. Same body and sentence as
+ * the address-search 503 above; no subject, no figures, no outcome.
+ */
+function recordsUnavailable(code: "PROPERTY_LOOKUP_UNAVAILABLE" | "ASSESSMENT_LOOKUP_UNAVAILABLE") {
+  return NextResponse.json(
+    {
+      error:
+        "We could not reach the Cook County records service just now. Please try again in a few minutes — this is on our side, not your address.",
+      code,
+      retryable: true,
+    },
+    { status: 503 }
+  )
+}
+
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -272,7 +289,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Too many requests" }, { status: 429 })
   }
 
-  const comparisonDeadline = Date.now() + COMPARISON_BUDGET_MS
+  const requestStartedAt = Date.now()
+  const comparisonDeadline = requestStartedAt + COMPARISON_BUDGET_MS
+  // Diagnostics only. Millisecond marks; see the single timing line below.
+  let addressResolvedAt: number | null = null
 
   try {
     const body = await req.json().catch(() => ({}))
@@ -297,11 +317,19 @@ export async function POST(req: NextRequest) {
     }
 
     let propertyData: PropertyData | null = null
+    // From the lookup wrapper on both branches; see the gate before CC-05 below.
+    let assessedValueUnavailable = false
 
     if (pinRaw && isValidPIN(pinRaw)) {
       const res = await getPropertyByPIN(pinRaw)
-      if (res.success && res.data) propertyData = res.data
-      else {
+      // An outage is not "not found", and provider text never reaches the reader.
+      if (!res.success && res.error != null && res.error === PROPERTY_LOOKUP_UNAVAILABLE) {
+        return recordsUnavailable("PROPERTY_LOOKUP_UNAVAILABLE")
+      }
+      if (res.success && res.data) {
+        propertyData = res.data
+        assessedValueUnavailable = res.assessedValueLookup === "unavailable"
+      } else {
         return NextResponse.json(
           { error: res.error ?? "Property not found for this PIN." },
           { status: 400 }
@@ -438,7 +466,11 @@ export async function POST(req: NextRequest) {
         chosen = resolution.candidate
       }
 
+      addressResolvedAt = Date.now()
       const res = await getPropertyByPIN(chosen.pin)
+      if (!res.success && res.error != null && res.error === PROPERTY_LOOKUP_UNAVAILABLE) {
+        return recordsUnavailable("PROPERTY_LOOKUP_UNAVAILABLE")
+      }
       if (!res.success || !res.data) {
         return NextResponse.json(
           { error: res.error ?? "Could not load property details.", code: "PROPERTY_LOOKUP_FAILED" },
@@ -469,6 +501,7 @@ export async function POST(req: NextRequest) {
       }
 
       propertyData = res.data
+      assessedValueUnavailable = res.assessedValueLookup === "unavailable"
     }
 
     if (!propertyData) {
@@ -497,6 +530,12 @@ export async function POST(req: NextRequest) {
       garage: propertyData.garage,
       note: "These are the characteristics on file with the CCAO. Errors in square footage, bedroom count, or property class can support an appeal.",
     } : null
+
+    // The assessed-value read failed or contradicted itself, so absence was not
+    // established: a service failure, never "hasn't published". A positive lookup
+    // figure still proceeds; every released figure below comes from the
+    // comparison's own mailed read, not from this lookup.
+    if (subjectAV <= 0 && assessedValueUnavailable) return recordsUnavailable("ASSESSMENT_LOOKUP_UNAVAILABLE")
 
     // If no assessed value on file, return property info without overpayment estimate.
     // This is CC-05, not a softer variant of it: the check ran and established
@@ -565,10 +604,24 @@ export async function POST(req: NextRequest) {
     // assessed value times ten. None of that survives: a refused read means no
     // comparison, never a looser one, and no subject figure beside it, because
     // the lookup's figure above can be a later stage than the mailed one.
+    const comparisonStartedAt = Date.now()
     const comparisonRead = await readFreeComparison({
       propertyPin: propertyData.pin,
       expectedTownship: propertyData.township,
       deadline: comparisonDeadline,
+    })
+    // One line per check that reached the comparison, refused or not, so the two
+    // input paths can be compared on the same terms. An input kind, a bounded
+    // blocker name and millisecond counts: no PIN, address or figure. It changes
+    // no result. `budgetLeftMs` at or below zero means the read was refused
+    // before it issued a request.
+    console.info("[free-check] timing", {
+      input: addressResolvedAt === null ? "pin" : "address",
+      addressMs: addressResolvedAt === null ? null : addressResolvedAt - requestStartedAt,
+      lookupMs: comparisonStartedAt - (addressResolvedAt ?? requestStartedAt),
+      budgetLeftMs: comparisonDeadline - comparisonStartedAt,
+      comparisonMs: Date.now() - comparisonStartedAt,
+      comparison: comparisonRead.ok ? "ok" : comparisonRead.blocker,
     })
     // The blocker is a bounded name. No PIN or address reaches a log line here.
     if (!comparisonRead.ok) console.warn("[free-check] comparison unavailable:", comparisonRead.blocker)

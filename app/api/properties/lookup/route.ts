@@ -1,3 +1,4 @@
+import { lookupUnavailableResponse } from '@/lib/properties/lookup-unavailable-response'
 // Property Lookup API - Fetch property data from Cook County by PIN
 import { NextRequest, NextResponse } from 'next/server'
 import { getPropertyByPIN, isValidPIN, formatPIN } from '@/lib/cook-county'
@@ -36,6 +37,8 @@ export async function GET(request: NextRequest) {
     }
     
     const result = await getPropertyByPIN(pin)
+    const unavailable = lookupUnavailableResponse(result)
+    if (unavailable) return unavailable
     
     if (!result.success || !result.data) {
       return NextResponse.json(

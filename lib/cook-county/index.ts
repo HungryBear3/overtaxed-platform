@@ -5,6 +5,7 @@ export {
   getPropertyByPIN,
   searchPropertiesByAddress,
   ADDRESS_LOOKUP_UNAVAILABLE,
+  PROPERTY_LOOKUP_UNAVAILABLE,
   getComparableSales,
   getComparableEquity,
   enrichComparableAddresses,
@@ -14,6 +15,8 @@ export {
   formatPIN,
   isValidPIN,
 } from './api'
+
+export type { AssessedValueLookup, PropertyLookupResponse } from './api'
 
 export type {
   PropertyData,

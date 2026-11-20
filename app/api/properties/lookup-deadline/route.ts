@@ -1,3 +1,4 @@
+import { lookupUnavailableResponse } from '@/lib/properties/lookup-unavailable-response'
 // GET /api/properties/lookup-deadline?pin=... - Look up township and appeal deadlines for a PIN
 // Uses Cook County Open Data for township; matches to Assessor calendar for deadlines
 import { NextRequest, NextResponse } from "next/server"
@@ -23,6 +24,8 @@ export async function GET(request: NextRequest) {
     }
 
     const result = await getPropertyByPIN(pin)
+    const unavailable = lookupUnavailableResponse(result)
+    if (unavailable) return unavailable
     if (!result.success || !result.data) {
       return NextResponse.json(
         { error: result.error || "Property not found for this PIN", township: null },

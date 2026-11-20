@@ -166,7 +166,8 @@ async function getTownshipForNeighborhood(nbhd: string): Promise<string | null> 
  * Tries current dataset first (pabr-t5kh), then archived (tx2p-k2g9).
  */
 async function getParcelUniverseByPIN(
-  pin: PIN
+  pin: PIN,
+  lookup?: { unavailable: boolean }
 ): Promise<ParcelUniverseRecord | null> {
   const normalizedPIN = normalizePIN(pin)
   const query = `$where=${encodeURIComponent(`pin='${normalizedPIN}'`)}&$limit=1`
@@ -177,7 +178,7 @@ async function getParcelUniverseByPIN(
   try {
     const results = await fetchSocrataData<ParcelUniverseRecord>(DATASETS.PARCEL_UNIVERSE_CURRENT, query)
     if (results[0]) currentRecord = results[0]
-  } catch { /* continue */ }
+  } catch { if (lookup) lookup.unavailable = true }
 
   // Current dataset (pabr-t5kh) does not contain address fields (property_address, property_city).
   // Fetch archived dataset (tx2p-k2g9) to get address fields and merge them in.
@@ -186,7 +187,7 @@ async function getParcelUniverseByPIN(
     try {
       const results = await fetchSocrataData<ParcelUniverseRecord>(DATASETS.PARCEL_UNIVERSE, query)
       if (results[0]) archivedRecord = results[0]
-    } catch { /* continue */ }
+    } catch { if (lookup) lookup.unavailable = true }
   }
 
   if (currentRecord && archivedRecord) {
@@ -285,7 +286,8 @@ async function getImprovementCharsFromCombinedByPIN(pin: PIN): Promise<Record<st
  * The current Assessed Values dataset exposes one 14-digit `pin` column.
  */
 async function getAssessedValuesByPIN(
-  pin: PIN
+  pin: PIN,
+  lookup?: { unavailable: boolean }
 ): Promise<Record<string, unknown> | null> {
   const normalizedPIN = normalizePIN(pin)
   if (normalizedPIN.length !== 14) return null
@@ -300,8 +302,12 @@ async function getAssessedValuesByPIN(
         DATASETS.ASSESSED_VALUES,
         query
       )
+      // A 200 that is not a row list answered nothing; it is not "zero rows".
+      if (!Array.isArray(results)) throw new Error('Socrata API error: non-array response body')
       if (results[0]) return results[0]
     } catch {
+      // An upstream failure is not an absent record.
+      if (lookup) lookup.unavailable = true
       continue
     }
   }
@@ -314,7 +320,8 @@ async function getAssessedValuesByPIN(
  */
 async function getAssessmentHistoryByPIN(
   pin: PIN,
-  limit: number = 20
+  limit: number = 20,
+  seen?: { mailedPositive: boolean }
 ): Promise<AssessmentHistoryRecord[]> {
   const normalizedPIN = normalizePIN(pin)
   // Get all available years, ordered most recent first
@@ -325,6 +332,12 @@ async function getAssessmentHistoryByPIN(
     query
   )
   
+  // The current-value query filters on `mailed_tot > 0`, so only a mailed total
+  // here can contradict an empty answer from it.
+  if (seen) {
+    seen.mailedPositive = results.some((record) => (parseAssessedValue(record.mailed_tot) ?? 0) > 0)
+  }
+
   // Transform to AssessmentHistoryRecord format
   return results.map((record) => {
     // Determine which stage has values (prefer board > certified > mailed)
@@ -403,11 +416,34 @@ async function getTaxRateByCode(
 }
 
 /**
+ * Sentinel `error`: the county could not be reached (or answered unusably) for
+ * this PIN, as distinct from "no such PIN". Mirrors ADDRESS_LOOKUP_UNAVAILABLE.
+ * Replaces raw provider text, which stays in the server log only.
+ */
+export const PROPERTY_LOOKUP_UNAVAILABLE = 'property_lookup_unavailable'
+
+/**
+ * How the subject's assessed value was established. Only `absent` means the
+ * county answered and has nothing on file; `zero` is a published non-positive
+ * total; `unavailable` means the authoritative query failed or contradicted the
+ * history read of the same dataset.
+ */
+export type AssessedValueLookup = 'found' | 'zero' | 'absent' | 'unavailable'
+
+/**
+ * The classification rides on the response wrapper, never on `data`, so callers
+ * that spread, store or return `data` see exactly `PropertyData`.
+ */
+export type PropertyLookupResponse = CookCountyApiResponse<PropertyData> & {
+  assessedValueLookup?: AssessedValueLookup
+}
+
+/**
  * Get property data by PIN (combines Parcel Universe + Characteristics)
  */
 export async function getPropertyByPIN(
   pin: PIN
-): Promise<CookCountyApiResponse<PropertyData>> {
+): Promise<PropertyLookupResponse> {
   try {
     if (!isValidPIN(pin)) {
       return {
@@ -421,8 +457,20 @@ export async function getPropertyByPIN(
     const normalizedPIN = normalizePIN(pin)
     
     // Fetch parcel universe data (location, address)
-    const parcelData = await getParcelUniverseByPIN(normalizedPIN)
-    
+    const parcelLookup = { unavailable: false }
+    const parcelData = await getParcelUniverseByPIN(normalizedPIN, parcelLookup)
+
+    // A parcel query that threw established nothing: neither "not found" nor a
+    // half record (no class, or no address) for downstream gates to judge.
+    if (parcelLookup.unavailable) {
+      return {
+        success: false,
+        data: null,
+        error: PROPERTY_LOOKUP_UNAVAILABLE,
+        source: 'Cook County Open Data',
+      }
+    }
+
     if (!parcelData) {
       return {
         success: false,
@@ -445,9 +493,11 @@ export async function getPropertyByPIN(
     )?.trim() || null
 
     // Fetch assessed values, assessment history, and tax rate in parallel
+    const assessedLookup = { unavailable: false }
+    const historySeen = { mailedPositive: false }
     const [assessedData, assessmentHistory, taxRate] = await Promise.all([
-      getAssessedValuesByPIN(normalizedPIN),
-      getAssessmentHistoryByPIN(normalizedPIN, 15),  // Get up to 15 years of history
+      getAssessedValuesByPIN(normalizedPIN, assessedLookup),
+      getAssessmentHistoryByPIN(normalizedPIN, 15, historySeen),  // Get up to 15 years of history
       taxCode ? getTaxRateByCode(taxCode) : Promise.resolve(null)
     ])
     
@@ -530,18 +580,39 @@ export async function getPropertyByPIN(
       propertyData.marketValue = propertyData.assessedTotalValue * 10
     }
     
+    // Order matters: a failed authoritative query is `unavailable` even if a
+    // secondary column supplied a number; an empty answer beside a history row
+    // with a positive MAILED total is a contradiction, not absence. Like for
+    // like: a certified- or board-only row does not contradict a query that
+    // asks for `mailed_tot > 0`, and treating it as one would answer that
+    // parcel with a "try again" that no retry can clear.
+    const total = propertyData.assessedTotalValue
+    const historyHasValue = historySeen.mailedPositive
+    const assessedValueLookup: AssessedValueLookup =
+      assessedLookup.unavailable
+        ? 'unavailable'
+        : total != null && total > 0
+          ? 'found'
+          : assessed
+            ? 'zero'
+            : historyHasValue
+              ? 'unavailable'
+              : 'absent'
+
     return {
       success: true,
       data: propertyData,
       error: null,
       source: 'Cook County Open Data',
+      assessedValueLookup,
     }
   } catch (error) {
     console.error('Error fetching property data:', error)
     return {
       success: false,
       data: null,
-      error: error instanceof Error ? error.message : 'Failed to fetch property data',
+      // Detail is logged above; callers get the sentinel, never provider text.
+      error: PROPERTY_LOOKUP_UNAVAILABLE,
       source: 'Cook County Open Data',
     }
   }

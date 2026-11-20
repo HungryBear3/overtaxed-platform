@@ -1,3 +1,4 @@
+import { lookupUnavailableResponse } from '@/lib/properties/lookup-unavailable-response'
 // Properties API - CRUD operations for user properties
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth/session'
@@ -217,6 +218,8 @@ export async function POST(request: NextRequest) {
     
     // Fetch property data from Cook County
     const cookCountyResult = await getPropertyByPIN(normalizedPIN)
+    const unavailable = lookupUnavailableResponse(cookCountyResult)
+    if (unavailable) return unavailable
     
     if (!cookCountyResult.success || !cookCountyResult.data) {
       return NextResponse.json(

@@ -1,3 +1,4 @@
+import { lookupUnavailableResponse } from '@/lib/properties/lookup-unavailable-response'
 // POST /api/properties/[id]/refresh - Re-fetch property data from Cook County and update DB
 import { NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth/session"
@@ -25,6 +26,8 @@ export async function POST(
     }
 
     const result = await refreshPropertyFromCookCounty(id)
+    const unavailable = lookupUnavailableResponse(result)
+    if (unavailable) return unavailable
 
     if (!result.success) {
       return NextResponse.json(
