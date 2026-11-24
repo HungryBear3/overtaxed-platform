@@ -23,7 +23,7 @@ afterEach(() => { global.fetch = originalFetch; jest.useRealTimers() })
 it.each([['townships', TownshipsPage], ['deadlines', DeadlinesPage]] as const)(
   '%s uses the real live calendar, then removes dates when the feed fails', async (_, Page) => {
     jest.mocked(fetch).mockResolvedValue(response(fixture()) as Response)
-    const view = render(<Page />)
+    const view = render(await Page())
     await act(async () => {})
     expect(view.container.textContent).toContain('Sep 23, 2026')
     expect(view.container.textContent).toContain(AT.toISOString())
@@ -41,7 +41,7 @@ it('withdraws mounted township dates at Chicago midnight without a new successfu
   const at = new Date('2026-09-13T04:59:59Z')
   jest.setSystemTime(at)
   jest.mocked(fetch).mockResolvedValue(response(fixture(at)) as Response)
-  const view = render(<TownshipsPage />)
+  const view = render(await TownshipsPage())
   await act(async () => {})
   expect(view.container.textContent).toContain('Sep 23, 2026')
   act(() => jest.advanceTimersByTime(1000))

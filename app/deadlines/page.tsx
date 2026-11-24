@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import LiveDeadlinesPage from "@/components/ot-design/LiveDeadlinesPage";
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
+import {
+  readInformationalSnapshot,
+  UNAVAILABLE_SERVER_INFORMATIONAL_SNAPSHOT,
+} from "@/lib/deadlines/read-informational-snapshot";
 import "../ot-design.css";
 
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://www.overtaxed-il.com";
@@ -36,11 +40,19 @@ export const metadata: Metadata = {
 // would assert an official deadline we can't stand behind. The page links to
 // the official Cook County sources instead.
 
-export default function Page() {
+// Per request, like /township/[slug]: server HTML must re-check source freshness
+// and status against the current clock, never bake a build-time date.
+export const dynamic = "force-dynamic";
+
+export default async function Page() {
+  // One guarded read at one instant; null (disabled, missing, stale, synthetic,
+  // invalid) is passed as an explicit unavailable snapshot, never a fallback.
+  const now = new Date();
+  const snapshot = (await readInformationalSnapshot(now)) ?? UNAVAILABLE_SERVER_INFORMATIONAL_SNAPSHOT;
   return (
     <div className="ot-root">
       <SiteHeader active="deadlines" />
-      <LiveDeadlinesPage />
+      <LiveDeadlinesPage initialSnapshot={snapshot} evaluatedAt={now.toISOString()} />
       {/* Informational page: CC-12 footer unconditionally, see SiteFooter. */}
       <SiteFooter informationalPage />
     </div>

@@ -107,7 +107,8 @@ describe("2026 view model against the committed snapshot", () => {
 });
 
 describe("/deadlines page render", () => {
-  const html = renderToStaticMarkup(DeadlinesRoutePage());
+  let html = "";
+  beforeAll(async () => { html = renderToStaticMarkup(await DeadlinesRoutePage()); });
 
   it("shows the official Assessor calendar source URL", () => {
     expect(html).toContain(ASSESSOR_CALENDAR_URL);

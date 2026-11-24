@@ -18,8 +18,16 @@ export function summarizeCalendar(VIEWS: ReturnType<typeof buildTownship2026View
 export const unavailableCalendar = summarizeCalendar(unavailable);
 
 /** Informational-only reevaluation. Never fetches, renews provenance or signs eligibility. */
-export function useInformationalCalendar(snapshot?: OfficialDeadlineSnapshot) {
-  const [evaluated, setEvaluated] = useState<{ snapshot?: OfficialDeadlineSnapshot; calendar: typeof unavailableCalendar } | null>(null);
+export function useInformationalCalendar(snapshot?: OfficialDeadlineSnapshot, evaluatedAt?: string) {
+  // With a server evaluation instant, SSR and first hydration evaluate the same
+  // snapshot at the same instant (deterministic markup); the effect below then
+  // reevaluates against the real clock. Without one, start unavailable as before.
+  const [evaluated, setEvaluated] = useState<{ snapshot?: OfficialDeadlineSnapshot; calendar: typeof unavailableCalendar } | null>(() => {
+    const at = evaluatedAt === undefined ? NaN : Date.parse(evaluatedAt);
+    return snapshot && Number.isFinite(at)
+      ? { snapshot, calendar: summarizeCalendar(buildTownship2026Views(new Date(at), snapshot)) }
+      : null;
+  });
   useEffect(() => {
     const update = () => setEvaluated({ snapshot, calendar: document.visibilityState === "hidden"
       ? unavailableCalendar : summarizeCalendar(buildTownship2026Views(new Date(), snapshot)) });

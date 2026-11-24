@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import LiveDeadlinesPage from "@/components/ot-design/LiveDeadlinesPage";
 import { SiteHeader, SiteFooter } from "@/components/ot-design/SiteChrome";
+import {
+  readInformationalSnapshot,
+  UNAVAILABLE_SERVER_INFORMATIONAL_SNAPSHOT,
+} from "@/lib/deadlines/read-informational-snapshot";
 import "../ot-design.css";
 
 const TOWNSHIPS_TITLE = "Cook County Township Appeal Deadlines";
@@ -18,11 +22,16 @@ export const metadata: Metadata = {
 
 // The two informational calendar routes share the same live feed and lifecycle.
 // Neither route may fall back to the bundled commerce snapshot or enable capture.
-export default function TownshipsPage() {
+export const dynamic = "force-dynamic";
+
+export default async function TownshipsPage() {
+  // Same guarded server read and single evaluation instant as /deadlines.
+  const now = new Date();
+  const snapshot = (await readInformationalSnapshot(now)) ?? UNAVAILABLE_SERVER_INFORMATIONAL_SNAPSHOT;
   return (
     <div className="ot-root">
       <SiteHeader active="deadlines" />
-      <LiveDeadlinesPage />
+      <LiveDeadlinesPage initialSnapshot={snapshot} evaluatedAt={now.toISOString()} />
       {/* Informational page: CC-12 footer unconditionally, see SiteFooter. */}
       <SiteFooter informationalPage />
     </div>

@@ -160,8 +160,8 @@ describe("/township/jefferson with a (hypothetical) verified open window", () =>
 describe("informational routes render the CC-12 informational footer unconditionally", () => {
   const ROUTES: Array<[string, () => Promise<string> | string]> = [
     ["/township/jefferson", async () => renderToStaticMarkup(await TownshipRoutePage({ params: Promise.resolve({ slug: "jefferson" }) }))],
-    ["/deadlines", () => renderToStaticMarkup(<DeadlinesRoutePage />)],
-    ["/townships", () => renderToStaticMarkup(<TownshipsRoutePage />)],
+    ["/deadlines", async () => renderToStaticMarkup(await DeadlinesRoutePage())],
+    ["/townships", async () => renderToStaticMarkup(await TownshipsRoutePage())],
   ];
   const original = process.env.OT_NEUTRAL_REPORT_CHECKOUT_ENABLED;
   afterAll(() => {
