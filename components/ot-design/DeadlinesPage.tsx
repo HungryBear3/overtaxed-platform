@@ -597,8 +597,10 @@ function VerifyAndSources() {
   );
 }
 
-export default function DeadlinesPage({ snapshot }: { snapshot?: OfficialDeadlineSnapshot } = {}) {
-  const calendar = useInformationalCalendar(snapshot);
+export default function DeadlinesPage(
+  { snapshot, evaluatedAt }: { snapshot?: OfficialDeadlineSnapshot; evaluatedAt?: string } = {},
+) {
+  const calendar = useInformationalCalendar(snapshot, evaluatedAt);
   const { COUNTS, PROVENANCE } = calendar;
   const [tracked, setTracked] = useState(false);
   useEffect(() => {

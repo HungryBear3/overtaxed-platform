@@ -17,8 +17,10 @@ import {
   ASSESSOR_CALENDAR_URL,
 } from "@/lib/deadline-sources";
 
+let routeElement: Awaited<ReturnType<typeof DeadlinesRoutePage>>;
+beforeAll(async () => { routeElement = await DeadlinesRoutePage(); });
 function renderPage(): string {
-  return renderToStaticMarkup(DeadlinesRoutePage());
+  return renderToStaticMarkup(routeElement);
 }
 
 describe("/deadlines sourcing safety", () => {

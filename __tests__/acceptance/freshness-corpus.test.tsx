@@ -292,8 +292,8 @@ describe("index and static routes", () => {
     expect(html).not.toMatch(/get notified|remind you|type="email"/i)
   })
 
-  it("/deadlines publishes no date and says the gap is ours", () => {
-    const html = renderToStaticMarkup(DeadlinesRoutePage())
+  it("/deadlines publishes no date and says the gap is ours", async () => {
+    const html = renderToStaticMarkup(await DeadlinesRoutePage())
     expectNoUnverifiedDeadlineClaim(html, "/deadlines")
     expectNoCommerceOrReminder(html, "/deadlines")
     expect(html).toMatch(/we have not (verified|read)/i)
@@ -356,13 +356,13 @@ describe("withdrawn download artifacts", () => {
     ])
   })
 
-  it("is linked from no rendered surface", () => {
+  it("is linked from no rendered surface", async () => {
     // The files stay on disk — deleting a design asset is a disposition
     // decision — but nothing serves them. A standing "Current appeal windows"
     // badge on a sheet meant to be printed and pinned in a lobby is the one
     // carrier that outlives every correction we could make.
     const surfaces = [
-      renderToStaticMarkup(DeadlinesRoutePage()),
+      renderToStaticMarkup(await DeadlinesRoutePage()),
       renderToStaticMarkup(AboutPage()),
       renderToStaticMarkup(ContingencyPage()),
     ]

@@ -8,9 +8,16 @@ export const UNAVAILABLE_INFORMATIONAL_SNAPSHOT: OfficialDeadlineSnapshot = {
   schemaVersion: 1, synthetic: true, sources: { assessor: null, bor: null }, townships: {},
 }
 
-/** Public informational reads only; the existing calendar hook owns canonical expiry. */
-export function useLiveInformationalSnapshot(): OfficialDeadlineSnapshot {
-  const [snapshot, setSnapshot] = useState(UNAVAILABLE_INFORMATIONAL_SNAPSHOT)
+/**
+ * Public informational reads only; the existing calendar hook owns canonical expiry.
+ * `initial` is the server-read snapshot for SSR and first hydration. The mount
+ * refresh keeps it while the replacement request is in flight; any failure,
+ * timeout, hidden tab or later refresh still clears to unavailable.
+ */
+export function useLiveInformationalSnapshot(
+  initial: OfficialDeadlineSnapshot = UNAVAILABLE_INFORMATIONAL_SNAPSHOT,
+): OfficialDeadlineSnapshot {
+  const [snapshot, setSnapshot] = useState(initial)
   useEffect(() => {
     const isVisible = () => document.visibilityState !== 'hidden'
     let mounted = true
@@ -22,9 +29,9 @@ export function useLiveInformationalSnapshot(): OfficialDeadlineSnapshot {
       controller?.abort()
       window.clearTimeout(timeout)
     }
-    const refresh = async () => {
+    const refresh = async (keepCurrent = false) => {
       invalidate()
-      setSnapshot(UNAVAILABLE_INFORMATIONAL_SNAPSHOT)
+      if (!keepCurrent || !isVisible()) setSnapshot(UNAVAILABLE_INFORMATIONAL_SNAPSHOT)
       if (!isVisible()) return
       const current = generation
       const request = new AbortController()
@@ -54,16 +61,18 @@ export function useLiveInformationalSnapshot(): OfficialDeadlineSnapshot {
     const activeRefresh = () => {
       if (isVisible()) void refresh()
     }
-    void refresh()
+    // Mount only: do not erase still-valid server data before the refetch settles.
+    void refresh(true)
     const interval = window.setInterval(activeRefresh, 300_000)
     window.addEventListener('focus', activeRefresh)
-    document.addEventListener('visibilitychange', refresh)
+    const visibilityRefresh = () => { void refresh() }
+    document.addEventListener('visibilitychange', visibilityRefresh)
     return () => {
       mounted = false
       invalidate()
       window.clearInterval(interval)
       window.removeEventListener('focus', activeRefresh)
-      document.removeEventListener('visibilitychange', refresh)
+      document.removeEventListener('visibilitychange', visibilityRefresh)
     }
   }, [])
   return snapshot

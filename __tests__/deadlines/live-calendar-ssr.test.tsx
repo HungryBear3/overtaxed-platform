@@ -15,11 +15,11 @@ jest.mock('@/components/ot-design/DeadlinesPage', () => ({
 }))
 jest.mock('@/components/ot-design/SiteChrome', () => ({ SiteHeader: () => <header />, SiteFooter: () => <footer /> }))
 
-test.each(['wrapper', 'page'])('%s SSR passes an explicit unavailable snapshot and never fetches', surface => {
+test.each(['wrapper', 'page'])('%s SSR passes an explicit unavailable snapshot and never fetches', async surface => {
   const fetch = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('SSR must not fetch'))
   snapshots.length = 0
   try {
-    const html = renderToString(surface === 'wrapper' ? <LiveDeadlinesPage /> : <Page />)
+    const html = renderToString(surface === 'wrapper' ? <LiveDeadlinesPage /> : await Page())
     expect(html).toContain('Informational calendar unavailable')
     expect(snapshots).toEqual([UNAVAILABLE_INFORMATIONAL_SNAPSHOT])
     expect(snapshots[0]?.sources).toEqual({ assessor: null, bor: null })
