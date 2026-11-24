@@ -46,7 +46,7 @@ describe("public 404 recovery", () => {
 
     render(React.createElement(route.default))
     expect(screen.getByRole("heading", { name: /page not found/i })).toBeTruthy()
-    expect(screen.getByRole("link", { name: /start a free property check/i }).getAttribute("href")).toBe("/#hero-check")
+    expect(screen.getByRole("link", { name: /start a free property check/i }).getAttribute("href")).toBe("/check")
     expect(screen.getByRole("link", { name: /return home/i }).getAttribute("href")).toBe("/")
   })
 })

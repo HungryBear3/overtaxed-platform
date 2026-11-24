@@ -94,7 +94,7 @@ Have questions or need help? Fill out the form, email us, call or text, or sched
           <CardHeader className="pb-2">
             <CardTitle className="text-lg text-blue-900">HOA or condo association?</CardTitle>
             <CardDescription className="text-blue-800">
-              We help associations check bulk PINs for over-assessment. Pick the &quot;HOA/condo&quot; subject in the form above (or email support@overtaxed-il.com) and tell us how many PINs you manage. We&apos;ll respond with a packet plan — no legal-representation claim, no per-unit upsell.
+              We do not offer a bulk association product today. If your association manages multiple PINs and wants to be told if bulk support becomes available, add your email to the association waitlist in the HOA section on the homepage or email support@overtaxed-il.com. Boards can share our free <Link href="/hoa" className="underline">resident resource</Link> so each owner can check their own property. OverTaxed IL is not a law firm and does not provide legal representation.
             </CardDescription>
           </CardHeader>
         </Card>

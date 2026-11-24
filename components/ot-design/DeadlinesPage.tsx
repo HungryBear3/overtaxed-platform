@@ -457,7 +457,7 @@ function BottomCheckCta() {
               source: "deadline_bottom_cta",
               hasAddressInput: address.trim().length > 0,
             });
-            window.location.href = "/#hero-check";
+            window.location.href = "/check";
           }}
         >
           <input

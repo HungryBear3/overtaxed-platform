@@ -27,7 +27,7 @@ export default function DisclaimerPage() {
           <section>
             <h2 className="text-xl font-semibold text-gray-900 mb-2">1. Technology Platform Only</h2>
             <p className="text-gray-700">
-              OverTaxed IL automates property tax appeal preparation and assists with comp packets and filing. We are not a law firm, tax advisor, or licensed appraiser. Use of our Service does not create an attorney-client or advisor-client relationship.
+              OverTaxed IL helps you prepare Cook County Assessor appeal materials that you review, sign, and file yourself. We do not file on your behalf, and we do not represent you before the Assessor or the Board of Review. We are not a law firm, tax advisor, or licensed appraiser. Use of our Service does not create an attorney-client or advisor-client relationship.
             </p>
           </section>
 
@@ -48,7 +48,7 @@ export default function DisclaimerPage() {
           <section>
             <h2 className="text-xl font-semibold text-gray-900 mb-2">4. Filing Responsibility</h2>
             <p className="text-gray-700">
-              Today, users file appeals themselves at the Cook County Assessor portal. We prepare packets and provide instructions. You are responsible for meeting deadlines and following county procedures. We are not responsible for missed deadlines or filing errors.
+              You file your own appeal with the Cook County Assessor. We prepare materials and instructions for you to review, sign, and file; we do not provide legal representation. You are responsible for meeting deadlines and following county procedures. We are not responsible for missed deadlines or filing errors.
             </p>
           </section>
 

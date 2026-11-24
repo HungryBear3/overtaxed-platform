@@ -21,7 +21,7 @@ export default function NotFound() {
             That link may be outdated. You can still check your Cook County assessment against public-record matching properties.
           </p>
           <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 12, marginTop: 28 }}>
-            <Link href="/#hero-check" className="ot-cta">
+            <Link href="/check" className="ot-cta">
               Start a free property check <span className="ot-cta-arrow">→</span>
             </Link>
             <Link href="/" className="ot-btn-secondary">

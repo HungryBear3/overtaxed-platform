@@ -62,7 +62,7 @@ export default function AboutPage() {
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center">
           <h1 className="text-4xl font-bold text-gray-900 mb-4">About OverTaxed IL</h1>
           <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-            We help Cook County homeowners and HOA/condo associations spot over-assessed property tax bills and prepare appeal materials — with public data, not guesswork.
+            We help Cook County homeowners spot over-assessed property tax bills and prepare Assessor appeal materials that you review, sign, and file yourself — with public data, not guesswork.
           </p>
         </div>
       </div>
