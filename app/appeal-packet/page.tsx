@@ -54,7 +54,7 @@ export default function AppealPacketPage() {
             OverTaxed IL turns public Cook County Assessor records into a filing-ready packet: comps, assessment-level context, filing instructions, and a deadline checklist. No savings promises. No testimonials. Not legal advice.
           </p>
           <div className="ot-hero-actions">
-            <Link href="/#hero-check" className="ot-cta ot-cta-primary">
+            <Link href="/check" className="ot-cta ot-cta-primary">
               Start with a free check <span className="ot-cta-arrow">→</span>
             </Link>
             <Link href="/pricing" className="ot-cta ot-cta-secondary">

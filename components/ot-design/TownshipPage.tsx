@@ -171,7 +171,7 @@ function TownshipHero({
                   against a schedule we could not promise. It is now keyed to
                   the same projection as everything else. */}
               {isOpen ? (
-                <Link href={`/#hero-check`} className="ot-cta">
+                <Link href="/check" className="ot-cta">
                   Run free check for my address <span className="ot-cta-arrow">→</span>
                 </Link>
               ) : view.allowReminderSignup ? (
@@ -278,7 +278,7 @@ function TownshipCheckCta({ t, view }: { t: Township; view: Township2026View }) 
           className="ot-bottom-cta-form"
           onSubmit={(e) => {
             e.preventDefault();
-            window.location.href = "/#hero-check";
+            window.location.href = "/check";
           }}
         >
           <input

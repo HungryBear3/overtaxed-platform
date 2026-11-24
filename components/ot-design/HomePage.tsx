@@ -1434,20 +1434,20 @@ function HoaSection() {
       <div className="ot-faq-inner">
         <div className="ot-faq-eyebrow">HOA & condo associations</div>
         <h2 id="ot-hoa-h" className="ot-h2">
-          Managing many PINs? We&apos;ll build a bulk packet for your association.
+          Managing many PINs? Join the association waitlist.
         </h2>
         <p className="ot-method-lede">
-          Condo boards and HOA managers in Cook County can use the same comparable-property +
-          assessment-level packet, run across every PIN in the association. No
-          legal-representation claim, no per-unit upsell. Drop your email and one
-          OverTaxed IL contact will reply within 2 business days with the next-step plan.
+          Bulk support for condo boards and HOA managers is not available today. Leave
+          your email if you want to be told if it becomes available. In the meantime,
+          boards can share our free <a href="/hoa">resident resource</a> so each
+          owner can check their own property.
         </p>
 
         {status === "success" ? (
           <div className="ot-rrb ot-rrb-inline" style={{ marginTop: 16 }}>
             <span className="ot-rrb-shield" aria-hidden="true">○</span>
             <span className="ot-rrb-text">
-              <strong>You&apos;re on the list.</strong> One OverTaxed IL contact will email you within 2 business days with next steps.
+              <strong>You&apos;re on the waitlist.</strong> We&apos;ll email you if bulk association support becomes available.
             </span>
           </div>
         ) : (
@@ -1491,11 +1491,11 @@ function HoaSection() {
               className="ot-cta ot-cta-block"
               disabled={status === "loading" || !email}
             >
-              {status === "loading" ? "Saving…" : "Get an association packet plan"}
+              {status === "loading" ? "Saving…" : "Join the association waitlist"}
             </button>
             <p className="ot-method-disclosure">
-              OverTaxed IL is not a law firm and does not provide legal advice.
-              We do not guarantee a reduction — county decisions are final.
+              OverTaxed IL is not a law firm and does not provide legal advice or
+              legal representation. We do not guarantee a reduction — county decisions are final.
             </p>
             {status === "error" && (
               <p style={{ color: "#b91c1c", fontSize: 13 }}>{errorMsg}</p>

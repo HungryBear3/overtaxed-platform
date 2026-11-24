@@ -89,7 +89,7 @@ export function SiteHeader({
           <Link href="/auth/signin" className="ot-header-link">
             Sign in
           </Link>
-          <Link href="/#hero-check" className="ot-cta ot-cta-sm">
+          <Link href="/check" className="ot-cta ot-cta-sm">
             Free check
           </Link>
         </div>
@@ -139,7 +139,7 @@ export function SiteFooter({
           <div className="ot-footer-col">
             <div className="ot-footer-col-head">Quick links</div>
             <ul className="ot-footer-links">
-              <li><Link href="/#hero-check">Free check</Link></li>
+              <li><Link href="/check">Free check</Link></li>
               <li><Link href="/#pricing">Pricing</Link></li>
               <li><Link href="/deadlines">All township deadlines</Link></li>
               <li><Link href="/how-it-works">How it works</Link></li>
